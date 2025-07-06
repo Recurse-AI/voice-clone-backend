@@ -88,19 +88,18 @@ class SegmentManager:
         return segment if self.validate_segment_quality(segment) else None
     
     def validate_segment_quality(self, segment: Dict) -> bool:
-        """Validate segment quality for voice cloning"""
-        # Duration check: 5-17 seconds
-        if segment['duration'] < 5.0:
+        """Validate segment quality for voice cloning with fallback for corner cases"""
+        # Minimum quality thresholds (fallback)
+        if segment['duration'] < 2.0:
             return False
         
-        if segment['duration'] > 17.0:
+        if segment['duration'] > 25.0:
             return False
         
-        # Word count check: 35-50 words
-        if segment['word_count'] < 35:
+        if segment['word_count'] < 10:
             return False
         
-        if segment['word_count'] > 50:
+        if segment['word_count'] > 200:
             return False
         
         # Confidence threshold
@@ -186,12 +185,34 @@ class SegmentManager:
             if not speaker_segments:
                 continue
             
-            # Select best segment (highest confidence, good duration)
-            best_segment = max(speaker_segments, key=lambda s: (
-                s['confidence'],
-                min(s['duration'], 17.0),  # Prefer segments up to 17 seconds
-                s['word_count']
-            ))
+            # Select best segment with preference for optimal ranges
+            def calculate_segment_score(s):
+                score = 0
+                
+                # Confidence score (40% weight)
+                score += s['confidence'] * 0.4
+                
+                # Duration preference score (30% weight) - prefer 5-17 seconds
+                if 5.0 <= s['duration'] <= 17.0:
+                    duration_score = 1.0  # Perfect range
+                elif 3.0 <= s['duration'] < 5.0 or 17.0 < s['duration'] <= 20.0:
+                    duration_score = 0.7  # Good range
+                else:
+                    duration_score = 0.3  # Acceptable range
+                score += duration_score * 0.3
+                
+                # Word count preference score (30% weight) - prefer 35-50 words
+                if 35 <= s['word_count'] <= 50:
+                    word_score = 1.0  # Perfect range
+                elif 25 <= s['word_count'] < 35 or 50 < s['word_count'] <= 70:
+                    word_score = 0.7  # Good range
+                else:
+                    word_score = 0.3  # Acceptable range
+                score += word_score * 0.3
+                
+                return score
+            
+            best_segment = max(speaker_segments, key=calculate_segment_score)
             
             reference_segments[speaker] = best_segment
         
