@@ -6,9 +6,23 @@ Handles Dia model operations and voice cloning functionality.
 
 import torch
 import numpy as np
+import random
 from typing import Optional, Dict, Any, List
 from transformers import AutoProcessor, DiaForConditionalGeneration
 from config import settings
+
+
+def set_seed(seed: int):
+    """Sets the random seed for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+    # Ensure deterministic behavior for cuDNN (if used)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 class VoiceCloningService:
@@ -82,8 +96,7 @@ class VoiceCloningService:
         
         try:
             if seed is not None:
-                torch.manual_seed(seed)
-                np.random.seed(seed)
+                set_seed(seed)
             
             cloned_segments = []
             

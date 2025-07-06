@@ -14,6 +14,7 @@ import random
 from config import settings
 from r2_storage import R2Storage
 from audio_processor.base_processor import AudioProcessor
+from audio_processor.voice_cloning import set_seed
 
 # Response models
 class ProcessingResponse(BaseModel):
@@ -144,7 +145,7 @@ async def process_audio(
     
     # Set seed for reproducible results
     actual_seed = seed if seed is not None else random.randint(1, 1000000)
-    random.seed(actual_seed)
+    set_seed(actual_seed)
     
     try:
         # Save uploaded files temporarily
