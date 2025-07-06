@@ -1,0 +1,36 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pydantic-settings
+
+# Audio processing
+soundfile
+librosa
+numpy
+scipy
+
+# AI/ML
+torch
+openai
+
+# Dia Model - Install latest transformers and dia
+git+https://github.com/nari-labs/dia.git
+
+# AssemblyAI for transcription
+assemblyai
+
+# Storage
+boto3
+botocore    
+
+# Utilities
+python-dotenv
+pathlib
+typing-extensions
+requests
+tqdm
+
+# Development
+pytest
+pytest-asyncio
