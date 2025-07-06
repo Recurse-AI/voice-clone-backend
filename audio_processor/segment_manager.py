@@ -89,16 +89,18 @@ class SegmentManager:
     
     def validate_segment_quality(self, segment: Dict) -> bool:
         """Validate segment quality for voice cloning"""
-        # Minimum duration check
-        if segment['duration'] < 1.0:
+        # Duration check: 5-17 seconds
+        if segment['duration'] < 5.0:
             return False
         
-        # Maximum duration check (for better Dia model performance)
-        if segment['duration'] > 25.0:
+        if segment['duration'] > 17.0:
             return False
         
-        # Minimum word count
-        if segment['word_count'] < 3:
+        # Word count check: 35-50 words
+        if segment['word_count'] < 35:
+            return False
+        
+        if segment['word_count'] > 50:
             return False
         
         # Confidence threshold
@@ -187,7 +189,7 @@ class SegmentManager:
             # Select best segment (highest confidence, good duration)
             best_segment = max(speaker_segments, key=lambda s: (
                 s['confidence'],
-                min(s['duration'], 10.0),  # Prefer segments up to 10 seconds
+                min(s['duration'], 17.0),  # Prefer segments up to 17 seconds
                 s['word_count']
             ))
             
