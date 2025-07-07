@@ -38,7 +38,12 @@ export PYTHONPATH="/workspace/runpod-backend:$PYTHONPATH"
 
 # Create .env file if not exists
 if [ ! -f .env ]; then
-    echo "⚙️ Creating .env file..."
+    echo "⚙️ Creating .env file from template..."
+    cp .env.example .env
+    echo "📝 Please edit .env file with your API keys"
+    echo "🚨 NEVER commit .env file to git!"
+    
+    # Override with environment variables if available
     cat > .env << EOF
 # API Configuration
 API_TITLE=Voice Cloning API

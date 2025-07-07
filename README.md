@@ -31,9 +31,11 @@ A production-ready voice cloning API built with FastAPI, integrating Dia voice c
 # Copy environment template
 cp .env.example .env
 
-# Edit .env with your credentials
+# Edit .env with your credentials (NEVER commit this file!)
 nano .env
 ```
+
+**🚨 IMPORTANT: Never commit .env file to git! It contains sensitive API keys.**
 
 ### 2. Install Dependencies
 
