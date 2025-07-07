@@ -93,17 +93,17 @@ class SegmentManager:
         if segment['duration'] < 2.0:
             return False
         
-        if segment['duration'] > 25.0:
+        if segment['duration'] > 20.0:
             return False
         
         if segment['word_count'] < 10:
             return False
         
-        if segment['word_count'] > 200:
+        if segment['word_count'] > 70:
             return False
         
         # Confidence threshold
-        if segment['confidence'] < 0.6:
+        if segment['confidence'] < 0.5:
             return False
         
         return True
