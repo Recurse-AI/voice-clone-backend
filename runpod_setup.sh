@@ -1,24 +1,6 @@
 #!/bin/bash
 
-# RunPod Voice Cloning API Setup Script
-echo "🚀 Setting up Voice Cloning API on RunPod..."
-
-# Change to workspace directory
-cd /workspace
-
-# Clone repository if not exists
-if [ ! -d "runpod-backend" ]; then
-    echo "📥 Cloning repository..."
-    git clone https://github.com/your-username/runpod-backend.git
-    cd runpod-backend
-else
-    echo "📁 Repository already exists"
-    cd runpod-backend
-    git pull origin master
-fi
-
 # Install system dependencies
-echo "📦 Installing system dependencies..."
 apt-get update
 apt-get install -y ffmpeg libsndfile1 git
 
@@ -34,16 +16,11 @@ mkdir -p /workspace/outputs
 
 # Set environment variables
 export CUDA_AVAILABLE=true
-export PYTHONPATH="/workspace/runpod-backend:$PYTHONPATH"
+export PYTHONPATH="/workspace/voice-clone-backend:$PYTHONPATH"
 
 # Create .env file if not exists
 if [ ! -f .env ]; then
-    echo "⚙️ Creating .env file from template..."
-    cp .env.example .env
-    echo "📝 Please edit .env file with your API keys"
-    echo "🚨 NEVER commit .env file to git!"
-    
-    # Override with environment variables if available
+    echo "⚙️ Creating .env file..."
     cat > .env << EOF
 # API Configuration
 API_TITLE=Voice Cloning API

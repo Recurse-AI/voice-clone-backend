@@ -9,9 +9,14 @@ soundfile
 librosa
 numpy
 scipy
+pydub
+ffmpeg-python
 
 # AI/ML
 torch
+transformers>=4.40.0
+tokenizers
+accelerate
 openai
 
 # Dia Model - Install latest transformers and dia
@@ -30,6 +35,7 @@ pathlib
 typing-extensions
 requests
 tqdm
+aiofiles
 
 # Development
 pytest
