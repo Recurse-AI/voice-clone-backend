@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     WORKERS: int = 1
     
     # File Upload Configuration
-    MAX_FILE_SIZE: int = 100 * 1024 * 1024  # 100MB
+    MAX_FILE_SIZE: int = 150 * 1024 * 1024  # 150MB
     ALLOWED_AUDIO_FORMATS: list = [".wav", ".mp3", ".flac", ".m4a"]
     TEMP_DIR: str = "/tmp/voice_cloning"
     
@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     
     # AssemblyAI Configuration
     ASSEMBLYAI_API_KEY: str = os.getenv("ASSEMBLYAI_API_KEY", "")
+    
+    # RunPod Configuration for Audio Separation
+    API_ACCESS_TOKEN: str = os.getenv("API_ACCESS_TOKEN", "")
+    RUNPOD_ENDPOINT_ID: str = os.getenv("RUNPOD_ENDPOINT_ID", "")
+    RUNPOD_TIMEOUT: int = int(os.getenv("RUNPOD_TIMEOUT", "1800000"))
     
     # Processing Options
     ENABLE_SUBTITLES: bool = True

@@ -5,7 +5,7 @@ Handles AssemblyAI integration, text translation, and formatting for voice cloni
 """
 
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import assemblyai as aai
 from openai import OpenAI
 from config import settings
@@ -18,21 +18,38 @@ class TranscriptionService:
         self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
         aai.settings.api_key = settings.ASSEMBLYAI_API_KEY
     
-    def transcribe_audio(self, audio_path: str) -> Dict[str, Any]:
-        """Transcribe audio using AssemblyAI with speaker diarization"""
+    def transcribe_audio(self, audio_path: str, language_code: str = "en", 
+                        speakers_expected: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Transcribe audio using AssemblyAI Universal model
+        
+        Args:
+            audio_path: Path to audio file
+            language_code: Language code (e.g., "en", "es", "fr", "de", "hi", "ja", "zh")
+            speakers_expected: Expected number of speakers (1-10)
+        """
         try:
-            config = aai.TranscriptionConfig(
-                speaker_labels=True,
-                auto_chapters=True,
-                punctuate=True,
-                format_text=True,
-                language_code="en"
-            )
+            # Build transcription config with universal model
+            config_params = {
+                "speaker_labels": True,
+                "auto_chapters": True,
+                "punctuate": True,
+                "format_text": True,
+                "language_code": language_code,
+                "speech_model": "universal"
+            }
+            
+            # Add speaker count if specified
+            if speakers_expected and 1 <= speakers_expected <= 10:
+                config_params["speakers_expected"] = speakers_expected
+            
+            # Create transcription config
+            config = aai.TranscriptionConfig(**config_params)
             
             transcriber = aai.Transcriber()
             transcript = transcriber.transcribe(audio_path, config=config)
             
-            if transcript.status == aai.TranscriptionStatus.error:
+            if transcript.status == "error":
                 raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
             
             words = []
@@ -51,7 +68,12 @@ class TranscriptionService:
                 "text": transcript.text,
                 "words": words,
                 "speakers": speakers,
-                "duration": words[-1]['end'] / 1000 if words else 0
+                "duration": words[-1]['end'] / 1000 if words else 0,
+                "metadata": {
+                    "language_code": language_code,
+                    "speakers_expected": speakers_expected,
+                    "detected_speakers": len(speakers)
+                }
             }
             
         except Exception as e:

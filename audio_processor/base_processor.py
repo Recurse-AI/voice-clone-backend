@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional, List
 import soundfile as sf
 import numpy as np
 import librosa
+from datetime import datetime
 
 from .transcription import TranscriptionService
 from .voice_cloning import VoiceCloningService
@@ -19,6 +20,8 @@ from .audio_utils import AudioUtils
 from .segment_manager import SegmentManager
 from .audio_reconstructor import AudioReconstructor
 from .file_manager import FileManager
+from .video_processor import VideoProcessor
+from .runpod_service import RunPodService
 
 
 class AudioProcessor:
@@ -35,20 +38,37 @@ class AudioProcessor:
         self.segment_manager = SegmentManager(self.transcription_service)
         self.audio_reconstructor = AudioReconstructor(str(self.temp_dir))
         self.file_manager = FileManager(str(self.temp_dir))
+        self.video_processor = VideoProcessor(str(self.temp_dir))
+        self.runpod_service = RunPodService()
     
     def load_dia_model(self, repo_id: str = "nari-labs/Dia-1.6B-0626") -> bool:
         """Load Dia model for voice cloning"""
         return self.voice_cloning_service.load_dia_model(repo_id)
     
     def process_audio_segments(self, audio_path: str, audio_id: str, 
-                             target_language: str = "English") -> Dict[str, Any]:
-        """Process audio file into segments for voice cloning"""
+                             target_language: str = "English",
+                             language_code: str = "en",
+                             speakers_expected: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Process audio file into segments for voice cloning
+        
+        Args:
+            audio_path: Path to audio file
+            audio_id: Unique identifier for this processing session
+            target_language: Target language for translation (e.g., "English", "Spanish")
+            language_code: Language code for AssemblyAI (e.g., "en", "es", "fr")
+            speakers_expected: Expected number of speakers (1-10)
+        """
         try:
             # Load audio
             audio, sr = sf.read(audio_path)
             
-            # Transcribe audio
-            transcript_data = self.transcription_service.transcribe_audio(audio_path)
+            # Transcribe audio with universal model
+            transcript_data = self.transcription_service.transcribe_audio(
+                audio_path, 
+                language_code=language_code,
+                speakers_expected=speakers_expected
+            )
             
             # Detect silent parts
             silent_parts = self.audio_utils.detect_silent_parts(audio, sr)
@@ -89,9 +109,15 @@ class AudioProcessor:
             )
             
             # Save metadata
+            metadata = {
+                **transcript_data.get('metadata', {}),
+                "target_language": target_language,
+                "processing_timestamp": datetime.now().isoformat()
+            }
+            
             self.file_manager.save_metadata(
                 transcript_data, segments, silent_parts, 
-                output_dir, audio_id, audio_path
+                output_dir, audio_id, audio_path, metadata
             )
             
             return {
@@ -100,7 +126,10 @@ class AudioProcessor:
                 "audio_id": audio_id,
                 "speakers": transcript_data['speakers'],
                 "total_segments": len(segments),
-                "total_duration": transcript_data['duration']
+                "total_duration": transcript_data['duration'],
+                "language_code": language_code,
+                "detected_speakers": len(transcript_data['speakers']),
+                "speakers_expected": speakers_expected
             }
             
         except Exception as e:
@@ -201,9 +230,105 @@ class AudioProcessor:
         """Generate subtitle file"""
         return self.audio_reconstructor.generate_subtitles(segments_dir, audio_id)
     
+    def create_video_with_subtitles(self, video_path: str, audio_path: str, 
+                                   segments_dir: str, audio_id: str,
+                                   instruments_path: Optional[str] = None) -> Dict[str, Any]:
+        """Create video with high-quality subtitles"""
+        return self.video_processor.create_video_with_subtitles(
+            video_path, audio_path, segments_dir, audio_id, instruments_path
+        )
+    
+    def process_video_with_separation(self, video_path: str, audio_id: str, 
+                                    target_language: str = "English",
+                                    language_code: str = "en",
+                                    speakers_expected: Optional[int] = None) -> Dict[str, Any]:
+        """Process video with RunPod vocal/instrument separation"""
+        try:
+            # Extract audio from video
+            audio_temp_path = self.temp_dir / f"{audio_id}_extracted_audio.wav"
+            extract_result = self.audio_utils.extract_audio_from_video(video_path, str(audio_temp_path))
+            
+            if not extract_result["success"]:
+                return {"success": False, "error": f"Audio extraction failed: {extract_result['error']}"}
+            
+            # Upload audio to temporary storage for RunPod
+            r2_storage = None
+            try:
+                from r2_storage import R2Storage
+                r2_storage = R2Storage()
+                
+                # Upload extracted audio
+                upload_result = r2_storage.upload_file(
+                    str(audio_temp_path),
+                    f"temp/{audio_id}_audio.wav",
+                    "audio/wav"
+                )
+                
+                if not upload_result["success"]:
+                    return {"success": False, "error": "Failed to upload audio for processing"}
+                
+                audio_url = upload_result["url"]
+                
+            except Exception as e:
+                return {"success": False, "error": f"Upload failed: {str(e)}"}
+            
+            # Process with RunPod
+            separation_result = self.runpod_service.process_audio_separation(audio_url)
+            
+            if not separation_result["success"]:
+                return {"success": False, "error": f"RunPod processing failed: {separation_result['error']}"}
+            
+            # Wait for completion
+            completion_result = self.runpod_service.wait_for_completion(separation_result["job_id"])
+            
+            if not completion_result["success"]:
+                return {"success": False, "error": f"RunPod job failed: {completion_result['error']}"}
+            
+            # Download separated audio files
+            vocal_path = self.temp_dir / f"{audio_id}_vocal.wav"
+            instrument_path = self.temp_dir / f"{audio_id}_instruments.wav"
+            
+            vocal_download = self.audio_utils.download_audio_file(
+                completion_result["vocal_audio"], str(vocal_path)
+            )
+            
+            instrument_download = self.audio_utils.download_audio_file(
+                completion_result["instrument_audio"], str(instrument_path)
+            )
+            
+            if not vocal_download["success"] or not instrument_download["success"]:
+                return {"success": False, "error": "Failed to download separated audio"}
+            
+            # Process vocal audio through normal pipeline
+            segment_result = self.process_audio_segments(
+                str(vocal_path), 
+                audio_id, 
+                target_language,
+                language_code=language_code,
+                speakers_expected=speakers_expected
+            )
+            
+            if not segment_result["success"]:
+                return {"success": False, "error": segment_result["error"]}
+            
+            return {
+                "success": True,
+                "segments_dir": segment_result["segments_dir"],
+                "vocal_path": str(vocal_path),
+                "instruments_path": str(instrument_path),
+                "audio_id": audio_id,
+                "speakers": segment_result["speakers"],
+                "total_segments": segment_result["total_segments"],
+                "total_duration": segment_result["total_duration"]
+            }
+            
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
     def cleanup_temp_files(self, audio_id: str):
         """Clean up temporary files"""
         self.file_manager.cleanup_temp_files(audio_id)
+        self.video_processor.cleanup_temp_files(audio_id)
     
     def get_processing_stats(self, segments_dir: str) -> Dict[str, Any]:
         """Get processing statistics"""

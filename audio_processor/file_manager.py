@@ -49,7 +49,8 @@ class FileManager:
     
     def save_metadata(self, transcript_data: Dict, segments: List[Dict], 
                      silent_parts: List[Tuple[float, float]], 
-                     base_dir: Path, audio_id: str, audio_path: str):
+                     base_dir: Path, audio_id: str, audio_path: str, 
+                     additional_metadata: Optional[Dict] = None):
         """Save comprehensive metadata"""
         metadata = {
             'audio_id': audio_id,
@@ -64,6 +65,10 @@ class FileManager:
             'processing_timestamp': datetime.now().isoformat(),
             'dia_guidelines_followed': True
         }
+        
+        # Add additional metadata if provided
+        if additional_metadata:
+            metadata.update(additional_metadata)
         
         # Count segments by speaker
         for segment in segments:
