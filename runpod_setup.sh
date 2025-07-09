@@ -1,6 +1,18 @@
 #!/bin/bash
 
+# Clean previous setup
+echo "🧹 Cleaning previous setup..."
+rm -rf /tmp/voice_cloning/*
+rm -rf /workspace/outputs/*
+rm -f .env
+rm -rf __pycache__
+rm -rf */__pycache__
+rm -rf .pytest_cache
+rm -rf *.pyc
+rm -rf */*.pyc
+
 # Install system dependencies
+echo "📦 Installing system dependencies..."
 apt-get update
 apt-get install -y ffmpeg libsndfile1 git
 
@@ -79,6 +91,11 @@ else
     echo "⚠️ No GPU detected! This application requires GPU."
     exit 1
 fi
+
+# Kill any existing processes
+echo "🔄 Stopping any existing processes..."
+pkill -f "python main.py" || true
+pkill -f "uvicorn" || true
 
 # Start the API
 echo "🎵 Starting Voice Cloning API..."
