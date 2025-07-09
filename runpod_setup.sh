@@ -32,21 +32,43 @@ PORT=8000
 DIA_DEVICE=cuda
 CUDA_AVAILABLE=true
 
-# Storage Configuration (Optional)
+# Storage Configuration (Required for video processing)
 R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
 R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
 R2_BUCKET_NAME=${R2_BUCKET_NAME:-}
 R2_ENDPOINT_URL=${R2_ENDPOINT_URL:-}
+R2_REGION=auto
 
-# API Keys (Optional)
+# API Keys (Required for processing)
 OPENAI_API_KEY=${OPENAI_API_KEY:-}
 ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY:-}
 
-# RunPod Configuration
+# RunPod Configuration (Required for audio separation)
 API_ACCESS_TOKEN=${API_ACCESS_TOKEN:-}
 RUNPOD_ENDPOINT_ID=${RUNPOD_ENDPOINT_ID:-}
-RUNPOD_TIMEOUT=${RUNPOD_TIMEOUT:-}
+RUNPOD_TIMEOUT=${RUNPOD_TIMEOUT:-1800000}
+
+# Processing Options
+ENABLE_SUBTITLES=true
+ENABLE_INSTRUMENTS=true
 EOF
+fi
+
+# Check if required environment variables are set
+echo "🔍 Checking environment variables..."
+if [ -z "$R2_ACCESS_KEY_ID" ] || [ -z "$R2_SECRET_ACCESS_KEY" ] || [ -z "$R2_BUCKET_NAME" ]; then
+    echo "⚠️ Warning: R2 Storage credentials not set. Video processing may fail."
+    echo "   Please set: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_NAME"
+fi
+
+if [ -z "$ASSEMBLYAI_API_KEY" ]; then
+    echo "⚠️ Warning: AssemblyAI API key not set. Voice cloning may fail."
+    echo "   Please set: ASSEMBLYAI_API_KEY"
+fi
+
+if [ -z "$API_ACCESS_TOKEN" ] || [ -z "$RUNPOD_ENDPOINT_ID" ]; then
+    echo "⚠️ Warning: RunPod credentials not set. Audio separation may fail."
+    echo "   Please set: API_ACCESS_TOKEN, RUNPOD_ENDPOINT_ID"
 fi
 
 # Check GPU availability
