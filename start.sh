@@ -17,11 +17,12 @@ echo "📁 Created temporary directory"
 if [ ! -d "venv" ]; then
     echo "🔧 Creating virtual environment..."
     python3 -m venv venv
-    source venv/bin/activate
+    source venv/Scripts/activate
     pip install -r requirements.txt
 else
     echo "🔧 Activating virtual environment..."
-    source venv/bin/activate
+    source venv/Scripts/activate
+    pip install -r requirements.txt
 fi
 
 # Check GPU availability
