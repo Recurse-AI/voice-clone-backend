@@ -96,7 +96,15 @@ fi
 echo "🔄 Stopping any existing processes..."
 pkill -f "python main.py" || true
 pkill -f "uvicorn" || true
+sleep 2
 
-# Start the API
-echo "🎵 Starting Voice Cloning API..."
-python main.py 
+# Start the API in background
+echo "🎵 Starting Voice Cloning API in background..."
+nohup python main.py > api.log 2>&1 &
+echo "✅ API started in background. Logs: api.log"
+
+# Show status
+echo "📊 API Status:"
+ps aux | grep "python main.py" | grep -v grep || echo "❌ API not running"
+echo "📋 Recent logs:"
+tail -5 api.log 2>/dev/null || echo "No logs yet" 
