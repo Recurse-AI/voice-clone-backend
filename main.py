@@ -19,6 +19,7 @@ from r2_storage import R2Storage
 from video_processor.base_processor import AudioProcessor
 from video_processor.voice_cloning import set_seed
 from video_processor.process_logger import process_logger
+from status_manager import status_manager, ProcessingStatus
 
 from contextlib import asynccontextmanager
 
@@ -104,13 +105,17 @@ async def root():
 @app.get("/health", response_model=StatusResponse)
 async def health_check():
     """Health check endpoint"""
+    # Clean up old statuses periodically
+    status_manager.cleanup_old_statuses()
+    
     return StatusResponse(
         status="healthy",
         message="API is healthy and ready to process requests",
         details={
             "dia_model_loaded": audio_processor.voice_cloning_service.is_model_loaded(),
             "r2_configured": bool(settings.R2_BUCKET_NAME),
-            "temp_dir": str(settings.TEMP_DIR)
+            "temp_dir": str(settings.TEMP_DIR),
+            "active_processing_count": len([s for s in status_manager.get_all_statuses().values() if s["status"] == "processing"])
         }
     )
 
@@ -135,10 +140,10 @@ async def process_video(
     cfg_scale: float = Form(settings.DIA_CFG_SCALE, description="CFG scale for voice cloning"),
     top_p: float = Form(settings.DIA_TOP_P, description="Top-p for voice cloning"),
     target_language: str = Form("English", description="Target language for translation"),
-    language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty for auto-detection"),
+    language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
     speakers_expected: Optional[int] = Form(None, description="Expected number of speakers (1-10)")
 ):
-    """Start video processing with immediate response"""
+    """Start video processing with immediate response. Processing happens in background - use status_check_url to monitor progress."""
     
     # Validate URL format
     if not video_url.startswith(('http://', 'https://')):
@@ -175,14 +180,14 @@ async def process_video(
     return StartProcessingResponse(
         success=True,
         audio_id=audio_id,
-        message="Video processing started successfully",
+        message="Video processing started successfully in background. Use status_check_url to monitor progress.",
         status="processing",
         estimated_time="10-20 minutes",
         status_check_url=f"/status/{audio_id}",
         logs_url=f"/logs/{audio_id}"
     )
 
-async def process_video_background(
+def process_video_background(
     video_url: str, audio_id: str, seed: Optional[int], include_instruments: bool,
     generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float,
     target_language: str, language_code: Optional[str], speakers_expected: Optional[int]
@@ -191,53 +196,57 @@ async def process_video_background(
     actual_seed = seed if seed is not None else random.randint(1, 1000000)
     set_seed(actual_seed)
     
+    # Convert empty string to None for proper handling
+    final_language_code = language_code if language_code and language_code.strip() else None
+    
+    # Start processing tracking
+    status_manager.start_processing(audio_id)
+    
+    # Optional: Keep minimal logging for debugging
     process_logger.start_processing(audio_id, video_url, {
         "temperature": temperature, "cfg_scale": cfg_scale, "top_p": top_p,
         "target_language": target_language, "include_instruments": include_instruments,
-        "generate_subtitles": generate_subtitles, "language_code": language_code,
+        "generate_subtitles": generate_subtitles, "language_code": final_language_code,
+        "language_detection_used": final_language_code is None,
         "speakers_expected": speakers_expected, "seed": actual_seed
     })
     
     video_temp_path = None
     try:
-        # Download video from URL
+        # Download video
+        process_logger.log_step("video_download", "starting", {"url": video_url})
+        status_manager.update_status(audio_id, ProcessingStatus.DOWNLOADING, 10)
         video_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_video.mp4")
         
-        # Get filename from URL
         parsed_url = urllib.parse.urlparse(video_url)
         filename = os.path.basename(parsed_url.path)
         if not filename or '.' not in filename:
             filename = "video.mp4"
         
-        # Download video
-        step_start = time.time()
-        process_logger.log_step("video_download", "starting")
         try:
             response = requests.get(video_url, stream=True, timeout=300)
             response.raise_for_status()
-            
-            # Check content type
-            content_type = response.headers.get('content-type', '')
             
             with open(video_temp_path, "wb") as buffer:
                 for chunk in response.iter_content(chunk_size=8192):
                     buffer.write(chunk)
             
-            process_logger.log_step("video_download", "completed", 
-                                  {"file_size_mb": os.path.getsize(video_temp_path) / (1024*1024)},
-                                  time.time() - step_start)
+            process_logger.log_step("video_download", "completed", {"file_size": os.path.getsize(video_temp_path)})
+            status_manager.set_progress(audio_id, 20)
+            
         except requests.exceptions.RequestException as e:
             process_logger.log_step("video_download", "failed", {"error": str(e)})
+            status_manager.fail_processing(audio_id, f"Download failed: {str(e)}")
             return
         
         # Validate downloaded video file
         if not os.path.exists(video_temp_path) or os.path.getsize(video_temp_path) == 0:
-            process_logger.log_step("video_download", "failed", {"error": "File is empty or missing"})
+            process_logger.log_step("video_validation", "failed", {"error": "Empty or missing file"})
+            status_manager.fail_processing(audio_id, "Downloaded file is empty or missing")
             return
         
         # Validate video file format
         if not filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
-            # Try to get extension from content-type header
             content_type = response.headers.get('content-type', '')
             if 'video/mp4' in content_type:
                 filename = "video.mp4"
@@ -248,15 +257,15 @@ async def process_video_background(
             elif 'video/webm' in content_type:
                 filename = "video.webm"
             else:
-                process_logger.log_step("video_download", "failed", {"error": "Invalid video format"})
+                process_logger.log_step("video_validation", "failed", {"error": "Invalid format"})
+                status_manager.fail_processing(audio_id, "Invalid video format")
                 return
         
-        # Process video with RunPod separation
-        step_start = time.time()
-        process_logger.log_step("audio_separation", "starting")
+        process_logger.log_step("video_validation", "completed", {"filename": filename})
         
-        # Convert empty string to None for proper handling
-        final_language_code = language_code if language_code and language_code.strip() else None
+        # Process video with RunPod separation
+        process_logger.log_step("runpod_separation", "starting")
+        status_manager.update_status(audio_id, ProcessingStatus.PROCESSING, 30)
         
         video_result = audio_processor.process_video_with_separation(
             video_temp_path, 
@@ -267,23 +276,25 @@ async def process_video_background(
         )
         
         if not video_result["success"]:
-            process_logger.log_step("audio_separation", "failed", {"error": video_result["error"]})
+            process_logger.log_step("runpod_separation", "failed", {"error": video_result["error"]})
+            status_manager.fail_processing(audio_id, f"Audio processing failed: {video_result['error']}")
             return
         
-        process_logger.log_step("audio_separation", "completed", 
-                              {"detected_speakers": video_result.get("detected_speakers", 0)},
-                              time.time() - step_start)
+        process_logger.log_step("runpod_separation", "completed", {
+            "speakers_detected": len(video_result.get("speakers", [])),
+            "total_segments": video_result.get("total_segments", 0)
+        })
+        
+        status_manager.set_progress(audio_id, 50)
         
         segments_dir = video_result["segments_dir"]
         vocal_path = video_result["vocal_path"]
         separated_instruments_path = video_result["instruments_path"]
         
-        # Get original audio details from extracted vocal
+        # Get original audio details
         import soundfile as sf
         original_audio, original_sr = sf.read(vocal_path)
         original_duration = len(original_audio) / original_sr
-        
-        # Get file size
         file_size = os.path.getsize(video_temp_path)
         
         original_audio_details = {
@@ -300,9 +311,9 @@ async def process_video_background(
             "detected_speakers": video_result.get("detected_speakers", len(video_result.get("speakers", [])))
         }
         
-        # Step 2: Clone voice segments
-        step_start = time.time()
+        # Clone voice segments
         process_logger.log_step("voice_cloning", "starting")
+        status_manager.set_progress(audio_id, 60)
         cloning_result = audio_processor.clone_voice_segments(
             segments_dir,
             audio_id,
@@ -314,17 +325,18 @@ async def process_video_background(
         
         if not cloning_result["success"]:
             process_logger.log_step("voice_cloning", "failed", {"error": cloning_result["error"]})
+            status_manager.fail_processing(audio_id, f"Voice cloning failed: {cloning_result['error']}")
             return
         
-        process_logger.log_step("voice_cloning", "completed", 
-                              {"cloned_segments": len(cloning_result.get("cloned_segments", {}))},
-                              time.time() - step_start)
+        process_logger.log_step("voice_cloning", "completed", {
+            "cloned_segments": len(cloning_result.get("cloned_segments", {}))
+        })
         
-        # Step 3: Reconstruct final audio
-        step_start = time.time()
+        status_manager.set_progress(audio_id, 70)
+        
+        # Reconstruct final audio
         process_logger.log_step("audio_reconstruction", "starting")
         if include_instruments:
-            # Use separated instruments from RunPod
             reconstruction_result = audio_processor.reconstruct_final_audio(
                 segments_dir,
                 audio_id,
@@ -332,7 +344,6 @@ async def process_video_background(
                 instruments_path=separated_instruments_path
             )
         else:
-            # Vocal only
             reconstruction_result = audio_processor.reconstruct_final_audio(
                 segments_dir,
                 audio_id,
@@ -342,21 +353,18 @@ async def process_video_background(
         
         if not reconstruction_result["success"]:
             process_logger.log_step("audio_reconstruction", "failed", {"error": reconstruction_result["error"]})
+            status_manager.fail_processing(audio_id, f"Audio reconstruction failed: {reconstruction_result['error']}")
             return
         
-        process_logger.log_step("audio_reconstruction", "completed", 
-                              {"duration": reconstruction_result.get("duration", 0)},
-                              time.time() - step_start)
+        process_logger.log_step("audio_reconstruction", "completed")
         
+        status_manager.set_progress(audio_id, 80)
         final_audio_path = reconstruction_result["final_audio_path"]
         
-        # Step 4: Handle video processing
-        step_start = time.time()
+        # Handle video processing
         process_logger.log_step("video_processing", "starting")
         video_result = None
-        
         if generate_subtitles:
-            # Create video with subtitles using original video
             instruments_for_video = separated_instruments_path if include_instruments else None
             video_result = audio_processor.create_video_with_subtitles(
                 video_temp_path,
@@ -366,57 +374,72 @@ async def process_video_background(
                 instruments_for_video
             )
         else:
-            # Create video with new audio only (no subtitles)
             video_result = audio_processor.create_video_with_audio(
                 video_temp_path,
                 final_audio_path,
                 audio_id
             )
         
-        if video_result and video_result["success"]:
-            process_logger.log_step("video_processing", "completed", 
-                                  {"subtitle_count": video_result.get("subtitle_count", 0)},
-                                  time.time() - step_start)
-        else:
-            process_logger.log_step("video_processing", "failed", 
-                                  {"error": video_result.get("error", "Unknown error") if video_result else "No result"})
+        if not video_result or not video_result["success"]:
+            error_msg = video_result.get('error', 'Unknown error') if video_result else 'No result'
+            process_logger.log_step("video_processing", "failed", {"error": error_msg})
+            status_manager.fail_processing(audio_id, f"Video processing failed: {error_msg}")
+            return
         
-        step_start = time.time()
+        process_logger.log_step("video_processing", "completed")
+        
+        # Upload files
         process_logger.log_step("file_upload", "starting")
+        status_manager.update_status(audio_id, ProcessingStatus.UPLOADING, 90)
         
-        r2_segments_result = r2_storage.upload_audio_segments(audio_id, segments_dir)
-        r2_final_result = r2_storage.upload_final_audio(audio_id, final_audio_path)
-        
-        r2_video_result = None
-        if video_result and video_result["success"]:
-            video_filename = f"video_processed_{audio_id}.mp4"
-            r2_key = r2_storage.generate_file_path(audio_id, "video", video_filename)
-            r2_video_result = r2_storage.upload_file(
-                video_result["video_path"], 
-                r2_key, 
-                "video/mp4"
-            )
-        
-        r2_subtitles_result = None
-        if video_result and video_result.get("subtitle_path"):
-            subtitle_filename = f"subtitles_{audio_id}.srt"
-            r2_key = r2_storage.generate_file_path(audio_id, "subtitles", subtitle_filename)
-            r2_subtitles_result = r2_storage.upload_file(
-                video_result["subtitle_path"], 
-                r2_key, 
-                "text/srt"
-            )
-        
-        upload_details = {
-            "segments_uploaded": r2_segments_result.get("success", False) if r2_segments_result else False,
-            "final_audio_uploaded": r2_final_result.get("success", False) if r2_final_result else False,
-            "video_uploaded": r2_video_result.get("success", False) if r2_video_result else False,
-            "subtitles_uploaded": r2_subtitles_result.get("success", False) if r2_subtitles_result else False
-        }
-        process_logger.log_step("file_upload", "completed", upload_details, time.time() - step_start)
+        try:
+            r2_segments_result = r2_storage.upload_audio_segments(audio_id, segments_dir)
+            r2_final_result = r2_storage.upload_final_audio(audio_id, final_audio_path)
             
-
+            r2_video_result = None
+            if video_result and video_result["success"]:
+                video_filename = f"video_processed_{audio_id}.mp4"
+                r2_key = r2_storage.generate_file_path(audio_id, "video", video_filename)
+                r2_video_result = r2_storage.upload_file(
+                    video_result["video_path"], 
+                    r2_key, 
+                    "video/mp4"
+                )
+            
+            r2_subtitles_result = None
+            if video_result and video_result.get("subtitle_path"):
+                subtitle_filename = f"subtitles_{audio_id}.srt"
+                r2_key = r2_storage.generate_file_path(audio_id, "subtitles", subtitle_filename)
+                r2_subtitles_result = r2_storage.upload_file(
+                    video_result["subtitle_path"], 
+                    r2_key, 
+                    "text/srt"
+                )
+            
+            process_logger.log_step("file_upload", "completed", {
+                "final_audio_uploaded": r2_final_result.get("success", False) if r2_final_result else False,
+                "video_uploaded": r2_video_result.get("success", False) if r2_video_result else False,
+                "subtitles_uploaded": r2_subtitles_result.get("success", False) if r2_subtitles_result else False
+            })
+            
+        except Exception as e:
+            process_logger.log_step("file_upload", "failed", {"error": str(e)})
+            status_manager.fail_processing(audio_id, f"File upload failed: {str(e)}")
+            return
         
+        # Complete processing
+        completion_details = {
+            "final_audio_url": r2_final_result.get("url") if r2_final_result and r2_final_result["success"] else None,
+            "video_url": r2_video_result.get("url") if r2_video_result and r2_video_result["success"] else None,
+            "subtitles_url": r2_subtitles_result.get("url") if r2_subtitles_result and r2_subtitles_result["success"] else None,
+            "segments_processed": len(cloning_result.get("cloned_segments", {})),
+            "speakers_detected": len(video_result.get("speakers", [])),
+            "total_duration": original_duration
+        }
+        
+        status_manager.complete_processing(audio_id, completion_details)
+        
+        # Create processing summary for R2
         processing_data = {
             "audio_id": audio_id,
             "original_audio": original_audio_details,
@@ -441,73 +464,42 @@ async def process_video_background(
             "separation_used": True
         }
         
-        summary_result = r2_storage.create_processing_summary(audio_id, processing_data)
+        r2_storage.create_processing_summary(audio_id, processing_data)
         
-
-        
-        storage_info = r2_storage.get_storage_info(audio_id)
-        background_tasks.add_task(cleanup_temp_files, audio_id, None, None, video_temp_path)
-        
-        message = f"Video from URL processed successfully with vocal/instrument separation"
-        
-        response = ProcessingResponse(
-            success=True,
-            audio_id=audio_id,
-            message=message,
-            processing_details={
-                "segments_processed": len(cloning_result.get("cloned_segments", {})),
-                "total_duration": reconstruction_result.get("duration", 0),
-                "speakers_detected": list(cloning_result.get("cloned_segments", {}).keys()),
-                "processing_stats": audio_processor.get_processing_stats(segments_dir),
-                "video_created": video_result is not None and video_result["success"],
-                "subtitle_count": video_result.get("subtitle_count", 0) if video_result else 0,
-                "processing_type": "video_processing_with_runpod_separation",
-                "video_source": "url",
-                "source_url": video_url,
-                "runpod_separation": True,
-                "separated_files": {
-                    "vocal_audio": vocal_path,
-                    "instruments_audio": separated_instruments_path
-                }
-            },
-            r2_storage={
-                "bucket": storage_info["bucket"],
-                "base_path": storage_info["base_path"],
-                "segments_upload": r2_segments_result,
-                "final_audio_upload": r2_final_result,
-                "video_upload": r2_video_result,
-                "subtitles_upload": r2_subtitles_result,
-                "summary_upload": summary_result,
-                "access_url": storage_info["access_url"]
-            },
-            final_audio_url=r2_final_result.get("url") if r2_final_result and r2_final_result["success"] else None,
-            video_url=r2_video_result.get("url") if r2_video_result and r2_video_result["success"] else None,
-            subtitles_url=r2_subtitles_result.get("url") if r2_subtitles_result and r2_subtitles_result["success"] else None,
-            original_audio_details=original_audio_details,
-            seed_used=actual_seed
-        )
-        
-        # Log successful completion
+        # Optional: Keep minimal logging for debugging
         process_logger.finish_processing(True, None, {
             "audio_id": audio_id,
             "total_segments": len(cloning_result.get("cloned_segments", {})),
             "video_created": video_result is not None and video_result["success"],
             "final_audio_url": r2_final_result.get("url") if r2_final_result and r2_final_result["success"] else None,
-            "video_url": r2_video_result.get("url") if r2_video_result and r2_video_result["success"] else None,
-            "log_file": process_logger.get_current_log_path()
+            "video_url": r2_video_result.get("url") if r2_video_result and r2_video_result["success"] else None
         })
         
-        return response
-        
     except Exception as e:
-        # Log failure
+        # Handle any unexpected errors
+        error_msg = f"Unexpected error: {str(e)}"
+        process_logger.log_step("processing", "failed", {"error": str(e), "error_type": type(e).__name__})
+        status_manager.fail_processing(audio_id, error_msg)
+        
+        # Log stack trace for debugging
+        import traceback
+        traceback_str = traceback.format_exc()
+        process_logger.log_step("stack_trace", "info", {"traceback": traceback_str})
+        
+        # Optional: Keep minimal logging for debugging
         process_logger.finish_processing(False, None, {
             "audio_id": audio_id,
             "error": str(e),
-            "log_file": process_logger.get_current_log_path()
+            "error_type": type(e).__name__
         })
         
-        cleanup_temp_files(audio_id, None, None, video_temp_path)
+    finally:
+        # Always cleanup temp files
+        try:
+            cleanup_temp_files(audio_id, None, None, video_temp_path)
+        except Exception as cleanup_error:
+            # Log cleanup error but don't let it affect the main error
+            process_logger.log_step("cleanup", "failed", {"error": str(cleanup_error)})
 
 @app.get("/download/{audio_id}/{file_type}")
 async def download_file(audio_id: str, file_type: str):
@@ -542,56 +534,15 @@ async def download_file(audio_id: str, file_type: str):
 
 @app.get("/status/{audio_id}", response_model=StatusResponse)
 async def get_processing_status(audio_id: str):
-    """Get processing status for a specific audio ID"""
-    try:
-        # Check current processing status from logger
-        current_status = process_logger.get_processing_status()
-        
-        if current_status["status"] == "active" and current_status.get("audio_id") == audio_id:
-            completed_steps = current_status["completed_steps"]
-            total_steps = 7  # video_download, audio_separation, voice_cloning, audio_reconstruction, video_processing, file_upload, cleanup
-            progress_percentage = min(int((len(completed_steps) / total_steps) * 100), 95)
-            
-            return StatusResponse(
-                status="processing",
-                message="Processing in progress",
-                audio_id=audio_id,
-                details={
-                    "elapsed_time": current_status["elapsed_time"],
-                    "completed_steps": completed_steps,
-                    "current_step": current_status["current_step"],
-                    "progress_percentage": progress_percentage,
-                    "estimated_remaining": max(0, 900 - current_status["elapsed_time"]),  # Max 15 minutes
-                    "log_file": process_logger.get_current_log_path()
-                }
-            )
-        
-        # Check if processing is complete by looking for final output
-        final_file = os.path.join(settings.TEMP_DIR, f"final_output_{audio_id}.wav")
-        
-        if os.path.exists(final_file):
-            return StatusResponse(
-                status="completed",
-                message="Processing completed successfully",
-                audio_id=audio_id,
-                details={
-                    "final_audio_available": True,
-                    "r2_storage_info": r2_storage.get_storage_info(audio_id)
-                }
-            )
-        else:
-            return StatusResponse(
-                status="not_found",
-                message="No processing found for this audio ID",
-                audio_id=audio_id
-            )
-            
-    except Exception as e:
-        return StatusResponse(
-            status="error",
-            message=str(e),
-            audio_id=audio_id
-        )
+    """Get processing status - simple and clean"""
+    status_data = status_manager.get_status(audio_id)
+    
+    return StatusResponse(
+        status=status_data["status"],
+        message=status_data["message"],
+        audio_id=audio_id,
+        details=status_data.get("details", {})
+    )
 
 @app.get("/logs/{audio_id}")
 async def get_process_log(audio_id: str):

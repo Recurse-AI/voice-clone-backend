@@ -20,11 +20,9 @@ class R2Storage:
             self.bucket_name = settings.R2_BUCKET_NAME
             self.base_path = settings.R2_BASE_PATH
             
-            # Test connection
-            self.client.head_bucket(Bucket=self.bucket_name)
+            # Skip connection test and public access setup during initialization
+            # These will be done lazily when needed
             
-            # Enable public access
-            self._enable_public_access()
         except Exception:
             self.client = None
             self.bucket_name = None

@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     
 
     
+    # MongoDB Configuration
+    MONGODB_URI: str = os.getenv("MONGODB_URI", "mongodb://localhost:27017/audio-separator")
+    
     # OpenAI Configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     

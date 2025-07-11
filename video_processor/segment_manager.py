@@ -2,9 +2,9 @@
 Segment Manager Module - Optimized for Dia Voice Cloning
 
 Handles smart segmentation with Dia model constraints:
-- Optimal: 35-50 words, 10-15 seconds
+- Strict: 5-19 seconds duration
 - Mixed speaker support with [S1], [S2] tags
-- Intelligent segment combination
+- Clean segment creation without extra logs
 """
 
 import numpy as np
@@ -22,16 +22,19 @@ class SegmentManager:
         self.transcription_service = transcription_service
         self.audio_utils = AudioUtils()
         
-        # Dia model optimal constraints
-        self.optimal_duration = (10.0, 15.0)  # 10-15 seconds
-        self.optimal_words = (35, 50)         # 35-50 words
-        self.min_segment_duration = 8.0       # Minimum viable segment
-        self.max_segment_duration = 20.0      # Maximum segment length
+        # Dia model constraints - 4-19 seconds (try to keep above 5s)
+        self.absolute_min_duration = 4.0      # Absolute minimum 4 seconds
+        self.preferred_min_duration = 5.0     # Preferred minimum 5 seconds
+        self.max_duration = 19.0              # Maximum 19 seconds
+        self.optimal_duration = (8.0, 15.0)   # Optimal range
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Create optimal segments for Dia voice cloning"""
         words = transcript_data.get('words', [])
         speakers = transcript_data.get('speakers', [])
+        
+        if not words:
+            return []
         
         if len(speakers) == 1:
             return self._create_single_speaker_segments(words, speakers[0])
@@ -39,134 +42,120 @@ class SegmentManager:
             return self._create_multi_speaker_segments(words, speakers)
     
     def _create_single_speaker_segments(self, words: List[Dict], speaker: str) -> List[Dict[str, Any]]:
-        """Create optimal segments for single speaker"""
+        """Create segments for single speaker with 4-19 seconds constraint (prefer 5s+)"""
         segments = []
         current_words = []
         
         for word in words:
             current_words.append(word)
             
-            # Check if we have enough content for optimal segment
-            if self._is_segment_optimal(current_words):
-                segment = self._create_pure_segment(current_words, speaker, [speaker])
+            # Check current segment duration
+            duration = self._calculate_duration(current_words)
+            
+            # If duration is optimal, create segment
+            if self.optimal_duration[0] <= duration <= self.optimal_duration[1]:
+                # Look ahead to see if we should include more words
+                if not self._would_exceed_max_duration(current_words, words[words.index(word) + 1:]):
+                    continue
+                
+                segment = self._create_segment(current_words, speaker, [speaker])
                 if segment:
                     segments.append(segment)
                     current_words = []
             
-            # Force segment if too long
-            elif self._is_segment_too_long(current_words):
-                segment = self._create_pure_segment(current_words, speaker, [speaker])
+            # Try to reach preferred minimum (5s), but don't wait too long
+            elif duration >= self.preferred_min_duration:
+                # Look ahead to see if we should create segment now
+                if not self._would_exceed_max_duration(current_words, words[words.index(word) + 1:]):
+                    continue
+                
+                segment = self._create_segment(current_words, speaker, [speaker])
+                if segment:
+                    segments.append(segment)
+                    current_words = []
+            
+            # Force segment if max duration reached
+            elif duration >= self.max_duration:
+                segment = self._create_segment(current_words, speaker, [speaker])
                 if segment:
                     segments.append(segment)
                     current_words = []
         
-        # Handle remaining words
-        if current_words and self._is_segment_viable(current_words):
-            segment = self._create_pure_segment(current_words, speaker, [speaker])
-            if segment:
-                segments.append(segment)
+        # Handle remaining words - accept 4s+ but prefer 5s+
+        if current_words:
+            duration = self._calculate_duration(current_words)
+            if duration >= self.absolute_min_duration:
+                segment = self._create_segment(current_words, speaker, [speaker])
+                if segment:
+                    segments.append(segment)
         
         return segments
     
     def _create_multi_speaker_segments(self, words: List[Dict], speakers: List[str]) -> List[Dict[str, Any]]:
-        """Create pure speaker segments first, then mixed only when necessary"""
-        # Step 1: Create pure speaker segments first
-        pure_segments = []
+        """Create segments for multiple speakers with 4-19 seconds constraint (prefer 5s+)"""
+        segments = []
+        current_words = []
+        current_speaker = None
         
-        # Group words by speaker with timing
-        for speaker in speakers:
-            speaker_words = [w for w in words if w.get('speaker') == speaker]
-            if not speaker_words:
-                continue
+        for word in words:
+            word_speaker = word.get('speaker', 'A')
             
-            # Create segments for this speaker with gap detection
-            current_segment = []
-            last_end_time = 0
-            
-            for word in speaker_words:
-                start_time = word['start'] / 1000
-                end_time = word['end'] / 1000
-                
-                # Check for gap > 2 seconds to split segments
-                if current_segment and (start_time - last_end_time > 2.0):
-                    # Finish current segment
-                    segment = self._create_pure_segment(current_segment, speaker, speakers)
-                    if segment:
-                        pure_segments.append(segment)
-                    current_segment = []
-                
-                current_segment.append(word)
-                last_end_time = end_time
-                
-                # Force segment if optimal length reached
-                if self._is_segment_optimal(current_segment):
-                    segment = self._create_pure_segment(current_segment, speaker, speakers)
-                    if segment:
-                        pure_segments.append(segment)
-                        current_segment = []
-            
-            # Add final segment for this speaker
-            if current_segment:
-                segment = self._create_pure_segment(current_segment, speaker, speakers)
-                if segment:
-                    pure_segments.append(segment)
-        
-        # Step 2: Sort segments by start time
-        pure_segments.sort(key=lambda x: x['start'])
-        
-        # Step 3: Check for short segments and create mixed segments
-        final_segments = []
-        i = 0
-        
-        while i < len(pure_segments):
-            current_segment = pure_segments[i]
-            
-            # If segment is too short, try to combine with next segment
-            if current_segment['duration'] < self.min_segment_duration:
-                next_segment = None
-                if i + 1 < len(pure_segments):
-                    next_segment = pure_segments[i + 1]
-                    
-                    # Check if segments are close enough (< 2s gap)
-                    gap = next_segment['start'] - current_segment['end']
-                    if gap < 2.0:
-                        # Create mixed segment
-                        mixed_segment = self._create_mixed_segment_from_pure(
-                            current_segment, next_segment, speakers
-                        )
-                        if mixed_segment and self._is_segment_viable(mixed_segment.get('words', [])):
-                            final_segments.append(mixed_segment)
-                            i += 2  # Skip both segments
-                            continue
-                
-                # If can't combine, add as is if viable
-                if self._is_segment_viable(current_segment.get('words', [])):
-                    final_segments.append(current_segment)
+            # Start new segment or continue current
+            if current_speaker is None:
+                current_speaker = word_speaker
+                current_words = [word]
+            elif current_speaker == word_speaker:
+                current_words.append(word)
             else:
-                # Segment is good as is
-                final_segments.append(current_segment)
+                # Speaker change - finalize current segment if viable
+                duration = self._calculate_duration(current_words)
+                if duration >= self.absolute_min_duration:
+                    segment = self._create_segment(current_words, current_speaker, speakers)
+                    if segment:
+                        segments.append(segment)
+                
+                # Start new segment
+                current_speaker = word_speaker
+                current_words = [word]
             
-            i += 1
+            # Check if current segment should be finalized
+            duration = self._calculate_duration(current_words)
+            if duration >= self.max_duration:
+                segment = self._create_segment(current_words, current_speaker, speakers)
+                if segment:
+                    segments.append(segment)
+                    current_words = []
+                    current_speaker = None
         
-        return final_segments
+        # Handle remaining words - accept 4s+ but prefer 5s+
+        if current_words:
+            duration = self._calculate_duration(current_words)
+            if duration >= self.absolute_min_duration:
+                segment = self._create_segment(current_words, current_speaker, speakers)
+                if segment:
+                    segments.append(segment)
+        
+        return segments
     
-    def _create_pure_segment(self, words: List[Dict], speaker: str, all_speakers: List[str]) -> Optional[Dict]:
-        """Create pure speaker segment"""
+    def _create_segment(self, words: List[Dict], speaker: str, all_speakers: List[str]) -> Optional[Dict]:
+        """Create segment with duration constraints (4-19s, prefer 5s+)"""
         if not words:
             return None
         
         start_time = words[0]['start'] / 1000
         end_time = words[-1]['end'] / 1000
         duration = end_time - start_time
+        
+        # Duration check - accept 4s+ but reject if over 19s
+        if duration < self.absolute_min_duration or duration > self.max_duration:
+            return None
+        
         text = ' '.join(word['text'] for word in words)
         word_count = len(words)
         
         # Calculate confidence
         confidences = [w.get('confidence', 0.5) for w in words]
         avg_confidence = sum(confidences) / len(confidences) if confidences else 0.5
-        
-        # Quality score
-        quality_score = self._calculate_quality_score(duration, word_count, avg_confidence)
         
         return {
             'speaker': speaker,
@@ -177,233 +166,136 @@ class SegmentManager:
             'words': words,
             'word_count': word_count,
             'confidence': avg_confidence,
-            'quality_score': quality_score,
-            'is_mixed_speaker': False,
-            'segment_speakers': [speaker],
             'all_speakers': all_speakers
         }
     
-    def _create_mixed_segment_from_pure(self, segment1: Dict, segment2: Dict, all_speakers: List[str]) -> Optional[Dict]:
-        """Create mixed segment from two pure segments"""
-        # Combine words from both segments
-        all_words = segment1['words'] + segment2['words']
-        all_words.sort(key=lambda x: x['start'])  # Sort by timeline
-        
-        start_time = all_words[0]['start'] / 1000
-        end_time = all_words[-1]['end'] / 1000
-        duration = end_time - start_time
-        
-        # Don't create if too long
-        if duration > self.max_segment_duration:
-            return None
-        
-        # Combine text
-        text = ' '.join(word['text'] for word in all_words)
-        word_count = len(all_words)
-        
-        # Calculate combined confidence
-        confidences = [w.get('confidence', 0.5) for w in all_words]
-        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.5
-        
-        # Use primary speaker (first in time)
-        primary_speaker = segment1['speaker']
-        segment_speakers = list(set([segment1['speaker'], segment2['speaker']]))
-        
-        # Quality score
-        quality_score = self._calculate_quality_score(duration, word_count, avg_confidence)
-        
-        return {
-            'speaker': primary_speaker,
-            'start': start_time,
-            'end': end_time,
-            'duration': duration,
-            'text': text,
-            'words': all_words,
-            'word_count': word_count,
-            'confidence': avg_confidence,
-            'quality_score': quality_score,
-            'is_mixed_speaker': True,
-            'segment_speakers': segment_speakers,
-            'all_speakers': all_speakers
-        }
-    
-    def _calculate_quality_score(self, duration: float, word_count: int, confidence: float) -> float:
-        """Calculate quality score for reference selection"""
-        score = 0.0
-        
-        # Duration score (40% weight)
-        if self.optimal_duration[0] <= duration <= self.optimal_duration[1]:
-            duration_score = 1.0
-        elif self.min_segment_duration <= duration < self.optimal_duration[0]:
-            duration_score = 0.7
-        elif self.optimal_duration[1] < duration <= self.max_segment_duration:
-            duration_score = 0.6
-        else:
-            duration_score = 0.3
-        score += duration_score * 0.4
-        
-        # Word count score (35% weight)
-        if self.optimal_words[0] <= word_count <= self.optimal_words[1]:
-            word_score = 1.0
-        elif 25 <= word_count < self.optimal_words[0]:
-            word_score = 0.7
-        elif self.optimal_words[1] < word_count <= 70:
-            word_score = 0.6
-        else:
-            word_score = 0.3
-        score += word_score * 0.35
-        
-        # Confidence score (25% weight)
-        score += confidence * 0.25
-        
-        return score
-    
-    def _is_segment_optimal(self, words: List[Dict]) -> bool:
-        """Check if segment meets optimal criteria"""
+    def _calculate_duration(self, words: List[Dict]) -> float:
+        """Calculate duration of word sequence"""
         if not words:
+            return 0.0
+        return (words[-1]['end'] - words[0]['start']) / 1000
+    
+    def _would_exceed_max_duration(self, current_words: List[Dict], remaining_words: List[Dict]) -> bool:
+        """Check if adding next word would exceed max duration"""
+        if not remaining_words:
             return False
         
-        duration = (words[-1]['end'] - words[0]['start']) / 1000
-        word_count = len(words)
-        
-        return (self.optimal_duration[0] <= duration <= self.optimal_duration[1] and 
-                self.optimal_words[0] <= word_count <= self.optimal_words[1])
-    
-    def _is_segment_viable(self, words: List[Dict]) -> bool:
-        """Check if segment is viable for cloning"""
-        if not words:
-            return False
-        
-        duration = (words[-1]['end'] - words[0]['start']) / 1000
-        word_count = len(words)
-        
-        return (duration >= self.min_segment_duration and 
-                word_count >= 20)  # Minimum 20 words
-    
-    def _is_segment_too_long(self, words: List[Dict]) -> bool:
-        """Check if segment exceeds maximum length"""
-        if not words:
-            return False
-        
-        duration = (words[-1]['end'] - words[0]['start']) / 1000
-        return duration > self.max_segment_duration
+        test_words = current_words + [remaining_words[0]]
+        test_duration = self._calculate_duration(test_words)
+        return test_duration > self.max_duration
     
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int, 
-                            base_dir: Path, speakers: List[str], target_language: str = "English",
-                            transcript_metadata: Optional[Dict] = None):
-        """Save optimized segments for Dia voice cloning"""
-        # Create directory structure
-        for speaker in speakers:
-            speaker_dir = base_dir / f"speaker_{speaker}"
-            (speaker_dir / "segments").mkdir(parents=True, exist_ok=True)
-            (speaker_dir / "reference").mkdir(parents=True, exist_ok=True)
+                            base_dir: Path, speakers: List[str], target_language: str = "English"):
+        """Save segments with duration compliance (4-19s, prefer 5s+)"""
+        reference_files = {}
         
-        # Save segments
         for i, segment in enumerate(segments):
-            primary_speaker = segment['speaker']
-            speaker_dir = base_dir / f"speaker_{primary_speaker}"
+            speaker = segment['speaker']
+            start_time = segment['start']
+            end_time = segment['end']
+            text = segment['text']
             
-            # Extract audio with exact timing
-            start_sample = int(segment['start'] * sr)
-            end_sample = int(segment['end'] * sr)
+            # Double-check duration constraint
+            duration = end_time - start_time
+            if duration < self.absolute_min_duration or duration > self.max_duration:
+                continue  # Skip segments outside 4-19 seconds
+            
+            # Extract and save audio
+            start_sample = int(start_time * sr)
+            end_sample = int(end_time * sr)
             segment_audio = audio[start_sample:end_sample]
             
-            # Audio processing
-            segment_audio = self.audio_utils.normalize_audio(segment_audio)
+            # Save segment files
+            segment_dir = base_dir / f"segment_{i:03d}"
+            segment_dir.mkdir(exist_ok=True)
             
-            # Generate filenames
-            seg_id = f"{primary_speaker}_seg_{i+1:03d}"
-            audio_file = speaker_dir / "segments" / f"{seg_id}.wav"
-            json_file = speaker_dir / "segments" / f"{seg_id}.json"
+            # Save original audio
+            original_path = segment_dir / "original.wav"
+            sf.write(str(original_path), segment_audio, sr)
             
-            # Save audio with exact length preservation
-            sf.write(audio_file, segment_audio, sr)
+            # Process text for voice cloning
+            if target_language.lower() != "english":
+                english_text = self.transcription_service.translate_text_clean(text)
+            else:
+                english_text = text
             
-            # Translate text for dubbing
-            english_text = self.transcription_service.translate_text_clean(segment['text'])
+            # Format for Dia model
+            dia_text = self.transcription_service.format_dia_text(english_text, speaker, speakers)
             
-            # Format for Dia model with mixed speaker support
-            dia_text = self._format_dia_text_optimal(
-                english_text, segment, speakers, i
-            )
-            
-            # Save segment metadata
-            segment_data = {
-                'segment_id': seg_id,
-                'speaker': primary_speaker,
-                'start': segment['start'],
-                'end': segment['end'],
-                'duration': segment['duration'],
-                'original_text': segment['text'],
-                'english_text': english_text,
-                'dia_text': dia_text,
-                'word_count': segment['word_count'],
-                'confidence': segment['confidence'],
-                'quality_score': segment['quality_score'],
-                'is_mixed_speaker': segment['is_mixed_speaker'],
-                'segment_speakers': segment['segment_speakers'],
-                'audio_file': audio_file.name,
-                'sample_rate': sr,
-                'translation_used': True
+            # Save metadata
+            metadata = {
+                "speaker": speaker,
+                "original_text": text,
+                "english_text": english_text,
+                "dia_text": dia_text,
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration": duration,
+                "word_count": segment['word_count'],
+                "confidence": segment['confidence']
             }
             
-            with open(json_file, 'w', encoding='utf-8') as f:
-                import json
-                json.dump(segment_data, f, ensure_ascii=False, indent=2)
-    
-    def _format_dia_text_optimal(self, english_text: str, segment: Dict, 
-                               all_speakers: List[str], segment_index: int) -> str:
-        """Format text for Dia model with optimal mixed speaker support (up to 10 speakers)"""
-        if segment['is_mixed_speaker']:
-            # Mixed speaker scenario - use specific speaker tags based on actual speakers
-            segment_speakers = segment['segment_speakers']
+            import json
+            with open(segment_dir / "metadata.json", "w", encoding="utf-8") as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
             
-            # Create speaker tags based on actual speaker indices
-            speaker_tags = []
-            for speaker in segment_speakers:
-                try:
-                    speaker_idx = all_speakers.index(speaker) + 1
-                    speaker_tags.append(f"[S{speaker_idx}]")
-                except ValueError:
-                    # Fallback if speaker not found
-                    speaker_tags.append("[S1]")
-            
-            # Format text with multiple speaker tags
-            if len(speaker_tags) == 2:
-                return f"{speaker_tags[0]} {english_text} {speaker_tags[1]}"
-            else:
-                # For more than 2 speakers in mixed segment
-                primary_tag = speaker_tags[0]
-                secondary_tag = speaker_tags[1] if len(speaker_tags) > 1 else "[S2]"
-                return f"{primary_tag} {english_text} {secondary_tag}"
-        else:
-            # Pure speaker - use appropriate tag (S1 to S10)
-            try:
-                speaker_idx = all_speakers.index(segment['speaker']) + 1
-                return f"[S{speaker_idx}] {english_text}"
-            except ValueError:
-                # Fallback if speaker not found
-                return f"[S1] {english_text}"
-    
+            # Track for reference selection
+            if speaker not in reference_files:
+                reference_files[speaker] = []
+            reference_files[speaker].append({
+                "path": str(original_path),
+                "duration": duration,
+                "confidence": segment['confidence'],
+                "segment_index": i
+            })
+        
+        # Select best reference for each speaker
+        selected_references = {}
+        for speaker, files in reference_files.items():
+            # Sort by duration (prefer 8-15 seconds) then by confidence
+            files.sort(key=lambda x: (
+                abs(x['duration'] - 11.5),  # Distance from 11.5 seconds (middle of optimal range)
+                -x['confidence']  # Higher confidence first
+            ))
+            selected_references[speaker] = files[0] if files else None
+        
+        return selected_references
+
     def select_optimal_references(self, segments: List[Dict], speakers: List[str]) -> Dict[str, Dict]:
         """Select optimal reference segments for each speaker"""
-        references = {}
+        reference_segments = {}
         
+        # Group segments by speaker
+        speaker_segments = {}
+        for segment in segments:
+            speaker = segment['speaker']
+            if speaker not in speaker_segments:
+                speaker_segments[speaker] = []
+            speaker_segments[speaker].append(segment)
+        
+        # Select best reference for each speaker
         for speaker in speakers:
-            speaker_segments = [s for s in segments if s['speaker'] == speaker and not s['is_mixed_speaker']]
-            
-            if not speaker_segments:
+            if speaker not in speaker_segments:
                 continue
+                
+            speaker_segs = speaker_segments[speaker]
             
-            # Select highest quality segment
-            best_segment = max(speaker_segments, key=lambda s: s['quality_score'])
+            # Sort by optimal criteria:
+            # 1. Duration preference (8-15 seconds is optimal)
+            # 2. Higher confidence
+            # 3. Word count (longer is better for reference)
+            best_segment = max(speaker_segs, key=lambda seg: (
+                -abs(seg['duration'] - 11.5),  # Closer to 11.5 seconds (middle of optimal range)
+                seg.get('confidence', 0.5),     # Higher confidence
+                seg.get('word_count', 0)        # More words
+            ))
             
-            # Add English text
-            english_text = self.transcription_service.translate_text_clean(best_segment['text'])
-            reference_segment = best_segment.copy()
-            reference_segment['english_text'] = english_text
-            reference_segment['original_text'] = best_segment['text']
-            
-            references[speaker] = reference_segment
+            reference_segments[speaker] = {
+                'segment': best_segment,
+                'duration': best_segment['duration'],
+                'confidence': best_segment.get('confidence', 0.5),
+                'word_count': best_segment.get('word_count', 0),
+                'text': best_segment['text']
+            }
         
-        return references
+        return reference_segments

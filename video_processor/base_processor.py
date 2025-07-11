@@ -72,8 +72,7 @@ class AudioProcessor:
             # Save optimal segments
             self.segment_manager.save_optimal_segments(
                 segments, audio, sr, output_dir, 
-                transcript_data['speakers'], target_language,
-                transcript_data.get('metadata', {})
+                transcript_data['speakers'], target_language
             )
             
             # Select optimal references
@@ -269,6 +268,14 @@ class AudioProcessor:
                                     speakers_expected: Optional[int] = 1) -> Dict[str, Any]:
         """Process video with RunPod vocal/instrument separation"""
         try:
+            # Validate RunPod service is properly configured
+            if not hasattr(self, 'runpod_service') or not self.runpod_service:
+                return {"success": False, "error": "RunPod service not initialized"}
+            
+            # Check if RunPod credentials are configured
+            if not self.runpod_service.api_key or not self.runpod_service.base_url:
+                return {"success": False, "error": "RunPod credentials not configured"}
+            
             # Extract audio from video
             audio_temp_path = self.temp_dir / f"{audio_id}_extracted_audio.wav"
             extract_result = self.audio_utils.extract_audio_from_video(video_path, str(audio_temp_path))
@@ -279,6 +286,13 @@ class AudioProcessor:
             from r2_storage import R2Storage
             r2_storage = R2Storage()
             
+            # Validate R2 storage is configured
+            if not r2_storage.bucket_name:
+                return {"success": False, "error": "R2 storage not configured"}
+            
+            if not r2_storage.client:
+                return {"success": False, "error": "R2 client not initialized"}
+            
             upload_result = r2_storage.upload_file(
                 str(audio_temp_path),
                 f"temp/{audio_id}_audio.wav",
@@ -286,18 +300,32 @@ class AudioProcessor:
             )
             
             if not upload_result["success"]:
-                return {"success": False, "error": "Failed to upload audio for processing"}
+                return {"success": False, "error": f"Failed to upload audio for processing: {upload_result.get('error', 'Unknown error')}"}
             
             audio_url = upload_result["url"]
             
             # Process with RunPod
-            separation_result = self.runpod_service.process_audio_separation(audio_url)
-            
-            # Wait for completion
-            completion_result = self.runpod_service.wait_for_completion(separation_result["id"])
-            
-            if completion_result.get("status") == "FAILED":
-                return {"success": False, "error": f"RunPod job failed: {completion_result.get('error', 'Unknown error')}"}
+            try:
+                separation_result = self.runpod_service.process_audio_separation(audio_url)
+                
+                if not separation_result or not separation_result.get("id"):
+                    return {"success": False, "error": "RunPod service returned invalid response"}
+                
+                # Wait for completion
+                completion_result = self.runpod_service.wait_for_completion(separation_result["id"])
+                
+                if completion_result.get("status") == "FAILED":
+                    return {"success": False, "error": f"RunPod job failed: {completion_result.get('error', 'Unknown error')}"}
+                
+                if completion_result.get("status") != "COMPLETED":
+                    return {"success": False, "error": f"RunPod job did not complete successfully: {completion_result.get('status', 'Unknown status')}"}
+                
+                # Validate output URLs
+                if not completion_result.get("output") or not completion_result["output"].get("vocal_audio") or not completion_result["output"].get("instrument_audio"):
+                    return {"success": False, "error": "RunPod job completed but no output URLs provided"}
+                
+            except Exception as e:
+                return {"success": False, "error": f"RunPod processing failed: {str(e)}"}
             
             # Download separated audio files
             vocal_path = self.temp_dir / f"{audio_id}_vocal.wav"
@@ -312,7 +340,14 @@ class AudioProcessor:
             )
             
             if not vocal_download["success"] or not instrument_download["success"]:
-                return {"success": False, "error": "Failed to download separated audio"}
+                return {"success": False, "error": f"Failed to download separated audio: vocal={vocal_download.get('error', 'Unknown')}, instrument={instrument_download.get('error', 'Unknown')}"}
+            
+            # Validate downloaded files
+            if not vocal_path.exists() or vocal_path.stat().st_size == 0:
+                return {"success": False, "error": "Downloaded vocal file is empty or missing"}
+            
+            if not instrument_path.exists() or instrument_path.stat().st_size == 0:
+                return {"success": False, "error": "Downloaded instrument file is empty or missing"}
             
             # Process vocal audio through normal pipeline
             segment_result = self.process_audio_segments(
@@ -324,7 +359,7 @@ class AudioProcessor:
             )
             
             if not segment_result.get("success", True):
-                return {"success": False, "error": segment_result.get("error", "Audio processing failed")}
+                return {"success": False, "error": f"Audio segmentation failed: {segment_result.get('error', 'Unknown error')}"}
             
             return {
                 "success": True,
@@ -339,7 +374,7 @@ class AudioProcessor:
             }
             
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": f"Unexpected error in video processing: {str(e)}"}
     
     def cleanup_temp_files(self, audio_id: str):
         """Clean up temporary files"""

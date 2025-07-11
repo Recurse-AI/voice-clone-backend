@@ -19,7 +19,7 @@ class TranscriptionService:
         aai.settings.api_key = settings.ASSEMBLYAI_API_KEY
     
     def transcribe_audio(self, audio_path: str, language_code: Optional[str] = None, 
-                        speakers_expected: Optional[int] = 1) -> Dict[str, Any]:
+                        speakers_expected: Optional[int] = None) -> Dict[str, Any]:
         """
         Transcribe audio using AssemblyAI Universal model
         
@@ -32,7 +32,7 @@ class TranscriptionService:
             # Build transcription config with universal model
             config_params = {
                 "speaker_labels": True,
-                "auto_chapters": True,
+                "auto_chapters": False,
                 "punctuate": True,
                 "format_text": True,
                 "speech_model": aai.SpeechModel.universal
@@ -40,12 +40,10 @@ class TranscriptionService:
             
             # Handle language detection vs manual language code
             if language_code and language_code.strip():
-                # Manual language code specified
                 config_params["language_code"] = language_code.strip()
             else:
-                # Auto-detect language
                 config_params["language_detection"] = True
-                config_params["language_confidence_threshold"] = 0.1  # Low threshold for better detection
+                config_params["language_confidence_threshold"] = 0.1  # Reduced from 0.5 to 0.1 for better language detection
             
             # Add speaker count if specified
             if speakers_expected and 1 <= speakers_expected <= 10:
@@ -60,19 +58,41 @@ class TranscriptionService:
             if transcript.status == "error":
                 raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
             
+            # Extract words with proper speaker labels and safe attribute access
             words = []
-            for word in transcript.words:
-                words.append({
-                    "text": word.text,
-                    "start": word.start,
-                    "end": word.end,
-                    "speaker": word.speaker if hasattr(word, 'speaker') else "A",
-                    "confidence": word.confidence
-                })
+            if hasattr(transcript, 'words') and transcript.words:
+                for word in transcript.words:
+                    try:
+                        # Safely access word attributes with fallbacks
+                        word_data = {
+                            "text": getattr(word, 'text', ''),
+                            "start": getattr(word, 'start', 0),
+                            "end": getattr(word, 'end', 0),
+                            "speaker": getattr(word, 'speaker', 'A') if hasattr(word, 'speaker') and word.speaker else "A",
+                            "confidence": getattr(word, 'confidence', 0.5)
+                        }
+                        
+                        # Skip empty words
+                        if word_data["text"].strip():
+                            words.append(word_data)
+                    except Exception:
+                        # Skip problematic words
+                        continue
             
-            speakers = sorted(list(set(word.get("speaker", "A") for word in words)))
+            # If no words were extracted, create fallback from text
+            if not words and transcript.text:
+                words = [{
+                    "text": transcript.text,
+                    "start": 0,
+                    "end": 5000,  # Default 5 seconds
+                    "speaker": "A",
+                    "confidence": 0.5
+                }]
             
-            # Get the final language code (either provided or detected)
+            # Get unique speakers and sort them
+            speakers = sorted(list(set(word["speaker"] for word in words))) if words else ["A"]
+            
+            # Get the final language code
             final_language_code = language_code if language_code and language_code.strip() else transcript.json_response.get("language_code", "en")
             
             return {
@@ -92,11 +112,12 @@ class TranscriptionService:
         except Exception as e:
             raise Exception(f"Transcription failed: {str(e)}")
     
-    def get_voice_cloning_prompt(self, text: str) -> str:
-        """Generate optimized prompt for voice cloning"""
-        return f"""Convert this text to natural English for high-quality voice cloning. Add appropriate non-verbal tags when contextually suitable.
+    def translate_text_clean(self, text: str) -> str:
+        """Clean translation optimized for voice cloning"""
+        try:
+            prompt = f"""Convert this text to natural English for voice cloning:
 
-SOURCE: "{text}"
+"{text}"
 
 REQUIREMENTS:
 - Clear, conversational English
@@ -109,17 +130,12 @@ REQUIREMENTS:
 - Do NOT force non-verbals into every sentence
 - Use them sparingly and naturally
 
-CLEAN ENGLISH WITH NATURAL NON-VERBALS:"""
-    
-    def translate_text_clean(self, text: str) -> str:
-        """Clean translation optimized for voice cloning"""
-        try:
-            prompt = self.get_voice_cloning_prompt(text)
+Return only the clean English text:"""
             
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are an expert translator specializing in voice cloning optimization. Return only clean, natural English text."},
+                    {"role": "system", "content": "You are an expert translator for voice cloning. Return only clean, natural English text."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=150,
@@ -136,39 +152,23 @@ CLEAN ENGLISH WITH NATURAL NON-VERBALS:"""
         except Exception as e:
             return text
     
-    def validate_dia_text_length(self, text: str) -> bool:
-        """Validate text length for Dia guidelines (5-20 seconds optimal)"""
-        word_count = len(text.split())
-        estimated_seconds = word_count / 17  # More accurate estimate
-        return 5 <= estimated_seconds <= 20
-    
-    def estimate_audio_duration(self, text: str) -> float:
-        """Estimate audio duration from text (following Dia guidelines)"""
-        word_count = len(text.split())
-        estimated_tokens = word_count / 0.75
-        estimated_seconds = estimated_tokens / 86
-        return estimated_seconds
-    
-    def format_dia_text(self, english_text: str, speaker: str, all_speakers: List[str], 
-                       segment_index: int = 0, is_last_segment: bool = False) -> str:
-        """Format text for Dia model with optimal speaker handling"""
-        # Clean and optimize text for Dia model
-        cleaned_text = self._optimize_text_for_dia(english_text)
+    def format_dia_text(self, english_text: str, speaker: str, all_speakers: List[str]) -> str:
+        """Format text for Dia model with proper speaker handling"""
+        # Clean text
+        cleaned_text = self._clean_text(english_text)
         
         if len(all_speakers) == 1:
-            # Single speaker: always use [S1]
             return f"[S1] {cleaned_text}"
         else:
-            # Multi-speaker: use speaker mapping
+            # Multi-speaker: use proper speaker mapping
             try:
                 speaker_idx = all_speakers.index(speaker) + 1
                 return f"[S{speaker_idx}] {cleaned_text}"
             except ValueError:
-                # Fallback to S1 if speaker not found
                 return f"[S1] {cleaned_text}"
     
-    def _optimize_text_for_dia(self, text: str) -> str:
-        """Optimize text for Dia model performance"""
+    def _clean_text(self, text: str) -> str:
+        """Clean text for Dia model"""
         # Remove excessive punctuation
         text = re.sub(r'[.]{2,}', '.', text)
         text = re.sub(r'[!]{2,}', '!', text)

@@ -59,6 +59,10 @@ class ProcessLogger:
         self.steps.append(step_data)
         self._write_step(step_data)
     
+    def get_current_log_path(self) -> Optional[str]:
+        """Get the current log file path"""
+        return str(self.current_log_file) if self.current_log_file else None
+    
     def finish_processing(self, success: bool, total_duration: Optional[float] = None, 
                          final_details: Optional[Dict[str, Any]] = None) -> None:
         """Finish logging and write summary"""
@@ -136,10 +140,6 @@ Final Details:
         
         with open(self.current_log_file, 'a', encoding='utf-8') as f:
             f.write(summary_text)
-    
-    def get_current_log_path(self) -> Optional[str]:
-        """Get current log file path"""
-        return str(self.current_log_file) if self.current_log_file else None
     
     def get_processing_status(self) -> Dict[str, Any]:
         """Get current processing status"""

@@ -32,6 +32,9 @@ assemblyai
 boto3
 botocore    
 
+# Database
+pymongo
+
 # Utilities
 python-dotenv
 pathlib

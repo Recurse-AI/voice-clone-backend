@@ -103,22 +103,35 @@ class RunPodService:
             }
         
         return data
-    
-    def wait_for_completion(self, job_id: str, max_wait: int = 900) -> Dict[str, Any]:
-        """Wait for job completion with polling"""
+
+    def wait_for_completion(self, job_id: str, timeout: int = 900) -> Dict[str, Any]:
+        """Wait for job completion with timeout"""
+        import time
         start_time = time.time()
-        while time.time() - start_time < max_wait:
-            result = self.check_job_status(job_id)
-            
-            if result.get('status') == 'COMPLETED':
-                return result
-            elif result.get('status') == 'FAILED':
-                return result
-            
-            time.sleep(15) #sleep for 15 seconds
+        
+        while time.time() - start_time < timeout:
+            try:
+                status = self.check_job_status(job_id)
+                
+                if status.get('status') == 'COMPLETED':
+                    return status
+                elif status.get('status') == 'FAILED':
+                    return status
+                elif status.get('status') in ['IN_QUEUE', 'IN_PROGRESS']:
+                    time.sleep(10)  # Wait 10 seconds before checking again
+                    continue
+                else:
+                    time.sleep(5)  # Wait 5 seconds for other statuses
+                    
+            except Exception as e:
+                return {
+                    'id': job_id,
+                    'status': 'FAILED',
+                    'error': f'Error checking job status: {str(e)}'
+                }
         
         return {
             'id': job_id,
             'status': 'FAILED',
-            'error': 'Job timed out'
+            'error': 'Job timeout - processing took too long'
         } 

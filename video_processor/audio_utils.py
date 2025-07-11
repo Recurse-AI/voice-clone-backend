@@ -46,41 +46,52 @@ class AudioUtils:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    def _get_ffmpeg_path(self) -> str:
-        """Get the correct FFmpeg executable path"""
-        import platform
-        import shutil
-        
-        # Check for bundled FFmpeg first (Windows)
-        if platform.system() == 'Windows':
-            bundled_ffmpeg = Path('ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe')
-            if bundled_ffmpeg.exists():
-                return str(bundled_ffmpeg)
-        
-        # Check if ffmpeg is in PATH
-        ffmpeg_in_path = shutil.which('ffmpeg')
-        if ffmpeg_in_path:
-            return 'ffmpeg'
-        
-        # Default fallback
-        return 'ffmpeg'
-    
     def download_audio_file(self, url: str, output_path: str) -> Dict[str, Any]:
         """Download audio file from URL"""
         try:
             import requests
             
-            response = requests.get(url, stream=True)
+            response = requests.get(url, stream=True, timeout=60)
             response.raise_for_status()
             
             with open(output_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
+            # Verify file was downloaded
+            if not os.path.exists(output_path):
+                return {"success": False, "error": "File not found after download"}
+            
+            if os.path.getsize(output_path) == 0:
+                return {"success": False, "error": "Downloaded file is empty"}
+            
             return {"success": True, "file_path": output_path}
             
+        except requests.exceptions.RequestException as e:
+            return {"success": False, "error": f"Download failed: {str(e)}"}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": f"Unexpected error: {str(e)}"}
+    
+    def _get_ffmpeg_path(self):
+        """Get FFmpeg executable path based on platform"""
+        # Check if ffmpeg is in PATH
+        try:
+            result = subprocess.run(['ffmpeg', '-version'], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                return 'ffmpeg'
+        except FileNotFoundError:
+            pass
+        
+        # Check local Windows installation
+        import platform
+        if platform.system() == 'Windows':
+            local_ffmpeg = Path('./ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe')
+            if local_ffmpeg.exists():
+                return str(local_ffmpeg)
+        
+        # Default to system ffmpeg
+        return 'ffmpeg'
     
     @staticmethod
     def detect_silent_parts(audio: np.ndarray, sr: int, 
