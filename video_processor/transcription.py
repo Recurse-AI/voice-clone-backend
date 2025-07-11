@@ -43,7 +43,7 @@ class TranscriptionService:
                 config_params["language_code"] = language_code.strip()
             else:
                 config_params["language_detection"] = True
-                config_params["language_confidence_threshold"] = 0.1  # Reduced from 0.5 to 0.1 for better language detection
+                config_params["language_confidence_threshold"] = 0.1
             
             # Add speaker count if specified
             if speakers_expected and 1 <= speakers_expected <= 10:
@@ -58,42 +58,14 @@ class TranscriptionService:
             if transcript.status == "error":
                 raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
             
-            # Extract words with proper speaker labels and safe attribute access
-            words = []
-            if hasattr(transcript, 'words') and transcript.words:
-                for word in transcript.words:
-                    try:
-                        # Safely access word attributes with fallbacks
-                        word_data = {
-                            "text": getattr(word, 'text', ''),
-                            "start": getattr(word, 'start', 0),
-                            "end": getattr(word, 'end', 0),
-                            "speaker": getattr(word, 'speaker', 'A') if hasattr(word, 'speaker') and word.speaker else "A",
-                            "confidence": getattr(word, 'confidence', 0.5)
-                        }
-                        
-                        # Skip empty words
-                        if word_data["text"].strip():
-                            words.append(word_data)
-                    except Exception:
-                        # Skip problematic words
-                        continue
+            # Extract words with robust error handling
+            words = self._extract_words_from_transcript(transcript)
             
-            # If no words were extracted, create fallback from text
-            if not words and transcript.text:
-                words = [{
-                    "text": transcript.text,
-                    "start": 0,
-                    "end": 5000,  # Default 5 seconds
-                    "speaker": "A",
-                    "confidence": 0.5
-                }]
-            
-            # Get unique speakers and sort them
-            speakers = sorted(list(set(word["speaker"] for word in words))) if words else ["A"]
+            # Get speakers from words or fallback
+            speakers = self._extract_speakers(words)
             
             # Get the final language code
-            final_language_code = language_code if language_code and language_code.strip() else transcript.json_response.get("language_code", "en")
+            final_language_code = self._get_language_code(transcript, language_code)
             
             return {
                 "text": transcript.text,
@@ -111,6 +83,106 @@ class TranscriptionService:
             
         except Exception as e:
             raise Exception(f"Transcription failed: {str(e)}")
+
+    def _extract_words_from_transcript(self, transcript) -> List[Dict[str, Any]]:
+        """Extract words from transcript with comprehensive error handling"""
+        words = []
+        
+        # Try to extract from transcript.words first
+        if hasattr(transcript, 'words') and transcript.words:
+            for word in transcript.words:
+                try:
+                    word_data = {
+                        "text": getattr(word, 'text', '').strip(),
+                        "start": getattr(word, 'start', 0),
+                        "end": getattr(word, 'end', 0),
+                        "speaker": self._get_word_speaker(word),
+                        "confidence": getattr(word, 'confidence', 0.5)
+                    }
+                    
+                    # Skip empty words
+                    if word_data["text"]:
+                        words.append(word_data)
+                        
+                except Exception:
+                    continue
+        
+        # Try to extract from utterances if words failed
+        if not words and hasattr(transcript, 'utterances') and transcript.utterances:
+            words = self._extract_words_from_utterances(transcript.utterances)
+        
+        # Final fallback: create from transcript text
+        if not words and transcript.text:
+            words = [{
+                "text": transcript.text,
+                "start": 0,
+                "end": 5000,  # Default 5 seconds
+                "speaker": "A",
+                "confidence": 0.5
+            }]
+        
+        return words
+
+    def _get_word_speaker(self, word) -> str:
+        """Get speaker from word with null handling"""
+        speaker = getattr(word, 'speaker', None)
+        
+        # Handle null speaker
+        if speaker is None or speaker == "null":
+            return "A"  # Default speaker
+        
+        return str(speaker)
+
+    def _extract_words_from_utterances(self, utterances) -> List[Dict[str, Any]]:
+        """Extract words from utterances as fallback"""
+        words = []
+        
+        for utterance in utterances:
+            try:
+                if hasattr(utterance, 'words') and utterance.words:
+                    for word in utterance.words:
+                        word_data = {
+                            "text": getattr(word, 'text', '').strip(),
+                            "start": getattr(word, 'start', 0),
+                            "end": getattr(word, 'end', 0),
+                            "speaker": getattr(word, 'speaker', getattr(utterance, 'speaker', 'A')),
+                            "confidence": getattr(word, 'confidence', 0.5)
+                        }
+                        
+                        if word_data["text"]:
+                            words.append(word_data)
+                            
+            except Exception:
+                continue
+                
+        return words
+
+    def _extract_speakers(self, words: List[Dict[str, Any]]) -> List[str]:
+        """Extract unique speakers from words"""
+        if not words:
+            return ["A"]
+        
+        speakers = set()
+        for word in words:
+            speaker = word.get('speaker', 'A')
+            if speaker and speaker != "null":
+                speakers.add(str(speaker))
+        
+        # Ensure at least one speaker
+        if not speakers:
+            speakers.add("A")
+        
+        return sorted(list(speakers))
+
+    def _get_language_code(self, transcript, language_code: Optional[str]) -> str:
+        """Get final language code with fallback"""
+        if language_code and language_code.strip():
+            return language_code.strip()
+        
+        try:
+            return transcript.json_response.get("language_code", "en")
+        except:
+            return "en"
     
     def translate_text_clean(self, text: str) -> str:
         """Clean translation optimized for voice cloning"""
