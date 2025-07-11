@@ -1,6 +1,6 @@
 # Voice Cloning API - Production Backend
 
-A production-ready voice cloning API built with FastAPI, integrating Dia voice cloning model with intelligent audio processing and cloud storage.
+A production-ready voice cloning API built with FastAPI, integrating Dia voice cloning model with intelligent video processing, audio separation, and cloud storage.
 
 ## Table of Contents
 
@@ -14,11 +14,13 @@ A production-ready voice cloning API built with FastAPI, integrating Dia voice c
 
 ## Features
 
+- **Video Processing**: Process videos from URLs with automatic audio extraction
 - **Voice Cloning**: Advanced voice cloning using Dia 1.6B model
-- **Audio Processing**: Intelligent speaker-aware audio segmentation  
+- **Audio Separation**: Automatic vocal/instrument separation using RunPod
 - **AssemblyAI Transcription**: Professional-grade transcription with speaker diarization
 - **Cloud Storage**: R2 bucket integration for scalable storage
 - **Subtitle Generation**: Automatic subtitle generation in SRT format
+- **Video Generation**: Create new videos with cloned audio and subtitles
 - **Instrument Mixing**: Optional background instrument mixing
 - **Standalone Deployment**: No external dependencies - completely self-contained
 - **RESTful API**: Clean, documented API endpoints
@@ -79,6 +81,7 @@ Get API status and information.
     "version": "1.0.0",
     "features": {
       "voice_cloning": true,
+      "video_processing": true,
       "subtitle_generation": true,
       "instrument_mixing": true,
       "r2_storage": true
@@ -107,11 +110,11 @@ Check API health and component status.
 }
 ```
 
-### 3. Process Audio (Main Endpoint)
+### 3. Process Video (Main Endpoint)
 
-**POST** `/process-audio`
+**POST** `/process-video`
 
-Process audio file with voice cloning and return final output with R2 storage details.
+Process video from URL with voice cloning and return final output with R2 storage details.
 
 #### Request
 
@@ -121,20 +124,21 @@ Process audio file with voice cloning and return final output with R2 storage de
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `audio_file` | file | ✅ | - | Main audio file to process |
-| `instruments_file` | file | ❌ | - | Optional instruments file to mix |
+| `video_url` | string | ✅ | - | Video URL (HTTP/HTTPS) to process |
 | `seed` | integer | ❌ | random | Seed for reproducible results |
-| `include_instruments` | boolean | ❌ | false | Whether to include instruments in final audio |
+| `include_instruments` | boolean | ❌ | true | Whether to include instruments in final audio |
 | `generate_subtitles` | boolean | ❌ | true | Whether to generate subtitles |
 | `temperature` | float | ❌ | 1.3 | Voice cloning temperature (0.1-2.0) |
 | `cfg_scale` | float | ❌ | 3.0 | CFG scale for voice cloning (1.0-5.0) |
 | `top_p` | float | ❌ | 0.95 | Top-p for voice cloning (0.1-1.0) |
 | `target_language` | string | ❌ | "English" | Target language for translation |
+| `language_code` | string | ❌ | "en" | Language code for transcription |
+| `speakers_expected` | integer | ❌ | - | Expected number of speakers (1-10) |
 
-#### File Constraints
+#### Video Constraints
 
-- **Supported formats**: `.wav`, `.mp3`, `.flac`, `.m4a`
-- **Maximum file size**: 100MB
+- **Supported formats**: `.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`
+- **URL must be**: HTTP/HTTPS accessible
 - **Recommended duration**: 1-300 seconds for optimal processing
 
 #### Response
@@ -143,11 +147,17 @@ Process audio file with voice cloning and return final output with R2 storage de
 {
   "success": true,
   "audio_id": "audio_20241201_123456_abcd1234",
-  "message": "Audio processing completed successfully",
+  "message": "Video from URL processed successfully with vocal/instrument separation",
   "processing_details": {
     "segments_processed": 15,
     "total_duration": 120.5,
     "speakers_detected": ["speaker_A", "speaker_B"],
+    "video_created": true,
+    "subtitle_count": 15,
+    "processing_type": "video_processing_with_runpod_separation",
+    "video_source": "url",
+    "source_url": "https://example.com/video.mp4",
+    "runpod_separation": true,
     "processing_stats": {
       "total_segments": 15,
       "speakers": ["A", "B"],
@@ -170,6 +180,11 @@ Process audio file with voice cloning and return final output with R2 storage de
       "url": "https://your-bucket.r2.dev/voice-cloning/.../final_output.wav",
       "size_mb": 12.5
     },
+    "video_upload": {
+      "success": true,
+      "url": "https://your-bucket.r2.dev/voice-cloning/.../video_processed.mp4",
+      "size_mb": 25.8
+    },
     "subtitles_upload": {
       "success": true,
       "url": "https://your-bucket.r2.dev/voice-cloning/.../subtitles.srt",
@@ -178,13 +193,15 @@ Process audio file with voice cloning and return final output with R2 storage de
     "access_url": "https://your-bucket.r2.cloudflarestorage.com/..."
   },
   "final_audio_url": "https://your-bucket.r2.dev/.../final_output.wav",
+  "video_url": "https://your-bucket.r2.dev/.../video_processed.mp4",
   "subtitles_url": "https://your-bucket.r2.dev/.../subtitles.srt",
   "original_audio_details": {
-    "filename": "input.wav",
+    "filename": "video.mp4",
+    "source_url": "https://example.com/video.mp4",
     "duration": 120.5,
     "sample_rate": 44100,
     "channels": 1,
-    "size_mb": 11.8
+    "size_mb": 25.8
   },
   "seed_used": 42
 }
@@ -294,15 +311,17 @@ All endpoints may return the following error responses:
 
 ## Processing Pipeline
 
-1. **Audio Upload**: Validate format and size
-2. **AssemblyAI Transcription**: Professional transcription with speaker diarization
-3. **Intelligent Segmentation**: Speaker-aware audio segmentation
-4. **Voice Cloning**: Generate cloned voice using Dia model with optimized parameters
-5. **Audio Reconstruction**: Rebuild audio with precise timing
-6. **Instrument Mixing**: Optional background instrument mixing
-7. **Subtitle Generation**: Generate synchronized subtitles in SRT format
-8. **Cloud Storage**: Upload all results to R2 bucket with organized structure
-9. **Response**: Return comprehensive response with URLs and metadata
+1. **Video URL Validation**: Validate URL format and accessibility
+2. **Video Download**: Download video from provided URL
+3. **Audio Extraction**: Extract audio from video file
+4. **RunPod Separation**: Separate vocal and instrument tracks
+5. **AssemblyAI Transcription**: Professional transcription with speaker diarization
+6. **Intelligent Segmentation**: Speaker-aware audio segmentation
+7. **Voice Cloning**: Generate cloned voice using Dia model with optimized parameters
+8. **Audio Reconstruction**: Rebuild audio with precise timing
+9. **Video Processing**: Create new video with cloned audio and subtitles
+10. **Cloud Storage**: Upload all results to R2 bucket with organized structure
+11. **Response**: Return comprehensive response with URLs and metadata
 
 ---
 
@@ -319,12 +338,18 @@ R2_SECRET_ACCESS_KEY=your_r2_secret_access_key
 R2_BUCKET_NAME=your_bucket_name
 R2_ENDPOINT_URL=https://your_account_id.r2.cloudflarestorage.com
 R2_REGION=auto
+R2_PUBLIC_URL=https://pub-your_bucket_id.r2.dev
 
 # OpenAI Configuration
 OPENAI_API_KEY=your_openai_api_key
 
 # AssemblyAI Configuration
 ASSEMBLYAI_API_KEY=your_assemblyai_api_key
+
+# RunPod Configuration
+API_ACCESS_TOKEN=your_runpod_api_token
+RUNPOD_ENDPOINT_ID=your_runpod_endpoint_id
+RUNPOD_TIMEOUT=1800000
 
 # GPU Configuration
 CUDA_AVAILABLE=true
@@ -372,6 +397,8 @@ voice-cloning/
 │   │   │   │   ├── silent_parts/
 │   │   │   │   ├── final/
 │   │   │   │   │   └── final_output.wav
+│   │   │   │   ├── video/
+│   │   │   │   │   └── video_processed.mp4
 │   │   │   │   ├── subtitles/
 │   │   │   │   │   └── subtitles.srt
 │   │   │   │   └── summary/
@@ -382,26 +409,27 @@ voice-cloning/
 
 ## Examples
 
-### Example 1: Basic Voice Cloning
+### Example 1: Basic Video Processing
 
 ```bash
-curl -X POST "http://localhost:8000/process-audio" \
-  -F "audio_file=@input.wav" \
+curl -X POST "http://localhost:8000/process-video" \
+  -F "video_url=https://example.com/video.mp4" \
   -F "generate_subtitles=true" \
   -F "temperature=1.5" \
   -F "seed=42"
 ```
 
-### Example 2: Voice Cloning with Instruments
+### Example 2: Video Processing with Custom Settings
 
 ```bash
-curl -X POST "http://localhost:8000/process-audio" \
-  -F "audio_file=@vocals.wav" \
-  -F "instruments_file=@music.wav" \
+curl -X POST "http://localhost:8000/process-video" \
+  -F "video_url=https://example.com/video.mp4" \
   -F "include_instruments=true" \
   -F "temperature=1.3" \
   -F "cfg_scale=3.0" \
-  -F "top_p=0.95"
+  -F "top_p=0.95" \
+  -F "language_code=en" \
+  -F "speakers_expected=2"
 ```
 
 ### Example 3: Check Processing Status
@@ -415,23 +443,26 @@ curl -X GET "http://localhost:8000/status/audio_20241201_123456_abcd1234"
 ```python
 import requests
 
-# Upload and process audio
-files = {'audio_file': open('input.wav', 'rb')}
+# Process video from URL
 data = {
+    'video_url': 'https://example.com/video.mp4',
     'seed': 42,
     'temperature': 1.5,
-    'generate_subtitles': True
+    'generate_subtitles': True,
+    'include_instruments': True,
+    'language_code': 'en',
+    'speakers_expected': 2
 }
 
 response = requests.post(
-    'http://localhost:8000/process-audio',
-    files=files,
+    'http://localhost:8000/process-video',
     data=data
 )
 
 result = response.json()
 print(f"Audio ID: {result['audio_id']}")
 print(f"Final Audio URL: {result['final_audio_url']}")
+print(f"Video URL: {result['video_url']}")
 print(f"Subtitles URL: {result['subtitles_url']}")
 ```
 

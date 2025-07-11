@@ -18,14 +18,14 @@ class TranscriptionService:
         self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
         aai.settings.api_key = settings.ASSEMBLYAI_API_KEY
     
-    def transcribe_audio(self, audio_path: str, language_code: str = "en", 
-                        speakers_expected: Optional[int] = None) -> Dict[str, Any]:
+    def transcribe_audio(self, audio_path: str, language_code: Optional[str] = None, 
+                        speakers_expected: Optional[int] = 1) -> Dict[str, Any]:
         """
         Transcribe audio using AssemblyAI Universal model
         
         Args:
             audio_path: Path to audio file
-            language_code: Language code (e.g., "en", "es", "fr", "de", "hi", "ja", "zh")
+            language_code: Language code (e.g., "en", "es", "fr", "de", "hi", "ja", "zh") - None for auto-detection
             speakers_expected: Expected number of speakers (1-10)
         """
         try:
@@ -35,9 +35,17 @@ class TranscriptionService:
                 "auto_chapters": True,
                 "punctuate": True,
                 "format_text": True,
-                "language_code": language_code,
-                "speech_model": "universal"
+                "speech_model": aai.SpeechModel.universal
             }
+            
+            # Handle language detection vs manual language code
+            if language_code and language_code.strip():
+                # Manual language code specified
+                config_params["language_code"] = language_code.strip()
+            else:
+                # Auto-detect language
+                config_params["language_detection"] = True
+                config_params["language_confidence_threshold"] = 0.1  # Low threshold for better detection
             
             # Add speaker count if specified
             if speakers_expected and 1 <= speakers_expected <= 10:
@@ -62,7 +70,10 @@ class TranscriptionService:
                     "confidence": word.confidence
                 })
             
-            speakers = list(set(word.get("speaker", "A") for word in words))
+            speakers = sorted(list(set(word.get("speaker", "A") for word in words)))
+            
+            # Get the final language code (either provided or detected)
+            final_language_code = language_code if language_code and language_code.strip() else transcript.json_response.get("language_code", "en")
             
             return {
                 "text": transcript.text,
@@ -70,7 +81,9 @@ class TranscriptionService:
                 "speakers": speakers,
                 "duration": words[-1]['end'] / 1000 if words else 0,
                 "metadata": {
-                    "language_code": language_code,
+                    "language_code": final_language_code,
+                    "language_detection_used": not (language_code and language_code.strip()),
+                    "language_confidence": transcript.json_response.get("language_confidence", 0.0),
                     "speakers_expected": speakers_expected,
                     "detected_speakers": len(speakers)
                 }
@@ -138,30 +151,35 @@ CLEAN ENGLISH WITH NATURAL NON-VERBALS:"""
     
     def format_dia_text(self, english_text: str, speaker: str, all_speakers: List[str], 
                        segment_index: int = 0, is_last_segment: bool = False) -> str:
-        """Format text for Dia model following official guidelines"""
-        sorted_speakers = sorted(all_speakers)
+        """Format text for Dia model with optimal speaker handling"""
+        # Clean and optimize text for Dia model
+        cleaned_text = self._optimize_text_for_dia(english_text)
         
         if len(all_speakers) == 1:
             # Single speaker: always use [S1]
-            formatted_text = f"[S1] {english_text}"
+            return f"[S1] {cleaned_text}"
         else:
-            # Multi-speaker: ensure proper alternation
-            if segment_index == 0:
-                speaker_tag = "[S1]"
-            else:
-                speaker_tag = "[S1]" if segment_index % 2 == 0 else "[S2]"
-            
-            formatted_text = f"{speaker_tag} {english_text}"
+            # Multi-speaker: use speaker mapping
+            try:
+                speaker_idx = all_speakers.index(speaker) + 1
+                return f"[S{speaker_idx}] {cleaned_text}"
+            except ValueError:
+                # Fallback to S1 if speaker not found
+                return f"[S1] {cleaned_text}"
+    
+    def _optimize_text_for_dia(self, text: str) -> str:
+        """Optimize text for Dia model performance"""
+        # Remove excessive punctuation
+        text = re.sub(r'[.]{2,}', '.', text)
+        text = re.sub(r'[!]{2,}', '!', text)
+        text = re.sub(r'[?]{2,}', '?', text)
         
-        # Add speaker tag at end for better audio quality (Dia guideline)
-        if is_last_segment:
-            if len(all_speakers) == 1:
-                end_tag = "[S1]"
-            else:
-                current_tag = "[S1]" if segment_index % 2 == 0 else "[S2]"
-                end_tag = "[S2]" if current_tag == "[S1]" else "[S1]"
-            
-            if not formatted_text.endswith(end_tag):
-                formatted_text += f" {end_tag}"
+        # Normalize spacing
+        text = re.sub(r'\s+', ' ', text)
         
-        return formatted_text 
+        # Ensure proper sentence ending
+        text = text.strip()
+        if text and not text.endswith(('.', '!', '?')):
+            text += '.'
+        
+        return text 

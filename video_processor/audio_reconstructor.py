@@ -1,19 +1,20 @@
 """
-Audio Reconstructor Module
+Audio Reconstructor Module - Production Clean Version
 
-Handles final audio reconstruction and subtitle generation.
+Handles final audio reconstruction only.
+Subtitles are handled separately in video processor.
 """
 
 import os
 import numpy as np
 import soundfile as sf
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 import json
 
 
 class AudioReconstructor:
-    """Handles final audio reconstruction and subtitle generation"""
+    """Handles final audio reconstruction from voice-cloned segments"""
     
     def __init__(self, temp_dir: str = "/tmp/voice_cloning"):
         self.temp_dir = Path(temp_dir)
@@ -87,70 +88,58 @@ class AudioReconstructor:
     
     def _find_cloned_audio_file(self, speaker_dir: Path, segment: Dict) -> Optional[Path]:
         """Find the cloned audio file for a segment"""
-        # Try to find cloned file by pattern
-        cloned_file = None
-        for file in speaker_dir.glob(f"cloned_*.wav"):
-            if any(str(segment['start']).replace('.', '_') in file.name for _ in [1]):
-                cloned_file = file
-                break
+        speaker = segment['speaker']
         
-        if not cloned_file:
-            # Find by segment number
-            segment_files = list(speaker_dir.glob(f"cloned_segment_{segment['speaker']}_*.wav"))
-            if segment_files:
-                cloned_file = segment_files[0]
+        # First try to find by exact segment matching
+        for json_file in speaker_dir.glob("*.json"):
+            with open(json_file, 'r', encoding='utf-8') as f:
+                seg_data = json.load(f)
+            
+            # Check if this is the matching segment by comparing start times
+            if abs(seg_data.get('start', 0) - segment['start']) < 0.1:
+                # Get the segment ID from the JSON file
+                segment_id = seg_data.get('segment_id', '')
+                if segment_id:
+                    cloned_file = speaker_dir / f"cloned_{segment_id}.wav"
+                    if cloned_file.exists():
+                        return cloned_file
         
-        return cloned_file
+        # Fallback: use any cloned file for this speaker
+        cloned_files = list(speaker_dir.glob(f"cloned_{speaker}_*.wav"))
+        if cloned_files:
+            return cloned_files[0]
+        
+        # Final fallback: use original file if no cloned file exists
+        for json_file in speaker_dir.glob("*.json"):
+            with open(json_file, 'r', encoding='utf-8') as f:
+                seg_data = json.load(f)
+            
+            if abs(seg_data.get('start', 0) - segment['start']) < 0.1:
+                segment_id = seg_data.get('segment_id', '')
+                if segment_id:
+                    original_file = speaker_dir / f"{segment_id}.wav"
+                    if original_file.exists():
+                        return original_file
+        
+        return None
     
-    def generate_subtitles(self, segments_dir: str, audio_id: str) -> Dict[str, Any]:
-        """Generate subtitle file"""
+    def cleanup_temp_files(self, audio_id: str):
+        """Clean up temporary files created during reconstruction"""
         try:
-            segments_path = Path(segments_dir)
-            metadata_file = segments_path / "metadata" / f"{audio_id}_metadata.json"
+            # Clean up final audio files
+            final_audio_path = self.temp_dir / f"final_output_{audio_id}.wav"
+            if final_audio_path.exists():
+                final_audio_path.unlink()
             
-            with open(metadata_file, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
+            # Clean up temporary mixed audio files
+            temp_mixed_path = self.temp_dir / f"temp_mixed_{audio_id}.wav"
+            if temp_mixed_path.exists():
+                temp_mixed_path.unlink()
             
-            subtitles = []
-            counter = 1
-            
-            for segment in metadata.get('segments_info', []):
-                start_time = self._format_srt_time(segment['start'])
-                end_time = self._format_srt_time(segment['end'])
-                
-                # Get English text from segment data
-                speaker = segment['speaker']
-                speaker_dir = segments_path / f"speaker_{speaker}" / "segments"
-                
-                english_text = segment.get('text', '')
-                for json_file in speaker_dir.glob("*.json"):
-                    with open(json_file, 'r', encoding='utf-8') as f:
-                        seg_data = json.load(f)
-                        if abs(seg_data.get('start', 0) - segment['start']) < 0.1:
-                            english_text = seg_data.get('english_text', english_text)
-                            break
-                
-                subtitles.extend([
-                    f"{counter}",
-                    f"{start_time} --> {end_time}",
-                    english_text,
-                    ""
-                ])
-                counter += 1
-            
-            subtitle_path = self.temp_dir / f"subtitles_{audio_id}.srt"
-            with open(subtitle_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(subtitles))
-            
-            return {"success": True, "subtitle_path": str(subtitle_path), "audio_id": audio_id}
-            
-        except Exception as e:
-            return {"success": False, "error": str(e), "audio_id": audio_id}
-    
-    def _format_srt_time(self, seconds: float) -> str:
-        """Format time for SRT subtitles"""
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        secs = int(seconds % 60)
-        milliseconds = int((seconds % 1) * 1000)
-        return f"{hours:02d}:{minutes:02d}:{secs:02d},{milliseconds:03d}"
+            # Clean up any other temp files related to audio reconstruction
+            for temp_file in self.temp_dir.glob(f"*{audio_id}*"):
+                if temp_file.is_file() and temp_file.name.endswith(('.wav', '.mp3', '.flac')):
+                    temp_file.unlink()
+                    
+        except Exception:
+            pass

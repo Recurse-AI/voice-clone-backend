@@ -85,7 +85,7 @@ class FileManager:
     def save_reference_segments(self, reference_segments: Dict[str, Dict], 
                                audio: np.ndarray, sr: int, base_dir: Path, 
                                speakers: List[str]):
-        """Save reference segments for each speaker"""
+        """Save reference segments for each speaker with proper Dia formatting"""
         for speaker in speakers:
             if speaker not in reference_segments:
                 continue
@@ -103,6 +103,18 @@ class FileManager:
             ref_audio_path = speaker_dir / ref_audio_name
             sf.write(ref_audio_path, reference_audio, sr)
             
+            # Get English text and format with speaker tag
+            english_text = ref_segment.get('english_text', ref_segment['text'])
+            original_text = ref_segment.get('original_text', ref_segment['text'])
+            
+            # Format reference text with proper speaker tag for voice cloning
+            try:
+                speaker_idx = speakers.index(speaker) + 1
+                formatted_reference_text = f"[S{speaker_idx}] {english_text}"
+            except ValueError:
+                # Fallback if speaker not found
+                formatted_reference_text = f"[S1] {english_text}"
+            
             # Save reference metadata
             ref_metadata = {
                 'speaker': speaker,
@@ -110,7 +122,9 @@ class FileManager:
                 'start': ref_segment['start'],
                 'end': ref_segment['end'],
                 'duration': ref_segment['duration'],
-                'text': ref_segment['text'],
+                'text': formatted_reference_text,  # ✅ Now includes [S1] tag
+                'plain_english_text': english_text,  # Plain text for reference
+                'original_text': original_text,  # Keep original text for reference
                 'confidence': ref_segment['confidence'],
                 'selected_reason': 'highest_confidence_and_quality'
             }

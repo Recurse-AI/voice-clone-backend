@@ -24,8 +24,11 @@ class AudioUtils:
     def extract_audio_from_video(self, video_path: str, output_path: str) -> Dict[str, Any]:
         """Extract audio from video file using ffmpeg"""
         try:
+            # Get FFmpeg executable path
+            ffmpeg_path = self._get_ffmpeg_path()
+            
             cmd = [
-                'ffmpeg', '-y',
+                ffmpeg_path, '-y',
                 '-i', video_path,
                 '-ac', '2',  # Stereo
                 '-ar', '44100',  # Sample rate
@@ -42,6 +45,25 @@ class AudioUtils:
                 
         except Exception as e:
             return {"success": False, "error": str(e)}
+    
+    def _get_ffmpeg_path(self) -> str:
+        """Get the correct FFmpeg executable path"""
+        import platform
+        import shutil
+        
+        # Check for bundled FFmpeg first (Windows)
+        if platform.system() == 'Windows':
+            bundled_ffmpeg = Path('ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe')
+            if bundled_ffmpeg.exists():
+                return str(bundled_ffmpeg)
+        
+        # Check if ffmpeg is in PATH
+        ffmpeg_in_path = shutil.which('ffmpeg')
+        if ffmpeg_in_path:
+            return 'ffmpeg'
+        
+        # Default fallback
+        return 'ffmpeg'
     
     def download_audio_file(self, url: str, output_path: str) -> Dict[str, Any]:
         """Download audio file from URL"""

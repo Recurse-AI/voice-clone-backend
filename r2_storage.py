@@ -9,15 +9,26 @@ from config import settings
 
 class R2Storage:
     def __init__(self):
-        self.client = boto3.client(
-            's3',
-            endpoint_url=settings.R2_ENDPOINT_URL,
-            aws_access_key_id=settings.R2_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
-            region_name=settings.R2_REGION
-        )
-        self.bucket_name = settings.R2_BUCKET_NAME
-        self.base_path = settings.R2_BASE_PATH
+        try:
+            self.client = boto3.client(
+                's3',
+                endpoint_url=settings.R2_ENDPOINT_URL,
+                aws_access_key_id=settings.R2_ACCESS_KEY_ID,
+                aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
+                region_name=settings.R2_REGION
+            )
+            self.bucket_name = settings.R2_BUCKET_NAME
+            self.base_path = settings.R2_BASE_PATH
+            
+            # Test connection
+            self.client.head_bucket(Bucket=self.bucket_name)
+            
+            # Enable public access
+            self._enable_public_access()
+        except Exception:
+            self.client = None
+            self.bucket_name = None
+            self.base_path = settings.R2_BASE_PATH
     
     def generate_audio_id(self) -> str:
         """Generate unique audio processing ID"""
@@ -32,6 +43,9 @@ class R2Storage:
     
     def upload_file(self, local_path: str, r2_key: str, content_type: str = "audio/wav") -> Dict[str, Any]:
         """Upload file to R2 bucket"""
+        if not self.client:
+            return {"success": False, "error": "R2 client not initialized"}
+            
         try:
             with open(local_path, 'rb') as file:
                 self.client.upload_fileobj(
@@ -42,13 +56,20 @@ class R2Storage:
                 )
             
             file_size = os.path.getsize(local_path)
+            
+            # Use public URL if configured, otherwise use default format
+            if settings.R2_PUBLIC_URL:
+                public_url = f"{settings.R2_PUBLIC_URL}/{r2_key}"
+            else:
+                public_url = f"https://{self.bucket_name}.r2.cloudflarestorage.com/{r2_key}"
+            
             return {
                 "success": True,
                 "r2_key": r2_key,
                 "bucket": self.bucket_name,
                 "size": file_size,
                 "content_type": content_type,
-                "url": f"https://{self.bucket_name}.r2.cloudflarestorage.com/{r2_key}"
+                "url": public_url
             }
         except Exception as e:
             return {
@@ -173,6 +194,50 @@ class R2Storage:
         
         return result
     
+
+    
+    def _enable_public_access(self):
+        """Enable public access for bucket"""
+        try:
+            # Set bucket policy for public read access
+            bucket_policy = {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Sid": "PublicReadGetObject",
+                        "Effect": "Allow",
+                        "Principal": "*",
+                        "Action": "s3:GetObject",
+                        "Resource": f"arn:aws:s3:::{self.bucket_name}/*"
+                    }
+                ]
+            }
+            
+            self.client.put_bucket_policy(
+                Bucket=self.bucket_name,
+                Policy=json.dumps(bucket_policy)
+            )
+            
+            # Set CORS for web access
+            cors_config = {
+                'CORSRules': [
+                    {
+                        'AllowedHeaders': ['*'],
+                        'AllowedMethods': ['GET', 'PUT', 'POST', 'DELETE'],
+                        'AllowedOrigins': ['*'],
+                        'ExposeHeaders': ['ETag']
+                    }
+                ]
+            }
+            
+            self.client.put_bucket_cors(
+                Bucket=self.bucket_name,
+                CORSConfiguration=cors_config
+            )
+            
+        except Exception:
+            pass
+    
     def get_storage_info(self, audio_id: str) -> Dict[str, Any]:
         """Get storage information for an audio processing job"""
         date_prefix = datetime.now().strftime("%Y/%m/%d")
@@ -182,4 +247,34 @@ class R2Storage:
             "audio_id": audio_id,
             "date": date_prefix,
             "access_url": f"https://{self.bucket_name}.r2.cloudflarestorage.com/{self.base_path}/{date_prefix}/{audio_id}"
-        } 
+        }
+    
+    def cleanup_temp_files(self, audio_id: str):
+        """Clean up temporary files uploaded to R2 for processing"""
+        try:
+            if not self.client:
+                return
+                
+            # List and delete temp files in R2
+            temp_prefix = f"temp/{audio_id}"
+            
+            # List objects with the temp prefix
+            response = self.client.list_objects_v2(
+                Bucket=self.bucket_name,
+                Prefix=temp_prefix
+            )
+            
+            # Delete temp files
+            if 'Contents' in response:
+                delete_objects = []
+                for obj in response['Contents']:
+                    delete_objects.append({'Key': obj['Key']})
+                
+                if delete_objects:
+                    self.client.delete_objects(
+                        Bucket=self.bucket_name,
+                        Delete={'Objects': delete_objects}
+                    )
+                    
+        except Exception:
+            pass 
