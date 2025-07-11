@@ -56,9 +56,9 @@ class FileManager:
             'audio_id': audio_id,
             'original_audio_path': audio_path,
             'transcription_source': 'AssemblyAI',
-            'speakers': transcript_data['speakers'],
+            'speakers': transcript_data.get('speakers', ['A']),
             'total_segments': len(segments),
-            'total_duration': transcript_data['duration'],
+            'total_duration': transcript_data.get('duration', 0),
             'segments_by_speaker': {},
             'silent_parts_count': len(silent_parts),
             'segments_info': segments,
@@ -70,9 +70,9 @@ class FileManager:
         if additional_metadata:
             metadata.update(additional_metadata)
         
-        # Count segments by speaker
+        # Count segments by speaker with safe access
         for segment in segments:
-            speaker = segment['speaker']
+            speaker = segment.get('speaker', 'A')
             if speaker not in metadata['segments_by_speaker']:
                 metadata['segments_by_speaker'][speaker] = 0
             metadata['segments_by_speaker'][speaker] += 1
@@ -93,9 +93,21 @@ class FileManager:
             ref_segment = reference_segments[speaker]
             speaker_dir = base_dir / f"speaker_{speaker}" / "reference"
             
+            # Safe access to segment data with fallbacks
+            start_time = ref_segment.get('start', 0)
+            end_time = ref_segment.get('end', 5)
+            duration = ref_segment.get('duration', 5)
+            
             # Extract reference audio
-            start_sample = int(ref_segment['start'] * sr)
-            end_sample = int(ref_segment['end'] * sr)
+            start_sample = int(start_time * sr)
+            end_sample = int(end_time * sr)
+            
+            # Ensure we don't exceed audio bounds
+            if end_sample > len(audio):
+                end_sample = len(audio)
+            if start_sample >= end_sample:
+                start_sample = max(0, end_sample - int(9 * sr))  # Fallback to 9 seconds
+            
             reference_audio = audio[start_sample:end_sample]
             
             # Save reference audio
@@ -104,8 +116,9 @@ class FileManager:
             sf.write(ref_audio_path, reference_audio, sr)
             
             # Get English text and format with speaker tag
-            english_text = ref_segment.get('english_text', ref_segment['text'])
-            original_text = ref_segment.get('original_text', ref_segment['text'])
+            ref_text = ref_segment.get('text', f'Reference for speaker {speaker}')
+            english_text = ref_segment.get('english_text', ref_text)
+            original_text = ref_segment.get('original_text', ref_text)
             
             # Format reference text with proper speaker tag for voice cloning
             try:
@@ -115,17 +128,17 @@ class FileManager:
                 # Fallback if speaker not found
                 formatted_reference_text = f"[S1] {english_text}"
             
-            # Save reference metadata
+            # Save reference metadata with safe access
             ref_metadata = {
                 'speaker': speaker,
                 'reference_audio': ref_audio_name,
-                'start': ref_segment['start'],
-                'end': ref_segment['end'],
-                'duration': ref_segment['duration'],
-                'text': formatted_reference_text,  # ✅ Now includes [S1] tag
-                'plain_english_text': english_text,  # Plain text for reference
-                'original_text': original_text,  # Keep original text for reference
-                'confidence': ref_segment['confidence'],
+                'start': start_time,
+                'end': end_time,
+                'duration': duration,
+                'text': formatted_reference_text,
+                'plain_english_text': english_text,
+                'original_text': original_text,
+                'confidence': ref_segment.get('confidence', 0.5),
                 'selected_reason': 'highest_confidence_and_quality'
             }
             

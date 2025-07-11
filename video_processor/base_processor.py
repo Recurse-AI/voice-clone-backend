@@ -51,13 +51,19 @@ class AudioProcessor:
             # Load audio
             audio, sr = sf.read(audio_path)
             
-            # Transcribe audio
-            transcript_data = self.transcription_service.transcribe_audio(
-                audio_path, language_code, speakers_expected
-            )
+            # Transcribe audio with detailed error handling
+            try:
+                transcript_data = self.transcription_service.transcribe_audio(
+                    audio_path, language_code, speakers_expected
+                )
+            except Exception as e:
+                return {"success": False, "error": f"Transcription failed: {str(e)}"}
             
-            # Create optimal segments for Dia model
-            segments = self.segment_manager.create_optimal_segments(transcript_data)
+            # Create optimal segments for Dia model with detailed error handling
+            try:
+                segments = self.segment_manager.create_optimal_segments(transcript_data)
+            except Exception as e:
+                return {"success": False, "error": f"Segment creation failed: {str(e)}"}
             
             if not segments:
                 return {"success": False, "error": "No viable segments created"}
@@ -67,34 +73,46 @@ class AudioProcessor:
             output_dir.mkdir(parents=True, exist_ok=True)
             
             # Create directory structure
-            self.file_manager.create_directory_structure(output_dir, transcript_data['speakers'])
+            try:
+                self.file_manager.create_directory_structure(output_dir, transcript_data['speakers'])
+            except Exception as e:
+                return {"success": False, "error": f"Directory creation failed: {str(e)}"}
             
             # Save optimal segments
-            self.segment_manager.save_optimal_segments(
-                segments, audio, sr, output_dir, 
-                transcript_data['speakers'], target_language
-            )
+            try:
+                self.segment_manager.save_optimal_segments(
+                    segments, audio, sr, output_dir, 
+                    transcript_data['speakers'], target_language
+                )
+            except Exception as e:
+                return {"success": False, "error": f"Segment saving failed: {str(e)}"}
             
             # Select optimal references
-            reference_segments = self.segment_manager.select_optimal_references(
-                segments, transcript_data['speakers']
-            )
-            self.file_manager.save_reference_segments(
-                reference_segments, audio, sr, output_dir, transcript_data['speakers']
-            )
+            try:
+                reference_segments = self.segment_manager.select_optimal_references(
+                    segments, transcript_data['speakers']
+                )
+                self.file_manager.save_reference_segments(
+                    reference_segments, audio, sr, output_dir, transcript_data['speakers']
+                )
+            except Exception as e:
+                return {"success": False, "error": f"Reference segment processing failed: {str(e)}"}
             
             # Save metadata
-            metadata = {
-                **transcript_data.get('metadata', {}),
-                "target_language": target_language,
-                "processing_timestamp": datetime.now().isoformat(),
-                "optimization": "dia_optimal_segments"
-            }
-            
-            self.file_manager.save_metadata(
-                transcript_data, segments, [], 
-                output_dir, audio_id, audio_path, metadata
-            )
+            try:
+                metadata = {
+                    **transcript_data.get('metadata', {}),
+                    "target_language": target_language,
+                    "processing_timestamp": datetime.now().isoformat(),
+                    "optimization": "dia_optimal_segments"
+                }
+                
+                self.file_manager.save_metadata(
+                    transcript_data, segments, [], 
+                    output_dir, audio_id, audio_path, metadata
+                )
+            except Exception as e:
+                return {"success": False, "error": f"Metadata saving failed: {str(e)}"}
             
             return {
                 "success": True,
@@ -109,7 +127,7 @@ class AudioProcessor:
             }
             
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": f"Audio processing failed: {str(e)}"}
     
     def clone_voice_segments_speaker_wise(self, segments_dir: str, audio_id: str, 
                                         temperature: float = 1.3, cfg_scale: float = 3.0, 

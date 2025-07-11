@@ -273,7 +273,7 @@ class SegmentManager:
         # Group segments by speaker
         speaker_segments = {}
         for segment in segments:
-            speaker = segment['speaker']
+            speaker = segment.get('speaker', 'A')
             if speaker not in speaker_segments:
                 speaker_segments[speaker] = []
             speaker_segments[speaker].append(segment)
@@ -285,22 +285,24 @@ class SegmentManager:
                 
             speaker_segs = speaker_segments[speaker]
             
-            # Sort by optimal criteria:
+            # Sort by optimal criteria with safe access:
             # 1. Duration preference (8-15 seconds is optimal)
             # 2. Higher confidence
             # 3. Word count (longer is better for reference)
             best_segment = max(speaker_segs, key=lambda seg: (
-                -abs(seg['duration'] - 11.5),  # Closer to 11.5 seconds (middle of optimal range)
-                seg.get('confidence', 0.5),     # Higher confidence
-                seg.get('word_count', 0)        # More words
+                -abs(seg.get('duration', 5) - 11.5),  # Closer to 11.5 seconds (middle of optimal range)
+                seg.get('confidence', 0.5),           # Higher confidence
+                seg.get('word_count', 0)              # More words
             ))
             
             reference_segments[speaker] = {
                 'segment': best_segment,
-                'duration': best_segment['duration'],
+                'start': best_segment.get('start', 0),
+                'end': best_segment.get('end', 5),
+                'duration': best_segment.get('duration', 5),
                 'confidence': best_segment.get('confidence', 0.5),
                 'word_count': best_segment.get('word_count', 0),
-                'text': best_segment['text']
+                'text': best_segment.get('text', f'Reference for speaker {speaker}')
             }
         
         return reference_segments
