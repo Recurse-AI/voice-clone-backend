@@ -142,15 +142,16 @@ class SegmentManager:
         if not words:
             return None
         
-        start_time = words[0]['start'] / 1000
-        end_time = words[-1]['end'] / 1000
+        # Safe access to start and end with fallbacks
+        start_time = words[0].get('start', 0) / 1000
+        end_time = words[-1].get('end', 0) / 1000
         duration = end_time - start_time
         
         # Duration check - accept 4s+ but reject if over 19s
         if duration < self.absolute_min_duration or duration > self.max_duration:
             return None
         
-        text = ' '.join(word['text'] for word in words)
+        text = ' '.join(word.get('text', '') for word in words)
         word_count = len(words)
         
         # Calculate confidence
@@ -173,7 +174,11 @@ class SegmentManager:
         """Calculate duration of word sequence"""
         if not words:
             return 0.0
-        return (words[-1]['end'] - words[0]['start']) / 1000
+        
+        # Safe access to start and end with fallbacks
+        start_time = words[0].get('start', 0)
+        end_time = words[-1].get('end', 0)
+        return (end_time - start_time) / 1000
     
     def _would_exceed_max_duration(self, current_words: List[Dict], remaining_words: List[Dict]) -> bool:
         """Check if adding next word would exceed max duration"""
