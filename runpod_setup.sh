@@ -4,8 +4,24 @@
 
 echo "🚀 Setting up Voice Cloning API on RunPod GPU..."
 
-# Set working directory
-cd /workspace
+# Set working directory to the project directory
+if [ -f "requirements.txt" ]; then
+    echo "📁 Found requirements.txt in current directory"
+elif [ -f "voice-clone-backend/requirements.txt" ]; then
+    echo "📁 Changing to voice-clone-backend directory"
+    cd voice-clone-backend
+elif [ -f "/workspace/voice-clone-backend/requirements.txt" ]; then
+    echo "📁 Changing to /workspace/voice-clone-backend directory"
+    cd /workspace/voice-clone-backend
+else
+    echo "❌ Could not find requirements.txt file"
+    echo "Current directory: $(pwd)"
+    echo "Files in current directory:"
+    ls -la
+    exit 1
+fi
+
+echo "📁 Working directory: $(pwd)"
 
 # Install system dependencies with error handling
 echo "📦 Installing system dependencies..."
