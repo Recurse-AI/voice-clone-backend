@@ -250,19 +250,58 @@ class AudioProcessor:
             return {"success": False, "error": str(e)}
     
     def _preserve_exact_length(self, cloned_audio: np.ndarray, target_duration: float, sample_rate: int) -> np.ndarray:
-        """Preserve exact length of original audio for dubbing"""
+        """Preserve exact length with smart audio processing - no empty voice"""
         target_samples = int(target_duration * sample_rate)
         current_samples = len(cloned_audio)
         
         if current_samples == target_samples:
             return cloned_audio
         elif current_samples > target_samples:
-            # Trim excess
             return cloned_audio[:target_samples]
         else:
-            # Pad with silence
-            padding = np.zeros(target_samples - current_samples)
-            return np.concatenate([cloned_audio, padding])
+            # Smart extension to avoid empty voice
+            missing_samples = target_samples - current_samples
+            
+            # Small gap: time-stretch naturally
+            if missing_samples < (1.0 * sample_rate):
+                return self._time_stretch_audio(cloned_audio, target_samples, sample_rate)
+            # Large gap: extend with fade
+            else:
+                return self._extend_with_fade(cloned_audio, target_samples, sample_rate)
+    
+    def _time_stretch_audio(self, audio: np.ndarray, target_samples: int, sample_rate: int) -> np.ndarray:
+        """Time-stretch audio naturally to exact length"""
+        try:
+            import librosa
+            stretch_factor = target_samples / len(audio)
+            stretched_audio = librosa.effects.time_stretch(audio, rate=1/stretch_factor)
+            return stretched_audio[:target_samples]  # Ensure exact length
+        except ImportError:
+            # Simple linear interpolation if librosa not available
+            import scipy.signal
+            return scipy.signal.resample(audio, target_samples)
+    
+    def _extend_with_fade(self, audio: np.ndarray, target_samples: int, sample_rate: int) -> np.ndarray:
+        """Extend audio with natural fade-out"""
+        missing_samples = target_samples - len(audio)
+        
+        # Use last 0.3 seconds for extension
+        extend_samples = min(int(0.3 * sample_rate), len(audio) // 3)
+        last_part = audio[-extend_samples:]
+        
+        # Create smooth fade-out
+        fade_length = min(extend_samples, missing_samples)
+        fade_curve = np.linspace(0.7, 0.0, fade_length)
+        extended_part = last_part[:fade_length] * fade_curve
+        
+        result = np.concatenate([audio, extended_part])
+        
+        # Fill remaining with minimal silence if needed
+        if len(result) < target_samples:
+            remaining = np.zeros(target_samples - len(result))
+            result = np.concatenate([result, remaining])
+        
+        return result[:target_samples]
     
     def clone_voice_segments(self, segments_dir: str, audio_id: str, 
                            temperature: float = 1.3, cfg_scale: float = 3.0, 
