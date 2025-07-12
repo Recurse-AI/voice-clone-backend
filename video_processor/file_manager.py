@@ -118,18 +118,9 @@ class FileManager:
             ref_audio_path = speaker_dir / ref_audio_name
             sf.write(ref_audio_path, reference_audio, sr)
             
-            # Get English text and format with speaker tag
-            ref_text = ref_segment.get('text', f'Reference for speaker {speaker}')
-            english_text = ref_segment.get('english_text', ref_text)
-            original_text = ref_segment.get('original_text', ref_text)
-            
-            # Format reference text with proper speaker tag for voice cloning
-            try:
-                speaker_idx = speakers.index(speaker) + 1
-                formatted_reference_text = f"[S{speaker_idx}] {english_text}"
-            except ValueError:
-                # Fallback if speaker not found
-                formatted_reference_text = f"[S1] {english_text}"
+            # Get clean English text (already cleaned by segment manager)
+            english_text = ref_segment.get('text', f'Reference for speaker {speaker}')
+            original_text = ref_segment.get('original_text', english_text)
             
             # Save reference metadata with safe access
             ref_metadata = {
@@ -138,8 +129,7 @@ class FileManager:
                 'start': start_time,
                 'end': end_time,
                 'duration': duration,
-                'text': formatted_reference_text,
-                'plain_english_text': english_text,
+                'text': english_text,  # Clean English text for reference
                 'original_text': original_text,
                 'confidence': ref_segment.get('confidence', 0.5),
                 'selected_reason': 'highest_confidence_and_quality'

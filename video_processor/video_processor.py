@@ -1,7 +1,7 @@
 """
 Video Processing Module
 
-Handles video processing with voice-cloned audio and subtitle display.
+Handles video processing with voice-cloned audio replacement.
 """
 
 import os
@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 import soundfile as sf
 import logging
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ except ImportError:
 
 
 class VideoProcessor:
-    """Video processor with subtitle display"""
+    """Simple video processor that replaces original audio with cloned audio"""
     
     def __init__(self, temp_dir: str = "/tmp/video_processing"):
         self.temp_dir = Path(temp_dir)
@@ -37,12 +38,12 @@ class VideoProcessor:
     def create_video_with_subtitles(self, video_path: str, audio_path: str, 
                                    segments_dir: str, audio_id: str,
                                    instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Create video with voice-cloned audio and subtitles"""
+        """Create video with cloned audio and subtitles"""
         try:
             output_path = self.temp_dir / f"video_with_subtitles_{audio_id}.mp4"
             
-            # Load subtitle data from voice-cloned segments
-            subtitle_data = self._load_voice_cloned_subtitles(segments_dir)
+            # Load subtitle data
+            subtitle_data = self._load_subtitles(segments_dir)
             
             if not subtitle_data:
                 logger.warning(f"No subtitle data found for {audio_id}")
@@ -50,19 +51,17 @@ class VideoProcessor:
             
             logger.info(f"Creating video with {len(subtitle_data)} subtitles for {audio_id}")
             
-            # Create standalone subtitle file
+            # Create subtitle file
             subtitle_path = self.temp_dir / f"subtitles_{audio_id}.srt"
             self._create_srt_file(subtitle_data, subtitle_path)
             
-            # Create video with subtitles
-            if MOVIEPY_AVAILABLE:
-                result = self._create_video_with_subtitles_moviepy(
-                    video_path, audio_path, subtitle_data, output_path, instruments_path
-                )
-            else:
-                result = self._create_video_with_subtitles_ffmpeg(
-                    video_path, audio_path, subtitle_data, output_path, instruments_path
-                )
+            # Create final audio (cloned + instruments if requested)
+            final_audio_path = self._create_final_audio(audio_path, instruments_path, audio_id)
+            
+            # Create video with new audio and subtitles
+            result = self._create_video_ffmpeg(
+                video_path, final_audio_path, subtitle_path, output_path
+            )
             
             if result["success"]:
                 return {
@@ -73,7 +72,7 @@ class VideoProcessor:
                     "duration": result.get("duration", 0),
                     "file_size": os.path.getsize(output_path) / (1024*1024),
                     "audio_id": audio_id,
-                    "audio_used": audio_path,
+                    "audio_used": str(final_audio_path),
                     "instruments_mixed": instruments_path is not None and os.path.exists(instruments_path)
                 }
             else:
@@ -85,21 +84,19 @@ class VideoProcessor:
     
     def create_video_with_audio(self, video_path: str, audio_path: str, 
                               audio_id: str, instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Create video with voice-cloned audio only"""
+        """Create video with cloned audio only (no subtitles)"""
         try:
             output_path = self.temp_dir / f"video_no_subtitles_{audio_id}.mp4"
             
             logger.info(f"Creating video without subtitles for {audio_id}")
             
-            # Create video without subtitles
-            if MOVIEPY_AVAILABLE:
-                result = self._create_video_audio_only_moviepy(
-                    video_path, audio_path, output_path, instruments_path
-                )
-            else:
-                result = self._create_video_audio_only_ffmpeg(
-                    video_path, audio_path, output_path, instruments_path
-                )
+            # Create final audio (cloned + instruments if requested)
+            final_audio_path = self._create_final_audio(audio_path, instruments_path, audio_id)
+            
+            # Create video with new audio only
+            result = self._create_video_ffmpeg(
+                video_path, final_audio_path, None, output_path
+            )
             
             if result["success"]:
                 return {
@@ -109,7 +106,7 @@ class VideoProcessor:
                     "file_size": os.path.getsize(output_path) / (1024*1024),
                     "subtitles_included": False,
                     "audio_id": audio_id,
-                    "audio_used": audio_path,
+                    "audio_used": str(final_audio_path),
                     "instruments_mixed": instruments_path is not None and os.path.exists(instruments_path)
                 }
             else:
@@ -119,12 +116,12 @@ class VideoProcessor:
             logger.error(f"Video creation failed for {audio_id}: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    def _load_voice_cloned_subtitles(self, segments_dir: str) -> List[Dict]:
-        """Load subtitle data from voice-cloned segments"""
+    def _load_subtitles(self, segments_dir: str) -> List[Dict]:
+        """Load subtitle data from segments"""
         subtitle_data = []
         segments_path = Path(segments_dir)
         
-        # Process each speaker directory (including mixed)
+        # Process each speaker directory
         for speaker_dir in segments_path.glob("speaker_*"):
             if not speaker_dir.is_dir():
                 continue
@@ -147,19 +144,17 @@ class VideoProcessor:
                     if not cloned_audio_path.exists():
                         continue
                     
-                    # Use English text from voice-cloned content
+                    # Use English text for subtitles
                     english_text = data.get('english_text', data.get('text', ''))
                     
                     if english_text and data.get('start') is not None and data.get('end') is not None:
-                        # For mixed segments, clean the text by removing speaker tags for subtitles
+                        # Clean mixed segment text (remove speaker tags for display)
                         if data.get('is_mixed', False):
-                            # Remove [S1], [S2] tags for subtitle display
                             import re
-                            clean_text = re.sub(r'\[S\d+\]\s*', '', english_text)
-                            english_text = clean_text.strip()
+                            english_text = re.sub(r'\[S\d+\]\s*', '', english_text)
                         
-                        # Split text into word chunks (max 3-4 words per subtitle)
-                        word_chunks = self._split_into_word_chunks(english_text, data['start'], data['end'])
+                        # Split into word chunks
+                        word_chunks = self._split_into_chunks(english_text, data['start'], data['end'])
                         subtitle_data.extend(word_chunks)
                 
                 except Exception as e:
@@ -170,8 +165,8 @@ class VideoProcessor:
         subtitle_data.sort(key=lambda x: x['start'])
         return subtitle_data
     
-    def _split_into_word_chunks(self, text: str, start_time: float, end_time: float) -> List[Dict]:
-        """Split text into chunks of max 3-4 words with proper timing"""
+    def _split_into_chunks(self, text: str, start_time: float, end_time: float) -> List[Dict]:
+        """Split text into small chunks for better subtitle display"""
         words = text.strip().split()
         if not words:
             return []
@@ -179,16 +174,16 @@ class VideoProcessor:
         chunks = []
         total_duration = end_time - start_time
         
-        # Split words into chunks
+        # Split words into chunks of max 3-4 words
         for i in range(0, len(words), self.max_words_per_subtitle):
             chunk_words = words[i:i + self.max_words_per_subtitle]
             chunk_text = ' '.join(chunk_words)
             
-            # Calculate timing for this chunk
+            # Calculate timing
             chunk_start = start_time + (i / len(words)) * total_duration
             chunk_end = start_time + ((i + len(chunk_words)) / len(words)) * total_duration
             
-            # Ensure minimum duration of 1 second
+            # Ensure minimum duration
             if chunk_end - chunk_start < 1.0:
                 chunk_end = chunk_start + 1.0
             
@@ -201,200 +196,88 @@ class VideoProcessor:
         
         return chunks
     
-    def _create_video_with_subtitles_moviepy(self, video_path: str, audio_path: str, 
-                                           subtitle_data: List[Dict], output_path: Path,
-                                           instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Create video with subtitles using MoviePy"""
-        try:
-            from moviepy.editor import TextClip, CompositeVideoClip
-            
-            # Load video and prepare audio
-            video = VideoFileClip(video_path)
-            final_audio = self._prepare_audio_moviepy(audio_path, instruments_path)
-            
-            # Create subtitle clips
-            subtitle_clips = []
-            for i, subtitle in enumerate(subtitle_data):
-                try:
-                    # Create text clip
-                    text_clip = TextClip(
-                        subtitle['text'],
-                        fontsize=self.subtitle_font_size,
-                        font='Arial-Bold',
-                        color='white',
-                        stroke_color='black',
-                        stroke_width=3,
-                        align='center'
-                    ).set_duration(subtitle['duration']).set_start(subtitle['start'])
-                    
-                    # Position at bottom center
-                    text_clip = text_clip.set_position(('center', video.h - self.subtitle_margin_bottom))
-                    subtitle_clips.append(text_clip)
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to create subtitle clip {i}: {str(e)}")
-                    continue
-            
-            # Compose final video
-            final_video = video.set_audio(final_audio)
-            if subtitle_clips:
-                final_video = CompositeVideoClip([final_video] + subtitle_clips)
-            
-            # Render
-            final_video.write_videofile(
-                str(output_path),
-                fps=24,
-                codec='libx264',
-                audio_codec='aac',
-                bitrate='1500k',
-                audio_bitrate='128k',
-                verbose=False,
-                logger=None,
-                threads=2
-            )
-            
-            # Cleanup
-            self._cleanup_moviepy_objects(video, final_audio, final_video)
-            
-            return {
-                "success": True,
-                "duration": video.duration,
-                "subtitle_count": len(subtitle_clips)
-            }
-            
-        except Exception as e:
-            logger.error(f"MoviePy video creation failed: {str(e)}")
-            return {"success": False, "error": str(e)}
-    
-    def _create_video_with_subtitles_ffmpeg(self, video_path: str, audio_path: str,
-                                          subtitle_data: List[Dict], output_path: Path,
-                                          instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Create video with subtitles using FFmpeg"""
-        try:
-            # Create temporary files
-            srt_path = self.temp_dir / f"temp_subtitles_{output_path.stem}.srt"
-            mixed_audio_path = self.temp_dir / f"temp_audio_{output_path.stem}.wav"
-            
-            # Create SRT file
-            self._create_srt_file(subtitle_data, srt_path)
-            
-            # Create mixed audio
-            self._create_mixed_audio(audio_path, instruments_path, mixed_audio_path)
-            
-            # FFmpeg command
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', video_path,
-                '-i', str(mixed_audio_path),
-                '-vf', f"subtitles='{srt_path}':force_style='Fontname=Arial-Bold,Fontsize={self.subtitle_font_size},Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV={self.subtitle_margin_bottom}'",
-                '-c:v', 'libx264',
-                '-c:a', 'aac',
-                '-b:v', '1500k',
-                '-b:a', '128k',
-                '-r', '24',
-                '-shortest',
-                str(output_path)
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            
-            # Cleanup temp files
-            self._cleanup_temp_files([srt_path, mixed_audio_path])
-            
-            if result.returncode == 0:
-                return {"success": True, "subtitle_count": len(subtitle_data)}
-            else:
-                return {"success": False, "error": f"FFmpeg error: {result.stderr}"}
-                
-        except Exception as e:
-            logger.error(f"FFmpeg video creation failed: {str(e)}")
-            return {"success": False, "error": str(e)}
-    
-    def _create_video_audio_only_moviepy(self, video_path: str, audio_path: str, 
-                                       output_path: Path, instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Create video with audio only using MoviePy"""
-        try:
-            # Load video and prepare audio
-            video = VideoFileClip(video_path)
-            final_audio = self._prepare_audio_moviepy(audio_path, instruments_path)
-            
-            # Set new audio to video
-            final_video = video.set_audio(final_audio)
-            
-            # Render
-            final_video.write_videofile(
-                str(output_path),
-                fps=24,
-                codec='libx264',
-                audio_codec='aac',
-                bitrate='1500k',
-                audio_bitrate='128k',
-                verbose=False,
-                logger=None,
-                threads=2
-            )
-            
-            # Cleanup
-            self._cleanup_moviepy_objects(video, final_audio, final_video)
-            
-            return {"success": True, "duration": video.duration}
-            
-        except Exception as e:
-            logger.error(f"MoviePy audio-only video creation failed: {str(e)}")
-            return {"success": False, "error": str(e)}
-    
-    def _create_video_audio_only_ffmpeg(self, video_path: str, audio_path: str,
-                                      output_path: Path, instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Create video with audio only using FFmpeg"""
-        try:
-            # Prepare audio
-            if instruments_path and os.path.exists(instruments_path):
-                mixed_audio_path = self.temp_dir / f"temp_audio_{output_path.stem}.wav"
-                self._create_mixed_audio(audio_path, instruments_path, mixed_audio_path)
-                final_audio_path = mixed_audio_path
-            else:
-                final_audio_path = audio_path
-            
-            # FFmpeg command
-            cmd = [
-                'ffmpeg', '-y',
-                '-i', video_path,
-                '-i', str(final_audio_path),
-                '-c:v', 'copy',
-                '-c:a', 'aac',
-                '-b:a', '128k',
-                '-map', '0:v:0',
-                '-map', '1:a:0',
-                '-shortest',
-                str(output_path)
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            
-            # Cleanup temp files
-            if final_audio_path != audio_path:
-                self._cleanup_temp_files([final_audio_path])
-            
-            if result.returncode == 0:
-                return {"success": True}
-            else:
-                return {"success": False, "error": f"FFmpeg error: {result.stderr}"}
-                
-        except Exception as e:
-            logger.error(f"FFmpeg audio-only video creation failed: {str(e)}")
-            return {"success": False, "error": str(e)}
-    
-    def _prepare_audio_moviepy(self, audio_path: str, instruments_path: Optional[str] = None):
-        """Prepare audio for MoviePy"""
-        generated_audio = AudioFileClip(audio_path)
+    def _create_final_audio(self, audio_path: str, instruments_path: Optional[str], audio_id: str) -> Path:
+        """Create final audio by mixing cloned audio with instruments if provided"""
+        final_audio_path = self.temp_dir / f"final_mixed_audio_{audio_id}.wav"
+        
+        # Load cloned audio
+        cloned_audio, sr = sf.read(audio_path)
         
         if instruments_path and os.path.exists(instruments_path):
-            instruments_audio = AudioFileClip(instruments_path)
-            instruments_audio = instruments_audio.volumex(0.2)
-            generated_audio = generated_audio.volumex(0.8)
-            return CompositeAudioClip([generated_audio, instruments_audio])
+            logger.info(f"Mixing cloned audio with instruments")
+            try:
+                # Load instruments
+                instruments_audio, _ = sf.read(instruments_path)
+                
+                # Match lengths
+                min_length = min(len(cloned_audio), len(instruments_audio))
+                cloned_audio = cloned_audio[:min_length]
+                instruments_audio = instruments_audio[:min_length]
+                
+                # Mix: 80% cloned voice, 20% instruments
+                mixed_audio = cloned_audio * 0.8 + instruments_audio * 0.2
+                
+                # Prevent clipping
+                max_val = np.max(np.abs(mixed_audio))
+                if max_val > 0.95:
+                    mixed_audio = mixed_audio * (0.95 / max_val)
+                
+                sf.write(final_audio_path, mixed_audio, sr)
+                logger.info(f"Mixed audio saved: voice 80%, instruments 20%")
+                
+            except Exception as e:
+                logger.error(f"Failed to mix with instruments: {str(e)}, using cloned audio only")
+                sf.write(final_audio_path, cloned_audio, sr)
         else:
-            return generated_audio
+            # Use cloned audio only
+            sf.write(final_audio_path, cloned_audio, sr)
+            logger.info(f"Using cloned audio only (no instruments)")
+        
+        return final_audio_path
+    
+    def _create_video_ffmpeg(self, video_path: str, audio_path: str, 
+                           subtitle_path: Optional[str], output_path: Path) -> Dict[str, Any]:
+        """Create video using FFmpeg - completely replace original audio"""
+        try:
+            # Build FFmpeg command
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', video_path,        # Input video
+                '-i', str(audio_path),   # Input audio (cloned)
+                '-c:v', 'copy',          # Copy video stream (no re-encoding)
+                '-c:a', 'aac',           # Encode audio as AAC
+                '-b:a', '128k',          # Audio bitrate
+                '-map', '0:v:0',         # Map video from first input
+                '-map', '1:a:0',         # Map audio from second input (replaces original)
+                '-shortest'              # End when shortest stream ends
+            ]
+            
+            # Add subtitles if provided
+            if subtitle_path and subtitle_path.exists():
+                # Insert subtitle filter before codec specifications
+                cmd.insert(-6, '-vf')
+                cmd.insert(-6, f"subtitles='{subtitle_path}':force_style='Fontname=Arial-Bold,Fontsize={self.subtitle_font_size},Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV={self.subtitle_margin_bottom}'")
+                # Change video codec from copy to libx264 since we're filtering
+                cmd[cmd.index('-c:v') + 1] = 'libx264'
+            
+            # Add output path
+            cmd.append(str(output_path))
+            
+            logger.info(f"Running FFmpeg command: {' '.join(cmd)}")
+            
+            # Execute FFmpeg
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                logger.info(f"Video created successfully: {output_path}")
+                return {"success": True}
+            else:
+                logger.error(f"FFmpeg error: {result.stderr}")
+                return {"success": False, "error": f"FFmpeg error: {result.stderr}"}
+                
+        except Exception as e:
+            logger.error(f"Video creation failed: {str(e)}")
+            return {"success": False, "error": str(e)}
     
     def _create_srt_file(self, subtitle_data: List[Dict], output_path: Path) -> None:
         """Create SRT subtitle file"""
@@ -407,30 +290,6 @@ class VideoProcessor:
                 f.write(f"{start_time} --> {end_time}\n")
                 f.write(f"{subtitle['text']}\n\n")
     
-    def _create_mixed_audio(self, audio_path: str, instruments_path: Optional[str], 
-                          output_path: Path) -> None:
-        """Create mixed audio file"""
-        logger.info(f"Creating mixed audio - Voice: {audio_path}, Instruments: {instruments_path}")
-        
-        audio, sr = sf.read(audio_path)
-        
-        if instruments_path and os.path.exists(instruments_path):
-            instruments, _ = sf.read(instruments_path)
-            
-            # Match lengths
-            min_length = min(len(audio), len(instruments))
-            audio = audio[:min_length]
-            instruments = instruments[:min_length]
-            
-            # Mix with voice dominant
-            mixed_audio = audio * 0.8 + instruments * 0.2
-            logger.info(f"Mixed audio created - Voice: 80%, Instruments: 20%")
-        else:
-            mixed_audio = audio
-            logger.info(f"Using voice-only audio (no instruments)")
-        
-        sf.write(output_path, mixed_audio, sr)
-    
     def _seconds_to_srt_time(self, seconds: float) -> str:
         """Convert seconds to SRT time format"""
         hours = int(seconds // 3600)
@@ -439,32 +298,22 @@ class VideoProcessor:
         millisecs = int((seconds % 1) * 1000)
         return f"{hours:02d}:{minutes:02d}:{secs:02d},{millisecs:03d}"
     
-    def _cleanup_moviepy_objects(self, *objects):
-        """Clean up MoviePy objects"""
-        for obj in objects:
-            try:
-                if hasattr(obj, 'close'):
-                    obj.close()
-            except Exception:
-                pass
-    
-    def _cleanup_temp_files(self, file_paths: List[Path]):
-        """Clean up temporary files"""
-        for file_path in file_paths:
-            try:
-                if file_path.exists():
-                    file_path.unlink()
-            except Exception:
-                pass
-    
     def cleanup_temp_files(self, audio_id: str):
         """Clean up temporary files"""
         try:
-            for pattern in [f"video_with_subtitles_{audio_id}.mp4", f"video_no_subtitles_{audio_id}.mp4"]:
+            patterns = [
+                f"video_with_subtitles_{audio_id}.mp4",
+                f"video_no_subtitles_{audio_id}.mp4",
+                f"final_mixed_audio_{audio_id}.wav",
+                f"subtitles_{audio_id}.srt"
+            ]
+            
+            for pattern in patterns:
                 temp_file = self.temp_dir / pattern
                 if temp_file.exists():
                     temp_file.unlink()
             
+            # Clean up any other temp files
             for temp_file in self.temp_dir.glob(f"*{audio_id}*"):
                 if temp_file.is_file():
                     temp_file.unlink()

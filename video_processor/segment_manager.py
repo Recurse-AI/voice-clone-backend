@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 from .audio_utils import AudioUtils
 from .transcription import TranscriptionService
-
+import json
 
 class SegmentManager:
     """Smart segment manager optimized for Dia voice cloning"""
@@ -339,129 +339,100 @@ class SegmentManager:
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int, 
                             base_dir: Path, speakers: List[str], target_language: str = "English", 
                             detected_language: str = "en"):
-        """Save segments with duration compliance"""
-        reference_files = {}
+        """Save optimal segments with clean text formatting"""
         
-        for i, segment in enumerate(segments):
+        for segment in segments:
+            # Get basic segment info
             speaker = segment['speaker']
             start_time = segment['start']
             end_time = segment['end']
             text = segment['text']
-            duration = end_time - start_time
+            confidence = segment.get('confidence', 0.5)
             is_mixed = segment.get('is_mixed', False)
             
-            # Extract and save audio
+            # Determine target directory
+            if is_mixed:
+                segment_dir = base_dir / "speaker_mixed" / "segments"
+            else:
+                segment_dir = base_dir / f"speaker_{speaker}" / "segments"
+            
+            # Extract audio segment
             start_sample = int(start_time * sr)
             end_sample = int(end_time * sr)
+            
+            # Ensure we don't exceed audio bounds
+            if end_sample > len(audio):
+                end_sample = len(audio)
+            if start_sample >= end_sample:
+                start_sample = max(0, end_sample - int(1.0 * sr))  # Minimum 1 second
+            
             segment_audio = audio[start_sample:end_sample]
             
-            # Create directory structure
+            # Generate unique filename
+            duration = end_time - start_time
+            filename_base = f"{base_dir.name}_{speaker}_{start_time:.2f}_{end_time:.2f}_{duration:.2f}s"
             if is_mixed:
-                speaker_dir = base_dir / "speaker_mixed"
-                segments_dir = speaker_dir / "segments"
-                segments_dir.mkdir(parents=True, exist_ok=True)
-                segment_filename = f"mixed_segment_{i:03d}.wav"
-            else:
-                speaker_dir = base_dir / f"speaker_{speaker}"
-                segments_dir = speaker_dir / "segments"
-                segments_dir.mkdir(parents=True, exist_ok=True)
-                segment_filename = f"segment_{i:03d}_{speaker}.wav"
+                filename_base = f"{base_dir.name}_mixed_{start_time:.2f}_{end_time:.2f}_{duration:.2f}s"
             
-            # Save segment audio
-            segment_path = segments_dir / segment_filename
-            sf.write(str(segment_path), segment_audio, sr)
+            # Save audio file
+            audio_filename = f"{filename_base}.wav"
+            audio_path = segment_dir / audio_filename
+            sf.write(audio_path, segment_audio, sr)
             
-            # Process text for voice cloning
-            if is_mixed:
-                # Mixed segments need translation and proper formatting
-                if detected_language.lower() not in ["en", "english"]:
-                    # For mixed segments, translate the entire text while preserving speaker tags
-                    # Extract speaker tags and text parts
-                    import re
-                    speaker_pattern = r'(\[S\d+\])\s*([^[]*?)(?=\[S\d+\]|$)'
-                    matches = re.findall(speaker_pattern, text)
-                    
-                    if matches:
-                        # Translate each part and reconstruct
-                        translated_parts = []
-                        for speaker_tag, text_part in matches:
-                            text_part = text_part.strip()
-                            if text_part:
-                                translated_part = self.transcription_service.translate_text_clean(text_part)
-                                translated_parts.append(f"{speaker_tag} {translated_part}")
-                        english_text = ' '.join(translated_parts)
-                    else:
-                        # Fallback: translate whole text
-                        english_text = self.transcription_service.translate_text_clean(text)
-                else:
-                    english_text = text
-                
-                # Mixed segments already have proper speaker tags
-                dia_text = english_text
-            else:
-                # Single speaker segments
-                if detected_language.lower() not in ["en", "english"]:
+            # Process text - keep it simple for voice cloning
+            if detected_language.lower() not in ["en", "english"]:
+                # Translate to English if needed
+                try:
                     english_text = self.transcription_service.translate_text_clean(text)
-                else:
+                except:
                     english_text = text
-                
-                # Format for Dia model
-                dia_text = self.transcription_service.format_dia_text(english_text, speaker, speakers)
+            else:
+                english_text = text
             
-            # Save metadata
-            metadata = {
-                "speaker": speaker,
-                "original_text": text,
-                "english_text": english_text,
-                "dia_text": dia_text,
-                "start": start_time,
-                "end": end_time,
-                "duration": duration,
-                "word_count": segment['word_count'],
-                "confidence": segment['confidence'],
-                "segment_file": segment_filename,
-                "audio_path": str(segment_path),
-                "is_mixed": is_mixed
+            # Clean the English text - remove complex formatting
+            english_text = self._clean_text_simple(english_text)
+            
+            # Create segment metadata with simple format
+            segment_metadata = {
+                'speaker': speaker,
+                'start': start_time,
+                'end': end_time,
+                'duration': duration,
+                'text': text,  # Original text
+                'english_text': english_text,  # Clean English text for voice cloning
+                'confidence': confidence,
+                'is_mixed': is_mixed,
+                'audio_file': audio_filename,
+                'word_count': len(english_text.split()),
+                'sample_rate': sr
             }
             
-            # Add mixed segment specific metadata
-            if is_mixed:
-                metadata["speaker_tags"] = segment.get('speaker_tags', {})
-                metadata["original_segments"] = segment.get('original_segments', [])
-            
-            import json
-            if is_mixed:
-                metadata_filename = f"mixed_segment_{i:03d}.json"
-            else:
-                metadata_filename = f"segment_{i:03d}_{speaker}.json"
-            
-            metadata_path = segments_dir / metadata_filename
-            with open(metadata_path, "w", encoding="utf-8") as f:
-                json.dump(metadata, f, ensure_ascii=False, indent=2)
-            
-            # Track for reference selection (only for non-mixed segments)
-            if not is_mixed:
-                if speaker not in reference_files:
-                    reference_files[speaker] = []
-                reference_files[speaker].append({
-                    "path": str(segment_path),
-                    "duration": duration,
-                    "confidence": segment['confidence'],
-                    "segment_index": i,
-                    "metadata": metadata
-                })
+            # Save metadata
+            metadata_filename = f"{filename_base}.json"
+            metadata_path = segment_dir / metadata_filename
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(segment_metadata, f, ensure_ascii=False, indent=2)
+    
+    def _clean_text_simple(self, text: str) -> str:
+        """Clean text for voice cloning - keep it simple and natural"""
+        import re
         
-        # Select best reference for each speaker
-        selected_references = {}
-        for speaker, files in reference_files.items():
-            # Sort by duration (prefer 15-19 seconds) then by confidence
-            files.sort(key=lambda x: (
-                abs(x['duration'] - 17.0),  # Distance from 17 seconds
-                -x['confidence']            # Higher confidence first
-            ))
-            selected_references[speaker] = files[0] if files else None
+        # Remove excessive punctuation
+        text = re.sub(r'[.]{2,}', '.', text)
+        text = re.sub(r'[!]{2,}', '!', text)
+        text = re.sub(r'[?]{2,}', '?', text)
         
-        return selected_references
+        # Remove any existing speaker tags
+        text = re.sub(r'\[S\d+\]\s*', '', text)
+        
+        # Normalize spacing
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        # Ensure proper sentence ending
+        if text and not text.endswith(('.', '!', '?')):
+            text += '.'
+        
+        return text
 
     def select_optimal_references(self, segments: List[Dict], speakers: List[str]) -> Dict[str, Dict]:
         """Select optimal reference segments for each speaker"""
@@ -499,7 +470,8 @@ class SegmentManager:
                 except:
                     pass
             
-            formatted_reference_text = self.transcription_service.format_dia_text(english_text, speaker, speakers)
+            # Clean the text for voice cloning
+            english_text = self._clean_text_simple(english_text)
             
             reference_segments[speaker] = {
                 'segment': best_segment,
@@ -508,8 +480,7 @@ class SegmentManager:
                 'duration': best_segment.get('duration', 5),
                 'confidence': best_segment.get('confidence', 0.5),
                 'word_count': best_segment.get('word_count', 0),
-                'text': formatted_reference_text,
-                'english_text': english_text,
+                'text': english_text,  # Clean English text for reference
                 'original_text': original_text
             }
         

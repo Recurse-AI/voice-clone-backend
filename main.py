@@ -310,6 +310,7 @@ def process_video_background(
             return
         
         logger.info(f"Voice cloning completed successfully for audio_id: {audio_id}, cloned {cloning_result.get('cloned_segments', 0)} segments")
+        logger.info(f"Cloning details: {cloning_result.get('cloned_by_speaker', {})}")
         status_manager.set_progress(audio_id, 70)
         
         # Reconstruct audio
