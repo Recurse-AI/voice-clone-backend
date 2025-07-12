@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Form, HTTPException, BackgroundTasks, Depends
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -24,16 +24,27 @@ from status_manager import status_manager, ProcessingStatus
 from contextlib import asynccontextmanager
 
 # Configure logging
-os.makedirs('logs', exist_ok=True)
+os.makedirs(settings.LOGS_DIR, exist_ok=True)
+log_file_path = os.path.join(settings.LOGS_DIR, 'api.log')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler('logs/api.log', mode='a')
+        logging.FileHandler(log_file_path, mode='a')
     ]
 )
 logger = logging.getLogger(__name__)
+
+# Custom dependency for handling empty seed values
+def parse_seed(seed: str = Form(None, description="Optional seed for reproducible results")) -> Optional[int]:
+    """Parse seed parameter, converting empty strings to None"""
+    if seed is None or seed == "" or seed.strip() == "":
+        return None
+    try:
+        return int(seed)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Seed must be a valid integer or empty")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -142,7 +153,7 @@ class StartProcessingResponse(BaseModel):
 async def process_video(
     background_tasks: BackgroundTasks,
     video_url: str = Form(..., description="Video URL (HTTP/HTTPS) for processing with automatic separation"),
-    seed: Optional[int] = Form(None, description="Optional seed for reproducible results"),
+    seed: Optional[int] = Depends(parse_seed),
     include_instruments: bool = Form(True, description="Whether to include instruments in final audio"),
     generate_subtitles: bool = Form(True, description="Whether to generate subtitles"),
     temperature: float = Form(settings.DIA_TEMPERATURE, description="Voice cloning temperature"),

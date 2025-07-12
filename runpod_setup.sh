@@ -41,8 +41,8 @@ fi
 
 # Create directories with proper permissions
 echo "📁 Creating directories..."
-mkdir -p /tmp/voice_cloning /workspace/logs
-chmod 755 /tmp/voice_cloning /workspace/logs
+mkdir -p /tmp/voice_cloning ./logs
+chmod 755 /tmp/voice_cloning ./logs
 
 # Setup Python environment
 echo "🐍 Setting up Python environment..."
@@ -66,6 +66,7 @@ HOST=0.0.0.0
 PORT=8000
 CUDA_AVAILABLE=true
 TEMP_DIR=/tmp/voice_cloning
+LOGS_DIR=./logs
 
 # R2 Storage
 R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
@@ -97,7 +98,7 @@ sleep 3
 # Start API with proper virtual environment
 echo "🚀 Starting API server..."
 source venv/bin/activate
-nohup ./venv/bin/python main.py > /workspace/logs/api.log 2>&1 &
+nohup ./venv/bin/python main.py > ./logs/api.log 2>&1 &
 
 # Wait for API to start
 echo "⏳ Waiting for API to start..."
