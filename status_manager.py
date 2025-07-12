@@ -75,12 +75,25 @@ class StatusManager:
     
     def _init_mongodb(self):
         """Initialize MongoDB connection"""
+        # Check if MongoDB URI is provided
+        if not self._mongodb_uri or self._mongodb_uri.strip() == "":
+            logger.info("MongoDB URI not provided, status persistence disabled (statuses will only be kept in memory)")
+            self._mongo_client = None
+            return
+        
         try:
-            self._mongo_client = MongoClient(self._mongodb_uri)
+            logger.info("Initializing MongoDB connection...")
+            self._mongo_client = MongoClient(self._mongodb_uri, serverSelectionTimeoutMS=5000)
+            
+            # Test the connection
+            self._mongo_client.admin.command('ismaster')
             self._mongo_collection = self._mongo_client.get_default_database().job_status
-            # Skip ping test during initialization to avoid blocking
-            # Connection will be tested when first used
-        except:
+            
+            logger.info("MongoDB connection established successfully")
+            
+        except Exception as e:
+            logger.warning(f"Failed to connect to MongoDB: {str(e)}")
+            logger.info("Status persistence disabled - statuses will only be kept in memory")
             self._mongo_client = None
     
     def start_processing(self, audio_id: str) -> None:
@@ -181,7 +194,7 @@ class StatusManager:
     def _save_final_state(self, status_info: StatusInfo):
         """Save final state to MongoDB"""
         if not self._mongo_client:
-            logger.warning(f"MongoDB client not available, cannot save final state for audio_id: {status_info.audio_id}")
+            logger.info(f"MongoDB not configured - final status for audio_id: {status_info.audio_id} saved in memory only")
             return
         
         try:
@@ -208,7 +221,7 @@ class StatusManager:
     def _get_from_mongodb(self, audio_id: str) -> Dict[str, Any]:
         """Get job status from MongoDB"""
         if not self._mongo_client:
-            logger.warning(f"MongoDB client not available for audio_id: {audio_id}")
+            logger.debug(f"MongoDB not configured, cannot retrieve status from persistent storage for audio_id: {audio_id}")
             return {
                 "status": ProcessingStatus.NOT_FOUND.value,
                 "message": self._status_messages[ProcessingStatus.NOT_FOUND],
