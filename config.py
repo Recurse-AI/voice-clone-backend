@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # File Upload Configuration
     MAX_FILE_SIZE: int = 150 * 1024 * 1024  # 150MB
     ALLOWED_AUDIO_FORMATS: list = [".wav", ".mp3", ".flac", ".m4a"]
-    TEMP_DIR: str = os.getenv("TEMP_DIR", "/tmp/voice_cloning")
+    TEMP_DIR: str = os.getenv("TEMP_DIR", "./tmp/voice_cloning")
     LOGS_DIR: str = os.getenv("LOGS_DIR", "./logs")
     
     # Dia Model Configuration

@@ -41,8 +41,8 @@ fi
 
 # Create directories with proper permissions
 echo "📁 Creating directories..."
-mkdir -p /tmp/voice_cloning ./logs
-chmod 755 /tmp/voice_cloning ./logs
+mkdir -p ./tmp/voice_cloning ./logs
+chmod 755 ./tmp/voice_cloning ./logs
 
 # Setup Python environment
 echo "🐍 Setting up Python environment..."
@@ -65,7 +65,7 @@ cat > .env << EOF
 HOST=0.0.0.0
 PORT=8000
 CUDA_AVAILABLE=true
-TEMP_DIR=/tmp/voice_cloning
+TEMP_DIR=./tmp/voice_cloning
 LOGS_DIR=./logs
 
 # R2 Storage
