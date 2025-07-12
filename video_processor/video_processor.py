@@ -244,24 +244,28 @@ class VideoProcessor:
                 'ffmpeg', '-y',
                 '-i', video_path,        # Input video
                 '-i', str(audio_path),   # Input audio (cloned)
-                '-c:v', 'copy',          # Copy video stream (no re-encoding)
-                '-c:a', 'aac',           # Encode audio as AAC
-                '-b:a', '128k',          # Audio bitrate
-                '-map', '0:v:0',         # Map video from first input
-                '-map', '1:a:0',         # Map audio from second input (replaces original)
-                '-shortest'              # End when shortest stream ends
             ]
             
             # Add subtitles if provided
             if subtitle_path and subtitle_path.exists():
-                # Insert subtitle filter before codec specifications
-                cmd.insert(-6, '-vf')
-                cmd.insert(-6, f"subtitles='{subtitle_path}':force_style='Fontname=Arial-Bold,Fontsize={self.subtitle_font_size},Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV={self.subtitle_margin_bottom}'")
-                # Change video codec from copy to libx264 since we're filtering
-                cmd[cmd.index('-c:v') + 1] = 'libx264'
+                # Add video filter for subtitles
+                cmd.extend([
+                    '-vf', f"subtitles='{subtitle_path}':force_style='Fontname=Arial-Bold,Fontsize={self.subtitle_font_size},Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV={self.subtitle_margin_bottom}'",
+                    '-c:v', 'libx264',       # Re-encode video with subtitles
+                ])
+            else:
+                # Copy video stream if no subtitles
+                cmd.extend(['-c:v', 'copy'])
             
-            # Add output path
-            cmd.append(str(output_path))
+            # Add audio and mapping settings
+            cmd.extend([
+                '-c:a', 'aac',           # Encode audio as AAC
+                '-b:a', '128k',          # Audio bitrate
+                '-map', '0:v:0',         # Map video from first input
+                '-map', '1:a:0',         # Map audio from second input (replaces original)
+                '-shortest',             # End when shortest stream ends
+                str(output_path)         # Output file
+            ])
             
             logger.info(f"Running FFmpeg command: {' '.join(cmd)}")
             
