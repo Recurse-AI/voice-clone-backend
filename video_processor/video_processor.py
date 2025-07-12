@@ -50,6 +50,10 @@ class VideoProcessor:
             
             logger.info(f"Creating video with {len(subtitle_data)} subtitles for {audio_id}")
             
+            # Create standalone subtitle file
+            subtitle_path = self.temp_dir / f"subtitles_{audio_id}.srt"
+            self._create_srt_file(subtitle_data, subtitle_path)
+            
             # Create video with subtitles
             if MOVIEPY_AVAILABLE:
                 result = self._create_video_with_subtitles_moviepy(
@@ -64,10 +68,13 @@ class VideoProcessor:
                 return {
                     "success": True,
                     "video_path": str(output_path),
+                    "subtitle_path": str(subtitle_path),
                     "subtitle_count": len(subtitle_data),
                     "duration": result.get("duration", 0),
                     "file_size": os.path.getsize(output_path) / (1024*1024),
-                    "audio_id": audio_id
+                    "audio_id": audio_id,
+                    "audio_used": audio_path,
+                    "instruments_mixed": instruments_path is not None and os.path.exists(instruments_path)
                 }
             else:
                 return result
@@ -101,7 +108,9 @@ class VideoProcessor:
                     "duration": result.get("duration", 0),
                     "file_size": os.path.getsize(output_path) / (1024*1024),
                     "subtitles_included": False,
-                    "audio_id": audio_id
+                    "audio_id": audio_id,
+                    "audio_used": audio_path,
+                    "instruments_mixed": instruments_path is not None and os.path.exists(instruments_path)
                 }
             else:
                 return result
@@ -401,6 +410,8 @@ class VideoProcessor:
     def _create_mixed_audio(self, audio_path: str, instruments_path: Optional[str], 
                           output_path: Path) -> None:
         """Create mixed audio file"""
+        logger.info(f"Creating mixed audio - Voice: {audio_path}, Instruments: {instruments_path}")
+        
         audio, sr = sf.read(audio_path)
         
         if instruments_path and os.path.exists(instruments_path):
@@ -413,8 +424,10 @@ class VideoProcessor:
             
             # Mix with voice dominant
             mixed_audio = audio * 0.8 + instruments * 0.2
+            logger.info(f"Mixed audio created - Voice: 80%, Instruments: 20%")
         else:
             mixed_audio = audio
+            logger.info(f"Using voice-only audio (no instruments)")
         
         sf.write(output_path, mixed_audio, sr)
     

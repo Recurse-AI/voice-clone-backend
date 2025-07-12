@@ -151,6 +151,9 @@ class SegmentManager:
                     mixed_segment = self._combine_short_segments_into_mixed(current_group, speaker_tags, speakers)
                     if mixed_segment:
                         mixed_segments.append(mixed_segment)
+                    else:
+                        # If can't create mixed segment (e.g., single speaker), add segments individually
+                        mixed_segments.extend(current_group)
                     current_group = []
                 
                 # Add the long segment as is
@@ -161,14 +164,24 @@ class SegmentManager:
             mixed_segment = self._combine_short_segments_into_mixed(current_group, speaker_tags, speakers)
             if mixed_segment:
                 mixed_segments.append(mixed_segment)
+            else:
+                # If can't create mixed segment (e.g., single speaker), add segments individually
+                mixed_segments.extend(current_group)
         
         return mixed_segments
     
     def _combine_short_segments_into_mixed(self, short_segments: List[Dict], 
                                          speaker_tags: Dict[str, str], 
                                          all_speakers: List[str]) -> Optional[Dict]:
-        """Combine short segments into mixed segment"""
+        """Combine short segments into mixed segment - only if multiple speakers are involved"""
         if not short_segments:
+            return None
+        
+        # Check if we have multiple speakers in the short segments
+        unique_speakers = set(seg['speaker'] for seg in short_segments)
+        if len(unique_speakers) < 2:
+            # If all segments are from the same speaker, don't create mixed segment
+            # Return None so these segments will be handled as regular segments
             return None
         
         # Sort by start time
@@ -182,6 +195,11 @@ class SegmentManager:
                 # If there's a big gap, only use segments up to this point
                 short_segments = short_segments[:i]
                 break
+        
+        # Re-check if we still have multiple speakers after gap filtering
+        unique_speakers = set(seg['speaker'] for seg in short_segments)
+        if len(unique_speakers) < 2:
+            return None
         
         # Calculate actual duration from first start to last end
         if len(short_segments) == 0:
@@ -355,9 +373,31 @@ class SegmentManager:
             
             # Process text for voice cloning
             if is_mixed:
-                # Mixed segments already have proper [S1], [S2] tags
-                english_text = text
-                dia_text = text
+                # Mixed segments need translation and proper formatting
+                if detected_language.lower() not in ["en", "english"]:
+                    # For mixed segments, translate the entire text while preserving speaker tags
+                    # Extract speaker tags and text parts
+                    import re
+                    speaker_pattern = r'(\[S\d+\])\s*([^[]*?)(?=\[S\d+\]|$)'
+                    matches = re.findall(speaker_pattern, text)
+                    
+                    if matches:
+                        # Translate each part and reconstruct
+                        translated_parts = []
+                        for speaker_tag, text_part in matches:
+                            text_part = text_part.strip()
+                            if text_part:
+                                translated_part = self.transcription_service.translate_text_clean(text_part)
+                                translated_parts.append(f"{speaker_tag} {translated_part}")
+                        english_text = ' '.join(translated_parts)
+                    else:
+                        # Fallback: translate whole text
+                        english_text = self.transcription_service.translate_text_clean(text)
+                else:
+                    english_text = text
+                
+                # Mixed segments already have proper speaker tags
+                dia_text = english_text
             else:
                 # Single speaker segments
                 if detected_language.lower() not in ["en", "english"]:

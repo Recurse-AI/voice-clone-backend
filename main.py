@@ -339,12 +339,14 @@ def process_video_background(
         status_manager.set_progress(audio_id, 80)
         final_audio_path = reconstruction_result["final_audio_path"]
         
-        # Handle video processing
+        # Handle video processing  
         logger.info(f"Starting final video processing for audio_id: {audio_id}")
+        logger.info(f"Using final audio: {final_audio_path} (exists: {os.path.exists(final_audio_path)})")
         
         video_result = None
         if generate_subtitles:
             instruments_for_video = separated_instruments_path if include_instruments else None
+            logger.info(f"Creating video with subtitles - instruments: {instruments_for_video}")
             video_result = audio_processor.create_video_with_subtitles(
                 video_temp_path,
                 final_audio_path,
@@ -353,6 +355,7 @@ def process_video_background(
                 instruments_for_video
             )
         else:
+            logger.info(f"Creating video without subtitles")
             video_result = audio_processor.create_video_with_audio(
                 video_temp_path,
                 final_audio_path,
@@ -366,6 +369,7 @@ def process_video_background(
             return
         
         logger.info(f"Final video processing completed successfully for audio_id: {audio_id}")
+        logger.info(f"Video result: {video_result}")
         
         # Upload files
         logger.info(f"Starting file upload for audio_id: {audio_id}")
@@ -376,7 +380,10 @@ def process_video_background(
             r2_final_result = r2_storage.upload_final_audio(audio_id, final_audio_path)
             
             r2_video_result = None
+            r2_subtitle_result = None
+            
             if video_result and video_result["success"]:
+                # Upload video
                 video_filename = f"video_processed_{audio_id}.mp4"
                 r2_key = r2_storage.generate_file_path(audio_id, "video", video_filename)
                 r2_video_result = r2_storage.upload_file(
@@ -384,6 +391,16 @@ def process_video_background(
                     r2_key, 
                     "video/mp4"
                 )
+                
+                # Upload subtitle file if it exists
+                if "subtitle_path" in video_result and os.path.exists(video_result["subtitle_path"]):
+                    subtitle_filename = f"subtitles_{audio_id}.srt"
+                    r2_subtitle_key = r2_storage.generate_file_path(audio_id, "subtitles", subtitle_filename)
+                    r2_subtitle_result = r2_storage.upload_file(
+                        video_result["subtitle_path"],
+                        r2_subtitle_key,
+                        "text/srt"
+                    )
             
             logger.info(f"File upload completed successfully for audio_id: {audio_id}")
             
@@ -392,14 +409,46 @@ def process_video_background(
             status_manager.fail_processing(audio_id, f"File upload failed: {str(e)}")
             return
         
-        # Complete processing
+        # Complete processing with comprehensive details
         completion_details = {
             "final_audio_url": r2_final_result.get("url") if r2_final_result and r2_final_result["success"] else None,
             "video_url": r2_video_result.get("url") if r2_video_result and r2_video_result["success"] else None,
-            "subtitles_url": None,  # No separate subtitle file - embedded in video
+            "subtitles_url": r2_subtitle_result.get("url") if r2_subtitle_result and r2_subtitle_result["success"] else None,
             "segments_processed": cloning_result.get("cloned_segments", 0),
             "speakers_detected": len(processing_result.get("speakers", [])),
-            "total_duration": original_duration
+            "total_duration": original_duration,
+            "video_processing": {
+                "audio_used": video_result.get("audio_used"),
+                "instruments_mixed": video_result.get("instruments_mixed", False),
+                "subtitles_generated": generate_subtitles,
+                "subtitle_count": video_result.get("subtitle_count", 0),
+                "video_duration": video_result.get("duration", 0),
+                "video_file_size_mb": video_result.get("file_size", 0)
+            },
+            "audio_processing": {
+                "cloned_by_speaker": cloning_result.get("cloned_by_speaker", {}),
+                "seeds_used": cloning_result.get("seeds_used", {}),
+                "final_audio_file_size_mb": r2_final_result.get("size", 0) / (1024*1024) if r2_final_result and r2_final_result.get("size") else 0,
+                "reconstruction_method": reconstruction_result.get("reconstruction_method", "standard"),
+                "instruments_included": include_instruments,
+                "separation_used": True
+            },
+            "upload_results": {
+                "segments_uploaded": r2_segments_result is not None,
+                "final_audio_uploaded": r2_final_result and r2_final_result["success"],
+                "video_uploaded": r2_video_result and r2_video_result["success"],
+                "subtitles_uploaded": r2_subtitle_result and r2_subtitle_result["success"]
+            },
+            "processing_parameters": {
+                "temperature": temperature,
+                "cfg_scale": cfg_scale,
+                "top_p": top_p,
+                "target_language": target_language,
+                "language_code": final_language_code,
+                "speakers_expected": speakers_expected,
+                "include_instruments": include_instruments,
+                "generate_subtitles": generate_subtitles
+            }
         }
         
         logger.info(f"Processing completed successfully for audio_id: {audio_id}")

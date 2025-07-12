@@ -59,6 +59,9 @@ class AudioReconstructor:
             final_path = self.temp_dir / f"final_output_{audio_id}.wav"
             sf.write(final_path, reconstructed_audio, self.sample_rate)
             
+            logger.info(f"Final audio saved: {final_path} (size: {os.path.getsize(final_path) / (1024*1024):.2f} MB)")
+            logger.info(f"Reconstruction completed: {len(segments)} segments processed, duration: {len(reconstructed_audio) / self.sample_rate:.2f}s")
+            
             return {
                 "success": True,
                 "final_audio_path": str(final_path),
@@ -66,7 +69,8 @@ class AudioReconstructor:
                 "sample_rate": self.sample_rate,
                 "audio_id": audio_id,
                 "segments_processed": len(segments),
-                "instruments_mixed": include_instruments and instruments_path is not None
+                "instruments_mixed": include_instruments and instruments_path is not None,
+                "reconstruction_method": "precise_timing_with_cloned_audio"
             }
             
         except Exception as e:

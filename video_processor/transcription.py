@@ -191,6 +191,8 @@ class TranscriptionService:
 "{text}"
 
 REQUIREMENTS:
+- MUST use ONLY English alphabet characters (A-Z, a-z)
+- MUST be in proper English language - no foreign words, characters, or scripts
 - Clear, conversational English
 - Simple vocabulary and sentence structure
 - Natural speech rhythm and flow
@@ -200,13 +202,14 @@ REQUIREMENTS:
   (laughs), (chuckles), (sighs), (gasps), (coughs), (clears throat), (inhales), (exhales), (humming), (sneezes), (whistles)
 - Do NOT force non-verbals into every sentence
 - Use them sparingly and naturally
+- NO accented characters, symbols, or non-English scripts
 
-Return only the clean English text:"""
+Return only the clean English text using English alphabet only:"""
             
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are an expert translator for voice cloning. Return only clean, natural English text."},
+                    {"role": "system", "content": "You are an expert English translator for voice cloning. You MUST return ONLY clean, natural English text using English alphabet characters (A-Z, a-z) only. NO foreign characters, accents, or non-English scripts allowed."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=150,
@@ -217,7 +220,17 @@ Return only the clean English text:"""
                 result = response.choices[0].message.content.strip()
                 result = re.sub(r'^["\s]*', '', result)
                 result = re.sub(r'["\s]*$', '', result)
-                return result
+                
+                # Validate that result contains only English alphabet characters
+                # Allow basic punctuation, spaces, and non-verbal tags
+                if self._is_valid_english_text(result):
+                    return result
+                else:
+                    # If validation fails, fallback to original text if it's English, otherwise return a safe default
+                    if self._is_valid_english_text(text):
+                        return text
+                    else:
+                        return "Please provide English text for voice cloning."
             return text
                 
         except Exception as e:
@@ -291,6 +304,13 @@ Return only the clean English text:"""
             "estimated_duration": estimated_duration,
             "speaker_tags": speaker_tags
         }
+    
+    def _is_valid_english_text(self, text: str) -> bool:
+        """Validate that text contains only English alphabet characters and basic punctuation"""
+        # Allow English letters, spaces, basic punctuation, and non-verbal tags in parentheses
+        # This regex allows: letters, spaces, punctuation, and content within parentheses
+        allowed_pattern = r'^[a-zA-Z\s\.\,\!\?\;\:\-\(\)\'\"\[\]]+$'
+        return bool(re.match(allowed_pattern, text))
     
     def _clean_text(self, text: str) -> str:
         """Clean text for Dia model"""
