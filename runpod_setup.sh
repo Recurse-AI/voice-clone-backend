@@ -4,6 +4,12 @@
 
 echo "🚀 Setting up Voice Cloning API on RunPod GPU..."
 
+# Fix /tmp directory permissions first
+echo "🔧 Fixing system permissions..."
+chmod 1777 /tmp 2>/dev/null || true
+mkdir -p /tmp && chmod 1777 /tmp 2>/dev/null || true
+export TMPDIR=/tmp
+
 # Set working directory to the project directory
 if [ -f "requirements.txt" ]; then
     echo "📁 Found requirements.txt in current directory"
@@ -23,12 +29,50 @@ fi
 
 echo "📁 Working directory: $(pwd)"
 
-# Install system dependencies with error handling
+# Install system dependencies with better error handling
 echo "📦 Installing system dependencies..."
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y || { echo "❌ Failed to update packages"; exit 1; }
-apt-get install -y ffmpeg libsndfile1 python3-dev python3-pip python3-venv git curl build-essential || { echo "❌ Failed to install dependencies"; exit 1; }
-apt-get autoremove -y
+
+# Try to fix APT issues first
+echo "🔧 Fixing APT configuration..."
+apt-get clean || true
+rm -rf /var/lib/apt/lists/* || true
+mkdir -p /var/lib/apt/lists/partial || true
+
+# Try updating packages with retry logic
+echo "🔄 Updating package lists..."
+for i in {1..3}; do
+    if apt-get update -y; then
+        echo "✅ Package lists updated successfully"
+        break
+    else
+        echo "⚠️  Attempt $i failed, retrying..."
+        sleep 2
+        apt-get clean || true
+        rm -rf /var/lib/apt/lists/* || true
+    fi
+    
+    if [ $i -eq 3 ]; then
+        echo "⚠️  Package update failed, but continuing with existing packages..."
+    fi
+done
+
+# Install dependencies with fallback
+echo "📦 Installing required packages..."
+apt-get install -y ffmpeg libsndfile1 python3-dev python3-pip python3-venv git curl build-essential || {
+    echo "⚠️  Some packages failed to install, checking what's available..."
+    
+    # Try installing packages individually
+    for package in ffmpeg libsndfile1 python3-dev python3-pip python3-venv git curl build-essential; do
+        if apt-get install -y "$package"; then
+            echo "✅ Installed $package"
+        else
+            echo "⚠️  Failed to install $package"
+        fi
+    done
+}
+
+apt-get autoremove -y || true
 
 # Verify GPU availability
 echo "🔍 Checking GPU availability..."
