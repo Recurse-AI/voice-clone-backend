@@ -7,10 +7,14 @@ Handles Dia model operations and voice cloning functionality.
 import torch
 import numpy as np
 import random
+import os
+import json
+import soundfile as sf
 from typing import Optional, Dict, Any, List
 from dia.model import Dia
 from config import settings
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -47,32 +51,43 @@ class VoiceCloningService:
             raise Exception(f"Error loading Dia model: {e}")
     
     def generate_with_dia(self, text: str, temperature: float = None, cfg_scale: float = None, 
-                         top_p: float = None, audio_prompt_path: Optional[str] = None) -> Optional[np.ndarray]:
-        """Generate audio with Dia model using simple, direct approach"""
+                         top_p: float = None, audio_prompt_path: Optional[str] = None,
+                         audio_prompt_transcript: Optional[str] = None) -> Optional[np.ndarray]:
+        """Generate audio with Dia model using official approach with transcript support"""
         try:
-            # Use config defaults if parameters not provided
+            # Use optimized parameters based on official examples
             generation_params = {
                 "use_torch_compile": settings.DIA_USE_TORCH_COMPILE,
                 "verbose": settings.DIA_VERBOSE,
-                "cfg_scale": cfg_scale or settings.DIA_CFG_SCALE,
-                "temperature": temperature or settings.DIA_TEMPERATURE,
-                "top_p": top_p or settings.DIA_TOP_P,
-                "cfg_filter_top_k": settings.DIA_CFG_FILTER_TOP_K,
+                "cfg_scale": cfg_scale or 4.0,  # Optimized from official examples
+                "temperature": temperature or 1.8,  # Optimized from official examples  
+                "top_p": top_p or 0.90,  # Optimized from official examples
+                "cfg_filter_top_k": 50,  # Optimized from official examples
                 "max_tokens": settings.DIA_MAX_TOKENS
             }
             
-            # Simple text formatting - just ensure it starts with [S1]
-            if not text.strip().startswith('[S'):
-                text = f"[S1] {text.strip()}"
+            # Prepare text according to official guidelines
+            if audio_prompt_path and audio_prompt_transcript:
+                # Voice cloning with reference audio - combine transcript + new text
+                # This is the key fix: we need to provide transcript of audio prompt
+                full_text = f"{audio_prompt_transcript.strip()} {text.strip()}"
+                logger.info(f"Voice cloning with transcript: {audio_prompt_transcript[:50]}... + {text[:50]}...")
+            else:
+                # Regular generation - just ensure proper speaker tags
+                full_text = text
+                logger.info(f"Regular generation with text: {text[:50]}...")
             
-            logger.info(f"Generating audio with text: {text[:100]}...")
+            # Format text according to Dia guidelines
+            formatted_text = self._format_text_for_dia(full_text)
             
-            if audio_prompt_path:
+            logger.info(f"Final formatted text: {formatted_text[:100]}...")
+            
+            if audio_prompt_path and os.path.exists(audio_prompt_path):
                 # Voice cloning with reference audio
-                output = self.dia_model.generate(text, audio_prompt=audio_prompt_path, **generation_params)
+                output = self.dia_model.generate(formatted_text, audio_prompt=audio_prompt_path, **generation_params)
             else:
                 # Regular generation without audio prompt
-                output = self.dia_model.generate(text, **generation_params)
+                output = self.dia_model.generate(formatted_text, **generation_params)
             
             if output is not None and len(output) > 0:
                 logger.info(f"Audio generated successfully, length: {len(output)}")
@@ -88,7 +103,7 @@ class VoiceCloningService:
     def clone_voice_segments(self, segments_data: List[Dict[str, Any]], 
                            temperature: float = None, cfg_scale: float = None, 
                            top_p: float = None, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Clone voice segments using Dia model with simplified approach"""
+        """Clone voice segments using Dia model with proper transcript support"""
         if not self.dia_model:
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -120,11 +135,19 @@ class VoiceCloningService:
                     # Clean and format text for Dia
                     clean_text = self._clean_text_for_dia(text)
                     
-                    logger.info(f"Processing segment {i+1}/{len(segments_data)}: {clean_text[:50]}...")
+                    # Get audio prompt transcript (this is the key fix)
+                    audio_prompt_transcript = self._get_audio_prompt_transcript(
+                        reference_audio_path, segment_data
+                    )
                     
-                    # Generate with Dia
+                    logger.info(f"Processing segment {i+1}/{len(segments_data)}: {clean_text[:50]}...")
+                    if audio_prompt_transcript:
+                        logger.info(f"Using audio prompt transcript: {audio_prompt_transcript[:50]}...")
+                    
+                    # Generate with Dia using proper transcript approach
                     cloned_audio = self.generate_with_dia(
-                        clean_text, temperature, cfg_scale, top_p, reference_audio_path
+                        clean_text, temperature, cfg_scale, top_p, 
+                        reference_audio_path, audio_prompt_transcript
                     )
                     
                     if cloned_audio is not None and len(cloned_audio) > 0:
@@ -169,16 +192,103 @@ class VoiceCloningService:
             logger.error(f"Voice cloning failed: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    def _clean_text_for_dia(self, text: str) -> str:
-        """Clean text for Dia model - keep it simple"""
-        # Remove excessive punctuation
+    def _get_audio_prompt_transcript(self, reference_audio_path: Optional[str], 
+                                   segment_data: Dict[str, Any]) -> Optional[str]:
+        """Get transcript for audio prompt according to official Dia guidelines"""
+        if not reference_audio_path or not os.path.exists(reference_audio_path):
+            return None
+        
+        try:
+            # Get reference audio directory and find reference metadata
+            ref_audio_path = Path(reference_audio_path)
+            ref_dir = ref_audio_path.parent
+            
+            # Look for reference metadata file
+            for metadata_file in ref_dir.glob("*REFERENCE_metadata.json"):
+                try:
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        ref_metadata = json.load(f)
+                    
+                    # Use the clean English text from reference metadata
+                    ref_text = ref_metadata.get('text', ref_metadata.get('original_text', ''))
+                    
+                    if ref_text.strip():
+                        # Format for Dia - simple and clean
+                        formatted_ref = self._format_text_for_dia(ref_text)
+                        
+                        # Keep transcript short and focused (5-10 seconds audio guideline)
+                        words = formatted_ref.split()
+                        if len(words) > 15:  # Limit to ~10 seconds of speech
+                            formatted_ref = ' '.join(words[:15]) + '.'
+                        
+                        logger.info(f"Created reference transcript from metadata: {formatted_ref[:50]}...")
+                        return formatted_ref
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to read reference metadata {metadata_file}: {str(e)}")
+                    continue
+            
+            # Fallback: try to get from current segment data
+            # Look for original text in segment data
+            original_text = segment_data.get('original_text', 
+                                           segment_data.get('text', 
+                                                         segment_data.get('english_text', '')))
+            
+            if original_text.strip():
+                # Format for Dia
+                formatted_text = self._format_text_for_dia(original_text)
+                
+                # Keep it short for better cloning
+                words = formatted_text.split()
+                if len(words) > 15:
+                    formatted_text = ' '.join(words[:15]) + '.'
+                
+                logger.info(f"Created fallback transcript from segment: {formatted_text[:50]}...")
+                return formatted_text
+            
+        except Exception as e:
+            logger.warning(f"Failed to get audio prompt transcript: {str(e)}")
+        
+        return None
+    
+    def _format_text_for_dia(self, text: str) -> str:
+        """Format text according to official Dia guidelines"""
         import re
+        
+        # Clean text first
+        text = self._clean_text_for_dia(text)
+        
+        # Check if it's a mixed segment (has multiple speakers)
+        has_multiple_speakers = '[S1]' in text and '[S2]' in text
+        
+        if has_multiple_speakers:
+            # For mixed segments, ensure proper alternation
+            # Split by speaker tags and reconstruct
+            parts = re.split(r'(\[S[12]\])', text)
+            formatted_parts = []
+            current_speaker = None
+            
+            for part in parts:
+                if part in ['[S1]', '[S2]']:
+                    current_speaker = part
+                    formatted_parts.append(part)
+                elif part.strip() and current_speaker:
+                    formatted_parts.append(f" {part.strip()}")
+            
+            return ''.join(formatted_parts)
+        else:
+            # Single speaker - ensure it starts with [S1]
+            text = re.sub(r'\[S\d+\]\s*', '', text)  # Remove existing tags
+            return f"[S1] {text.strip()}"
+    
+    def _clean_text_for_dia(self, text: str) -> str:
+        """Clean text for Dia model according to official guidelines"""
+        import re
+        
+        # Remove excessive punctuation
         text = re.sub(r'[.]{2,}', '.', text)
         text = re.sub(r'[!]{2,}', '!', text)
         text = re.sub(r'[?]{2,}', '?', text)
-        
-        # Remove speaker tags if present and re-add properly
-        text = re.sub(r'\[S\d+\]\s*', '', text)
         
         # Normalize spacing
         text = re.sub(r'\s+', ' ', text).strip()
