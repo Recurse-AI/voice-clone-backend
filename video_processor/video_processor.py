@@ -8,7 +8,6 @@ Only processes subtitles from voice-cloned content, not original video.
 import os
 import json
 import subprocess
-import tempfile
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import soundfile as sf
@@ -100,12 +99,33 @@ class VideoProcessor:
         segments_path = Path(segments_dir)
         subtitle_data = []
         
-        # Process voice-cloned segments
-        for speaker_dir in segments_path.glob("speaker_*/segments"):
-            for json_file in speaker_dir.glob("*.json"):
+        # Process voice-cloned segments from speaker-wise directory structure
+        for speaker_dir in segments_path.glob("speaker_*"):
+            if not speaker_dir.is_dir():
+                continue
+                
+            segments_subdir = speaker_dir / "segments"
+            if not segments_subdir.exists():
+                continue
+                
+            # Check if any cloned audio files exist for this speaker
+            cloned_files = list(segments_subdir.glob("cloned_*.wav"))
+            if not cloned_files:
+                continue  # Skip if no cloned audio found
+                
+            # Load segment metadata
+            for json_file in segments_subdir.glob("*.json"):
                 try:
                     with open(json_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
+                    
+                    # Check if corresponding cloned audio exists
+                    json_stem = json_file.stem
+                    cloned_audio_name = f"cloned_{json_stem}.wav"
+                    cloned_audio_path = segments_subdir / cloned_audio_name
+                    
+                    if not cloned_audio_path.exists():
+                        continue  # Skip if no cloned audio for this segment
                     
                     # Only use English text from voice-cloned content
                     english_text = data.get('english_text', data.get('text', ''))
@@ -115,7 +135,9 @@ class VideoProcessor:
                             'start': data['start'],
                             'end': data['end'],
                             'text': english_text.strip(),
-                            'duration': data['end'] - data['start']
+                            'duration': data['end'] - data['start'],
+                            'speaker': data.get('speaker', 'Unknown'),
+                            'cloned_audio_path': str(cloned_audio_path)
                         })
                 
                 except Exception:

@@ -44,8 +44,8 @@ class VoiceCloningService:
     
     def generate_with_dia(self, text: str, temperature: float = None, cfg_scale: float = None, 
                          top_p: float = None, audio_prompt_path: Optional[str] = None,
-                         reference_text: Optional[str] = None) -> Optional[np.ndarray]:
-        """Generate audio with Dia model using official API"""
+                         reference_text: Optional[str] = None, all_speakers: Optional[List[str]] = None) -> Optional[np.ndarray]:
+        """Generate audio with Dia model using official API with improved prompt formatting"""
         try:
             # Use config defaults if parameters not provided
             generation_params = {
@@ -59,9 +59,22 @@ class VoiceCloningService:
             }
             
             if audio_prompt_path and reference_text:
-                # Voice cloning: clone_from_text + text_to_generate
-                full_text = reference_text + text
-                output = self.dia_model.generate(full_text, audio_prompt=audio_prompt_path, **generation_params)
+                # Voice cloning with proper prompt formatting
+                from .transcription import TranscriptionService
+                transcription_service = TranscriptionService()
+                
+                # Format the complete prompt according to Dia guidelines
+                formatted_prompt = transcription_service.format_dia_prompt_with_reference(
+                    reference_text, text, all_speakers or ["A"]
+                )
+                
+                # Validate the formatted prompt
+                validation = transcription_service.validate_dia_text_format(formatted_prompt)
+                if not validation["valid"]:
+                    # Log validation issues but continue (removed debug print)
+                    pass
+                
+                output = self.dia_model.generate(formatted_prompt, audio_prompt=audio_prompt_path, **generation_params)
             else:
                 # Regular generation without audio prompt
                 output = self.dia_model.generate(text, **generation_params)
@@ -69,12 +82,13 @@ class VoiceCloningService:
             return output
             
         except Exception as e:
+            # Removed debug print - error will be handled by caller
             return None
     
     def clone_voice_segments(self, segments_data: List[Dict[str, Any]], 
                            temperature: float = None, cfg_scale: float = None, 
                            top_p: float = None, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Clone voice segments using Dia model"""
+        """Clone voice segments using Dia model with improved prompt formatting"""
         if not self.dia_model:
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -83,6 +97,13 @@ class VoiceCloningService:
                 set_seed(seed)
             
             cloned_segments = []
+            
+            # Extract speaker information from segments
+            all_speakers = []
+            for segment_data in segments_data:
+                speaker = segment_data.get('speaker', 'A')
+                if speaker not in all_speakers:
+                    all_speakers.append(speaker)
             
             for i, segment_data in enumerate(segments_data):
                 try:
@@ -101,9 +122,18 @@ class VoiceCloningService:
                         })
                         continue
                     
+                    # Validate text format before processing
+                    from .transcription import TranscriptionService
+                    transcription_service = TranscriptionService()
+                    validation = transcription_service.validate_dia_text_format(dia_text)
+                    
+                    if not validation["valid"]:
+                        # Removed debug print - validation issues will be included in response
+                        pass
+                    
                     cloned_audio = self.generate_with_dia(
                         dia_text, temperature, cfg_scale, top_p, 
-                        reference_audio_path, reference_text
+                        reference_audio_path, reference_text, all_speakers
                     )
                     
                     if cloned_audio is not None:
@@ -111,7 +141,8 @@ class VoiceCloningService:
                             "original_data": segment_data,
                             "cloned_audio": cloned_audio,
                             "text": dia_text,
-                            "success": True
+                            "success": True,
+                            "validation": validation
                         })
                     else:
                         cloned_segments.append({
@@ -119,7 +150,8 @@ class VoiceCloningService:
                             "cloned_audio": None,
                             "text": dia_text,
                             "success": False,
-                            "error": "Generated audio is None"
+                            "error": "Generated audio is None",
+                            "validation": validation
                         })
                         
                 except Exception as e:
@@ -133,7 +165,9 @@ class VoiceCloningService:
             
             return {
                 "success": True,
-                "cloned_segments": cloned_segments
+                "cloned_segments": cloned_segments,
+                "total_speakers": len(all_speakers),
+                "speakers": all_speakers
             }
             
         except Exception as e:

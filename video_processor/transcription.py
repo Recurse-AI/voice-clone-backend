@@ -61,7 +61,6 @@ class TranscriptionService:
             # Extract words with robust error handling
             words = self._extract_words_from_transcript(transcript)
             
-            # Get speakers from words or fallback
             speakers = self._extract_speakers(words)
             
             # Get the final language code
@@ -225,11 +224,13 @@ Return only the clean English text:"""
             return text
     
     def format_dia_text(self, english_text: str, speaker: str, all_speakers: List[str]) -> str:
-        """Format text for Dia model with proper speaker handling"""
+        """Format text for Dia model with proper speaker handling and guidelines"""
         # Clean text
         cleaned_text = self._clean_text(english_text)
         
+        # Format with proper speaker tags according to Dia guidelines
         if len(all_speakers) == 1:
+            # Single speaker: always use [S1]
             return f"[S1] {cleaned_text}"
         else:
             # Multi-speaker: use proper speaker mapping
@@ -237,7 +238,59 @@ Return only the clean English text:"""
                 speaker_idx = all_speakers.index(speaker) + 1
                 return f"[S{speaker_idx}] {cleaned_text}"
             except ValueError:
+                # Fallback if speaker not found
                 return f"[S1] {cleaned_text}"
+    
+    def format_dia_prompt_with_reference(self, reference_text: str, target_text: str, 
+                                        all_speakers: List[str]) -> str:
+        """Format complete prompt for Dia voice cloning with reference audio"""
+        # Ensure reference text has proper speaker tags
+        if not reference_text.startswith('[S'):
+            # Add [S1] tag if missing
+            reference_text = f"[S1] {reference_text}"
+        
+        # Combine reference and target text for voice cloning
+        # According to Dia guidelines: reference_text + target_text
+        return f"{reference_text} {target_text}"
+    
+    def validate_dia_text_format(self, text: str) -> Dict[str, Any]:
+        """Validate text format for Dia model compliance"""
+        issues = []
+        warnings = []
+        
+        # Check for speaker tag at beginning
+        if not text.strip().startswith('[S'):
+            issues.append("Text must start with [S1] or [S2] speaker tag")
+        
+        # Check for proper speaker tag format
+        import re
+        speaker_tags = re.findall(r'\[S(\d+)\]', text)
+        if not speaker_tags:
+            issues.append("No valid speaker tags found")
+        elif len(set(speaker_tags)) > 2:
+            warnings.append("More than 2 speakers detected - Dia works best with 1-2 speakers")
+        
+        # Check text length (approximate duration estimation)
+        word_count = len(text.split())
+        estimated_duration = word_count * 0.6  # Rough estimate: 0.6 seconds per word
+        
+        if estimated_duration < 5:
+            warnings.append(f"Text may be too short (~{estimated_duration:.1f}s) - Dia works best with 5-20s")
+        elif estimated_duration > 20:
+            warnings.append(f"Text may be too long (~{estimated_duration:.1f}s) - Dia works best with 5-20s")
+        
+        # Check for non-verbal tags
+        non_verbal_tags = re.findall(r'\([^)]+\)', text)
+        if len(non_verbal_tags) > 2:
+            warnings.append("Many non-verbal tags detected - use sparingly for best results")
+        
+        return {
+            "valid": len(issues) == 0,
+            "issues": issues,
+            "warnings": warnings,
+            "estimated_duration": estimated_duration,
+            "speaker_tags": speaker_tags
+        }
     
     def _clean_text(self, text: str) -> str:
         """Clean text for Dia model"""

@@ -93,7 +93,6 @@ class FileManager:
             ref_segment = reference_segments[speaker]
             speaker_dir = base_dir / f"speaker_{speaker}" / "reference"
             
-            # Safe access to segment data with fallbacks
             start_time = ref_segment.get('start', 0)
             end_time = ref_segment.get('end', 5)
             duration = ref_segment.get('duration', 5)
@@ -106,7 +105,7 @@ class FileManager:
             if end_sample > len(audio):
                 end_sample = len(audio)
             if start_sample >= end_sample:
-                start_sample = max(0, end_sample - int(9 * sr))  # Fallback to 9 seconds
+                start_sample = max(0, end_sample - int(5 * sr))  # Fallback to 5 seconds minimum
             
             reference_audio = audio[start_sample:end_sample]
             

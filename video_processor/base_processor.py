@@ -80,9 +80,10 @@ class AudioProcessor:
             
             # Save optimal segments
             try:
+                detected_language = transcript_data.get('metadata', {}).get('language_code', 'en')
                 self.segment_manager.save_optimal_segments(
                     segments, audio, sr, output_dir, 
-                    transcript_data['speakers'], target_language
+                    transcript_data['speakers'], target_language, detected_language
                 )
             except Exception as e:
                 return {"success": False, "error": f"Segment saving failed: {str(e)}"}
@@ -150,23 +151,25 @@ class AudioProcessor:
                 segments_subdir = speaker_dir / "segments"
                 reference_subdir = speaker_dir / "reference"
                 
+                # Check if directories exist
+                if not segments_subdir.exists():
+                    continue
+                
                 # Load reference for this speaker
                 reference_audio_path = None
                 reference_text = None
                 
-                for ref_file in reference_subdir.glob("*_REFERENCE.wav"):
-                    reference_audio_path = str(ref_file)
-                    ref_json_name = ref_file.stem + "_metadata.json"
-                    ref_json = ref_file.parent / ref_json_name
-                    if ref_json.exists():
-                        with open(ref_json, 'r', encoding='utf-8') as f:
-                            import json
-                            ref_data = json.load(f)
-                            reference_text = ref_data.get('text', '')
-                    break
-                
-                if not reference_audio_path:
-                    continue
+                if reference_subdir.exists():
+                    for ref_file in reference_subdir.glob("*_REFERENCE.wav"):
+                        reference_audio_path = str(ref_file)
+                        ref_json_name = ref_file.stem + "_metadata.json"
+                        ref_json = ref_file.parent / ref_json_name
+                        if ref_json.exists():
+                            with open(ref_json, 'r', encoding='utf-8') as f:
+                                import json
+                                ref_data = json.load(f)
+                                reference_text = ref_data.get('text', '')
+                        break
                 
                 # Load all segments for this speaker
                 speaker_segments = []
@@ -174,6 +177,10 @@ class AudioProcessor:
                     with open(segment_file, 'r', encoding='utf-8') as f:
                         import json
                         segment_data = json.load(f)
+                    
+                    # Check if segment has required fields
+                    if not segment_data.get('dia_text'):
+                        continue
                     
                     segment_data['reference_audio_path'] = reference_audio_path
                     segment_data['reference_text'] = reference_text
@@ -189,18 +196,24 @@ class AudioProcessor:
                     speaker_segments, temperature, cfg_scale, top_p, seed
                 )
                 
-                if not cloning_result['success']:
+                if not cloning_result.get('success', False):
                     continue
                 
                 # Save cloned audio with exact length preservation
                 speaker_successful = 0
-                for cloned_segment in cloning_result['cloned_segments']:
-                    if cloned_segment['success'] and cloned_segment['cloned_audio'] is not None:
+                for cloned_segment in cloning_result.get('cloned_segments', []):
+                    if cloned_segment.get('success', False) and cloned_segment.get('cloned_audio') is not None:
                         segment_data = cloned_segment['original_data']
                         segments_dir_path = Path(segment_data['segments_dir'])
                         
-                        # Get original audio for exact length matching
-                        original_audio_path = Path(segment_data['segment_file']).with_suffix('.wav')
+                        # Get original audio file path
+                        original_audio_path = segments_dir_path / segment_data.get('segment_file', 'original.wav')
+                        if not original_audio_path.exists():
+                            # Try to find the corresponding wav file
+                            segment_json_path = Path(segment_data['segment_file'])
+                            wav_filename = segment_json_path.stem + '.wav'
+                            original_audio_path = segments_dir_path / wav_filename
+                        
                         if original_audio_path.exists():
                             original_audio, _ = sf.read(original_audio_path)
                             original_duration = len(original_audio) / 44100
@@ -223,8 +236,10 @@ class AudioProcessor:
                 }
                 total_successful_clones += speaker_successful
             
+            # Return proper success response
             return {
                 "success": True,
+                "cloned_segments": total_successful_clones,
                 "cloned_segments_count": total_successful_clones,
                 "cloned_by_speaker": all_cloned_segments,
                 "audio_id": audio_id,

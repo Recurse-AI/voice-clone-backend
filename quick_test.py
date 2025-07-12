@@ -50,7 +50,6 @@ def test_process_video():
             audio_id = result.get("audio_id")
             print(f"✅ Video Processing Started: {audio_id}")
             print(f"   - Status Check URL: {result.get('status_check_url')}")
-            print(f"   - Logs URL: {result.get('logs_url')}")
             return audio_id
         else:
             print(f"❌ Video Processing Failed: Status {response.status_code}")
@@ -90,27 +89,6 @@ def test_status_check(audio_id):
         print(f"❌ Status Check Error: {str(e)}")
         return None
 
-def test_logs(audio_id):
-    """Test logs endpoint"""
-    print(f"\n🔄 Testing logs for {audio_id}...")
-    
-    try:
-        response = requests.get(f"{API_BASE_URL}/logs/{audio_id}")
-        
-        if response.status_code == 200:
-            print("✅ Logs Retrieved Successfully")
-            print("   - First 500 characters of log:")
-            print(f"   {response.text[:500]}")
-            return True
-        else:
-            print(f"❌ Logs Retrieval Failed: Status {response.status_code}")
-            print(f"   - Error: {response.text}")
-            return False
-            
-    except Exception as e:
-        print(f"❌ Logs Retrieval Error: {str(e)}")
-        return False
-
 def main():
     """Main test function"""
     print("🚀 Starting API Test Suite...")
@@ -131,9 +109,6 @@ def main():
     if not status:
         print("❌ Could not get status. Exiting...")
         return
-    
-    # Test logs
-    test_logs(audio_id)
     
     # Monitor processing for a few iterations
     print(f"\n🔄 Monitoring processing for {audio_id}...")
