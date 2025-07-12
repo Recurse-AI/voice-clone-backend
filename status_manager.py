@@ -131,9 +131,11 @@ class StatusManager:
             # Save final states to MongoDB and cleanup
             if status in [ProcessingStatus.COMPLETED, ProcessingStatus.FAILED]:
                 logger.info(f"Final status reached for audio_id: {audio_id} - {status.value}")
-                self._save_final_state(status_info)
-                del self._statuses[audio_id]
-                logger.info(f"Status moved to MongoDB and cleared from memory for audio_id: {audio_id}")
+                if self._save_final_state(status_info):
+                    del self._statuses[audio_id]
+                    logger.info(f"Status moved to MongoDB and cleared from memory for audio_id: {audio_id}")
+                else:
+                    logger.info(f"Status kept in memory for audio_id: {audio_id} (MongoDB not available)")
     
     def set_progress(self, audio_id: str, progress: int) -> None:
         """Set progress percentage"""
@@ -191,11 +193,11 @@ class StatusManager:
         
         return mongodb_result
     
-    def _save_final_state(self, status_info: StatusInfo):
+    def _save_final_state(self, status_info: StatusInfo) -> bool:
         """Save final state to MongoDB"""
         if not self._mongo_client:
-            logger.info(f"MongoDB not configured - final status for audio_id: {status_info.audio_id} saved in memory only")
-            return
+            logger.info(f"MongoDB not configured - final status for audio_id: {status_info.audio_id} kept in memory")
+            return False
         
         try:
             doc = {
@@ -214,9 +216,10 @@ class StatusManager:
                 upsert=True
             )
             logger.info(f"Final state saved to MongoDB for audio_id: {status_info.audio_id}")
+            return True
         except Exception as e:
             logger.error(f"Failed to save final state to MongoDB for audio_id: {status_info.audio_id}, error: {str(e)}")
-            pass
+            return False
     
     def _get_from_mongodb(self, audio_id: str) -> Dict[str, Any]:
         """Get job status from MongoDB"""
