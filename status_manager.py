@@ -148,6 +148,11 @@ class StatusManager:
     def complete_processing(self, audio_id: str, details: Dict[str, Any] = None) -> None:
         """Mark processing as completed"""
         logger.info(f"Completing processing for audio_id: {audio_id}")
+        
+        # Store raw AssemblyAI response if available
+        if details and "raw_assemblyai_response" in details:
+            self._store_raw_assemblyai_response(audio_id, details["raw_assemblyai_response"])
+        
         self.update_status(audio_id, ProcessingStatus.COMPLETED, 100, details)
     
     def fail_processing(self, audio_id: str, error: str, details: Dict[str, Any] = None) -> None:
@@ -210,9 +215,9 @@ class StatusManager:
                 "completed_at": status_info.updated_at
             }
             
-            self._mongo_collection.find_and_modify(
-                query={"audio_id": status_info.audio_id},
-                update={"$set": doc},
+            self._mongo_collection.find_one_and_update(
+                {"audio_id": status_info.audio_id},
+                {"$set": doc},
                 upsert=True
             )
             logger.info(f"Final state saved to MongoDB for audio_id: {status_info.audio_id}")
@@ -308,6 +313,32 @@ class StatusManager:
                 audio_id: self.get_status(audio_id) 
                 for audio_id in self._statuses.keys()
             }
+
+    def _store_raw_assemblyai_response(self, audio_id: str, raw_response: Dict[str, Any]) -> None:
+        """Store raw AssemblyAI response in MongoDB for debugging"""
+        if not self._mongo_client:
+            logger.info(f"MongoDB not configured - raw AssemblyAI response for audio_id: {audio_id} not stored")
+            return
+        
+        try:
+            # Create collection for raw responses
+            raw_collection = self._mongo_client.get_default_database().raw_assemblyai_responses
+            
+            doc = {
+                "audio_id": audio_id,
+                "stored_at": time.time(),
+                "raw_response": raw_response
+            }
+            
+            raw_collection.find_one_and_update(
+                {"audio_id": audio_id},
+                {"$set": doc},
+                upsert=True
+            )
+            logger.info(f"Raw AssemblyAI response stored in MongoDB for audio_id: {audio_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to store raw AssemblyAI response for audio_id: {audio_id}, error: {str(e)}")
 
 
 # Global status manager instance

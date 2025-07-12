@@ -32,10 +32,8 @@ class FileManager:
             (speaker_dir / "segments").mkdir(parents=True, exist_ok=True)
             (speaker_dir / "reference").mkdir(parents=True, exist_ok=True)
         
-        # Create mixed segments directory for multi-speaker scenarios
-        if len(speakers) > 1:
-            mixed_dir = base_dir / "speaker_mixed"
-            (mixed_dir / "segments").mkdir(parents=True, exist_ok=True)
+        # Create silent parts directory
+        (base_dir / "silent_parts").mkdir(parents=True, exist_ok=True)
     
     def save_silent_parts(self, silent_parts: List[Tuple[float, float]], 
                          audio: np.ndarray, sr: int, base_dir: Path):
@@ -67,7 +65,8 @@ class FileManager:
             'silent_parts_count': len(silent_parts),
             'segments_info': segments,
             'processing_timestamp': datetime.now().isoformat(),
-            'dia_guidelines_followed': True
+            'dia_guidelines_followed': True,
+            'raw_assemblyai_response': transcript_data.get('raw_assemblyai_response', {})
         }
         
         # Add additional metadata if provided
@@ -173,10 +172,10 @@ class FileManager:
             for item in self.temp_dir.iterdir():
                 if audio_id in item.name:
                     if item.is_dir():
-                        # Clean up all subdirectories including mixed segments
+                        # Clean up all subdirectories
                         if item.name.startswith("segments_"):
                             for speaker_dir in item.iterdir():
-                                if speaker_dir.is_dir() and (speaker_dir.name.startswith("speaker_") or speaker_dir.name == "speaker_mixed"):
+                                if speaker_dir.is_dir() and (speaker_dir.name.startswith("speaker_") or speaker_dir.name in ["silent_parts", "metadata"]):
                                     shutil.rmtree(speaker_dir)
                         shutil.rmtree(item)
                     else:
@@ -186,25 +185,37 @@ class FileManager:
             pass
     
     def get_processing_stats(self, segments_dir: str) -> Dict[str, Any]:
-        """Get processing statistics"""
+        """Get processing statistics from timeline"""
         try:
             segments_path = Path(segments_dir)
-            metadata_files = list((segments_path / "metadata").glob("*_metadata.json"))
+            timeline_file = segments_path / "metadata" / "timeline.json"
             
-            if not metadata_files:
-                return {"error": "Metadata file not found"}
+            if not timeline_file.exists():
+                return {"error": "Timeline file not found"}
             
-            with open(metadata_files[0], 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
+            with open(timeline_file, 'r', encoding='utf-8') as f:
+                timeline_data = json.load(f)
+            
+            timeline = timeline_data.get('timeline', [])
+            speech_segments = [t for t in timeline if t.get('segment_type') == 'speech']
+            silent_parts = [t for t in timeline if t.get('segment_type') == 'silent']
+            
+            # Calculate stats
+            total_duration = max(t['end'] for t in timeline) if timeline else 0
+            speakers = list(set(s['speaker'] for s in speech_segments))
+            
+            segments_by_speaker = {}
+            for speaker in speakers:
+                segments_by_speaker[speaker] = len([s for s in speech_segments if s['speaker'] == speaker])
             
             return {
-                "total_duration": metadata.get('total_duration', 0),
-                "total_segments": metadata.get('total_segments', 0),
-                "speakers": metadata.get('speakers', []),
-                "segments_by_speaker": metadata.get('segments_by_speaker', {}),
-                "silent_parts_count": metadata.get('silent_parts_count', 0),
-                "transcription_source": metadata.get('transcription_source', 'AssemblyAI'),
-                "dia_guidelines_followed": metadata.get('dia_guidelines_followed', False)
+                "total_duration": total_duration,
+                "total_segments": len(speech_segments),
+                "speakers": speakers,
+                "segments_by_speaker": segments_by_speaker,
+                "silent_parts_count": len(silent_parts),
+                "transcription_source": "AssemblyAI",
+                "processing_method": "word_based_segments_with_silent_parts"
             }
             
         except Exception as e:

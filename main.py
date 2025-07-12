@@ -418,6 +418,7 @@ def process_video_background(
             "segments_processed": cloning_result.get("cloned_segments", 0),
             "speakers_detected": len(processing_result.get("speakers", [])),
             "total_duration": original_duration,
+            "raw_assemblyai_response": processing_result.get("raw_assemblyai_response"),  # Store raw response
             "video_processing": {
                 "audio_used": video_result.get("audio_used"),
                 "instruments_mixed": video_result.get("instruments_mixed", False),

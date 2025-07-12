@@ -26,27 +26,28 @@ class AudioReconstructor:
     def reconstruct_final_audio(self, segments_dir: str, audio_id: str, 
                                include_instruments: bool = False,
                                instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Reconstruct final audio with precise timing and order maintenance"""
+        """Reconstruct final audio using timeline with speech segments and silent parts"""
         try:
             segments_path = Path(segments_dir)
-            metadata_file = segments_path / "metadata" / f"{audio_id}_metadata.json"
+            timeline_file = segments_path / "metadata" / "timeline.json"
             
-            if not metadata_file.exists():
-                return {"success": False, "error": "Metadata file not found", "audio_id": audio_id}
+            if not timeline_file.exists():
+                return {"success": False, "error": "Timeline file not found", "audio_id": audio_id}
             
-            with open(metadata_file, 'r', encoding='utf-8') as f:
-                metadata = json.load(f)
+            with open(timeline_file, 'r', encoding='utf-8') as f:
+                timeline_data = json.load(f)
             
-            segments = metadata.get('segments_info', [])
-            if not segments:
-                return {"success": False, "error": "No segments found", "audio_id": audio_id}
+            timeline = timeline_data.get('timeline', [])
+            if not timeline:
+                return {"success": False, "error": "No timeline items found", "audio_id": audio_id}
             
-            total_duration = metadata.get('total_duration', max(seg['end'] for seg in segments))
+            # Calculate total duration
+            total_duration = max(item['end'] for item in timeline)
             if total_duration <= 0:
                 return {"success": False, "error": "Invalid duration", "audio_id": audio_id}
             
-            # Reconstruct audio with precise timing
-            reconstructed_audio = self._reconstruct_audio(segments, segments_path, total_duration)
+            # Reconstruct audio from timeline
+            reconstructed_audio = self._reconstruct_from_timeline(timeline, segments_path, total_duration)
             
             if reconstructed_audio is None:
                 return {"success": False, "error": "Reconstruction failed", "audio_id": audio_id}
@@ -59,8 +60,11 @@ class AudioReconstructor:
             final_path = self.temp_dir / f"final_output_{audio_id}.wav"
             sf.write(final_path, reconstructed_audio, self.sample_rate)
             
+            speech_count = len([t for t in timeline if t['segment_type'] == 'speech'])
+            silent_count = len([t for t in timeline if t['segment_type'] == 'silent'])
+            
             logger.info(f"Final audio saved: {final_path} (size: {os.path.getsize(final_path) / (1024*1024):.2f} MB)")
-            logger.info(f"Reconstruction completed: {len(segments)} segments processed, duration: {len(reconstructed_audio) / self.sample_rate:.2f}s")
+            logger.info(f"Reconstruction completed: {speech_count} speech segments + {silent_count} silent parts, duration: {len(reconstructed_audio) / self.sample_rate:.2f}s")
             
             return {
                 "success": True,
@@ -68,46 +72,62 @@ class AudioReconstructor:
                 "duration": len(reconstructed_audio) / self.sample_rate,
                 "sample_rate": self.sample_rate,
                 "audio_id": audio_id,
-                "segments_processed": len(segments),
+                "segments_processed": speech_count,
+                "silent_parts_included": silent_count,
                 "instruments_mixed": include_instruments and instruments_path is not None,
-                "reconstruction_method": "precise_timing_with_cloned_audio"
+                "reconstruction_method": "timeline_based_with_silent_parts"
             }
             
         except Exception as e:
             logger.error(f"Audio reconstruction failed for {audio_id}: {str(e)}")
             return {"success": False, "error": str(e), "audio_id": audio_id}
     
-    def _reconstruct_audio(self, segments: List[Dict], segments_path: Path, 
-                          total_duration: float) -> Optional[np.ndarray]:
-        """Reconstruct audio with precise timing"""
+    def _reconstruct_from_timeline(self, timeline: List[Dict], segments_path: Path, 
+                                  total_duration: float) -> Optional[np.ndarray]:
+        """Reconstruct audio from timeline with speech segments and silent parts"""
         try:
-            # Sort segments by start time
-            segments_sorted = sorted(segments, key=lambda x: x['start'])
+            # Sort timeline by start time
+            timeline_sorted = sorted(timeline, key=lambda x: x['start'])
             
             # Create timeline
             total_samples = int(total_duration * self.sample_rate)
             final_audio = np.zeros(total_samples, dtype=np.float32)
             
-            # Process each segment
-            for segment in segments_sorted:
-                start_sample = int(segment['start'] * self.sample_rate)
-                end_sample = int(segment['end'] * self.sample_rate)
+            # Process each timeline item
+            for item in timeline_sorted:
+                start_sample = int(item['start'] * self.sample_rate)
+                end_sample = int(item['end'] * self.sample_rate)
                 
                 # Bounds check
                 start_sample = max(0, min(start_sample, total_samples - 1))
                 end_sample = max(start_sample + 1, min(end_sample, total_samples))
                 
-                # Find and load cloned audio
-                cloned_audio = self._load_cloned_audio(segments_path, segment)
-                
-                if cloned_audio is not None:
-                    # Adjust length to fit exact time slot
-                    expected_samples = end_sample - start_sample
-                    if len(cloned_audio) != expected_samples:
-                        cloned_audio = self._adjust_length(cloned_audio, expected_samples)
+                if item['segment_type'] == 'speech':
+                    # Load cloned audio for speech segments
+                    cloned_audio = self._load_cloned_speech_audio(segments_path, item)
                     
-                    # Place audio at exact position
-                    final_audio[start_sample:end_sample] = cloned_audio
+                    if cloned_audio is not None:
+                        # Adjust length to fit exact time slot
+                        expected_samples = end_sample - start_sample
+                        if len(cloned_audio) != expected_samples:
+                            cloned_audio = self._adjust_length(cloned_audio, expected_samples)
+                        
+                        # Place audio at exact position
+                        final_audio[start_sample:end_sample] = cloned_audio
+                        
+                elif item['segment_type'] == 'silent':
+                    # Load original silent audio
+                    silent_audio = self._load_silent_audio(segments_path, item)
+                    
+                    if silent_audio is not None:
+                        # Adjust length to fit exact time slot
+                        expected_samples = end_sample - start_sample
+                        if len(silent_audio) != expected_samples:
+                            silent_audio = self._adjust_length(silent_audio, expected_samples)
+                        
+                        # Place audio at exact position
+                        final_audio[start_sample:end_sample] = silent_audio
+                    # If no silent audio file, keep zeros (silence)
             
             return final_audio
             
@@ -115,71 +135,79 @@ class AudioReconstructor:
             logger.error(f"Audio reconstruction failed: {str(e)}")
             return None
     
-    def _load_cloned_audio(self, segments_path: Path, segment: Dict) -> Optional[np.ndarray]:
-        """Load cloned audio for segment"""
+    def _load_cloned_speech_audio(self, segments_path: Path, segment: Dict) -> Optional[np.ndarray]:
+        """Load cloned audio for speech segment"""
         speaker = segment['speaker']
+        speaker_dir = segments_path / f"speaker_{speaker}" / "segments"
         
-        # Handle mixed segments
-        if speaker == 'mixed':
-            mixed_dir = segments_path / "speaker_mixed" / "segments"
-            if not mixed_dir.exists():
-                return None
-            
-            # Find matching mixed segment by timing
-            for json_file in mixed_dir.glob("*.json"):
-                try:
-                    with open(json_file, 'r', encoding='utf-8') as f:
-                        seg_data = json.load(f)
+        if not speaker_dir.exists():
+            return None
+        
+        # Find matching segment by timing
+        for json_file in speaker_dir.glob("*.json"):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    seg_data = json.load(f)
+                
+                # Check timing match (with tolerance for speaker-turn based segments)
+                if (abs(seg_data.get('start', 0) - segment['start']) < 0.1 and 
+                    abs(seg_data.get('end', 0) - segment['end']) < 0.1):
                     
-                    # Check timing match
-                    if (abs(seg_data.get('start', 0) - segment['start']) < 0.1 and 
-                        abs(seg_data.get('end', 0) - segment['end']) < 0.1):
+                    # Get audio file name
+                    audio_file = seg_data.get('audio_file', '')
+                    if audio_file:
+                        # Look for cloned version first
+                        cloned_file = f"cloned_{audio_file}"
+                        cloned_path = speaker_dir / cloned_file
                         
-                        # Load cloned audio
-                        segment_id = seg_data.get('segment_file', json_file.stem)
-                        if segment_id.endswith('.json'):
-                            segment_id = segment_id[:-5]  # Remove .json extension
-                        
-                        cloned_file = mixed_dir / f"cloned_{segment_id}.wav"
-                        
-                        if cloned_file.exists():
-                            audio, _ = sf.read(cloned_file)
+                        if cloned_path.exists():
+                            audio, _ = sf.read(cloned_path)
                             return audio
-                            
-                except Exception:
-                    continue
-        else:
-            # Handle individual speaker segments
-            speaker_dir = segments_path / f"speaker_{speaker}" / "segments"
-            
-            if not speaker_dir.exists():
-                return None
-            
-            # Find matching segment by timing
-            for json_file in speaker_dir.glob("*.json"):
-                try:
-                    with open(json_file, 'r', encoding='utf-8') as f:
-                        seg_data = json.load(f)
-                    
-                    # Check timing match
-                    if (abs(seg_data.get('start', 0) - segment['start']) < 0.1 and 
-                        abs(seg_data.get('end', 0) - segment['end']) < 0.1):
                         
-                        # Load cloned audio
-                        segment_id = seg_data.get('segment_file', json_file.stem)
-                        if segment_id.endswith('.json'):
-                            segment_id = segment_id[:-5]  # Remove .json extension
-                        
-                        cloned_file = speaker_dir / f"cloned_{segment_id}.wav"
-                        
-                        if cloned_file.exists():
-                            audio, _ = sf.read(cloned_file)
+                        # Fallback to original segment if cloned doesn't exist
+                        original_path = speaker_dir / audio_file
+                        if original_path.exists():
+                            audio, _ = sf.read(original_path)
                             return audio
-                            
-                except Exception:
-                    continue
+                        
+            except Exception as e:
+                logger.warning(f"Error loading segment {json_file}: {str(e)}")
+                continue
         
         return None
+    
+    def _load_silent_audio(self, segments_path: Path, silent_part: Dict) -> Optional[np.ndarray]:
+        """Load original silent audio"""
+        silent_dir = segments_path / "silent_parts"
+        
+        if not silent_dir.exists():
+            return None
+        
+        # Find matching silent part by timing
+        for json_file in silent_dir.glob("*.json"):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    silent_data = json.load(f)
+                
+                # Check timing match
+                if (abs(silent_data.get('start', 0) - silent_part['start']) < 0.1 and 
+                    abs(silent_data.get('end', 0) - silent_part['end']) < 0.1):
+                    
+                    # Load silent audio
+                    audio_file = silent_data.get('audio_file', '')
+                    if audio_file:
+                        silent_path = silent_dir / audio_file
+                        if silent_path.exists():
+                            audio, _ = sf.read(silent_path)
+                            return audio
+                        
+            except Exception:
+                continue
+        
+        # If no silent audio found, return zeros (silence)
+        duration = silent_part['end'] - silent_part['start']
+        silent_samples = int(duration * self.sample_rate)
+        return np.zeros(silent_samples, dtype=np.float32)
     
     def _adjust_length(self, audio: np.ndarray, target_samples: int) -> np.ndarray:
         """Adjust audio length to target samples"""

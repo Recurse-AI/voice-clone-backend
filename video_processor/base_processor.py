@@ -103,21 +103,15 @@ class AudioProcessor:
             except Exception as e:
                 return {"success": False, "error": f"Reference segment processing failed: {str(e)}"}
             
-            # Save metadata
+            # Save metadata with raw AssemblyAI response
             try:
-                metadata = {
-                    **transcript_data.get('metadata', {}),
-                    "target_language": target_language,
-                    "processing_timestamp": datetime.now().isoformat(),
-                    "optimization": "dia_optimal_segments"
-                }
-                
+                silent_parts = self.segment_manager.identify_silent_parts(segments, transcript_data['duration'])
                 self.file_manager.save_metadata(
-                    transcript_data, segments, [], 
-                    output_dir, audio_id, audio_path, metadata
+                    transcript_data, segments, silent_parts, 
+                    output_dir, audio_id, audio_path
                 )
             except Exception as e:
-                return {"success": False, "error": f"Metadata saving failed: {str(e)}"}
+                logger.warning(f"Failed to save metadata: {str(e)}")
             
             return {
                 "success": True,
@@ -128,7 +122,8 @@ class AudioProcessor:
                 "total_duration": transcript_data['duration'],
                 "language_code": language_code,
                 "detected_speakers": len(transcript_data['speakers']),
-                "speakers_expected": speakers_expected
+                "speakers_expected": speakers_expected,
+                "raw_assemblyai_response": transcript_data.get("raw_assemblyai_response")  # Pass raw response through
             }
             
         except Exception as e:

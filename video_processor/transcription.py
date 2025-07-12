@@ -66,17 +66,37 @@ class TranscriptionService:
             # Get the final language code
             final_language_code = self._get_language_code(transcript, language_code)
             
+            # Store raw AssemblyAI response for debugging
+            raw_response = {
+                "id": transcript.id,
+                "status": transcript.status,
+                "text": transcript.text,
+                "confidence": getattr(transcript, 'confidence', None),
+                "language_code": final_language_code,
+                "language_confidence": getattr(transcript, 'language_confidence', None),
+                "audio_duration": getattr(transcript, 'audio_duration', None),
+                "speech_model": str(config_params.get("speech_model", "universal")),
+                "speaker_labels": config_params.get("speaker_labels", False),
+                "speakers_expected": speakers_expected,
+                "detected_speakers": len(speakers),
+                "words_count": len(words),
+                "raw_json": getattr(transcript, 'json_response', {})
+            }
+            
             return {
                 "text": transcript.text,
                 "words": words,
                 "speakers": speakers,
                 "duration": words[-1]['end'] / 1000 if words else 0,
+                "raw_assemblyai_response": raw_response,  # Store raw response for debugging
                 "metadata": {
                     "language_code": final_language_code,
                     "language_detection_used": not (language_code and language_code.strip()),
-                    "language_confidence": transcript.json_response.get("language_confidence", 0.0),
+                    "language_confidence": getattr(transcript, 'language_confidence', 0.0),
                     "speakers_expected": speakers_expected,
-                    "detected_speakers": len(speakers)
+                    "detected_speakers": len(speakers),
+                    "transcript_id": transcript.id,
+                    "audio_duration": getattr(transcript, 'audio_duration', None)
                 }
             }
             
@@ -190,9 +210,12 @@ class TranscriptionService:
 
 "{text}"
 
-REQUIREMENTS:
+CRITICAL REQUIREMENTS:
 - MUST use ONLY English alphabet characters (A-Z, a-z)
-- MUST be in proper English language - no foreign words, characters, or scripts
+- MUST translate ALL non-English words to their English equivalents
+- NO foreign language words, NO accented characters (é, ñ, ü, etc.)
+- NO non-Latin scripts (Arabic, Chinese, Hindi, etc.)
+- Convert all content to proper English words only
 - Clear, conversational English
 - Simple vocabulary and sentence structure
 - Natural speech rhythm and flow
@@ -202,14 +225,15 @@ REQUIREMENTS:
   (laughs), (chuckles), (sighs), (gasps), (coughs), (clears throat), (inhales), (exhales), (humming), (sneezes), (whistles)
 - Do NOT force non-verbals into every sentence
 - Use them sparingly and naturally
-- NO accented characters, symbols, or non-English scripts
 
-Return only the clean English text using English alphabet only:"""
+IMPORTANT: The output MUST contain ONLY characters from the English alphabet (A-Z, a-z), numbers (0-9), basic punctuation (.,!?;:'-"()), and spaces. ANY other character will break the voice cloning system.
+
+Return only the clean English text:"""
             
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are an expert English translator for voice cloning. You MUST return ONLY clean, natural English text using English alphabet characters (A-Z, a-z) only. NO foreign characters, accents, or non-English scripts allowed."},
+                    {"role": "system", "content": "You are an expert English translator for voice cloning. You MUST output ONLY text that uses the English alphabet (A-Z, a-z), numbers (0-9), and basic punctuation. Translate ALL foreign words to English. NO accented characters (é, ñ, ü), NO non-Latin scripts. If you encounter any non-English word, translate it to its English equivalent. The voice cloning system will fail if ANY non-English character is present."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=150,
@@ -307,9 +331,9 @@ Return only the clean English text using English alphabet only:"""
     
     def _is_valid_english_text(self, text: str) -> bool:
         """Validate that text contains only English alphabet characters and basic punctuation"""
-        # Allow English letters, spaces, basic punctuation, and non-verbal tags in parentheses
-        # This regex allows: letters, spaces, punctuation, and content within parentheses
-        allowed_pattern = r'^[a-zA-Z\s\.\,\!\?\;\:\-\(\)\'\"\[\]]+$'
+        # Allow ONLY: English letters, numbers, spaces, basic punctuation, and parentheses
+        # This is a strict check to ensure voice cloning compatibility
+        allowed_pattern = r'^[a-zA-Z0-9\s\.\,\!\?\;\:\-\(\)\'\"\[\]]+$'
         return bool(re.match(allowed_pattern, text))
     
     def _clean_text(self, text: str) -> str:

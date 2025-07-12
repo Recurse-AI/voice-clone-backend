@@ -32,8 +32,8 @@ class VideoProcessor:
         
         # Subtitle configuration
         self.max_words_per_subtitle = 4  # Max 3-4 words at a time
-        self.subtitle_font_size = 32
-        self.subtitle_margin_bottom = 80
+        self.subtitle_font_size = 24  # Smaller font size
+        self.subtitle_margin_bottom = 120  # Higher position from bottom
         
     def create_video_with_subtitles(self, video_path: str, audio_path: str, 
                                    segments_dir: str, audio_id: str,
