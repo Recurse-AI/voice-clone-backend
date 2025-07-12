@@ -46,9 +46,6 @@ chmod 755 /tmp/voice_cloning /workspace/logs
 
 # Setup Python environment
 echo "🐍 Setting up Python environment..."
-if [ -d "venv" ]; then
-    rm -rf venv
-fi
 python3 -m venv venv || { echo "❌ Failed to create virtual environment"; exit 1; }
 source venv/bin/activate || { echo "❌ Failed to activate virtual environment"; exit 1; }
 pip install --upgrade pip || { echo "❌ Failed to upgrade pip"; exit 1; }
@@ -105,27 +102,5 @@ nohup ./venv/bin/python main.py > /workspace/logs/api.log 2>&1 &
 # Wait for API to start
 echo "⏳ Waiting for API to start..."
 sleep 10
-
-# Health check
-echo "🔍 Performing health check..."
-for i in {1..10}; do
-    if curl -f http://localhost:8000/ &>/dev/null; then
-        echo "✅ API is running successfully!"
-        echo "🌐 API URL: http://0.0.0.0:8000"
-        echo "📊 API Status: http://0.0.0.0:8000/"
-        echo "📋 Logs: tail -f /workspace/logs/api.log"
-        echo "🎯 Health Check: curl http://localhost:8000/"
-        break
-    else
-        echo "⏳ Waiting for API... (attempt $i/10)"
-        sleep 5
-    fi
-    
-    if [ $i -eq 10 ]; then
-        echo "❌ API failed to start. Check logs:"
-        tail -20 /workspace/logs/api.log
-        exit 1
-    fi
-done
 
 echo "🎉 Setup complete! Your Voice Cloning API is ready!" 
