@@ -141,10 +141,78 @@ class AudioProcessor:
             segments_path = Path(segments_dir)
             all_cloned_segments = {}
             total_successful_clones = 0
+            seeds_used = {}
             
-            # Process each speaker separately
+            # Generate seed for mixed audio processing first
+            import random
+            mixed_audio_seed = random.randint(1, 1000000)
+            seeds_used['mixed_audio'] = mixed_audio_seed
+            
+            # Process mixed segments first
+            mixed_dir = segments_path / "speaker_mixed"
+            if mixed_dir.exists():
+                mixed_segments_dir = mixed_dir / "segments"
+                if mixed_segments_dir.exists():
+                    # Load all mixed segments
+                    mixed_segments = []
+                    for segment_file in mixed_segments_dir.glob("*.json"):
+                        with open(segment_file, 'r', encoding='utf-8') as f:
+                            import json
+                            segment_data = json.load(f)
+                        
+                        # Check if segment has required fields
+                        if not segment_data.get('dia_text'):
+                            continue
+                        
+                        segment_data['segments_dir'] = str(mixed_segments_dir)
+                        segment_data['segment_file'] = str(segment_file)
+                        mixed_segments.append(segment_data)
+                    
+                    if mixed_segments:
+                        # Clone mixed segments with mixed_audio_seed
+                        cloning_result = self.voice_cloning_service.clone_voice_segments(
+                            mixed_segments, temperature, cfg_scale, top_p, mixed_audio_seed
+                        )
+                        
+                        if cloning_result.get('success', False):
+                            # Save cloned mixed audio
+                            mixed_successful = 0
+                            for cloned_segment in cloning_result.get('cloned_segments', []):
+                                if cloned_segment.get('success', False) and cloned_segment.get('cloned_audio') is not None:
+                                    segment_data = cloned_segment['original_data']
+                                    segments_dir_path = Path(segment_data['segments_dir'])
+                                    
+                                    # Get original audio file path
+                                    segment_json_path = Path(segment_data['segment_file'])
+                                    wav_filename = segment_json_path.stem + '.wav'
+                                    original_audio_path = segments_dir_path / wav_filename
+                                    
+                                    if original_audio_path.exists():
+                                        original_audio, _ = sf.read(original_audio_path)
+                                        original_duration = len(original_audio) / 44100
+                                        
+                                        # Ensure cloned audio matches exact original length
+                                        cloned_audio = self._preserve_exact_length(
+                                            cloned_segment['cloned_audio'], original_duration, 44100
+                                        )
+                                        
+                                        # Save cloned audio
+                                        cloned_filename = f"cloned_{original_audio_path.stem}.wav"
+                                        cloned_path = segments_dir_path / cloned_filename
+                                        sf.write(cloned_path, cloned_audio, 44100)
+                                        mixed_successful += 1
+                            
+                            all_cloned_segments['mixed'] = {
+                                'total_segments': len(mixed_segments),
+                                'successful_clones': mixed_successful,
+                                'reference_used': None,
+                                'seed_used': mixed_audio_seed
+                            }
+                            total_successful_clones += mixed_successful
+            
+            # Process each individual speaker separately with unique seeds
             for speaker_dir in segments_path.iterdir():
-                if not (speaker_dir.is_dir() and speaker_dir.name.startswith("speaker_")):
+                if not (speaker_dir.is_dir() and speaker_dir.name.startswith("speaker_") and speaker_dir.name != "speaker_mixed"):
                     continue
                 
                 speaker = speaker_dir.name.replace("speaker_", "")
@@ -154,6 +222,10 @@ class AudioProcessor:
                 # Check if directories exist
                 if not segments_subdir.exists():
                     continue
+                
+                # Generate unique seed for this speaker
+                speaker_seed = random.randint(1, 1000000)
+                seeds_used[speaker] = speaker_seed
                 
                 # Load reference for this speaker
                 reference_audio_path = None
@@ -191,9 +263,9 @@ class AudioProcessor:
                 if not speaker_segments:
                     continue
                 
-                # Clone all segments for this speaker at once
+                # Clone all segments for this speaker with speaker-specific seed
                 cloning_result = self.voice_cloning_service.clone_voice_segments(
-                    speaker_segments, temperature, cfg_scale, top_p, seed
+                    speaker_segments, temperature, cfg_scale, top_p, speaker_seed
                 )
                 
                 if not cloning_result.get('success', False):
@@ -232,18 +304,20 @@ class AudioProcessor:
                 all_cloned_segments[speaker] = {
                     'total_segments': len(speaker_segments),
                     'successful_clones': speaker_successful,
-                    'reference_used': reference_audio_path
+                    'reference_used': reference_audio_path,
+                    'seed_used': speaker_seed
                 }
                 total_successful_clones += speaker_successful
             
-            # Return proper success response
+            # Return proper success response with seeds
             return {
                 "success": True,
                 "cloned_segments": total_successful_clones,
                 "cloned_segments_count": total_successful_clones,
                 "cloned_by_speaker": all_cloned_segments,
+                "seeds_used": seeds_used,
                 "audio_id": audio_id,
-                "processing_method": "speaker_wise_batch"
+                "processing_method": "speaker_wise_batch_with_mixed_segments"
             }
             
         except Exception as e:

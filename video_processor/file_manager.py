@@ -22,16 +22,20 @@ class FileManager:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
     
     def create_directory_structure(self, base_dir: Path, speakers: List[str]):
-        """Create directory structure for processed audio"""
-        # Create main directories
+        """Create directory structure for segments and references"""
+        # Create base directories
         (base_dir / "metadata").mkdir(parents=True, exist_ok=True)
-        (base_dir / "silent_parts").mkdir(parents=True, exist_ok=True)
         
         # Create speaker directories
         for speaker in speakers:
             speaker_dir = base_dir / f"speaker_{speaker}"
             (speaker_dir / "segments").mkdir(parents=True, exist_ok=True)
             (speaker_dir / "reference").mkdir(parents=True, exist_ok=True)
+        
+        # Create mixed segments directory for multi-speaker scenarios
+        if len(speakers) > 1:
+            mixed_dir = base_dir / "speaker_mixed"
+            (mixed_dir / "segments").mkdir(parents=True, exist_ok=True)
     
     def save_silent_parts(self, silent_parts: List[Tuple[float, float]], 
                          audio: np.ndarray, sr: int, base_dir: Path):
@@ -179,6 +183,11 @@ class FileManager:
             for item in self.temp_dir.iterdir():
                 if audio_id in item.name:
                     if item.is_dir():
+                        # Clean up all subdirectories including mixed segments
+                        if item.name.startswith("segments_"):
+                            for speaker_dir in item.iterdir():
+                                if speaker_dir.is_dir() and (speaker_dir.name.startswith("speaker_") or speaker_dir.name == "speaker_mixed"):
+                                    shutil.rmtree(speaker_dir)
                         shutil.rmtree(item)
                     else:
                         item.unlink()

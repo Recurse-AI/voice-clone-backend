@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Form, HTTPException, BackgroundTasks, Depends
+from fastapi import FastAPI, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -6,7 +6,6 @@ from typing import Optional, Dict, Any
 import os
 import shutil
 from pathlib import Path
-from datetime import datetime
 import json
 import random
 import requests
@@ -36,16 +35,6 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
-
-# Custom dependency for handling empty seed values
-def parse_seed(seed: str = Form(None, description="Optional seed for reproducible results")) -> Optional[int]:
-    """Parse seed parameter, converting empty strings to None"""
-    if seed is None or seed == "" or seed.strip() == "":
-        return None
-    try:
-        return int(seed)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Seed must be a valid integer or empty")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -93,7 +82,6 @@ class ProcessingResponse(BaseModel):
     subtitles_url: Optional[str] = None
     video_url: Optional[str] = None
     original_audio_details: Optional[Dict[str, Any]] = None
-    seed_used: Optional[int] = None
 
 class StatusResponse(BaseModel):
     status: str
@@ -154,7 +142,6 @@ class StartProcessingResponse(BaseModel):
 async def process_video(
     background_tasks: BackgroundTasks,
     video_url: str = Form(..., description="Video URL (HTTP/HTTPS) for processing with automatic separation"),
-    seed: Optional[int] = Depends(parse_seed),
     include_instruments: bool = Form(True, description="Whether to include instruments in final audio"),
     generate_subtitles: bool = Form(True, description="Whether to generate subtitles"),
     temperature: float = Form(settings.DIA_TEMPERATURE, description="Voice cloning temperature"),
@@ -199,7 +186,7 @@ async def process_video(
     # Start background processing
     background_tasks.add_task(
         process_video_background,
-        video_url, audio_id, seed, include_instruments, generate_subtitles,
+        video_url, audio_id, include_instruments, generate_subtitles,
         temperature, cfg_scale, top_p, target_language, language_code, speakers_expected
     )
     
@@ -216,16 +203,13 @@ async def process_video(
     )
 
 def process_video_background(
-    video_url: str, audio_id: str, seed: Optional[int], include_instruments: bool,
+    video_url: str, audio_id: str, include_instruments: bool,
     generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float,
     target_language: str, language_code: Optional[str], speakers_expected: Optional[int]
 ):
     """Background processing function"""
     logger.info(f"Starting background processing for audio_id: {audio_id}")
-    logger.info(f"Processing parameters - video_url: {video_url}, seed: {seed}, include_instruments: {include_instruments}, generate_subtitles: {generate_subtitles}")
-    
-    actual_seed = seed if seed is not None else random.randint(1, 1000000)
-    set_seed(actual_seed)
+    logger.info(f"Processing parameters - video_url: {video_url}, include_instruments: {include_instruments}, generate_subtitles: {generate_subtitles}")
     
     # Convert empty string to None for proper handling
     final_language_code = language_code if language_code and language_code.strip() else None
@@ -308,7 +292,7 @@ def process_video_background(
             "detected_speakers": processing_result.get("detected_speakers", len(processing_result.get("speakers", [])))
         }
         
-        # Clone voices
+        # Clone voices with speaker-specific seeds
         logger.info(f"Starting voice cloning for audio_id: {audio_id}")
         status_manager.set_progress(audio_id, 60)
         
@@ -317,8 +301,7 @@ def process_video_background(
             audio_id,
             temperature=temperature,
             cfg_scale=cfg_scale,
-            top_p=top_p,
-            seed=actual_seed
+            top_p=top_p
         )
         
         if not cloning_result["success"]:
@@ -331,6 +314,7 @@ def process_video_background(
         
         # Reconstruct audio
         logger.info(f"Starting audio reconstruction for audio_id: {audio_id}")
+        
         if include_instruments:
             reconstruction_result = audio_processor.reconstruct_final_audio(
                 segments_dir,
@@ -357,6 +341,7 @@ def process_video_background(
         
         # Handle video processing
         logger.info(f"Starting final video processing for audio_id: {audio_id}")
+        
         video_result = None
         if generate_subtitles:
             instruments_for_video = separated_instruments_path if include_instruments else None
@@ -421,11 +406,11 @@ def process_video_background(
         logger.info(f"Completion details for audio_id: {audio_id} - segments: {completion_details.get('segments_processed', 0)}, speakers: {completion_details.get('speakers_detected', 0)}, duration: {completion_details.get('total_duration', 0)}s")
         status_manager.complete_processing(audio_id, completion_details)
         
-        # Create processing summary for R2
+        # Create processing summary for R2 with seed information
         processing_data = {
             "audio_id": audio_id,
             "original_audio": original_audio_details,
-            "seed_used": actual_seed,
+            "seeds_used": cloning_result.get("seeds_used", {}),
             "parameters": {
                 "temperature": temperature,
                 "cfg_scale": cfg_scale,

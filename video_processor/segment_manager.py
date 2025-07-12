@@ -41,8 +41,10 @@ class SegmentManager:
         else:
             segments = self._create_multi_speaker_segments(words, speakers)
         
-        # Post-process to combine short segments
-        return self._combine_short_segments(segments)
+        # Create mixed segments for short bursts
+        segments = self._create_mixed_segments(segments, speakers)
+        
+        return segments
     
     def _create_single_speaker_segments(self, words: List[Dict], speaker: str) -> List[Dict[str, Any]]:
         """Create segments for single speaker"""
@@ -128,8 +130,107 @@ class SegmentManager:
         
         return segments
     
+    def _create_mixed_segments(self, segments: List[Dict], speakers: List[str]) -> List[Dict[str, Any]]:
+        """Create mixed segments from short speaker bursts"""
+        if len(speakers) == 1:
+            return segments
+        
+        # Create speaker tag mapping
+        speaker_tags = {speaker: f"[S{i+1}]" for i, speaker in enumerate(speakers)}
+        
+        mixed_segments = []
+        current_group = []
+        
+        for segment in segments:
+            # Check if segment is short (less than 7 seconds)
+            if segment['duration'] < 7.0:
+                current_group.append(segment)
+            else:
+                # Process accumulated short segments
+                if current_group:
+                    mixed_segment = self._combine_short_segments_into_mixed(current_group, speaker_tags, speakers)
+                    if mixed_segment:
+                        mixed_segments.append(mixed_segment)
+                    current_group = []
+                
+                # Add the long segment as is
+                mixed_segments.append(segment)
+        
+        # Handle remaining short segments
+        if current_group:
+            mixed_segment = self._combine_short_segments_into_mixed(current_group, speaker_tags, speakers)
+            if mixed_segment:
+                mixed_segments.append(mixed_segment)
+        
+        return mixed_segments
+    
+    def _combine_short_segments_into_mixed(self, short_segments: List[Dict], 
+                                         speaker_tags: Dict[str, str], 
+                                         all_speakers: List[str]) -> Optional[Dict]:
+        """Combine short segments into mixed segment"""
+        if not short_segments:
+            return None
+        
+        # Sort by start time
+        short_segments.sort(key=lambda x: x['start'])
+        
+        # Check if segments are reasonably consecutive (no big gaps)
+        max_gap = 2.0  # Maximum 2 seconds gap between segments
+        for i in range(1, len(short_segments)):
+            gap = short_segments[i]['start'] - short_segments[i-1]['end']
+            if gap > max_gap:
+                # If there's a big gap, only use segments up to this point
+                short_segments = short_segments[:i]
+                break
+        
+        # Calculate actual duration from first start to last end
+        if len(short_segments) == 0:
+            return None
+        
+        actual_start = short_segments[0]['start']
+        actual_end = short_segments[-1]['end']
+        actual_duration = actual_end - actual_start
+        
+        # Only create mixed segment if total duration is reasonable
+        if actual_duration < 3.0:  # Too short overall
+            return None
+        
+        # Create mixed text with consistent speaker tags
+        mixed_text_parts = []
+        all_words = []
+        
+        for segment in short_segments:
+            speaker = segment['speaker']
+            text = segment['text']
+            speaker_tag = speaker_tags.get(speaker, '[S1]')
+            
+            mixed_text_parts.append(f"{speaker_tag} {text}")
+            all_words.extend(segment.get('words', []))
+        
+        # Combine into single mixed text
+        mixed_text = ' '.join(mixed_text_parts)
+        
+        # Calculate confidence
+        confidences = [seg.get('confidence', 0.5) for seg in short_segments]
+        avg_confidence = sum(confidences) / len(confidences) if confidences else 0.5
+        
+        return {
+            'speaker': 'mixed',
+            'start': actual_start,
+            'end': actual_end,
+            'duration': actual_duration,
+            'text': mixed_text,
+            'words': all_words,
+            'word_count': len(all_words),
+            'confidence': avg_confidence,
+            'all_speakers': all_speakers,
+            'is_mixed': True,
+            'original_segments': short_segments,
+            'speaker_tags': speaker_tags
+        }
+    
     def _combine_short_segments(self, segments: List[Dict]) -> List[Dict[str, Any]]:
-        """Combine short segments to reach optimal duration"""
+        """Combine short segments to reach optimal duration - now handles mixed segments"""
         if len(segments) <= 1:
             return segments
         
@@ -139,10 +240,17 @@ class SegmentManager:
         while i < len(segments):
             current_segment = segments[i]
             
+            # Skip mixed segments from further combination
+            if current_segment.get('is_mixed', False):
+                combined_segments.append(current_segment)
+                i += 1
+                continue
+            
             # Try to combine with next segment if current is short
             if (current_segment['duration'] < self.combine_threshold and 
                 i + 1 < len(segments) and 
-                segments[i + 1]['speaker'] == current_segment['speaker']):
+                segments[i + 1]['speaker'] == current_segment['speaker'] and
+                not segments[i + 1].get('is_mixed', False)):
                 
                 next_segment = segments[i + 1]
                 combined_duration = current_segment['duration'] + next_segment['duration']
@@ -222,30 +330,43 @@ class SegmentManager:
             end_time = segment['end']
             text = segment['text']
             duration = end_time - start_time
+            is_mixed = segment.get('is_mixed', False)
             
             # Extract and save audio
             start_sample = int(start_time * sr)
             end_sample = int(end_time * sr)
             segment_audio = audio[start_sample:end_sample]
             
-            # Save in speaker-wise directory structure
-            speaker_dir = base_dir / f"speaker_{speaker}"
-            segments_dir = speaker_dir / "segments"
-            segments_dir.mkdir(parents=True, exist_ok=True)
+            # Create directory structure
+            if is_mixed:
+                speaker_dir = base_dir / "speaker_mixed"
+                segments_dir = speaker_dir / "segments"
+                segments_dir.mkdir(parents=True, exist_ok=True)
+                segment_filename = f"mixed_segment_{i:03d}.wav"
+            else:
+                speaker_dir = base_dir / f"speaker_{speaker}"
+                segments_dir = speaker_dir / "segments"
+                segments_dir.mkdir(parents=True, exist_ok=True)
+                segment_filename = f"segment_{i:03d}_{speaker}.wav"
             
-            # Save segment files
-            segment_filename = f"segment_{i:03d}_{speaker}.wav"
+            # Save segment audio
             segment_path = segments_dir / segment_filename
             sf.write(str(segment_path), segment_audio, sr)
             
             # Process text for voice cloning
-            if detected_language.lower() not in ["en", "english"]:
-                english_text = self.transcription_service.translate_text_clean(text)
-            else:
+            if is_mixed:
+                # Mixed segments already have proper [S1], [S2] tags
                 english_text = text
-            
-            # Format for Dia model
-            dia_text = self.transcription_service.format_dia_text(english_text, speaker, speakers)
+                dia_text = text
+            else:
+                # Single speaker segments
+                if detected_language.lower() not in ["en", "english"]:
+                    english_text = self.transcription_service.translate_text_clean(text)
+                else:
+                    english_text = text
+                
+                # Format for Dia model
+                dia_text = self.transcription_service.format_dia_text(english_text, speaker, speakers)
             
             # Save metadata
             metadata = {
@@ -259,25 +380,36 @@ class SegmentManager:
                 "word_count": segment['word_count'],
                 "confidence": segment['confidence'],
                 "segment_file": segment_filename,
-                "audio_path": str(segment_path)
+                "audio_path": str(segment_path),
+                "is_mixed": is_mixed
             }
             
+            # Add mixed segment specific metadata
+            if is_mixed:
+                metadata["speaker_tags"] = segment.get('speaker_tags', {})
+                metadata["original_segments"] = segment.get('original_segments', [])
+            
             import json
-            metadata_filename = f"segment_{i:03d}_{speaker}.json"
+            if is_mixed:
+                metadata_filename = f"mixed_segment_{i:03d}.json"
+            else:
+                metadata_filename = f"segment_{i:03d}_{speaker}.json"
+            
             metadata_path = segments_dir / metadata_filename
             with open(metadata_path, "w", encoding="utf-8") as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
             
-            # Track for reference selection
-            if speaker not in reference_files:
-                reference_files[speaker] = []
-            reference_files[speaker].append({
-                "path": str(segment_path),
-                "duration": duration,
-                "confidence": segment['confidence'],
-                "segment_index": i,
-                "metadata": metadata
-            })
+            # Track for reference selection (only for non-mixed segments)
+            if not is_mixed:
+                if speaker not in reference_files:
+                    reference_files[speaker] = []
+                reference_files[speaker].append({
+                    "path": str(segment_path),
+                    "duration": duration,
+                    "confidence": segment['confidence'],
+                    "segment_index": i,
+                    "metadata": metadata
+                })
         
         # Select best reference for each speaker
         selected_references = {}
