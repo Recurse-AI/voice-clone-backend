@@ -96,6 +96,12 @@ class FileManager:
             ref_segment = reference_segments[speaker]
             speaker_dir = base_dir / f"speaker_{speaker}" / "reference"
             
+            # Handle composite references differently
+            if ref_segment and ref_segment.get('is_composite', False):
+                # Save composite reference metadata
+                self._save_composite_reference(ref_segment, speaker_dir, base_dir, speaker)
+                continue
+            
             start_time = ref_segment.get('start', 0)
             end_time = ref_segment.get('end', 5)
             duration = ref_segment.get('duration', 5)
@@ -130,13 +136,35 @@ class FileManager:
                 'duration': duration,
                 'text': english_text,  # Clean English text for reference
                 'original_text': original_text,
+                'word_count': ref_segment.get('word_count', len(english_text.split())),
                 'confidence': ref_segment.get('confidence', 0.5),
-                'selected_reason': 'highest_confidence_and_quality'
+                'selected_reason': 'optimal_word_count_and_quality'
             }
             
             ref_metadata_path = speaker_dir / f"{base_dir.name}_speaker_{speaker}_REFERENCE_metadata.json"
             with open(ref_metadata_path, 'w', encoding='utf-8') as f:
                 json.dump(ref_metadata, f, ensure_ascii=False, indent=2)
+    
+    def _save_composite_reference(self, ref_segment: Dict, speaker_dir: Path, 
+                                 base_dir: Path, speaker: str):
+        """Save composite reference created from mixed segments"""
+        # For composite references, we save metadata only (no audio file)
+        # The voice cloning service will handle creating the reference from mixed segments
+        
+        ref_metadata = {
+            'speaker': speaker,
+            'reference_type': 'composite',
+            'source': ref_segment.get('source', 'mixed_segments'),
+            'text': ref_segment.get('text', ''),
+            'word_count': ref_segment.get('word_count', 0),
+            'estimated_duration': ref_segment.get('duration', 10.0),
+            'is_composite': True,
+            'note': 'Composite reference created from mixed segments - audio will be generated during cloning'
+        }
+        
+        ref_metadata_path = speaker_dir / f"{base_dir.name}_speaker_{speaker}_COMPOSITE_REFERENCE_metadata.json"
+        with open(ref_metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(ref_metadata, f, ensure_ascii=False, indent=2)
     
     def save_multi_speaker_reference(self, audio: np.ndarray, sr: int, 
                                    base_dir: Path, speakers: List[str]):

@@ -195,8 +195,10 @@ class VoiceCloningService:
     def _get_audio_prompt_transcript(self, reference_audio_path: Optional[str], 
                                    segment_data: Dict[str, Any]) -> Optional[str]:
         """Get transcript for audio prompt according to official Dia guidelines"""
+        # Check if this is a composite reference scenario
         if not reference_audio_path or not os.path.exists(reference_audio_path):
-            return None
+            # Look for composite reference metadata
+            return self._get_composite_reference_transcript(segment_data)
         
         try:
             # Get reference audio directory and find reference metadata
@@ -216,10 +218,10 @@ class VoiceCloningService:
                         # Format for Dia - simple and clean
                         formatted_ref = self._format_text_for_dia(ref_text)
                         
-                        # Keep transcript short and focused (5-10 seconds audio guideline)
+                        # Keep transcript focused on optimal word count (35-45 words)
                         words = formatted_ref.split()
-                        if len(words) > 15:  # Limit to ~10 seconds of speech
-                            formatted_ref = ' '.join(words[:15]) + '.'
+                        if len(words) > 45:  # Limit to optimal word count
+                            formatted_ref = ' '.join(words[:40]) + '.'
                         
                         logger.info(f"Created reference transcript from metadata: {formatted_ref[:50]}...")
                         return formatted_ref
@@ -238,16 +240,48 @@ class VoiceCloningService:
                 # Format for Dia
                 formatted_text = self._format_text_for_dia(original_text)
                 
-                # Keep it short for better cloning
+                # Keep it within optimal word count
                 words = formatted_text.split()
-                if len(words) > 15:
-                    formatted_text = ' '.join(words[:15]) + '.'
+                if len(words) > 45:
+                    formatted_text = ' '.join(words[:40]) + '.'
                 
                 logger.info(f"Created fallback transcript from segment: {formatted_text[:50]}...")
                 return formatted_text
             
         except Exception as e:
             logger.warning(f"Failed to get audio prompt transcript: {str(e)}")
+        
+        return None
+    
+    def _get_composite_reference_transcript(self, segment_data: Dict[str, Any]) -> Optional[str]:
+        """Get composite reference transcript for mixed segment scenarios"""
+        try:
+            # Check if segment directory has composite reference metadata
+            segments_dir = segment_data.get('segments_dir', '')
+            if segments_dir:
+                segments_path = Path(segments_dir)
+                speaker_dir = segments_path.parent
+                reference_dir = speaker_dir / "reference"
+                
+                # Look for composite reference metadata
+                for metadata_file in reference_dir.glob("*COMPOSITE_REFERENCE_metadata.json"):
+                    try:
+                        with open(metadata_file, 'r', encoding='utf-8') as f:
+                            comp_metadata = json.load(f)
+                        
+                        ref_text = comp_metadata.get('text', '')
+                        if ref_text.strip():
+                            # Format for Dia
+                            formatted_ref = self._format_text_for_dia(ref_text)
+                            logger.info(f"Using composite reference transcript: {formatted_ref[:50]}...")
+                            return formatted_ref
+                            
+                    except Exception as e:
+                        logger.warning(f"Failed to read composite reference: {str(e)}")
+                        continue
+        
+        except Exception as e:
+            logger.warning(f"Failed to get composite reference transcript: {str(e)}")
         
         return None
     
