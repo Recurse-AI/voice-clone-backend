@@ -10,7 +10,11 @@ import threading
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 from datetime import datetime, timedelta
+import logging
 from config import settings
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class ProcessingStatus(Enum):
@@ -81,6 +85,7 @@ class StatusManager:
     
     def start_processing(self, audio_id: str) -> None:
         """Start processing for an audio ID"""
+        logger.info(f"Starting processing status tracking for audio_id: {audio_id}")
         with self._lock:
             self._statuses[audio_id] = StatusInfo(
                 status=ProcessingStatus.STARTING,
@@ -88,12 +93,15 @@ class StatusManager:
                 audio_id=audio_id,
                 progress=0
             )
+        logger.info(f"Processing status initialized for audio_id: {audio_id}")
     
     def update_status(self, audio_id: str, status: ProcessingStatus, 
                      progress: int = None, details: Dict[str, Any] = None) -> None:
         """Update processing status"""
+        logger.info(f"Updating status for audio_id: {audio_id} to {status.value}")
         with self._lock:
             if audio_id not in self._statuses:
+                logger.warning(f"Attempted to update status for non-existent audio_id: {audio_id}")
                 return
                 
             status_info = self._statuses[audio_id]
@@ -109,8 +117,10 @@ class StatusManager:
             
             # Save final states to MongoDB and cleanup
             if status in [ProcessingStatus.COMPLETED, ProcessingStatus.FAILED]:
+                logger.info(f"Final status reached for audio_id: {audio_id} - {status.value}")
                 self._save_final_state(status_info)
                 del self._statuses[audio_id]
+                logger.info(f"Status moved to MongoDB and cleared from memory for audio_id: {audio_id}")
     
     def set_progress(self, audio_id: str, progress: int) -> None:
         """Set progress percentage"""
@@ -118,13 +128,16 @@ class StatusManager:
             if audio_id in self._statuses:
                 self._statuses[audio_id].progress = min(100, max(0, progress))
                 self._statuses[audio_id].updated_at = time.time()
+                logger.debug(f"Progress updated for audio_id: {audio_id} to {progress}%")
     
     def complete_processing(self, audio_id: str, details: Dict[str, Any] = None) -> None:
         """Mark processing as completed"""
+        logger.info(f"Completing processing for audio_id: {audio_id}")
         self.update_status(audio_id, ProcessingStatus.COMPLETED, 100, details)
     
     def fail_processing(self, audio_id: str, error: str, details: Dict[str, Any] = None) -> None:
         """Mark processing as failed"""
+        logger.error(f"Failing processing for audio_id: {audio_id} with error: {error}")
         fail_details = {"error": error}
         if details:
             fail_details.update(details)
@@ -132,14 +145,19 @@ class StatusManager:
     
     def get_status(self, audio_id: str) -> Dict[str, Any]:
         """Get processing status - local first, MongoDB fallback"""
+        logger.debug(f"Getting status for audio_id: {audio_id}")
+        
         # Check local memory first
         with self._lock:
             if audio_id in self._statuses:
+                logger.debug(f"Found status in memory for audio_id: {audio_id}")
                 status_info = self._statuses[audio_id]
                 result = asdict(status_info)
                 result["status"] = status_info.status.value
                 result["elapsed_time"] = time.time() - status_info.started_at
                 return result
+        
+        logger.debug(f"Status not found in memory for audio_id: {audio_id}, checking MongoDB")
         
         # Fallback to MongoDB
         mongodb_result = self._get_from_mongodb(audio_id)
@@ -147,8 +165,10 @@ class StatusManager:
         # If not found in MongoDB, check if there's a log file for this audio_id
         # This indicates processing was started but status was lost
         if mongodb_result["status"] == ProcessingStatus.NOT_FOUND.value:
+            logger.warning(f"Status not found in MongoDB for audio_id: {audio_id}")
             log_file_exists = self._check_log_file_exists(audio_id)
             if log_file_exists:
+                logger.warning(f"Log file exists for audio_id: {audio_id} but status not found - may indicate lost processing")
                 return {
                     "status": ProcessingStatus.FAILED.value,
                     "message": "Processing was started but status was lost. Check logs for details.",
@@ -161,6 +181,7 @@ class StatusManager:
     def _save_final_state(self, status_info: StatusInfo):
         """Save final state to MongoDB"""
         if not self._mongo_client:
+            logger.warning(f"MongoDB client not available, cannot save final state for audio_id: {status_info.audio_id}")
             return
         
         try:
@@ -179,12 +200,15 @@ class StatusManager:
                 update={"$set": doc},
                 upsert=True
             )
-        except:
+            logger.info(f"Final state saved to MongoDB for audio_id: {status_info.audio_id}")
+        except Exception as e:
+            logger.error(f"Failed to save final state to MongoDB for audio_id: {status_info.audio_id}, error: {str(e)}")
             pass
     
     def _get_from_mongodb(self, audio_id: str) -> Dict[str, Any]:
         """Get job status from MongoDB"""
         if not self._mongo_client:
+            logger.warning(f"MongoDB client not available for audio_id: {audio_id}")
             return {
                 "status": ProcessingStatus.NOT_FOUND.value,
                 "message": self._status_messages[ProcessingStatus.NOT_FOUND],
@@ -194,6 +218,7 @@ class StatusManager:
         try:
             doc = self._mongo_collection.find_one({"audio_id": audio_id})
             if doc:
+                logger.debug(f"Found status in MongoDB for audio_id: {audio_id}")
                 return {
                     "status": doc["status"],
                     "message": doc.get("message", ""),
@@ -203,7 +228,10 @@ class StatusManager:
                     "started_at": doc.get("started_at", 0),
                     "elapsed_time": doc.get("completed_at", 0) - doc.get("started_at", 0)
                 }
-        except:
+            else:
+                logger.debug(f"No status found in MongoDB for audio_id: {audio_id}")
+        except Exception as e:
+            logger.error(f"Failed to retrieve status from MongoDB for audio_id: {audio_id}, error: {str(e)}")
             pass
         
         return {

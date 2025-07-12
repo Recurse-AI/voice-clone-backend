@@ -88,6 +88,67 @@ echo "📁 Creating directories..."
 mkdir -p ./tmp/voice_cloning ./logs
 chmod 755 ./tmp/voice_cloning ./logs
 
+# Log rotation function
+rotate_api_log() {
+    local log_file="./logs/api.log"
+    local max_lines=100
+    
+    if [ -f "$log_file" ]; then
+        local current_lines=$(wc -l < "$log_file" 2>/dev/null || echo "0")
+        
+        if [ "$current_lines" -gt "$max_lines" ]; then
+            echo "📋 Rotating log file (current: $current_lines lines, keeping last $max_lines)"
+            
+            # Keep only the last 100 lines
+            tail -n "$max_lines" "$log_file" > "$log_file.tmp" && mv "$log_file.tmp" "$log_file"
+            
+            echo "✅ Log rotated successfully"
+        else
+            echo "📋 Log file size OK ($current_lines lines)"
+        fi
+    else
+        echo "📋 No existing log file found"
+    fi
+}
+
+# Setup log rotation as background task
+setup_log_rotation() {
+    echo "⚙️  Setting up automatic log rotation..."
+    
+    # Create log rotation script
+    cat > ./logs/rotate_logs.sh << 'EOF'
+#!/bin/bash
+# Auto log rotation script
+
+LOG_FILE="./logs/api.log"
+MAX_LINES=100
+CHECK_INTERVAL=300  # 5 minutes
+
+while true; do
+    if [ -f "$LOG_FILE" ]; then
+        CURRENT_LINES=$(wc -l < "$LOG_FILE" 2>/dev/null || echo "0")
+        
+        if [ "$CURRENT_LINES" -gt "$MAX_LINES" ]; then
+            echo "$(date): Rotating log file ($CURRENT_LINES lines -> $MAX_LINES lines)" >> "./logs/rotation.log"
+            tail -n "$MAX_LINES" "$LOG_FILE" > "$LOG_FILE.tmp" && mv "$LOG_FILE.tmp" "$LOG_FILE"
+        fi
+    fi
+    
+    sleep $CHECK_INTERVAL
+done
+EOF
+    
+    chmod +x ./logs/rotate_logs.sh
+    
+    # Kill any existing log rotation process
+    pkill -f "rotate_logs.sh" || true
+    
+    # Start log rotation in background
+    nohup ./logs/rotate_logs.sh > /dev/null 2>&1 &
+    
+    echo "✅ Automatic log rotation enabled (checks every 5 minutes)"
+}
+
 # Setup Python environment
 echo "🐍 Setting up Python environment..."
 python3 -m venv venv || { echo "❌ Failed to create virtual environment"; exit 1; }
@@ -138,6 +199,13 @@ EOF
 echo "🔄 Stopping existing processes..."
 pkill -f "python.*main.py" || true
 sleep 3
+
+# Rotate logs before starting
+echo "📋 Checking and rotating logs..."
+rotate_api_log
+
+# Setup automatic log rotation
+setup_log_rotation
 
 # Start API with proper virtual environment
 echo "🚀 Starting API server..."

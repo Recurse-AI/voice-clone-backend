@@ -38,6 +38,30 @@ else
     echo "📁 Created temporary directory: /tmp/voice_cloning"
 fi
 
+# Create logs directory
+mkdir -p ./logs
+
+# Log rotation function
+rotate_api_log() {
+    local log_file="./logs/api.log"
+    local max_lines=100
+    
+    if [ -f "$log_file" ]; then
+        local current_lines=$(wc -l < "$log_file" 2>/dev/null || echo "0")
+        
+        if [ "$current_lines" -gt "$max_lines" ]; then
+            echo "📋 Rotating log file (current: $current_lines lines, keeping last $max_lines)"
+            
+            # Keep only the last 100 lines
+            tail -n "$max_lines" "$log_file" > "$log_file.tmp" && mv "$log_file.tmp" "$log_file"
+            
+            echo "✅ Log rotated successfully"
+        else
+            echo "📋 Log file size OK ($current_lines lines)"
+        fi
+    fi
+}
+
 # Check if virtual environment exists
 if [ ! -d "venv" ]; then
     echo "🔧 Creating virtual environment..."
@@ -112,6 +136,10 @@ fi
 if [ -z "$API_ACCESS_TOKEN" ] || [ -z "$RUNPOD_ENDPOINT_ID" ]; then
     echo "⚠️ Warning: RunPod credentials not set. Audio separation may fail."
 fi
+
+# Rotate logs if needed
+echo "📋 Checking log file size..."
+rotate_api_log
 
 # Kill any existing processes
 echo "🔄 Stopping any existing processes..."
