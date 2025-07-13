@@ -19,10 +19,10 @@ class SegmentManager:
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.words_per_chunk = 30  # Optimal for overlapping approach
-        self.max_duration = 15.0   # Max duration per segment
-        self.min_words = 5         # Minimum words per segment (reduced from 6)
-        self.min_duration = 1.0    # Minimum duration per segment (reduced from 3.0)
+        self.words_per_chunk = 60  # Increased for longer segments
+        self.max_duration = 20.0   # Increased max duration
+        self.min_words = 15        # Increased minimum words for longer segments
+        self.min_duration = 4.0    # Increased minimum duration for longer segments
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Create segments optimized for overlapping voice cloning"""
@@ -98,16 +98,70 @@ class SegmentManager:
         if not segments:
             return segments
             
-        optimized = []
-        
+        # First filter by basic quality
+        filtered = []
         for segment in segments:
-            # Keep segments that meet quality criteria - more lenient
             if (segment['confidence'] >= 0.3 and 
                 segment['duration'] >= self.min_duration and 
                 segment['word_count'] >= self.min_words):
-                optimized.append(segment)
+                filtered.append(segment)
+        
+        # Then combine small segments to make longer ones
+        optimized = self._combine_small_segments(filtered)
         
         return optimized
+    
+    def _combine_small_segments(self, segments: List[Dict]) -> List[Dict]:
+        """Combine small segments from same speaker to create longer segments"""
+        if not segments:
+            return segments
+            
+        combined = []
+        i = 0
+        
+        while i < len(segments):
+            current_segment = segments[i]
+            
+            # Check if current segment is small and can be combined
+            if (current_segment['duration'] < 8.0 and 
+                current_segment['word_count'] < 25 and 
+                i + 1 < len(segments)):
+                
+                next_segment = segments[i + 1]
+                
+                # Check if next segment is from same speaker and close in time
+                if (next_segment['speaker'] == current_segment['speaker'] and
+                    next_segment['start'] - current_segment['end'] < 2.0):
+                    
+                    # Combine segments
+                    combined_segment = self._merge_segments(current_segment, next_segment)
+                    combined.append(combined_segment)
+                    i += 2  # Skip next segment as it's merged
+                    continue
+            
+            # Add segment as is
+            combined.append(current_segment)
+            i += 1
+        
+        return combined
+    
+    def _merge_segments(self, seg1: Dict, seg2: Dict) -> Dict:
+        """Merge two segments into one longer segment"""
+        combined_words = seg1.get('words', []) + seg2.get('words', [])
+        combined_text = f"{seg1['text']} {seg2['text']}"
+        combined_duration = seg2['end'] - seg1['start']
+        combined_confidence = (seg1['confidence'] + seg2['confidence']) / 2
+        
+        return {
+            'start': seg1['start'],
+            'end': seg2['end'],
+            'duration': combined_duration,
+            'text': combined_text,
+            'speaker': seg1['speaker'],
+            'word_count': len(combined_words),
+            'confidence': combined_confidence,
+            'words': combined_words
+        }
     
     def select_optimal_references(self, segments: List[Dict], speakers: List[str]) -> Dict[str, Dict]:
         """Select optimal reference segments for each speaker"""
@@ -116,18 +170,18 @@ class SegmentManager:
         for speaker in speakers:
             speaker_segments = [s for s in segments if s['speaker'] == speaker]
             
-            # Sort by quality metrics
+            # Sort by quality metrics - prefer longer segments
             speaker_segments.sort(
-                key=lambda x: (x['confidence'], x['word_count'], -abs(x['duration'] - 6.0)), 
+                key=lambda x: (x['confidence'], x['word_count'], x['duration']), 
                 reverse=True
             )
             
-            # Find best reference segment - more lenient criteria
+            # Find best reference segment - prefer longer segments
             for segment in speaker_segments:
-                if (segment['confidence'] >= 0.6 and 
-                    segment['duration'] >= 4.0 and 
-                    segment['duration'] <= 12.0 and
-                    segment['word_count'] >= 10):
+                if (segment['confidence'] >= 0.5 and 
+                    segment['duration'] >= 6.0 and 
+                    segment['duration'] <= 20.0 and
+                    segment['word_count'] >= 15):
                     
                     references[speaker] = segment
                     break

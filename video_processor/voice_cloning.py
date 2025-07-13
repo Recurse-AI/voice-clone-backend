@@ -117,7 +117,7 @@ class VoiceCloningService:
         """Group segments into manageable chunks for processing"""
         chunks = []
         current_chunk = []
-        max_words_per_chunk = 40
+        max_words_per_chunk = 80  # Increased for longer segments
         current_words = 0
         
         for segment in segments:
