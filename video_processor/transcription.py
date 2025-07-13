@@ -204,36 +204,29 @@ class TranscriptionService:
             return "en"
     
     def translate_text_clean(self, text: str) -> str:
-        """Clean translation optimized for voice cloning"""
+        """Simple text cleaning for voice cloning"""
         try:
-            prompt = f"""Convert this text to natural English for voice cloning:
+            # Simple approach - similar to dia_model_readme.md
+            if self._is_valid_english_text(text):
+                return self._clean_text(text)
+            
+            # Only translate if text has non-English characters
+            prompt = f"""Translate this to clean English for voice cloning:
 
 "{text}"
 
-CRITICAL REQUIREMENTS:
-- MUST use ONLY English alphabet characters (A-Z, a-z)
-- MUST translate ALL non-English words to their English equivalents
-- NO foreign language words, NO accented characters (é, ñ, ü, etc.)
-- NO non-Latin scripts (Arabic, Chinese, Hindi, etc.)
-- Convert all content to proper English words only
-- Clear, conversational English
-- Simple vocabulary and sentence structure
-- Natural speech rhythm and flow
-- Remove filler words and hesitations
-- Maintain emotional tone and intent
-- Add non-verbal tags ONLY when contextually appropriate from this list:
-  (laughs), (chuckles), (sighs), (gasps), (coughs), (clears throat), (inhales), (exhales), (humming), (sneezes), (whistles)
-- Do NOT force non-verbals into every sentence
-- Use them sparingly and naturally
-
-IMPORTANT: The output MUST contain ONLY characters from the English alphabet (A-Z, a-z), numbers (0-9), basic punctuation (.,!?;:'-"()), and spaces. ANY other character will break the voice cloning system.
+Requirements:
+- Only English alphabet characters (A-Z, a-z)
+- Simple, clear sentences
+- Natural speech flow
+- No special characters or accents
 
 Return only the clean English text:"""
             
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "You are an expert English translator for voice cloning. You MUST output ONLY text that uses the English alphabet (A-Z, a-z), numbers (0-9), and basic punctuation. Translate ALL foreign words to English. NO accented characters (é, ñ, ü), NO non-Latin scripts. If you encounter any non-English word, translate it to its English equivalent. The voice cloning system will fail if ANY non-English character is present."},
+                    {"role": "system", "content": "Translate to clean English using only A-Z, a-z, 0-9, and basic punctuation."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=150,
@@ -245,35 +238,27 @@ Return only the clean English text:"""
                 result = re.sub(r'^["\s]*', '', result)
                 result = re.sub(r'["\s]*$', '', result)
                 
-                # Validate that result contains only English alphabet characters
-                # Allow basic punctuation, spaces, and non-verbal tags
                 if self._is_valid_english_text(result):
-                    return result
-                else:
-                    # If validation fails, fallback to original text if it's English, otherwise return a safe default
-                    if self._is_valid_english_text(text):
-                        return text
-                    else:
-                        return "Please provide English text for voice cloning."
-            return text
+                    return self._clean_text(result)
+            
+            return self._clean_text(text)
                 
         except Exception as e:
-            return text
+            return self._clean_text(text)
     
     def format_dia_text(self, english_text: str, speaker: str, all_speakers: List[str]) -> str:
+        """Simple Dia text formatting"""
         cleaned_text = self._clean_text(english_text)
         return f"[S1] {cleaned_text}"
     
     def format_dia_prompt_with_reference(self, reference_text: str, target_text: str, 
                                         all_speakers: List[str]) -> str:
-        """Format complete prompt for Dia voice cloning with reference audio"""
-        # Ensure reference text has proper speaker tags
+        """Simple prompt formatting for Dia voice cloning"""
+        # Ensure reference text has speaker tag
         if not reference_text.startswith('[S'):
-            # Add [S1] tag if missing
             reference_text = f"[S1] {reference_text}"
         
-        # Combine reference and target text for voice cloning
-        # According to Dia guidelines: reference_text + target_text
+        # Simple combination - reference + target
         return f"{reference_text} {target_text}"
     
     def validate_dia_text_format(self, text: str) -> Dict[str, Any]:

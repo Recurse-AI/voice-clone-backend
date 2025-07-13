@@ -1,8 +1,7 @@
 """
 Segment Manager Module
 
-Handles intelligent segment creation with continuous/non-continuous detection
-and optimal chunking for voice cloning.
+Simple segment creation with word-based chunking similar to Dia model approach.
 """
 
 import json
@@ -16,309 +15,171 @@ logger = logging.getLogger(__name__)
 
 
 class SegmentManager:
-    """Smart segment manager with continuous/non-continuous detection"""
+    """Simple segment manager with word-based chunking"""
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.min_segment_duration = 2.0
-        self.max_segment_duration = 20.0
-        self.optimal_word_range = (25, 45)
-        self.max_gap_for_merge = 2.0
-        self.min_confidence = 0.5
+        # Simple word-based chunking - similar to Dia model approach
+        self.words_per_chunk = 35  # Optimal for voice cloning (similar to dia approach)
+        self.max_duration = 18.0   # Max duration in seconds
+        self.min_words = 8         # Minimum words per segment
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Create optimal segments with smart chunking"""
+        """Create simple word-based segments"""
         words = transcript_data.get('words', [])
         if not words:
             return []
         
-        # Group words by speaker
-        speaker_segments = self._group_by_speaker(words)
-        
-        # Process each speaker's segments
-        optimal_segments = []
-        for speaker, segments in speaker_segments.items():
-            speaker_optimal = self._process_speaker_segments(speaker, segments)
-            optimal_segments.extend(speaker_optimal)
-        
-        # Sort by start time
-        optimal_segments.sort(key=lambda x: x['start'])
-        return optimal_segments
-    
-    def _group_by_speaker(self, words: List[Dict]) -> Dict[str, List[List[Dict]]]:
-        """Group words by speaker and create continuous segments"""
-        speaker_segments = {}
-        current_segment = []
+        # Simple chunking by word count - no complex logic
+        segments = []
+        current_chunk = []
         current_speaker = None
         
         for word in words:
             speaker = word.get('speaker', 'A')
             
-            if speaker != current_speaker:
-                if current_segment and current_speaker:
-                    if current_speaker not in speaker_segments:
-                        speaker_segments[current_speaker] = []
-                    speaker_segments[current_speaker].append(current_segment)
-                current_segment = [word]
+            # If speaker changes or chunk is full, finalize current chunk
+            if (speaker != current_speaker and current_chunk) or len(current_chunk) >= self.words_per_chunk:
+                if current_chunk:
+                    segment = self._create_simple_segment(current_chunk, current_speaker or 'A')
+                    if segment:
+                        segments.append(segment)
+                current_chunk = [word]
                 current_speaker = speaker
             else:
-                current_segment.append(word)
+                current_chunk.append(word)
+                current_speaker = speaker
         
-        # Add last segment
-        if current_segment and current_speaker:
-            if current_speaker not in speaker_segments:
-                speaker_segments[current_speaker] = []
-            speaker_segments[current_speaker].append(current_segment)
-        
-        return speaker_segments
-    
-    def _process_speaker_segments(self, speaker: str, segments: List[List[Dict]]) -> List[Dict]:
-        """Process segments for a speaker with continuous/non-continuous detection"""
-        processed_segments = []
-        
-        for segment_words in segments:
-            if not segment_words:
-                continue
-            
-            # Check if segment is in optimal range
-            word_count = len(segment_words)
-            
-            if self.optimal_word_range[0] <= word_count <= self.optimal_word_range[1]:
-                # Single optimal segment - mark as continuous
-                processed_segments.append(self._create_segment(
-                    segment_words, speaker, is_continuous=True
-                ))
-            else:
-                # Check for non-continuous opportunities
-                non_continuous_groups = self._find_non_continuous_groups(segments)
-                
-                if non_continuous_groups:
-                    for group in non_continuous_groups:
-                        processed_segments.extend(self._create_non_continuous_segments(
-                            group, speaker
-                        ))
-                else:
-                    # Split large segments
-                    if word_count > self.optimal_word_range[1]:
-                        split_segments = self._split_large_segment(segment_words, speaker)
-                        processed_segments.extend(split_segments)
-                    else:
-                        # Keep small segments as is
-                        processed_segments.append(self._create_segment(
-                            segment_words, speaker, is_continuous=True
-                        ))
-        
-        return processed_segments
-    
-    def _find_non_continuous_groups(self, segments: List[List[Dict]]) -> List[List[List[Dict]]]:
-        """Find groups of segments that can be merged for non-continuous processing"""
-        groups = []
-        current_group = []
-        
-        for i, segment in enumerate(segments):
-            if not current_group:
-                current_group.append(segment)
-                continue
-            
-            # Check gap between segments
-            last_word_prev = current_group[-1][-1]
-            first_word_curr = segment[0]
-            gap = (first_word_curr['start'] - last_word_prev['end']) / 1000.0
-            
-            if gap <= self.max_gap_for_merge:
-                current_group.append(segment)
-                
-                # Check if group is in optimal range
-                total_words = sum(len(s) for s in current_group)
-                if self.optimal_word_range[0] <= total_words <= self.optimal_word_range[1]:
-                    groups.append(current_group)
-                    current_group = []
-            else:
-                if len(current_group) > 1:
-                    groups.append(current_group)
-                current_group = [segment]
-        
-        return groups
-    
-    def _create_non_continuous_segments(self, segment_group: List[List[Dict]], 
-                                      speaker: str) -> List[Dict]:
-        """Create non-continuous segments from a group"""
-        segments = []
-        
-        for segment_words in segment_group:
-            segment = self._create_segment(segment_words, speaker, is_continuous=False)
-            segment['group_id'] = id(segment_group)  # Mark as part of same group
-            segments.append(segment)
+        # Add final chunk
+        if current_chunk:
+            segment = self._create_simple_segment(current_chunk, current_speaker or 'A')
+            if segment:
+                segments.append(segment)
         
         return segments
     
-    def _split_large_segment(self, words: List[Dict], speaker: str) -> List[Dict]:
-        """Split large segment into optimal chunks"""
-        segments = []
-        chunk_size = self.optimal_word_range[1]
-        
-        for i in range(0, len(words), chunk_size):
-            chunk_words = words[i:i + chunk_size]
-            if chunk_words:
-                segments.append(self._create_segment(chunk_words, speaker, is_continuous=True))
-        
-        return segments
-    
-    def _create_segment(self, words: List[Dict], speaker: str, is_continuous: bool) -> Dict:
-        """Create a segment from words"""
+    def _create_simple_segment(self, words: List[Dict], speaker: str) -> Optional[Dict]:
+        """Create a simple segment from words"""
+        if len(words) < self.min_words:
+            return None
+            
         start_time = words[0]['start'] / 1000.0
         end_time = words[-1]['end'] / 1000.0
+        duration = end_time - start_time
+        
+        # Skip if too long
+        if duration > self.max_duration:
+            return None
+            
         text = ' '.join(w['text'] for w in words)
         confidence = np.mean([w.get('confidence', 0.5) for w in words])
         
         return {
             'start': start_time,
             'end': end_time,
-            'duration': end_time - start_time,
+            'duration': duration,
             'text': text,
             'speaker': speaker,
             'word_count': len(words),
             'confidence': confidence,
-            'is_continuous': is_continuous,
             'words': words
         }
     
     def select_optimal_references(self, segments: List[Dict], speakers: List[str]) -> Dict[str, Dict]:
-        """Select optimal reference audio for each speaker"""
+        """Simple reference selection - just pick first good segment per speaker"""
         references = {}
         
         for speaker in speakers:
             speaker_segments = [s for s in segments if s['speaker'] == speaker]
             
-            # Find best reference
-            best_ref = self._find_best_reference(speaker_segments)
+            # Sort by confidence and pick first good one
+            speaker_segments.sort(key=lambda x: x['confidence'], reverse=True)
             
-            if best_ref:
-                references[speaker] = best_ref
-            else:
-                # Create composite reference if needed
-                composite_ref = self._create_composite_reference(speaker_segments)
-                if composite_ref:
-                    references[speaker] = composite_ref
-        
-        return references
-    
-    def _find_best_reference(self, segments: List[Dict]) -> Optional[Dict]:
-        candidates = []
-        
-        for segment in segments:
-            if (segment['confidence'] >= self.min_confidence and
-                segment['duration'] <= 17.0 and
-                segment['word_count'] >= 5):
-                candidates.append(segment)
-        
-        if candidates:
-            candidates.sort(key=lambda x: (x['confidence'], x['duration']), reverse=True)
-            best = candidates[0]
-            
-            if 'dia_text' not in best:
-                best['dia_text'] = f"[S1] {best.get('text', '')}"
-            
-            return best
-        
-        return None
-    
-    def _create_composite_reference(self, segments: List[Dict]) -> Optional[Dict]:
-        segments.sort(key=lambda x: x['confidence'], reverse=True)
-        
-        composite_segments = []
-        total_duration = 0
-        
-        for segment in segments:
-            if total_duration + segment['duration'] <= 17.0:
-                composite_segments.append(segment)
-                total_duration += segment['duration']
-                if total_duration >= 2.0:
+            for segment in speaker_segments:
+                if (segment['confidence'] >= 0.5 and 
+                    segment['duration'] >= 2.0 and 
+                    segment['duration'] <= 15.0 and
+                    segment['word_count'] >= 8):
+                    
+                    # Format for Dia model
+                    segment['dia_text'] = f"[S1] {segment['text']}"
+                    references[speaker] = segment
                     break
         
-        if composite_segments and total_duration >= 2.0:
-            return {
-                'is_composite': True,
-                'segments': composite_segments,
-                'duration': total_duration,
-                'text': ' '.join(s['text'] for s in composite_segments),
-                'word_count': sum(s['word_count'] for s in composite_segments)
-            }
-        
-        return None
+        return references
     
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int,
                             output_dir: Path, speakers: List[str], 
                             target_language: str, detected_language: str):
-        """Save segments with metadata"""
+        """Save segments with simple file naming"""
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
         for i, segment in enumerate(segments):
-            speaker = segment['speaker']
-            speaker_dir = output_dir / f"speaker_{speaker}" / "segments"
-            
-            # Extract audio
-            start_sample = int(segment['start'] * sr)
-            end_sample = int(segment['end'] * sr)
-            segment_audio = audio[start_sample:end_sample]
-            
-            # Save audio
-            audio_filename = f"segment_{i+1:03d}_{speaker}.wav"
-            audio_path = speaker_dir / audio_filename
-            sf.write(audio_path, segment_audio, sr)
-            
-            # Translate if needed
-            if detected_language != 'en':
+            try:
+                # Extract audio segment
+                start_sample = int(segment['start'] * sr)
+                end_sample = int(segment['end'] * sr)
+                segment_audio = audio[start_sample:end_sample]
+                
+                # Simple file naming
+                audio_filename = f"segment_{i+1:03d}.wav"
+                audio_path = output_dir / audio_filename
+                
+                # Save audio
+                sf.write(audio_path, segment_audio, sr)
+                
+                # Translate text for voice cloning
                 english_text = self.transcription_service.translate_text_clean(segment['text'])
-            else:
-                english_text = segment['text']
-            
-            # Format for Dia
-            dia_text = self.transcription_service.format_dia_text(
-                english_text, speaker, speakers
-            )
-            
-            # Save metadata
-            metadata = {
-                'segment_id': i + 1,
-                'speaker': speaker,
-                'start': segment['start'],
-                'end': segment['end'],
-                'duration': segment['duration'],
-                'text': segment['text'],
-                'english_text': english_text,
-                'dia_text': dia_text,
-                'word_count': segment['word_count'],
-                'confidence': segment['confidence'],
-                'is_continuous': segment.get('is_continuous', True),
-                'group_id': segment.get('group_id'),
-                'audio_file': audio_filename
-            }
-            
-            metadata_path = speaker_dir / f"segment_{i+1:03d}_{speaker}.json"
-            with open(metadata_path, 'w', encoding='utf-8') as f:
-                json.dump(metadata, f, ensure_ascii=False, indent=2)
+                
+                # Format for Dia model
+                dia_text = f"[S1] {english_text}"
+                
+                # Save metadata
+                metadata = {
+                    'original_text': segment['text'],
+                    'english_text': english_text,
+                    'dia_text': dia_text,
+                    'speaker': segment['speaker'],
+                    'start': segment['start'],
+                    'end': segment['end'],
+                    'duration': segment['duration'],
+                    'word_count': segment['word_count'],
+                    'confidence': segment['confidence'],
+                    'detected_language': detected_language,
+                    'target_language': target_language
+                }
+                
+                metadata_path = output_dir / f"segment_{i+1:03d}_metadata.json"
+                with open(metadata_path, 'w', encoding='utf-8') as f:
+                    json.dump(metadata, f, ensure_ascii=False, indent=2)
+                
+                # Update segment with paths
+                segment.update({
+                    'audio_path': str(audio_path),
+                    'metadata_path': str(metadata_path),
+                    'english_text': english_text,
+                    'dia_text': dia_text
+                })
+                
+            except Exception as e:
+                logger.error(f"Error saving segment {i+1}: {str(e)}")
+                continue
+        
+        logger.info(f"Saved {len(segments)} segments to {output_dir}")
     
     def identify_silent_parts(self, segments: List[Dict], total_duration: float) -> List[Tuple[float, float]]:
-        """Identify silent parts between segments"""
+        """Simple silent part identification"""
         silent_parts = []
         
-        # Sort segments by start time
-        sorted_segments = sorted(segments, key=lambda x: x['start'])
+        if not segments:
+            return silent_parts
         
         # Check gaps between segments
-        for i in range(len(sorted_segments) - 1):
-            gap_start = sorted_segments[i]['end']
-            gap_end = sorted_segments[i + 1]['start']
-            gap_duration = gap_end - gap_start
+        for i in range(len(segments) - 1):
+            current_end = segments[i]['end']
+            next_start = segments[i + 1]['start']
             
-            if gap_duration >= 2.0:  # Only track significant silent parts
-                silent_parts.append((gap_start, gap_end))
-        
-        # Check beginning
-        if sorted_segments and sorted_segments[0]['start'] >= 2.0:
-            silent_parts.append((0, sorted_segments[0]['start']))
-        
-        # Check end
-        if sorted_segments and total_duration - sorted_segments[-1]['end'] >= 2.0:
-            silent_parts.append((sorted_segments[-1]['end'], total_duration))
+            if next_start - current_end > 0.5:  # Gap > 0.5 seconds
+                silent_parts.append((current_end, next_start))
         
         return silent_parts 

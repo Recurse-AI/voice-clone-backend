@@ -1,7 +1,7 @@
 """
 Voice Cloning Module
 
-Handles Dia model operations and voice cloning functionality.
+Simple voice cloning using Dia model with direct text-to-speech approach.
 """
 
 import torch
@@ -26,13 +26,12 @@ def set_seed(seed: int):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-    # Ensure deterministic behavior for cuDNN (if used)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
 
 class VoiceCloningService:
-    """Service for voice cloning using Dia model"""
+    """Simple voice cloning service using Dia model"""
     
     def __init__(self):
         self.dia_model = None
@@ -54,10 +53,10 @@ class VoiceCloningService:
         """Check if Dia model is loaded"""
         return self.dia_model is not None 
     
-    def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.3,
+    def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.2,
                            cfg_scale: float = 3.0, top_p: float = 0.95,
                            seed: Optional[int] = None) -> Dict[str, Any]:
-        """Clone voice segments with continuous/non-continuous handling"""
+        """Simple voice cloning for segments"""
         if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -65,36 +64,13 @@ class VoiceCloningService:
             if seed is not None:
                 set_seed(seed)
             
-            # Group segments by type and group_id
-            continuous_segments = []
-            non_continuous_groups = {}
-            
-            for segment in segments:
-                if segment.get('is_continuous', True):
-                    continuous_segments.append(segment)
-                else:
-                    group_id = segment.get('group_id')
-                    if group_id:
-                        if group_id not in non_continuous_groups:
-                            non_continuous_groups[group_id] = []
-                        non_continuous_groups[group_id].append(segment)
-            
             cloned_segments = []
             
-            # Process continuous segments
-            for segment in continuous_segments:
-                cloned = self._clone_continuous_segment(
-                    segment, temperature, cfg_scale, top_p
-                )
+            # Process each segment directly - no complex grouping
+            for segment in segments:
+                cloned = self._clone_segment_direct(segment, temperature, cfg_scale, top_p)
                 if cloned:
                     cloned_segments.append(cloned)
-            
-            # Process non-continuous groups
-            for group_id, group_segments in non_continuous_groups.items():
-                cloned_group = self._clone_non_continuous_group(
-                    group_segments, temperature, cfg_scale, top_p
-                )
-                cloned_segments.extend(cloned_group)
             
             return {
                 "success": True,
@@ -107,34 +83,34 @@ class VoiceCloningService:
             logger.error(f"Voice cloning failed: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    def _clone_continuous_segment(self, segment: Dict, temperature: float,
-                                cfg_scale: float, top_p: float) -> Optional[Dict]:
-        """Clone a continuous segment"""
+    def _clone_segment_direct(self, segment: Dict, temperature: float,
+                            cfg_scale: float, top_p: float) -> Optional[Dict]:
+        """Clone a segment directly - simple approach"""
         try:
             # Get reference audio if available
             reference_audio_path = segment.get('reference_audio_path')
             
-            # Prepare text for Dia
+            # Get text for Dia (should be already formatted)
             dia_text = segment.get('dia_text', '')
             if not dia_text:
-                return None
+                # Fallback to english text with speaker tag
+                english_text = segment.get('english_text', segment.get('text', ''))
+                dia_text = f"[S1] {english_text}"
             
-            # Clone with Dia
+            print(f"VOICE CLONING:")
+            print(f"Text: {dia_text}")
+            print(f"Reference: {reference_audio_path if reference_audio_path else 'None'}")
+            
+            # Simple direct generation - same as dia_model_readme.md approach
             if reference_audio_path and os.path.exists(reference_audio_path):
-                # Load reference transcript
+                # Get reference transcript
                 ref_transcript = self._get_reference_transcript(reference_audio_path)
                 
-                # Build prompt according to Dia guidelines
-                # Reference transcript should come first, then a space, then the target text
-                prompt_text = f"{ref_transcript} {dia_text}"
-                
-                print(f"VOICE CLONING:")
-                print(f"Text: {dia_text}")
-                print(f"Reference: {reference_audio_path}")
-                print(f"Full prompt: {prompt_text}")
+                # Combine reference + target text (dia approach)
+                combined_text = f"{ref_transcript} {dia_text}"
                 
                 cloned_audio = self.dia_model.generate(
-                    prompt_text,
+                    combined_text,
                     audio_prompt=reference_audio_path,
                     use_torch_compile=False,
                     cfg_scale=cfg_scale,
@@ -144,10 +120,7 @@ class VoiceCloningService:
                     max_tokens=3072
                 )
             else:
-                print(f"VOICE CLONING:")
-                print(f"Text: {dia_text}")
-                print(f"Reference: None")
-                
+                # No reference - direct generation
                 cloned_audio = self.dia_model.generate(
                     dia_text,
                     use_torch_compile=False,
@@ -158,214 +131,43 @@ class VoiceCloningService:
                     max_tokens=3072
                 )
             
-            # Length synchronization
+            # Simple length adjustment if needed
             original_duration = segment.get('duration', 0)
-            if original_duration > 0:
-                cloned_audio = self._synchronize_length(
-                    cloned_audio, original_duration, 44100
-                )
+            if original_duration > 0 and len(cloned_audio) > 0:
+                cloned_audio = self._adjust_audio_length(cloned_audio, original_duration)
             
             return {
                 "success": True,
                 "original_data": segment,
                 "cloned_audio": cloned_audio,
-                "type": "continuous"
+                "type": "direct"
             }
             
         except Exception as e:
-            logger.error(f"Failed to clone continuous segment: {str(e)}")
+            logger.error(f"Failed to clone segment: {str(e)}")
             return None
     
-    def _clone_non_continuous_group(self, group_segments: List[Dict], temperature: float,
-                                   cfg_scale: float, top_p: float) -> List[Dict]:
-        """Clone non-continuous segment group"""
-        try:
-            # Merge texts from all segments
-            merged_text = ' '.join(s.get('dia_text', '') for s in group_segments)
-            if not merged_text:
-                return []
+    def _adjust_audio_length(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
+        """Simple audio length adjustment"""
+        if len(audio) == 0:
+            return audio
             
-            # Get reference audio
-            reference_audio_path = group_segments[0].get('reference_audio_path')
-            
-            # Clone merged audio
-            if reference_audio_path and os.path.exists(reference_audio_path):
-                ref_transcript = self._get_reference_transcript(reference_audio_path)
-                prompt_text = f"{ref_transcript} {merged_text}"
-                
-                cloned_audio = self.dia_model.generate(
-                    prompt_text,
-                    audio_prompt=reference_audio_path,
-                    use_torch_compile=False,
-                    cfg_scale=cfg_scale,
-                    temperature=temperature,
-                    top_p=top_p,
-                    cfg_filter_top_k=50,
-                    max_tokens=3072
-                )
-            else:
-                cloned_audio = self.dia_model.generate(
-                    merged_text,
-                    use_torch_compile=False,
-                    cfg_scale=cfg_scale,
-                    temperature=temperature,
-                    top_p=top_p,
-                    cfg_filter_top_k=50,
-                    max_tokens=3072
-                )
-            
-            # Split cloned audio back to original segments
-            split_segments = self._split_non_continuous_audio(
-                cloned_audio, group_segments, 44100
-            )
-            
-            return split_segments
-            
-        except Exception as e:
-            logger.error(f"Failed to clone non-continuous group: {str(e)}")
-            return []
-    
-    def _split_non_continuous_audio(self, cloned_audio: np.ndarray, 
-                                  original_segments: List[Dict],
-                                  sample_rate: int) -> List[Dict]:
-        """Split non-continuous cloned audio using OpenAI assistance"""
-        try:
-            from openai import OpenAI
-            from .transcription import TranscriptionService
-            
-            # Transcribe cloned audio
-            temp_path = Path(settings.TEMP_DIR) / f"temp_clone_{random.randint(1000, 9999)}.wav"
-            sf.write(temp_path, cloned_audio, sample_rate)
-            
-            transcription_service = TranscriptionService()
-            clone_transcript = transcription_service.transcribe_audio(str(temp_path))
-            
-            # Get cutting instructions from OpenAI
-            client = OpenAI(api_key=settings.OPENAI_API_KEY)
-            
-            original_info = [
-                f"Segment {i+1}: {s.get('duration', 0):.2f}s - \"{s.get('english_text', '')}\""
-                for i, s in enumerate(original_segments)
-            ]
-            
-            prompt = f"""Analyze this cloned audio transcription and provide exact cutting points:
-
-Original segments:
-{chr(10).join(original_info)}
-
-Cloned audio transcription:
-{clone_transcript.get('text', '')}
-Duration: {len(cloned_audio) / sample_rate:.2f}s
-
-Provide cutting points in seconds for each segment. Format:
-Segment 1: 0.0-X.X
-Segment 2: X.X-Y.Y
-etc."""
-
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1
-            )
-            
-            cutting_instructions = response.choices[0].message.content
-            
-            # Parse cutting points
-            import re
-            pattern = r'Segment \d+:\s*([\d.]+)-([\d.]+)'
-            matches = re.findall(pattern, cutting_instructions)
-            
-            split_segments = []
-            for i, (start, end) in enumerate(matches):
-                if i < len(original_segments):
-                    start_sample = int(float(start) * sample_rate)
-                    end_sample = int(float(end) * sample_rate)
-                    
-                    segment_audio = cloned_audio[start_sample:end_sample]
-                    
-                    # Synchronize to original length
-                    original_duration = original_segments[i].get('duration', 0)
-                    if original_duration > 0:
-                        segment_audio = self._synchronize_length(
-                            segment_audio, original_duration, sample_rate
-                        )
-                    
-                    split_segments.append({
-                        "success": True,
-                        "original_data": original_segments[i],
-                        "cloned_audio": segment_audio,
-                        "type": "non_continuous"
-                    })
-            
-            # Cleanup
-            if temp_path.exists():
-                temp_path.unlink()
-            
-            return split_segments
-            
-        except Exception as e:
-            logger.error(f"Failed to split non-continuous audio: {str(e)}")
-            # Fallback: split proportionally
-            return self._split_proportionally(cloned_audio, original_segments, sample_rate)
-    
-    def _split_proportionally(self, audio: np.ndarray, segments: List[Dict],
-                            sample_rate: int) -> List[Dict]:
-        """Fallback: Split audio proportionally based on original durations"""
-        total_duration = sum(s.get('duration', 0) for s in segments)
-        audio_duration = len(audio) / sample_rate
-        
-        split_segments = []
-        current_sample = 0
-        
-        for segment in segments:
-            segment_duration = segment.get('duration', 0)
-            proportion = segment_duration / total_duration if total_duration > 0 else 1/len(segments)
-            
-            segment_samples = int(proportion * len(audio))
-            end_sample = min(current_sample + segment_samples, len(audio))
-            
-            segment_audio = audio[current_sample:end_sample]
-            
-            # Synchronize to original length
-            if segment_duration > 0:
-                segment_audio = self._synchronize_length(
-                    segment_audio, segment_duration, sample_rate
-                )
-            
-            split_segments.append({
-                "success": True,
-                "original_data": segment,
-                "cloned_audio": segment_audio,
-                "type": "non_continuous_fallback"
-            })
-            
-            current_sample = end_sample
-        
-        return split_segments
-    
-    def _synchronize_length(self, audio: np.ndarray, target_duration: float,
-                          sample_rate: int) -> np.ndarray:
+        sample_rate = 44100  # Standard sample rate
         target_samples = int(target_duration * sample_rate)
         current_samples = len(audio)
         
         if current_samples == target_samples:
             return audio
         
+        # Simple speed adjustment for small differences
         ratio = target_samples / current_samples
         
-        if 0.85 <= ratio <= 1.15:
-            try:
-                import librosa
-                stretched = librosa.effects.time_stretch(audio, rate=1/ratio)
-                if len(stretched) > target_samples:
-                    return stretched[:target_samples]
-                elif len(stretched) < target_samples:
-                    padding = np.zeros(target_samples - len(stretched))
-                    return np.concatenate([stretched, padding])
-                return stretched
-            except ImportError:
-                pass
+        if 0.9 <= ratio <= 1.1:
+            # Use numpy interpolation for small adjustments
+            indices = np.linspace(0, current_samples - 1, target_samples)
+            return np.interp(indices, np.arange(current_samples), audio)
         
+        # For larger differences, just truncate or pad
         if current_samples > target_samples:
             return audio[:target_samples]
         else:

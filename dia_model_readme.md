@@ -237,9 +237,9 @@ Join our [Discord Server](https://discord.gg/bJq6vjRRKv) for discussions.
  </picture>
 </a>
 from dia.model import Dia
+example code:
 
-
-model = Dia.from_pretrained("nari-labs/Dia-1.6B-0626", compute_dtype="float16")
+<!-- model = Dia.from_pretrained("nari-labs/Dia-1.6B-0626", compute_dtype="float16")
 
 # You should put the transcript of the voice you want to clone
 # We will use the audio created by running simple.py as an example.
@@ -279,7 +279,7 @@ texts = [text for _ in range(10)]
 output = model.generate(texts, use_torch_compile=True, verbose=True, max_tokens=1500)
 
 for i, o in enumerate(output):
-    model.save_audio(f"simple_{i}.mp3", o)
+    model.save_audio(f"simple_{i}.mp3", o) -->
 
 
 
