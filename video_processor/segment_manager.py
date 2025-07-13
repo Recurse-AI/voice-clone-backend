@@ -10,6 +10,7 @@ import soundfile as sf
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -19,29 +20,30 @@ class SegmentManager:
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.words_per_chunk = 80  # Increased for bigger segments
-        self.max_duration = 20.0   # Maximum segment duration
-        self.min_duration = 15.0   # Minimum segment duration
-        self.min_words = 20        # Increased minimum words for bigger segments
-        self.max_gap = 6.0         # Increased gap tolerance for bigger segments
-        self.min_silent_duration = 3.0  # Minimum duration to consider as silent
+        self.words_per_chunk = 60  # Increased for bigger segments
+        self.max_duration = 30.0   # Maximum duration before splitting
+        self.min_duration = 15.0   # Minimum 15 seconds as requested
+        self.min_words = 20        # Minimum words for a valid segment
+        self.max_gap = 8.0         # Maximum gap tolerance
+        self.min_silent_duration = 4.0  # Minimum duration to consider as silent
+        self.target_split_duration = 15.0  # Target duration when splitting
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Create larger segments with better vocal/silent separation"""
+        """Create segments with minimum 15 seconds duration"""
         words = transcript_data.get('words', [])
         if not words:
             return []
         
-        # Create larger segments with aggressive combining
-        segments = self._create_large_segments(words)
+        # Create initial segments
+        segments = self._create_initial_segments(words)
         
-        # Further combine segments from same speaker
-        combined_segments = self._aggressively_combine_segments(segments)
+        # Merge short segments and split long ones
+        final_segments = self._process_segments_for_duration(segments)
         
-        return combined_segments
+        return final_segments
     
-    def _create_large_segments(self, words: List[Dict]) -> List[Dict]:
-        """Create larger segments by being more lenient with gaps"""
+    def _create_initial_segments(self, words: List[Dict]) -> List[Dict]:
+        """Create initial segments based on speaker changes and gaps"""
         segments = []
         current_chunk = []
         current_speaker = None
@@ -55,16 +57,16 @@ class SegmentManager:
                 prev_end = prev_word.get('end', 0) / 1000.0
                 gap = word_start - prev_end
                 
-                # Much more lenient - only split on very large gaps or speaker change
+                # Split on speaker change or large gap
                 should_split = (
                     (speaker != current_speaker) or
-                    (gap > self.max_gap) or  # Increased gap tolerance
+                    (gap > self.max_gap) or
                     (len(current_chunk) >= self.words_per_chunk)
                 )
                 
                 if should_split:
                     if current_chunk:
-                        segment = self._create_large_segment(current_chunk, current_speaker or 'A')
+                        segment = self._create_segment(current_chunk, current_speaker or 'A')
                         if segment:
                             segments.append(segment)
                     current_chunk = [word]
@@ -77,30 +79,28 @@ class SegmentManager:
         
         # Add final chunk
         if current_chunk:
-            segment = self._create_large_segment(current_chunk, current_speaker or 'A')
+            segment = self._create_segment(current_chunk, current_speaker or 'A')
             if segment:
                 segments.append(segment)
         
         return segments
     
-    def _create_large_segment(self, words: List[Dict], speaker: str) -> Optional[Dict]:
-        """Create larger segments with more lenient validation"""
-        if len(words) < 5:  # Very lenient word count
+    def _create_segment(self, words: List[Dict], speaker: str) -> Optional[Dict]:
+        """Create a segment from words"""
+        if not words:
             return None
             
         start_time = words[0]['start'] / 1000.0
         end_time = words[-1]['end'] / 1000.0
         duration = end_time - start_time
         
-        # More lenient duration check
-        if duration < 1.0:  # Very lenient minimum
+        if duration < 1.0:  # Too short to be meaningful
             return None
         
-        text = ' '.join(w['text'] for w in words)
+        text = ' '.join(w['text'] for w in words).strip()
         confidence = np.mean([w.get('confidence', 0.5) for w in words])
         
-        # Basic quality check
-        if len(text.strip()) < 3:
+        if len(text) < 3:
             return None
         
         return {
@@ -114,133 +114,200 @@ class SegmentManager:
             'words': words
         }
     
-    def _aggressively_combine_segments(self, segments: List[Dict]) -> List[Dict]:
-        """Aggressively combine segments from same speaker to make bigger segments"""
+    def _process_segments_for_duration(self, segments: List[Dict]) -> List[Dict]:
+        """Process segments to ensure minimum 15s duration and split long ones"""
         if not segments:
-            return segments
+            return []
         
-        combined = []
+        processed = []
         i = 0
         
         while i < len(segments):
             current_segment = segments[i]
             
-            # Look for consecutive segments from same speaker to combine
-            segments_to_combine = [current_segment]
-            j = i + 1
+            # If segment is too short, try to merge with adjacent segments
+            if current_segment['duration'] < self.min_duration:
+                merged_segment = self._merge_with_adjacent(segments, i)
+                if merged_segment:
+                    processed.append(merged_segment)
+                    # Skip merged segments
+                    i = self._find_next_unmerged_index(segments, i, merged_segment)
+                else:
+                    # Can't merge, keep as is if it's the only option
+                    logger.warning(f"Keeping short segment ({current_segment['duration']:.1f}s) - no merge possible")
+                    processed.append(current_segment)
+                    i += 1
             
-            while j < len(segments):
-                next_segment = segments[j]
-                gap = next_segment['start'] - current_segment['end']
+            # If segment is too long, split it
+            elif current_segment['duration'] > self.max_duration:
+                split_segments = self._split_segment_intelligently(current_segment)
+                processed.extend(split_segments)
+                i += 1
+            
+            # Perfect duration, keep as is
+            else:
+                processed.append(current_segment)
+                i += 1
+        
+        # Log final statistics
+        if processed:
+            durations = [s['duration'] for s in processed]
+            duration_strs = [f"{d:.1f}s" for d in durations]
+            logger.info(f"Final segments: {len(processed)} segments with durations: {duration_strs}")
+            logger.info(f"Duration range: {min(durations):.1f}s - {max(durations):.1f}s")
+        
+        return processed
+    
+    def _merge_with_adjacent(self, segments: List[Dict], index: int) -> Optional[Dict]:
+        """Try to merge segment with adjacent segments to reach minimum duration"""
+        current = segments[index]
+        speaker = current['speaker']
+        
+        # Try to merge with next segments of same speaker
+        segments_to_merge = [current]
+        total_duration = current['duration']
+        
+        # Look forward for same speaker segments
+        j = index + 1
+        while j < len(segments) and total_duration < self.min_duration:
+            next_seg = segments[j]
+            gap = next_seg['start'] - segments_to_merge[-1]['end']
+            
+            # Merge if same speaker and reasonable gap
+            if (next_seg['speaker'] == speaker and gap < 10.0):
+                segments_to_merge.append(next_seg)
+                total_duration = segments_to_merge[-1]['end'] - segments_to_merge[0]['start']
+                j += 1
+            else:
+                break
+        
+        # If still too short, try to merge with previous segments
+        if total_duration < self.min_duration and index > 0:
+            k = index - 1
+            while k >= 0 and total_duration < self.min_duration:
+                prev_seg = segments[k]
+                gap = segments_to_merge[0]['start'] - prev_seg['end']
                 
-                # Combine if same speaker and gap is reasonable
-                if (next_segment['speaker'] == current_segment['speaker'] and 
-                    gap < 8.0):  # Allow larger gaps for combining
-                    
-                    segments_to_combine.append(next_segment)
-                    current_segment = next_segment  # Update end time
-                    j += 1
+                if (prev_seg['speaker'] == speaker and gap < 10.0):
+                    segments_to_merge.insert(0, prev_seg)
+                    total_duration = segments_to_merge[-1]['end'] - segments_to_merge[0]['start']
+                    k -= 1
                 else:
                     break
-            
-            # Create combined segment if we have multiple segments
-            if len(segments_to_combine) > 1:
-                combined_segment = self._merge_multiple_segments(segments_to_combine)
-                combined.append(combined_segment)
-            else:
-                # Check if single segment meets minimum requirements
-                if (current_segment['duration'] >= self.min_duration and 
-                    current_segment['word_count'] >= self.min_words):
-                    combined.append(current_segment)
-                elif len(combined) > 0 and combined[-1]['speaker'] == current_segment['speaker']:
-                    # Merge with previous segment if same speaker
-                    logger.info(f"Merging short segment ({current_segment['duration']:.1f}s) with previous segment")
-                    combined[-1] = self._merge_segments(combined[-1], current_segment)
-                else:
-                    if current_segment['duration'] < self.min_duration:
-                        logger.warning(f"Keeping short segment ({current_segment['duration']:.1f}s) - no adjacent segments to merge with")
-                    combined.append(current_segment)  # Keep even if small
-            
-            i = j
         
-        # Apply balanced splitting for segments that are too long
-        final_segments = []
-        for segment in combined:
-            if segment['duration'] > self.max_duration:
-                logger.info(f"Segment too long ({segment['duration']:.1f}s), splitting into balanced parts")
-                # Split segment in a balanced way
-                split_segments = self._split_segment_balanced(segment)
-                final_segments.extend(split_segments)
-            else:
-                final_segments.append(segment)
+        # Merge if we have multiple segments
+        if len(segments_to_merge) > 1:
+            return self._merge_multiple_segments(segments_to_merge)
         
-        # Log segment statistics
-        if final_segments:
-            durations = [s['duration'] for s in final_segments]
-            duration_strs = [f"{d:.1f}s" for d in durations]
-            logger.info(f"Created {len(final_segments)} final segments with durations: {duration_strs}")
-            logger.info(f"Duration range: {min(durations):.1f}s - {max(durations):.1f}s (target: {self.min_duration}-{self.max_duration}s)")
-        
-        return final_segments
+        return None
     
-    def _split_segment_balanced(self, segment: Dict) -> List[Dict]:
-        """Split a long segment into balanced parts"""
+    def _find_next_unmerged_index(self, segments: List[Dict], start_index: int, merged_segment: Dict) -> int:
+        """Find the next index after merged segments"""
+        merged_end = merged_segment['end']
+        
+        for i in range(start_index, len(segments)):
+            if segments[i]['end'] > merged_end:
+                return i
+        
+        return len(segments)
+    
+    def _split_segment_intelligently(self, segment: Dict) -> List[Dict]:
+        """Split long segment intelligently without breaking sentences"""
         duration = segment['duration']
         words = segment.get('words', [])
         
         if duration <= self.max_duration:
             return [segment]
         
-        # Calculate number of parts needed
-        num_parts = int(np.ceil(duration / self.max_duration))
+        # Calculate target number of parts
+        num_parts = int(np.ceil(duration / self.target_split_duration))
         
-        # Try to make parts as equal as possible
-        target_duration = duration / num_parts
-        
-        # Split by words for better balance
         if not words:
-            # If no words, split by time
             return self._split_by_time(segment, num_parts)
         
-        # Split by words
-        words_per_part = len(words) // num_parts
-        parts = []
+        # Find good split points (sentence boundaries)
+        split_points = self._find_sentence_boundaries(words)
         
+        # Split based on sentence boundaries
+        if split_points:
+            return self._split_by_sentences(segment, split_points, num_parts)
+        else:
+            # Fallback to word-based splitting
+            return self._split_by_words(segment, num_parts)
+    
+    def _find_sentence_boundaries(self, words: List[Dict]) -> List[int]:
+        """Find sentence boundaries in words"""
+        boundaries = []
+        sentence_enders = ['.', '!', '?', '।', '|']  # Including Bengali sentence ender
+        
+        for i, word in enumerate(words):
+            word_text = word.get('text', '').strip()
+            if any(word_text.endswith(ender) for ender in sentence_enders):
+                boundaries.append(i)
+        
+        return boundaries
+    
+    def _split_by_sentences(self, segment: Dict, sentence_boundaries: List[int], target_parts: int) -> List[Dict]:
+        """Split segment by sentence boundaries"""
+        words = segment['words']
+        total_words = len(words)
+        
+        # Find optimal split points
+        words_per_part = total_words // target_parts
+        split_indices = []
+        
+        for i in range(1, target_parts):
+            target_word_index = i * words_per_part
+            
+            # Find nearest sentence boundary
+            best_boundary = min(sentence_boundaries, 
+                              key=lambda x: abs(x - target_word_index),
+                              default=target_word_index)
+            
+            if best_boundary not in split_indices:
+                split_indices.append(best_boundary)
+        
+        # Create segments
+        parts = []
+        start_idx = 0
+        
+        for split_idx in sorted(split_indices):
+            if start_idx < split_idx:
+                part_words = words[start_idx:split_idx + 1]
+                part = self._create_segment(part_words, segment['speaker'])
+                if part:
+                    parts.append(part)
+                start_idx = split_idx + 1
+        
+        # Add final part
+        if start_idx < len(words):
+            part_words = words[start_idx:]
+            part = self._create_segment(part_words, segment['speaker'])
+            if part:
+                parts.append(part)
+        
+        # Ensure parts meet minimum duration
+        return self._ensure_minimum_duration(parts)
+    
+    def _split_by_words(self, segment: Dict, num_parts: int) -> List[Dict]:
+        """Split segment by words when no sentence boundaries found"""
+        words = segment['words']
+        words_per_part = len(words) // num_parts
+        
+        parts = []
         for i in range(num_parts):
             start_idx = i * words_per_part
             if i == num_parts - 1:
-                # Last part gets remaining words
                 end_idx = len(words)
             else:
                 end_idx = (i + 1) * words_per_part
             
             part_words = words[start_idx:end_idx]
-            
-            if part_words:
-                part_start = part_words[0]['start'] / 1000.0
-                part_end = part_words[-1]['end'] / 1000.0
-                part_duration = part_end - part_start
-                
-                part_text = ' '.join(w['text'] for w in part_words)
-                part_confidence = np.mean([w.get('confidence', 0.5) for w in part_words])
-                
-                part = {
-                    'start': part_start,
-                    'end': part_end,
-                    'duration': part_duration,
-                    'text': part_text,
-                    'speaker': segment['speaker'],
-                    'word_count': len(part_words),
-                    'confidence': part_confidence,
-                    'words': part_words,
-                    'is_split': True,
-                    'original_segment': segment
-                }
+            part = self._create_segment(part_words, segment['speaker'])
+            if part:
                 parts.append(part)
         
-        part_durations = [f"{p['duration']:.1f}s" for p in parts]
-        logger.info(f"Split {duration:.1f}s segment into {len(parts)} balanced parts: {part_durations}")
-        return parts
+        return self._ensure_minimum_duration(parts)
     
     def _split_by_time(self, segment: Dict, num_parts: int) -> List[Dict]:
         """Split segment by time when words are not available"""
@@ -257,22 +324,49 @@ class SegmentManager:
                 'start': part_start,
                 'end': part_end,
                 'duration': part_duration,
-                'text': segment['text'],  # Same text for all parts
+                'text': segment['text'],
                 'speaker': segment['speaker'],
                 'word_count': segment['word_count'] // num_parts,
                 'confidence': segment['confidence'],
                 'words': [],
-                'is_split': True,
-                'original_segment': segment
+                'is_split': True
             }
             parts.append(part)
         
         return parts
     
+    def _ensure_minimum_duration(self, segments: List[Dict]) -> List[Dict]:
+        """Ensure all segments meet minimum duration by merging if necessary"""
+        if not segments:
+            return segments
+        
+        result = []
+        i = 0
+        
+        while i < len(segments):
+            current = segments[i]
+            
+            # If current segment is too short, try to merge with next
+            if (current['duration'] < self.min_duration and 
+                i + 1 < len(segments) and 
+                segments[i + 1]['speaker'] == current['speaker']):
+                
+                merged = self._merge_segments(current, segments[i + 1])
+                result.append(merged)
+                i += 2  # Skip both segments
+            else:
+                result.append(current)
+                i += 1
+        
+        return result
+    
     def _merge_multiple_segments(self, segments: List[Dict]) -> Dict:
-        """Merge multiple segments into one large segment"""
+        """Merge multiple segments into one"""
         if not segments:
             return None
+        
+        if len(segments) == 1:
+            return segments[0]
         
         # Combine all words
         all_words = []
@@ -282,12 +376,17 @@ class SegmentManager:
         # Combine text
         combined_text = ' '.join(seg['text'] for seg in segments)
         
-        # Calculate combined metrics
+        # Calculate metrics
         start_time = segments[0]['start']
         end_time = segments[-1]['end']
         duration = end_time - start_time
         word_count = sum(seg['word_count'] for seg in segments)
-        confidence = sum(seg['confidence'] * seg['word_count'] for seg in segments) / word_count if word_count > 0 else 0.5
+        
+        # Weighted average confidence
+        if word_count > 0:
+            confidence = sum(seg['confidence'] * seg['word_count'] for seg in segments) / word_count
+        else:
+            confidence = 0.5
         
         return {
             'start': start_time,
@@ -298,6 +397,31 @@ class SegmentManager:
             'word_count': word_count,
             'confidence': confidence,
             'words': all_words
+        }
+    
+    def _merge_segments(self, seg1: Dict, seg2: Dict) -> Dict:
+        """Merge two segments"""
+        combined_words = seg1.get('words', []) + seg2.get('words', [])
+        combined_text = f"{seg1['text']} {seg2['text']}"
+        combined_duration = seg2['end'] - seg1['start']
+        
+        # Weighted average confidence
+        total_words = seg1['word_count'] + seg2['word_count']
+        if total_words > 0:
+            combined_confidence = (seg1['confidence'] * seg1['word_count'] + 
+                                 seg2['confidence'] * seg2['word_count']) / total_words
+        else:
+            combined_confidence = (seg1['confidence'] + seg2['confidence']) / 2
+        
+        return {
+            'start': seg1['start'],
+            'end': seg2['end'],
+            'duration': combined_duration,
+            'text': combined_text,
+            'speaker': seg1['speaker'],
+            'word_count': total_words,
+            'confidence': combined_confidence,
+            'words': combined_words
         }
     
     def identify_silent_parts(self, segments: List[Dict], total_duration: float) -> List[Tuple[float, float]]:
@@ -358,24 +482,6 @@ class SegmentManager:
                 references[speaker] = best_segment
         
         return references
-    
-    def _merge_segments(self, seg1: Dict, seg2: Dict) -> Dict:
-        """Merge two segments into one longer segment"""
-        combined_words = seg1.get('words', []) + seg2.get('words', [])
-        combined_text = f"{seg1['text']} {seg2['text']}"
-        combined_duration = seg2['end'] - seg1['start']
-        combined_confidence = (seg1['confidence'] + seg2['confidence']) / 2
-        
-        return {
-            'start': seg1['start'],
-            'end': seg2['end'],
-            'duration': combined_duration,
-            'text': combined_text,
-            'speaker': seg1['speaker'],
-            'word_count': len(combined_words),
-            'confidence': combined_confidence,
-            'words': combined_words
-        }
     
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int,
                             output_dir: Path, speakers: List[str], 
