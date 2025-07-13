@@ -261,22 +261,8 @@ Return only the clean English text:"""
             return text
     
     def format_dia_text(self, english_text: str, speaker: str, all_speakers: List[str]) -> str:
-        """Format text for Dia model with proper speaker handling and guidelines"""
-        # Clean text
         cleaned_text = self._clean_text(english_text)
-        
-        # Format with proper speaker tags according to Dia guidelines
-        if len(all_speakers) == 1:
-            # Single speaker: always use [S1]
-            return f"[S1] {cleaned_text}"
-        else:
-            # Multi-speaker: use proper speaker mapping
-            try:
-                speaker_idx = all_speakers.index(speaker) + 1
-                return f"[S{speaker_idx}] {cleaned_text}"
-            except ValueError:
-                # Fallback if speaker not found
-                return f"[S1] {cleaned_text}"
+        return f"[S1] {cleaned_text}"
     
     def format_dia_prompt_with_reference(self, reference_text: str, target_text: str, 
                                         all_speakers: List[str]) -> str:

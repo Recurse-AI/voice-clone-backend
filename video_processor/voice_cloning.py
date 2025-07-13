@@ -128,6 +128,11 @@ class VoiceCloningService:
                 # Reference transcript should come first, then a space, then the target text
                 prompt_text = f"{ref_transcript} {dia_text}"
                 
+                print(f"VOICE CLONING:")
+                print(f"Text: {dia_text}")
+                print(f"Reference: {reference_audio_path}")
+                print(f"Full prompt: {prompt_text}")
+                
                 cloned_audio = self.dia_model.generate(
                     prompt_text,
                     audio_prompt=reference_audio_path,
@@ -139,6 +144,10 @@ class VoiceCloningService:
                     max_tokens=3072
                 )
             else:
+                print(f"VOICE CLONING:")
+                print(f"Text: {dia_text}")
+                print(f"Reference: None")
+                
                 cloned_audio = self.dia_model.generate(
                     dia_text,
                     use_torch_compile=False,
@@ -341,6 +350,21 @@ etc."""
         
         if current_samples == target_samples:
             return audio
+        
+        ratio = target_samples / current_samples
+        
+        if 0.85 <= ratio <= 1.15:
+            try:
+                import librosa
+                stretched = librosa.effects.time_stretch(audio, rate=1/ratio)
+                if len(stretched) > target_samples:
+                    return stretched[:target_samples]
+                elif len(stretched) < target_samples:
+                    padding = np.zeros(target_samples - len(stretched))
+                    return np.concatenate([stretched, padding])
+                return stretched
+            except ImportError:
+                pass
         
         if current_samples > target_samples:
             return audio[:target_samples]
