@@ -230,3 +230,88 @@ class VideoProcessor:
                     
         except Exception:
             pass
+    
+    def create_video_with_subtitles(self, video_path: str, audio_path: str, 
+                                   segments_dir: str, audio_id: str,
+                                   instruments_path: Optional[str] = None) -> Dict[str, Any]:
+        """Create video with high-quality subtitles"""
+        try:
+            # Create final mixed audio if instruments are provided
+            if instruments_path and os.path.exists(instruments_path):
+                final_audio_path = self._create_final_audio(audio_path, instruments_path, audio_id)
+            else:
+                final_audio_path = Path(audio_path)
+            
+            # Load subtitles from segments
+            subtitle_data = self._load_subtitles(segments_dir)
+            
+            if not subtitle_data:
+                logger.warning(f"No subtitle data found for audio_id: {audio_id}")
+                # If no subtitles, create video without subtitles
+                return self.create_video_with_audio(video_path, str(final_audio_path), audio_id)
+            
+            # Create SRT file
+            subtitle_path = self.temp_dir / f"subtitles_{audio_id}.srt"
+            self._create_srt_file(subtitle_data, subtitle_path)
+            
+            # Create output video path
+            output_path = self.temp_dir / f"video_with_subtitles_{audio_id}.mp4"
+            
+            # Create video with subtitles using FFmpeg
+            result = self._create_video_ffmpeg(video_path, str(final_audio_path), subtitle_path, output_path)
+            
+            if result["success"]:
+                return {
+                    "success": True,
+                    "video_path": str(output_path),
+                    "subtitle_path": str(subtitle_path),
+                    "subtitle_count": len(subtitle_data),
+                    "has_subtitles": True
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.get("error", "Unknown error in video creation")
+                }
+                
+        except Exception as e:
+            logger.error(f"Video creation with subtitles failed: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Video creation with subtitles failed: {str(e)}"
+            }
+    
+    def create_video_with_audio(self, video_path: str, audio_path: str, 
+                               audio_id: str, instruments_path: Optional[str] = None) -> Dict[str, Any]:
+        """Create video with new audio only (no subtitles)"""
+        try:
+            # Create final mixed audio if instruments are provided
+            if instruments_path and os.path.exists(instruments_path):
+                final_audio_path = self._create_final_audio(audio_path, instruments_path, audio_id)
+            else:
+                final_audio_path = Path(audio_path)
+            
+            # Create output video path
+            output_path = self.temp_dir / f"video_no_subtitles_{audio_id}.mp4"
+            
+            # Create video without subtitles using FFmpeg
+            result = self._create_video_ffmpeg(video_path, str(final_audio_path), None, output_path)
+            
+            if result["success"]:
+                return {
+                    "success": True,
+                    "video_path": str(output_path),
+                    "has_subtitles": False
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.get("error", "Unknown error in video creation")
+                }
+                
+        except Exception as e:
+            logger.error(f"Video creation with audio failed: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Video creation with audio failed: {str(e)}"
+            }
