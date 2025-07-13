@@ -76,9 +76,14 @@ class VoiceCloningService:
                 # Generate chunk text with speaker overlap
                 chunk_text = self._create_chunk_text(chunk_segments, chunk_index > 0)
                 
+                # Get reference audio for first chunk (from first segment)
+                reference_audio_path = None
+                if chunk_index == 0 and chunk_segments:
+                    reference_audio_path = chunk_segments[0].get('reference_audio_path')
+                
                 # Generate audio for this chunk
                 chunk_audio = self._generate_chunk_audio(
-                    chunk_text, previous_audio, temperature, cfg_scale, top_p
+                    chunk_text, previous_audio, temperature, cfg_scale, top_p, reference_audio_path
                 )
                 
                 if chunk_audio is not None:
@@ -145,14 +150,19 @@ class VoiceCloningService:
         return " ".join(chunk_lines)
     
     def _generate_chunk_audio(self, text: str, previous_audio: Optional[np.ndarray],
-                            temperature: float, cfg_scale: float, top_p: float) -> Optional[np.ndarray]:
-        """Generate audio for a chunk with optional previous audio as prompt"""
+                            temperature: float, cfg_scale: float, top_p: float,
+                            reference_audio_path: Optional[str] = None) -> Optional[np.ndarray]:
+        """Generate audio for a chunk with optional previous audio or reference as prompt"""
         try:
             audio_prompt_path = None
             
+            # Priority: previous_audio > reference_audio > none
             if previous_audio is not None:
-                # Save previous audio as temporary prompt
+                # Use previous chunk audio for overlapping consistency
                 audio_prompt_path = self._save_temp_audio(previous_audio)
+            elif reference_audio_path and os.path.exists(reference_audio_path):
+                # Use reference audio for initial chunk
+                audio_prompt_path = reference_audio_path
             
             # Generate audio using Dia model
             with torch.inference_mode():
@@ -168,8 +178,8 @@ class VoiceCloningService:
                     verbose=False
                 )
             
-            # Clean up temporary file
-            if audio_prompt_path and os.path.exists(audio_prompt_path):
+            # Clean up temporary file (only if we created it)
+            if previous_audio is not None and audio_prompt_path and os.path.exists(audio_prompt_path):
                 os.unlink(audio_prompt_path)
             
             return audio

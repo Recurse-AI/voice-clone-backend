@@ -140,12 +140,19 @@ class SegmentManager:
         """Save segments optimized for overlapping voice cloning"""
         output_dir.mkdir(parents=True, exist_ok=True)
         
+        # First, select optimal references for each speaker
+        references = self.select_optimal_references(segments, speakers)
+        
         # Process segments for overlapping approach
         for i, segment in enumerate(segments):
             speaker = segment.get('speaker', 'A')
             speaker_dir = output_dir / f"speaker_{speaker}"
-            segments_dir = speaker_dir / "segments"  # Create segments subdirectory
+            segments_dir = speaker_dir / "segments"
+            reference_dir = speaker_dir / "reference"
+            
+            # Create directories
             segments_dir.mkdir(parents=True, exist_ok=True)
+            reference_dir.mkdir(parents=True, exist_ok=True)
             
             try:
                 # Extract audio segment
@@ -181,6 +188,23 @@ class SegmentManager:
                 metadata_path = segments_dir / f"segment_{i+1:03d}_metadata.json"
                 with open(metadata_path, 'w', encoding='utf-8') as f:
                     json.dump(metadata, f, ensure_ascii=False, indent=2)
+                
+                # Save reference audio if this segment is selected as reference
+                if speaker in references and references[speaker] == segment:
+                    reference_audio_path = reference_dir / f"speaker_{speaker}_REFERENCE.wav"
+                    sf.write(reference_audio_path, segment_audio, sr)
+                    
+                    # Save reference metadata
+                    reference_metadata = {
+                        'speaker': speaker,
+                        'reference_text': english_text,
+                        'original_segment_index': i + 1,
+                        'duration': segment['duration'],
+                        'confidence': segment['confidence']
+                    }
+                    reference_metadata_path = reference_dir / f"speaker_{speaker}_REFERENCE_metadata.json"
+                    with open(reference_metadata_path, 'w', encoding='utf-8') as f:
+                        json.dump(reference_metadata, f, ensure_ascii=False, indent=2)
                 
                 # Update segment with paths
                 segment.update({
