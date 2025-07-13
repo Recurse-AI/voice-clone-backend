@@ -210,46 +210,29 @@ class AudioReconstructor:
         return np.zeros(silent_samples, dtype=np.float32)
     
     def _adjust_length(self, audio: np.ndarray, target_samples: int) -> np.ndarray:
-        """Adjust audio length to target samples"""
         current_samples = len(audio)
         
         if current_samples == target_samples:
             return audio
         elif current_samples > target_samples:
-            # Trim with fade
-            trimmed = audio[:target_samples]
-            if target_samples > 100:
-                fade_samples = min(50, target_samples // 10)
-                fade_curve = np.linspace(1, 0, fade_samples)
-                trimmed[-fade_samples:] *= fade_curve
-            return trimmed
+            return audio[:target_samples]
         else:
-            # Extend with silence
             padding = np.zeros(target_samples - current_samples)
             return np.concatenate([audio, padding])
     
     def _mix_with_instruments(self, audio: np.ndarray, instruments_path: str) -> np.ndarray:
-        """Mix audio with instruments"""
         try:
             instruments_audio, _ = sf.read(instruments_path)
             
-            # Match lengths
             min_length = min(len(audio), len(instruments_audio))
             audio = audio[:min_length]
             instruments_audio = instruments_audio[:min_length]
             
-            # Mix with voice dominant
             mixed_audio = audio * 0.8 + instruments_audio * 0.2
-            
-            # Prevent clipping
-            max_val = np.max(np.abs(mixed_audio))
-            if max_val > 0.95:
-                mixed_audio = mixed_audio * (0.95 / max_val)
             
             return mixed_audio
             
         except Exception as e:
-            logger.error(f"Failed to mix with instruments: {str(e)}")
             return audio
     
     def cleanup_temp_files(self, audio_id: str):

@@ -274,48 +274,17 @@ class AudioProcessor:
     
     def _preserve_exact_length(self, cloned_audio: np.ndarray, target_duration: float, 
                                sample_rate: int) -> np.ndarray:
-        """Preserve exact audio length by stretching or compressing"""
         target_samples = int(target_duration * sample_rate)
         current_samples = len(cloned_audio)
         
         if current_samples == target_samples:
             return cloned_audio
         
-        # Calculate stretch/compression ratio
-        ratio = target_samples / current_samples
-        
-        # If difference is small (within 5%), use simple trim/pad
-        if 0.95 <= ratio <= 1.05:
-            if current_samples > target_samples:
-                # Trim with fade out
-                trimmed = cloned_audio[:target_samples]
-                fade_samples = min(int(0.05 * sample_rate), target_samples // 10)
-                if fade_samples > 0:
-                    fade_curve = np.linspace(1, 0, fade_samples)
-                    trimmed[-fade_samples:] *= fade_curve
-                return trimmed
-            else:
-                # Pad with silence
-                padding = np.zeros(target_samples - current_samples)
-                return np.concatenate([cloned_audio, padding])
-        
-        # For larger differences, use time stretching
-        try:
-            import librosa
-            # Time stretch to match exact duration
-            stretched = librosa.effects.time_stretch(cloned_audio, rate=1/ratio)
-            
-            # Ensure exact length after stretching
-            if len(stretched) > target_samples:
-                stretched = stretched[:target_samples]
-            elif len(stretched) < target_samples:
-                padding = np.zeros(target_samples - len(stretched))
-                stretched = np.concatenate([stretched, padding])
-            
-            return stretched
-            
-        except ImportError:
-            raise ImportError("librosa is required for this operation")
+        if current_samples > target_samples:
+            return cloned_audio[:target_samples]
+        else:
+            padding = np.zeros(target_samples - current_samples)
+            return np.concatenate([cloned_audio, padding])
     
     def clone_voice_segments(self, segments_dir: str, audio_id: str, 
                            temperature: float = 1.3, cfg_scale: float = 3.0, 

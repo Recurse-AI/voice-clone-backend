@@ -197,41 +197,25 @@ class VideoProcessor:
         return chunks
     
     def _create_final_audio(self, audio_path: str, instruments_path: Optional[str], audio_id: str) -> Path:
-        """Create final audio by mixing cloned audio with instruments if provided"""
         final_audio_path = self.temp_dir / f"final_mixed_audio_{audio_id}.wav"
         
-        # Load cloned audio
         cloned_audio, sr = sf.read(audio_path)
         
         if instruments_path and os.path.exists(instruments_path):
-            logger.info(f"Mixing cloned audio with instruments")
             try:
-                # Load instruments
                 instruments_audio, _ = sf.read(instruments_path)
                 
-                # Match lengths
                 min_length = min(len(cloned_audio), len(instruments_audio))
                 cloned_audio = cloned_audio[:min_length]
                 instruments_audio = instruments_audio[:min_length]
                 
-                # Mix: 80% cloned voice, 20% instruments
                 mixed_audio = cloned_audio * 0.8 + instruments_audio * 0.2
-                
-                # Prevent clipping
-                max_val = np.max(np.abs(mixed_audio))
-                if max_val > 0.95:
-                    mixed_audio = mixed_audio * (0.95 / max_val)
-                
                 sf.write(final_audio_path, mixed_audio, sr)
-                logger.info(f"Mixed audio saved: voice 80%, instruments 20%")
                 
             except Exception as e:
-                logger.error(f"Failed to mix with instruments: {str(e)}, using cloned audio only")
                 sf.write(final_audio_path, cloned_audio, sr)
         else:
-            # Use cloned audio only
             sf.write(final_audio_path, cloned_audio, sr)
-            logger.info(f"Using cloned audio only (no instruments)")
         
         return final_audio_path
     
