@@ -35,6 +35,48 @@ class FileManager:
         # Create silent parts directory
         (base_dir / "silent_parts").mkdir(parents=True, exist_ok=True)
     
+    def _create_timeline(self, segments: List[Dict], silent_parts: List[Tuple[float, float]], 
+                        base_dir: Path, total_duration: float):
+        """Create timeline for audio reconstruction"""
+        timeline = []
+        
+        # Add speech segments
+        for segment in segments:
+            timeline.append({
+                'segment_type': 'speech',
+                'start': segment['start'],
+                'end': segment['end'],
+                'duration': segment['duration'],
+                'speaker': segment['speaker'],
+                'is_continuous': segment.get('is_continuous', True),
+                'group_id': segment.get('group_id')
+            })
+        
+        # Add silent parts
+        for start, end in silent_parts:
+            timeline.append({
+                'segment_type': 'silent',
+                'start': start,
+                'end': end,
+                'duration': end - start
+            })
+        
+        # Sort by start time
+        timeline.sort(key=lambda x: x['start'])
+        
+        # Save timeline
+        timeline_data = {
+            'audio_id': base_dir.name.replace('segments_', ''),
+            'total_duration': total_duration,
+            'timeline': timeline,
+            'speech_segments': len([t for t in timeline if t['segment_type'] == 'speech']),
+            'silent_parts': len([t for t in timeline if t['segment_type'] == 'silent'])
+        }
+        
+        timeline_path = base_dir / "metadata" / "timeline.json"
+        with open(timeline_path, 'w', encoding='utf-8') as f:
+            json.dump(timeline_data, f, ensure_ascii=False, indent=2)
+    
     def save_silent_parts(self, silent_parts: List[Tuple[float, float]], 
                          audio: np.ndarray, sr: int, base_dir: Path):
         """Save silent parts as separate audio files"""
@@ -46,8 +88,24 @@ class FileManager:
             
             if start_sample < len(audio) and end_sample <= len(audio):
                 silent_audio = audio[start_sample:end_sample]
-                silent_file = silent_dir / f"silent_{i+1:03d}.wav"
+                
+                # Save audio file
+                audio_filename = f"silent_{i+1:03d}.wav"
+                silent_file = silent_dir / audio_filename
                 sf.write(silent_file, silent_audio, sr)
+                
+                # Save metadata
+                metadata = {
+                    'silent_id': i + 1,
+                    'start': start,
+                    'end': end,
+                    'duration': end - start,
+                    'audio_file': audio_filename
+                }
+                
+                metadata_path = silent_dir / f"silent_{i+1:03d}.json"
+                with open(metadata_path, 'w', encoding='utf-8') as f:
+                    json.dump(metadata, f, ensure_ascii=False, indent=2)
     
     def save_metadata(self, transcript_data: Dict, segments: List[Dict], 
                      silent_parts: List[Tuple[float, float]], 
@@ -73,17 +131,30 @@ class FileManager:
         if additional_metadata:
             metadata.update(additional_metadata)
         
-        # Count segments by speaker with safe access
+        # Count segments by speaker with proper handling of mixed segments
         for segment in segments:
             speaker = segment.get('speaker', 'A')
-            if speaker not in metadata['segments_by_speaker']:
-                metadata['segments_by_speaker'][speaker] = 0
-            metadata['segments_by_speaker'][speaker] += 1
+            
+            # For mixed segments, count toward each speaker involved
+            if segment.get('is_mixed', False) and segment.get('speakers'):
+                # Mixed segment - count toward each speaker involved
+                for mixed_speaker in segment.get('speakers', []):
+                    if mixed_speaker not in metadata['segments_by_speaker']:
+                        metadata['segments_by_speaker'][mixed_speaker] = 0
+                    metadata['segments_by_speaker'][mixed_speaker] += 1
+            else:
+                # Pure segment - count toward the single speaker
+                if speaker not in metadata['segments_by_speaker']:
+                    metadata['segments_by_speaker'][speaker] = 0
+                metadata['segments_by_speaker'][speaker] += 1
         
         # Save metadata
         metadata_path = base_dir / "metadata" / f"{audio_id}_metadata.json"
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
+        
+        # Create and save timeline
+        self._create_timeline(segments, silent_parts, base_dir, transcript_data.get('duration', 0))
     
     def save_reference_segments(self, reference_segments: Dict[str, Dict], 
                                audio: np.ndarray, sr: int, base_dir: Path, 

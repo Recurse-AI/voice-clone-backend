@@ -103,9 +103,16 @@ class AudioProcessor:
             except Exception as e:
                 return {"success": False, "error": f"Reference segment processing failed: {str(e)}"}
             
-            # Save metadata with raw AssemblyAI response
+            # Identify and save silent parts
             try:
                 silent_parts = self.segment_manager.identify_silent_parts(segments, transcript_data['duration'])
+                self.file_manager.save_silent_parts(silent_parts, audio, sr, output_dir)
+            except Exception as e:
+                logger.warning(f"Failed to process silent parts: {str(e)}")
+                silent_parts = []
+            
+            # Save metadata with raw AssemblyAI response
+            try:
                 self.file_manager.save_metadata(
                     transcript_data, segments, silent_parts, 
                     output_dir, audio_id, audio_path
@@ -203,7 +210,7 @@ class AudioProcessor:
                 
                 logger.info(f"Processing {len(speaker_segments)} segments for speaker {speaker}")
                 
-                # Clone all segments for this speaker
+                # Clone all segments for this speaker using new logic
                 cloning_result = self.voice_cloning_service.clone_voice_segments(
                     speaker_segments, temperature, cfg_scale, top_p, speaker_seed
                 )
@@ -225,26 +232,13 @@ class AudioProcessor:
                             wav_filename = segment_json_path.stem + '.wav'
                             original_audio_path = segments_dir_path / wav_filename
                             
-                            if original_audio_path.exists():
-                                # Load original audio to get exact duration
-                                original_audio, original_sr = sf.read(original_audio_path)
-                                original_duration = len(original_audio) / original_sr
-                                
-                                # Get cloned audio and ensure it matches original length
-                                cloned_audio = cloned_segment['cloned_audio']
-                                cloned_audio = self._preserve_exact_length(
-                                    cloned_audio, original_duration, 44100
-                                )
-                                
-                                # Save cloned audio
-                                cloned_filename = f"cloned_{original_audio_path.stem}.wav"
-                                cloned_path = segments_dir_path / cloned_filename
-                                sf.write(cloned_path, cloned_audio, 44100)
-                                speaker_successful += 1
-                                
-                                logger.info(f"Saved cloned audio: {cloned_filename}")
-                            else:
-                                logger.warning(f"Original audio not found: {original_audio_path}")
+                            # Save cloned audio
+                            cloned_filename = f"cloned_{segment_json_path.stem}.wav"
+                            cloned_path = segments_dir_path / cloned_filename
+                            sf.write(cloned_path, cloned_segment['cloned_audio'], 44100)
+                            speaker_successful += 1
+                            
+                            logger.info(f"Saved cloned audio: {cloned_filename} (type: {cloned_segment.get('type', 'unknown')})")
                                 
                         except Exception as e:
                             logger.error(f"Failed to save cloned audio: {str(e)}")
@@ -268,7 +262,7 @@ class AudioProcessor:
                 "cloned_by_speaker": cloned_by_speaker,
                 "seeds_used": seeds_used,
                 "audio_id": audio_id,
-                "processing_method": "simplified_speaker_wise"
+                "processing_method": "smart_continuous_non_continuous"
             }
             
         except Exception as e:
@@ -318,18 +312,7 @@ class AudioProcessor:
             return stretched
             
         except ImportError:
-            # Fallback if librosa not available - use simple interpolation
-            import scipy.signal
-            
-            # Resample to match target length
-            resampled = scipy.signal.resample(cloned_audio, target_samples)
-            
-            # Apply smoothing to reduce artifacts
-            if target_samples > 1000:
-                window_size = min(100, target_samples // 50)
-                resampled = np.convolve(resampled, np.ones(window_size)/window_size, mode='same')
-            
-            return resampled
+            raise ImportError("librosa is required for this operation")
     
     def clone_voice_segments(self, segments_dir: str, audio_id: str, 
                            temperature: float = 1.3, cfg_scale: float = 3.0, 
@@ -368,14 +351,6 @@ class AudioProcessor:
                                     speakers_expected: Optional[int] = 1) -> Dict[str, Any]:
         """Process video with RunPod vocal/instrument separation"""
         try:
-            # Validate RunPod service is properly configured
-            if not hasattr(self, 'runpod_service') or not self.runpod_service:
-                return {"success": False, "error": "RunPod service not initialized"}
-            
-            # Check if RunPod credentials are configured
-            if not self.runpod_service.api_key or not self.runpod_service.base_url:
-                return {"success": False, "error": "RunPod credentials not configured"}
-            
             # Extract audio from video
             audio_temp_path = self.temp_dir / f"{audio_id}_extracted_audio.wav"
             extract_result = self.audio_utils.extract_audio_from_video(video_path, str(audio_temp_path))
@@ -385,13 +360,6 @@ class AudioProcessor:
             
             from r2_storage import R2Storage
             r2_storage = R2Storage()
-            
-            # Validate R2 storage is configured
-            if not r2_storage.bucket_name:
-                return {"success": False, "error": "R2 storage not configured"}
-            
-            if not r2_storage.client:
-                return {"success": False, "error": "R2 client not initialized"}
             
             upload_result = r2_storage.upload_file(
                 str(audio_temp_path),

@@ -5,6 +5,11 @@
 
 echo "🚀 Voice Cloning API Startup - Platform Independent"
 
+# Set UTF-8 environment variables for Unicode support (Linux/RunPod)
+export PYTHONIOENCODING=utf-8
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+
 # Detect platform more accurately
 if [[ "$OSTYPE" == "msys" || "$OSTYPE" == "cygwin" || "$OSTYPE" == "win32" ]]; then
     PLATFORM="windows"

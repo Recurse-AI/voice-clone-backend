@@ -49,290 +49,335 @@ class VoiceCloningService:
         except Exception as e:
             logger.error(f"Error loading Dia model: {e}")
             raise Exception(f"Error loading Dia model: {e}")
+        
+    def is_model_loaded(self) -> bool:
+        """Check if Dia model is loaded"""
+        return self.dia_model is not None 
     
-    def generate_with_dia(self, text: str, temperature: float = None, cfg_scale: float = None, 
-                         top_p: float = None, audio_prompt_path: Optional[str] = None,
-                         audio_prompt_transcript: Optional[str] = None) -> Optional[np.ndarray]:
-        """Generate audio with Dia model using official approach with transcript support"""
-        try:
-            # Use optimized parameters based on official examples
-            generation_params = {
-                "use_torch_compile": settings.DIA_USE_TORCH_COMPILE,
-                "verbose": settings.DIA_VERBOSE,
-                "cfg_scale": cfg_scale or 4.0,  # Optimized from official examples
-                "temperature": temperature or 1.8,  # Optimized from official examples  
-                "top_p": top_p or 0.90,  # Optimized from official examples
-                "cfg_filter_top_k": 50,  # Optimized from official examples
-                "max_tokens": settings.DIA_MAX_TOKENS
-            }
-            
-            # Prepare text according to official guidelines
-            if audio_prompt_path and audio_prompt_transcript:
-                # Voice cloning with reference audio - combine transcript + new text
-                # This is the key fix: we need to provide transcript of audio prompt
-                full_text = f"{audio_prompt_transcript.strip()} {text.strip()}"
-                logger.info(f"Voice cloning with transcript: {audio_prompt_transcript[:50]}... + {text[:50]}...")
-            else:
-                # Regular generation - just ensure proper speaker tags
-                full_text = text
-                logger.info(f"Regular generation with text: {text[:50]}...")
-            
-            # Format text according to Dia guidelines
-            formatted_text = self._format_text_for_dia(full_text)
-            
-            logger.info(f"Final formatted text: {formatted_text[:100]}...")
-            
-            if audio_prompt_path and os.path.exists(audio_prompt_path):
-                # Voice cloning with reference audio
-                output = self.dia_model.generate(formatted_text, audio_prompt=audio_prompt_path, **generation_params)
-            else:
-                # Regular generation without audio prompt
-                output = self.dia_model.generate(formatted_text, **generation_params)
-            
-            if output is not None and len(output) > 0:
-                logger.info(f"Audio generated successfully, length: {len(output)}")
-                return output
-            else:
-                logger.warning("Dia model returned empty audio")
-                return None
-            
-        except Exception as e:
-            logger.error(f"Dia generation failed: {str(e)}")
-            return None
-    
-    def clone_voice_segments(self, segments_data: List[Dict[str, Any]], 
-                           temperature: float = None, cfg_scale: float = None, 
-                           top_p: float = None, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Clone voice segments using Dia model with proper transcript support"""
-        if not self.dia_model:
+    def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.3,
+                           cfg_scale: float = 3.0, top_p: float = 0.95,
+                           seed: Optional[int] = None) -> Dict[str, Any]:
+        """Clone voice segments with continuous/non-continuous handling"""
+        if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
         try:
             if seed is not None:
                 set_seed(seed)
-                logger.info(f"Set random seed to {seed}")
+            
+            # Group segments by type and group_id
+            continuous_segments = []
+            non_continuous_groups = {}
+            
+            for segment in segments:
+                if segment.get('is_continuous', True):
+                    continuous_segments.append(segment)
+                else:
+                    group_id = segment.get('group_id')
+                    if group_id:
+                        if group_id not in non_continuous_groups:
+                            non_continuous_groups[group_id] = []
+                        non_continuous_groups[group_id].append(segment)
             
             cloned_segments = []
-            successful_clones = 0
             
-            for i, segment_data in enumerate(segments_data):
-                try:
-                    # Get the text to clone
-                    text = segment_data.get('english_text', segment_data.get('text', ''))
-                    reference_audio_path = segment_data.get('reference_audio_path', None)
-                    
-                    if not text.strip():
-                        logger.warning(f"Empty text for segment {i}")
-                        cloned_segments.append({
-                            "original_data": segment_data,
-                            "cloned_audio": None,
-                            "text": text,
-                            "success": False,
-                            "error": "Empty text"
-                        })
-                        continue
-                    
-                    # Clean and format text for Dia
-                    clean_text = self._clean_text_for_dia(text)
-                    
-                    # Get audio prompt transcript (this is the key fix)
-                    audio_prompt_transcript = self._get_audio_prompt_transcript(
-                        reference_audio_path, segment_data
-                    )
-                    
-                    logger.info(f"Processing segment {i+1}/{len(segments_data)}: {clean_text[:50]}...")
-                    if audio_prompt_transcript:
-                        logger.info(f"Using audio prompt transcript: {audio_prompt_transcript[:50]}...")
-                    
-                    # Generate with Dia using proper transcript approach
-                    cloned_audio = self.generate_with_dia(
-                        clean_text, temperature, cfg_scale, top_p, 
-                        reference_audio_path, audio_prompt_transcript
-                    )
-                    
-                    if cloned_audio is not None and len(cloned_audio) > 0:
-                        cloned_segments.append({
-                            "original_data": segment_data,
-                            "cloned_audio": cloned_audio,
-                            "text": clean_text,
-                            "success": True
-                        })
-                        successful_clones += 1
-                        logger.info(f"Successfully cloned segment {i+1}")
-                    else:
-                        logger.warning(f"Failed to generate audio for segment {i+1}")
-                        cloned_segments.append({
-                            "original_data": segment_data,
-                            "cloned_audio": None,
-                            "text": clean_text,
-                            "success": False,
-                            "error": "Generated audio is None or empty"
-                        })
-                        
-                except Exception as e:
-                    logger.error(f"Error processing segment {i+1}: {str(e)}")
-                    cloned_segments.append({
-                        "original_data": segment_data,
-                        "cloned_audio": None,
-                        "text": segment_data.get('text', ''),
-                        "success": False,
-                        "error": str(e)
-                    })
+            # Process continuous segments
+            for segment in continuous_segments:
+                cloned = self._clone_continuous_segment(
+                    segment, temperature, cfg_scale, top_p
+                )
+                if cloned:
+                    cloned_segments.append(cloned)
             
-            logger.info(f"Voice cloning completed: {successful_clones}/{len(segments_data)} segments successful")
+            # Process non-continuous groups
+            for group_id, group_segments in non_continuous_groups.items():
+                cloned_group = self._clone_non_continuous_group(
+                    group_segments, temperature, cfg_scale, top_p
+                )
+                cloned_segments.extend(cloned_group)
             
             return {
                 "success": True,
                 "cloned_segments": cloned_segments,
-                "successful_count": successful_clones,
-                "total_count": len(segments_data)
+                "total_segments": len(segments),
+                "successful_clones": len(cloned_segments)
             }
             
         except Exception as e:
             logger.error(f"Voice cloning failed: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    def _get_audio_prompt_transcript(self, reference_audio_path: Optional[str], 
-                                   segment_data: Dict[str, Any]) -> Optional[str]:
-        """Get transcript for audio prompt according to official Dia guidelines"""
-        # Check if this is a composite reference scenario
-        if not reference_audio_path or not os.path.exists(reference_audio_path):
-            # Look for composite reference metadata
-            return self._get_composite_reference_transcript(segment_data)
-        
+    def _clone_continuous_segment(self, segment: Dict, temperature: float,
+                                cfg_scale: float, top_p: float) -> Optional[Dict]:
+        """Clone a continuous segment"""
         try:
-            # Get reference audio directory and find reference metadata
-            ref_audio_path = Path(reference_audio_path)
-            ref_dir = ref_audio_path.parent
+            # Get reference audio if available
+            reference_audio_path = segment.get('reference_audio_path')
             
-            # Look for reference metadata file
-            for metadata_file in ref_dir.glob("*REFERENCE_metadata.json"):
-                try:
-                    with open(metadata_file, 'r', encoding='utf-8') as f:
-                        ref_metadata = json.load(f)
-                    
-                    # Use the clean English text from reference metadata
-                    ref_text = ref_metadata.get('text', ref_metadata.get('original_text', ''))
-                    
-                    if ref_text.strip():
-                        # Format for Dia - simple and clean
-                        formatted_ref = self._format_text_for_dia(ref_text)
-                        
-                        # Keep transcript focused on optimal word count (35-45 words)
-                        words = formatted_ref.split()
-                        if len(words) > 45:  # Limit to optimal word count
-                            formatted_ref = ' '.join(words[:40]) + '.'
-                        
-                        logger.info(f"Created reference transcript from metadata: {formatted_ref[:50]}...")
-                        return formatted_ref
-                        
-                except Exception as e:
-                    logger.warning(f"Failed to read reference metadata {metadata_file}: {str(e)}")
-                    continue
+            # Prepare text for Dia
+            dia_text = segment.get('dia_text', '')
+            if not dia_text:
+                return None
             
-            # Fallback: try to get from current segment data
-            # Look for original text in segment data
-            original_text = segment_data.get('original_text', 
-                                           segment_data.get('text', 
-                                                         segment_data.get('english_text', '')))
-            
-            if original_text.strip():
-                # Format for Dia
-                formatted_text = self._format_text_for_dia(original_text)
+            # Clone with Dia
+            if reference_audio_path and os.path.exists(reference_audio_path):
+                # Load reference transcript
+                ref_transcript = self._get_reference_transcript(reference_audio_path)
+                prompt_text = f"{ref_transcript} {dia_text}"
                 
-                # Keep it within optimal word count
-                words = formatted_text.split()
-                if len(words) > 45:
-                    formatted_text = ' '.join(words[:40]) + '.'
-                
-                logger.info(f"Created fallback transcript from segment: {formatted_text[:50]}...")
-                return formatted_text
+                cloned_audio = self.dia_model.generate(
+                    prompt_text,
+                    audio_prompt=reference_audio_path,
+                    use_torch_compile=False,
+                    cfg_scale=cfg_scale,
+                    temperature=temperature,
+                    top_p=top_p
+                )
+            else:
+                cloned_audio = self.dia_model.generate(
+                    dia_text,
+                    use_torch_compile=False,
+                    cfg_scale=cfg_scale,
+                    temperature=temperature,
+                    top_p=top_p
+                )
+            
+            # Length synchronization
+            original_duration = segment.get('duration', 0)
+            if original_duration > 0:
+                cloned_audio = self._synchronize_length(
+                    cloned_audio, original_duration, 44100
+                )
+            
+            return {
+                "success": True,
+                "original_data": segment,
+                "cloned_audio": cloned_audio,
+                "type": "continuous"
+            }
             
         except Exception as e:
-            logger.warning(f"Failed to get audio prompt transcript: {str(e)}")
-        
-        return None
+            logger.error(f"Failed to clone continuous segment: {str(e)}")
+            return None
     
-    def _get_composite_reference_transcript(self, segment_data: Dict[str, Any]) -> Optional[str]:
-        """Get composite reference transcript for mixed segment scenarios"""
+    def _clone_non_continuous_group(self, group_segments: List[Dict], temperature: float,
+                                   cfg_scale: float, top_p: float) -> List[Dict]:
+        """Clone non-continuous segment group"""
         try:
-            # Check if segment directory has composite reference metadata
-            segments_dir = segment_data.get('segments_dir', '')
-            if segments_dir:
-                segments_path = Path(segments_dir)
-                speaker_dir = segments_path.parent
-                reference_dir = speaker_dir / "reference"
+            # Merge texts from all segments
+            merged_text = ' '.join(s.get('dia_text', '') for s in group_segments)
+            if not merged_text:
+                return []
+            
+            # Get reference audio
+            reference_audio_path = group_segments[0].get('reference_audio_path')
+            
+            # Clone merged audio
+            if reference_audio_path and os.path.exists(reference_audio_path):
+                ref_transcript = self._get_reference_transcript(reference_audio_path)
+                prompt_text = f"{ref_transcript} {merged_text}"
                 
-                # Look for composite reference metadata
-                for metadata_file in reference_dir.glob("*COMPOSITE_REFERENCE_metadata.json"):
-                    try:
-                        with open(metadata_file, 'r', encoding='utf-8') as f:
-                            comp_metadata = json.load(f)
-                        
-                        ref_text = comp_metadata.get('text', '')
-                        if ref_text.strip():
-                            # Format for Dia
-                            formatted_ref = self._format_text_for_dia(ref_text)
-                            logger.info(f"Using composite reference transcript: {formatted_ref[:50]}...")
-                            return formatted_ref
-                            
-                    except Exception as e:
-                        logger.warning(f"Failed to read composite reference: {str(e)}")
-                        continue
-        
+                cloned_audio = self.dia_model.generate(
+                    prompt_text,
+                    audio_prompt=reference_audio_path,
+                    use_torch_compile=False,
+                    cfg_scale=cfg_scale,
+                    temperature=temperature,
+                    top_p=top_p
+                )
+            else:
+                cloned_audio = self.dia_model.generate(
+                    merged_text,
+                    use_torch_compile=False,
+                    cfg_scale=cfg_scale,
+                    temperature=temperature,
+                    top_p=top_p
+                )
+            
+            # Split cloned audio back to original segments
+            split_segments = self._split_non_continuous_audio(
+                cloned_audio, group_segments, 44100
+            )
+            
+            return split_segments
+            
         except Exception as e:
-            logger.warning(f"Failed to get composite reference transcript: {str(e)}")
-        
-        return None
+            logger.error(f"Failed to clone non-continuous group: {str(e)}")
+            return []
     
-    def _format_text_for_dia(self, text: str) -> str:
-        """Format text according to official Dia guidelines"""
-        import re
-        
-        # Clean text first
-        text = self._clean_text_for_dia(text)
-        
-        # Check if it's a mixed segment (has multiple speakers)
-        has_multiple_speakers = '[S1]' in text and '[S2]' in text
-        
-        if has_multiple_speakers:
-            # For mixed segments, ensure proper alternation
-            # Split by speaker tags and reconstruct
-            parts = re.split(r'(\[S[12]\])', text)
-            formatted_parts = []
-            current_speaker = None
+    def _split_non_continuous_audio(self, cloned_audio: np.ndarray, 
+                                  original_segments: List[Dict],
+                                  sample_rate: int) -> List[Dict]:
+        """Split non-continuous cloned audio using OpenAI assistance"""
+        try:
+            from openai import OpenAI
+            from .transcription import TranscriptionService
             
-            for part in parts:
-                if part in ['[S1]', '[S2]']:
-                    current_speaker = part
-                    formatted_parts.append(part)
-                elif part.strip() and current_speaker:
-                    formatted_parts.append(f" {part.strip()}")
+            # Transcribe cloned audio
+            temp_path = Path(settings.TEMP_DIR) / f"temp_clone_{random.randint(1000, 9999)}.wav"
+            sf.write(temp_path, cloned_audio, sample_rate)
             
-            return ''.join(formatted_parts)
+            transcription_service = TranscriptionService()
+            clone_transcript = transcription_service.transcribe_audio(str(temp_path))
+            
+            # Get cutting instructions from OpenAI
+            client = OpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            original_info = [
+                f"Segment {i+1}: {s.get('duration', 0):.2f}s - \"{s.get('english_text', '')}\""
+                for i, s in enumerate(original_segments)
+            ]
+            
+            prompt = f"""Analyze this cloned audio transcription and provide exact cutting points:
+
+Original segments:
+{chr(10).join(original_info)}
+
+Cloned audio transcription:
+{clone_transcript.get('text', '')}
+Duration: {len(cloned_audio) / sample_rate:.2f}s
+
+Provide cutting points in seconds for each segment. Format:
+Segment 1: 0.0-X.X
+Segment 2: X.X-Y.Y
+etc."""
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.1
+            )
+            
+            cutting_instructions = response.choices[0].message.content
+            
+            # Parse cutting points
+            import re
+            pattern = r'Segment \d+:\s*([\d.]+)-([\d.]+)'
+            matches = re.findall(pattern, cutting_instructions)
+            
+            split_segments = []
+            for i, (start, end) in enumerate(matches):
+                if i < len(original_segments):
+                    start_sample = int(float(start) * sample_rate)
+                    end_sample = int(float(end) * sample_rate)
+                    
+                    segment_audio = cloned_audio[start_sample:end_sample]
+                    
+                    # Synchronize to original length
+                    original_duration = original_segments[i].get('duration', 0)
+                    if original_duration > 0:
+                        segment_audio = self._synchronize_length(
+                            segment_audio, original_duration, sample_rate
+                        )
+                    
+                    split_segments.append({
+                        "success": True,
+                        "original_data": original_segments[i],
+                        "cloned_audio": segment_audio,
+                        "type": "non_continuous"
+                    })
+            
+            # Cleanup
+            if temp_path.exists():
+                temp_path.unlink()
+            
+            return split_segments
+            
+        except Exception as e:
+            logger.error(f"Failed to split non-continuous audio: {str(e)}")
+            # Fallback: split proportionally
+            return self._split_proportionally(cloned_audio, original_segments, sample_rate)
+    
+    def _split_proportionally(self, audio: np.ndarray, segments: List[Dict],
+                            sample_rate: int) -> List[Dict]:
+        """Fallback: Split audio proportionally based on original durations"""
+        total_duration = sum(s.get('duration', 0) for s in segments)
+        audio_duration = len(audio) / sample_rate
+        
+        split_segments = []
+        current_sample = 0
+        
+        for segment in segments:
+            segment_duration = segment.get('duration', 0)
+            proportion = segment_duration / total_duration if total_duration > 0 else 1/len(segments)
+            
+            segment_samples = int(proportion * len(audio))
+            end_sample = min(current_sample + segment_samples, len(audio))
+            
+            segment_audio = audio[current_sample:end_sample]
+            
+            # Synchronize to original length
+            if segment_duration > 0:
+                segment_audio = self._synchronize_length(
+                    segment_audio, segment_duration, sample_rate
+                )
+            
+            split_segments.append({
+                "success": True,
+                "original_data": segment,
+                "cloned_audio": segment_audio,
+                "type": "non_continuous_fallback"
+            })
+            
+            current_sample = end_sample
+        
+        return split_segments
+    
+    def _synchronize_length(self, audio: np.ndarray, target_duration: float,
+                          sample_rate: int) -> np.ndarray:
+        """Synchronize audio length to target duration"""
+        target_samples = int(target_duration * sample_rate)
+        current_samples = len(audio)
+        
+        if current_samples == target_samples:
+            return audio
+        
+        # Calculate deviation
+        deviation = abs(current_samples - target_samples) / target_samples
+        
+        if deviation <= 0.1:  # Within 10% tolerance
+            # Simple trim/pad
+            if current_samples > target_samples:
+                return audio[:target_samples]
+            else:
+                padding = np.zeros(target_samples - current_samples)
+                return np.concatenate([audio, padding])
         else:
-            # Single speaker - ensure it starts with [S1]
-            text = re.sub(r'\[S\d+\]\s*', '', text)  # Remove existing tags
-            return f"[S1] {text.strip()}"
+            # Time stretching needed
+            try:
+                import librosa
+                stretch_ratio = target_samples / current_samples
+                stretched = librosa.effects.time_stretch(audio, rate=1/stretch_ratio)
+                
+                # Ensure exact length
+                if len(stretched) > target_samples:
+                    return stretched[:target_samples]
+                elif len(stretched) < target_samples:
+                    padding = np.zeros(target_samples - len(stretched))
+                    return np.concatenate([stretched, padding])
+                return stretched
+                
+            except ImportError:
+                # Fallback to simple trim/pad
+                if current_samples > target_samples:
+                    return audio[:target_samples]
+                else:
+                    padding = np.zeros(target_samples - current_samples)
+                    return np.concatenate([audio, padding])
     
-    def _clean_text_for_dia(self, text: str) -> str:
-        """Clean text for Dia model according to official guidelines"""
-        import re
-        
-        # Remove excessive punctuation
-        text = re.sub(r'[.]{2,}', '.', text)
-        text = re.sub(r'[!]{2,}', '!', text)
-        text = re.sub(r'[?]{2,}', '?', text)
-        
-        # Normalize spacing
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        # Ensure proper sentence ending
-        if text and not text.endswith(('.', '!', '?')):
-            text += '.'
-        
-        return text
-    
-    def is_model_loaded(self) -> bool:
-        """Check if Dia model is loaded"""
-        return self.dia_model is not None 
+    def _get_reference_transcript(self, reference_path: str) -> str:
+        """Get reference transcript from metadata"""
+        try:
+            # Look for metadata file
+            ref_path = Path(reference_path)
+            metadata_path = ref_path.parent / f"{ref_path.stem}_metadata.json"
+            
+            if metadata_path.exists():
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                return metadata.get('text', '[S1] Reference audio.')
+            
+            return '[S1] Reference audio.'
+            
+        except Exception:
+            return '[S1] Reference audio.' 

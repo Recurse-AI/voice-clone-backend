@@ -23,16 +23,26 @@ from status_manager import status_manager, ProcessingStatus
 
 from contextlib import asynccontextmanager
 
-# Configure logging
+# Configure logging with UTF-8 support
 os.makedirs(settings.LOGS_DIR, exist_ok=True)
 log_file_path = os.path.join(settings.LOGS_DIR, 'api.log')
+
+# Configure UTF-8 encoding for both console and file handlers
+import sys
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+
+# File handler with UTF-8 encoding for Unicode support
+file_handler = logging.FileHandler(log_file_path, mode='a', encoding='utf-8')
+file_handler.setLevel(logging.INFO)
+
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+console_handler.setFormatter(formatter)
+file_handler.setFormatter(formatter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(log_file_path, mode='a')
-    ]
+    handlers=[console_handler, file_handler]
 )
 logger = logging.getLogger(__name__)
 
@@ -207,10 +217,6 @@ def process_video_background(
     generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float,
     target_language: str, language_code: Optional[str], speakers_expected: Optional[int]
 ):
-    """Background processing function"""
-    logger.info(f"Starting background processing for audio_id: {audio_id}")
-    logger.info(f"Processing parameters - video_url: {video_url}, include_instruments: {include_instruments}, generate_subtitles: {generate_subtitles}")
-    
     # Convert empty string to None for proper handling
     final_language_code = language_code if language_code and language_code.strip() else None
     
@@ -265,7 +271,6 @@ def process_video_background(
             status_manager.fail_processing(audio_id, f"Processing failed: {processing_result.get('error', 'Unknown error')}")
             return
         
-        logger.info(f"Video processing completed successfully for audio_id: {audio_id}")
         status_manager.set_progress(audio_id, 50)
         
         # Extract paths
@@ -305,12 +310,9 @@ def process_video_background(
         )
         
         if not cloning_result["success"]:
-            logger.error(f"Voice cloning failed for audio_id: {audio_id}, error: {cloning_result.get('error', 'Unknown error')}")
             status_manager.fail_processing(audio_id, f"Voice cloning failed: {cloning_result.get('error', 'Unknown error')}")
             return
         
-        logger.info(f"Voice cloning completed successfully for audio_id: {audio_id}, cloned {cloning_result.get('cloned_segments', 0)} segments")
-        logger.info(f"Cloning details: {cloning_result.get('cloned_by_speaker', {})}")
         status_manager.set_progress(audio_id, 70)
         
         # Reconstruct audio
