@@ -115,35 +115,52 @@ class AudioReconstructor:
             
             # Process each timeline item
             for item in timeline_sorted:
-                start_sample = int(item['start'] * self.sample_rate)
-                end_sample = int(item['end'] * self.sample_rate)
-                
-                # Bounds check
-                start_sample = max(0, min(start_sample, total_samples - 1))
-                end_sample = max(start_sample + 1, min(end_sample, total_samples))
-                
-                if item['segment_type'] == 'speech':
-                    # Load cloned audio for speech segments
-                    cloned_audio = self._load_cloned_speech_audio(segments_path, item)
+                try:
+                    start_sample = int(item['start'] * self.sample_rate)
+                    end_sample = int(item['end'] * self.sample_rate)
                     
-                    if cloned_audio is not None:
-                        # Simple placement - no complex volume matching
-                        expected_samples = end_sample - start_sample
-                        if len(cloned_audio) != expected_samples:
-                            cloned_audio = self._adjust_length(cloned_audio, expected_samples)
+                    # Bounds check
+                    start_sample = max(0, min(start_sample, total_samples - 1))
+                    end_sample = max(start_sample + 1, min(end_sample, total_samples))
+                    
+                    print(f"Processing item: {item['segment_type']} from {item['start']:.2f}s to {item['end']:.2f}s (samples: {start_sample}-{end_sample})")
+                    
+                    if item['segment_type'] == 'speech':
+                        # Load cloned audio for speech segments
+                        cloned_audio = self._load_cloned_speech_audio(segments_path, item)
                         
-                        # Place cloned audio directly
-                        final_audio[start_sample:end_sample] = cloned_audio
-                        print(f"Placed cloned audio: {item['start']:.2f}s-{item['end']:.2f}s, speaker: {item.get('speaker', 'unknown')}")
-                    else:
-                        print(f"WARNING: No cloned audio found for segment {item['start']:.2f}s-{item['end']:.2f}s")
-                        
-                elif item['segment_type'] == 'silent':
-                    duration = item['end'] - item['start']
-                    if duration > 0:
-                        silent_samples = int(duration * self.sample_rate)
-                        final_audio[start_sample:end_sample] = np.zeros(silent_samples, dtype=np.float32)
-
+                        if cloned_audio is not None:
+                            # Simple placement - no complex volume matching
+                            expected_samples = end_sample - start_sample
+                            if len(cloned_audio) != expected_samples:
+                                cloned_audio = self._adjust_length(cloned_audio, expected_samples)
+                            
+                            # Ensure exact length match before placement
+                            if len(cloned_audio) == expected_samples:
+                                final_audio[start_sample:end_sample] = cloned_audio
+                                print(f"Placed cloned audio: {item['start']:.2f}s-{item['end']:.2f}s, speaker: {item.get('speaker', 'unknown')}")
+                            else:
+                                print(f"ERROR: Length mismatch after adjustment: {len(cloned_audio)} != {expected_samples}")
+                                # Fill with silence if length mismatch
+                                final_audio[start_sample:end_sample] = np.zeros(expected_samples, dtype=np.float32)
+                        else:
+                            print(f"WARNING: No cloned audio found for segment {item['start']:.2f}s-{item['end']:.2f}s")
+                            # Fill with silence when no cloned audio
+                            expected_samples = end_sample - start_sample
+                            final_audio[start_sample:end_sample] = np.zeros(expected_samples, dtype=np.float32)
+                            
+                    elif item['segment_type'] == 'silent':
+                        duration = item['end'] - item['start']
+                        if duration > 0:
+                            expected_samples = end_sample - start_sample
+                            silent_samples = np.zeros(expected_samples, dtype=np.float32)
+                            final_audio[start_sample:end_sample] = silent_samples
+                            print(f"Placed silence: {item['start']:.2f}s-{item['end']:.2f}s, duration: {duration:.2f}s")
+                            
+                except Exception as e:
+                    print(f"Error processing timeline item: {item}, error: {e}")
+                    continue
+            
             return final_audio
             
         except Exception as e:
@@ -171,8 +188,8 @@ class AudioReconstructor:
                 if (abs(seg_data.get('start', 0) - segment['start']) < 0.1 and 
                     abs(seg_data.get('end', 0) - segment['end']) < 0.1):
                     
-                    # Get audio file name
-                    audio_file = seg_data.get('audio_file', '')
+                    # Get audio file name - try multiple possible keys
+                    audio_file = seg_data.get('audio_file', '') or seg_data.get('filename', '')
                     if audio_file:
                         # Look for cloned version first
                         cloned_file = f"cloned_{audio_file}"
@@ -186,9 +203,28 @@ class AudioReconstructor:
                             return audio
                         else:
                             print(f"Cloned file not found: {cloned_path}")
+                            
+                        # Also try without "cloned_" prefix in case naming is different
+                        alt_cloned_file = audio_file.replace('.wav', '_cloned.wav')
+                        alt_cloned_path = speaker_dir / alt_cloned_file
+                        
+                        if alt_cloned_path.exists():
+                            audio, _ = sf.read(alt_cloned_path)
+                            print(f"Found alternative cloned audio: {alt_cloned_path}, length: {len(audio)} samples")
+                            return audio
                         
             except Exception as e:
                 logger.warning(f"Error loading segment {json_file}: {str(e)}")
+                continue
+                
+        # If no exact timing match, try to find any cloned audio files
+        print(f"No timing match found, checking all cloned files in {speaker_dir}")
+        for cloned_file in speaker_dir.glob("cloned_*.wav"):
+            try:
+                audio, _ = sf.read(cloned_file)
+                print(f"Found fallback cloned audio: {cloned_file}, length: {len(audio)} samples")
+                return audio
+            except Exception as e:
                 continue
         
         print(f"No cloned audio found for segment {segment['start']:.2f}s-{segment['end']:.2f}s")
@@ -262,9 +298,11 @@ class AudioReconstructor:
         if current_samples == target_samples:
             return audio
         elif current_samples > target_samples:
+            # Truncate to exact target length
             return audio[:target_samples]
         else:
-            padding = np.zeros(target_samples - current_samples)
+            # Pad with zeros to reach exact target length
+            padding = np.zeros(target_samples - current_samples, dtype=np.float32)
             return np.concatenate([audio, padding])
     
     def _mix_with_instruments(self, audio: np.ndarray, instruments_path: str) -> np.ndarray:
