@@ -111,10 +111,15 @@ class SegmentManager:
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int,
                             output_dir: Path, speakers: List[str], 
                             target_language: str, detected_language: str):
-        """Save segments with simple file naming"""
+        """Save segments with simple file naming into speaker subdirs"""
+        # Ensure base directory exists
         output_dir.mkdir(parents=True, exist_ok=True)
         
+        # Save each segment into its speaker-specific folder
         for i, segment in enumerate(segments):
+            speaker = segment.get('speaker', 'A')
+            speaker_dir = output_dir / f"speaker_{speaker}" / "segments"
+            speaker_dir.mkdir(parents=True, exist_ok=True)
             try:
                 # Extract audio segment
                 start_sample = int(segment['start'] * sr)
@@ -123,15 +128,11 @@ class SegmentManager:
                 
                 # Simple file naming
                 audio_filename = f"segment_{i+1:03d}.wav"
-                audio_path = output_dir / audio_filename
-                
-                # Save audio
+                audio_path = speaker_dir / audio_filename
                 sf.write(audio_path, segment_audio, sr)
                 
-                # Translate text for voice cloning
+                # Clean or translate text
                 english_text = self.transcription_service.translate_text_clean(segment['text'])
-                
-                # Format for Dia model
                 dia_text = f"[S1] {english_text}"
                 
                 # Save metadata
@@ -139,7 +140,7 @@ class SegmentManager:
                     'original_text': segment['text'],
                     'english_text': english_text,
                     'dia_text': dia_text,
-                    'speaker': segment['speaker'],
+                    'speaker': speaker,
                     'start': segment['start'],
                     'end': segment['end'],
                     'duration': segment['duration'],
@@ -148,24 +149,19 @@ class SegmentManager:
                     'detected_language': detected_language,
                     'target_language': target_language
                 }
-                
-                metadata_path = output_dir / f"segment_{i+1:03d}_metadata.json"
+                metadata_path = speaker_dir / f"segment_{i+1:03d}_metadata.json"
                 with open(metadata_path, 'w', encoding='utf-8') as f:
                     json.dump(metadata, f, ensure_ascii=False, indent=2)
                 
-                # Update segment with paths
+                # Update segment with paths if needed
                 segment.update({
                     'audio_path': str(audio_path),
-                    'metadata_path': str(metadata_path),
-                    'english_text': english_text,
-                    'dia_text': dia_text
+                    'metadata_path': str(metadata_path)
                 })
-                
             except Exception as e:
-                logger.error(f"Error saving segment {i+1}: {str(e)}")
+                logger.error(f"Error saving segment {i+1} for speaker {speaker}: {str(e)}")
                 continue
-        
-        logger.info(f"Saved {len(segments)} segments to {output_dir}")
+        logger.info(f"Saved {len(segments)} segments under speaker subdirectories in {output_dir}")
     
     def identify_silent_parts(self, segments: List[Dict], total_duration: float) -> List[Tuple[float, float]]:
         """Simple silent part identification"""
