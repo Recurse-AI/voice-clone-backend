@@ -171,12 +171,16 @@ class AudioProcessor:
                     continue
                 
                 # Generate unique seed for this speaker
-                if seed is not None:
-                    # Use provided seed as base and add speaker offset
-                    speaker_seed = seed + hash(speaker) % 1000
-                else:
-                    # Generate completely random seed for each speaker
-                    speaker_seed = random.randint(100000, 999999)
+                # TODO: Dynamic seed generation - commented for now, using constant seed
+                # if seed is not None:
+                #     # Use provided seed as base and add speaker offset
+                #     speaker_seed = seed + hash(speaker) % 1000
+                # else:
+                #     # Generate completely random seed for each speaker
+                #     speaker_seed = random.randint(100000, 999999)
+                
+                # Using constant seed for now
+                speaker_seed = 12345
                 
                 seeds_used[speaker] = speaker_seed
                 

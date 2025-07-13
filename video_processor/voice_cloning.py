@@ -61,8 +61,12 @@ class VoiceCloningService:
             return {"success": False, "error": "Dia model not loaded"}
         
         try:
-            if seed is not None:
-                set_seed(seed)
+            # TODO: Dynamic seed setting - commented for now, using constant seed
+            # if seed is not None:
+            #     set_seed(seed)
+            
+            # Using constant seed for now
+            set_seed(12345)
             
             cloned_segments = []
             
