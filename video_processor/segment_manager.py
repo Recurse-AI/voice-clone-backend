@@ -177,7 +177,8 @@ class SegmentManager:
         # Log segment statistics
         if final_segments:
             durations = [s['duration'] for s in final_segments]
-            logger.info(f"Created {len(final_segments)} final segments with durations: {[f'{d:.1f}s' for d in durations]}")
+            duration_strs = [f"{d:.1f}s" for d in durations]
+            logger.info(f"Created {len(final_segments)} final segments with durations: {duration_strs}")
             logger.info(f"Duration range: {min(durations):.1f}s - {max(durations):.1f}s (target: {self.min_duration}-{self.max_duration}s)")
         
         return final_segments
@@ -237,7 +238,8 @@ class SegmentManager:
                 }
                 parts.append(part)
         
-        logger.info(f"Split {duration:.1f}s segment into {len(parts)} balanced parts: {[f'{p['duration']:.1f}s' for p in parts]}")
+        part_durations = [f"{p['duration']:.1f}s" for p in parts]
+        logger.info(f"Split {duration:.1f}s segment into {len(parts)} balanced parts: {part_durations}")
         return parts
     
     def _split_by_time(self, segment: Dict, num_parts: int) -> List[Dict]:
