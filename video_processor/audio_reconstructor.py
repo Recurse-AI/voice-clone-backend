@@ -23,6 +23,26 @@ class AudioReconstructor:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.sample_rate = 44100
     
+    def _calculate_rms(self, audio: np.ndarray) -> float:
+        """Calculate the Root Mean Square of the audio signal."""
+        if audio.size == 0:
+            return 0.0
+        return np.sqrt(np.mean(audio**2))
+
+    def _match_target_volume(self, audio: np.ndarray, target_rms: float, gain_db: float = 3.0) -> np.ndarray:
+        """Adjusts the audio volume to a target RMS level with an optional dB boost."""
+        if audio.size == 0 or target_rms <= 1e-7:
+            return audio
+        
+        current_rms = self._calculate_rms(audio)
+        if current_rms <= 1e-7:
+            return audio
+            
+        gain = target_rms / current_rms
+        gain *= 10**(gain_db / 20.0)
+        
+        return audio * gain
+
     def reconstruct_final_audio(self, segments_dir: str, audio_id: str, 
                                include_instruments: bool = False,
                                instruments_path: Optional[str] = None) -> Dict[str, Any]:
@@ -103,32 +123,26 @@ class AudioReconstructor:
                 end_sample = max(start_sample + 1, min(end_sample, total_samples))
                 
                 if item['segment_type'] == 'speech':
-                    # Load cloned audio for speech segments
                     cloned_audio = self._load_cloned_speech_audio(segments_path, item)
                     
                     if cloned_audio is not None:
-                        # Adjust length to fit exact time slot
+                        original_audio = self._load_original_speech_audio(segments_path, item)
+                        if original_audio is not None:
+                            target_rms = self._calculate_rms(original_audio)
+                            cloned_audio = self._match_target_volume(cloned_audio, target_rms, gain_db=3.0)
+                        
                         expected_samples = end_sample - start_sample
                         if len(cloned_audio) != expected_samples:
                             cloned_audio = self._adjust_length(cloned_audio, expected_samples)
                         
-                        # Place audio at exact position
                         final_audio[start_sample:end_sample] = cloned_audio
                         
                 elif item['segment_type'] == 'silent':
-                    # Load original silent audio
-                    silent_audio = self._load_silent_audio(segments_path, item)
-                    
-                    if silent_audio is not None:
-                        # Adjust length to fit exact time slot
-                        expected_samples = end_sample - start_sample
-                        if len(silent_audio) != expected_samples:
-                            silent_audio = self._adjust_length(silent_audio, expected_samples)
-                        
-                        # Place audio at exact position
-                        final_audio[start_sample:end_sample] = silent_audio
-                    # If no silent audio file, keep zeros (silence)
-            
+                    duration = item['end'] - item['start']
+                    if duration > 0:
+                        silent_samples = int(duration * self.sample_rate)
+                        final_audio[start_sample:end_sample] = np.zeros(silent_samples, dtype=np.float32)
+
             return final_audio
             
         except Exception as e:
@@ -176,6 +190,35 @@ class AudioReconstructor:
         
         return None
     
+    def _load_original_speech_audio(self, segments_path: Path, segment: Dict) -> Optional[np.ndarray]:
+        """Load original audio for a speech segment to be used for volume matching."""
+        speaker = segment.get('speaker')
+        if not speaker: 
+            return None
+    
+        speaker_dir = segments_path / f"speaker_{speaker}" / "segments"
+        if not speaker_dir.exists(): 
+            return None
+
+        for json_file in speaker_dir.glob("*.json"):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    seg_data = json.load(f)
+                
+                if (abs(seg_data.get('start', 0) - segment['start']) < 0.1 and 
+                    abs(seg_data.get('end', 0) - segment['end']) < 0.1):
+                    
+                    audio_file = seg_data.get('audio_file', '')
+                    if audio_file:
+                        original_path = speaker_dir / audio_file
+                        if original_path.exists():
+                            audio, _ = sf.read(original_path)
+                            return audio
+            except Exception as e:
+                logger.warning(f"Could not load original audio for segment {segment.get('start')}: {e}")
+                continue
+        return None
+
     def _load_silent_audio(self, segments_path: Path, silent_part: Dict) -> Optional[np.ndarray]:
         """Load original silent audio"""
         silent_dir = segments_path / "silent_parts"

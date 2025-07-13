@@ -92,8 +92,8 @@ class SegmentManager:
         for speaker in speakers:
             speaker_segments = [s for s in segments if s['speaker'] == speaker]
             
-            # Sort by confidence and pick first good one
-            speaker_segments.sort(key=lambda x: x['confidence'], reverse=True)
+            # Sort by word count (prefer larger segments) then by confidence
+            speaker_segments.sort(key=lambda x: (x['word_count'], x['confidence']), reverse=True)
             
             for segment in speaker_segments:
                 if (segment['confidence'] >= 0.5 and 

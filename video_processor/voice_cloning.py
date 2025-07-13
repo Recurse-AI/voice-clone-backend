@@ -117,7 +117,8 @@ class VoiceCloningService:
                     temperature=temperature,
                     top_p=top_p,
                     cfg_filter_top_k=50,
-                    max_tokens=3072
+                    max_tokens=3072,
+                    verbose=True
                 )
             else:
                 # No reference - direct generation
@@ -128,7 +129,8 @@ class VoiceCloningService:
                     temperature=temperature,
                     top_p=top_p,
                     cfg_filter_top_k=50,
-                    max_tokens=3072
+                    max_tokens=3072,
+                    verbose=True
                 )
             
             # Simple length adjustment if needed
