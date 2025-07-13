@@ -45,46 +45,7 @@ class AudioProcessor:
     
     def _convert_local_path_to_r2_url(self, local_path: str, audio_id: str) -> str:
         """Convert local file path to R2 public URL"""
-        if not local_path or not settings.R2_PUBLIC_URL:
-            return local_path
-            
-        try:
-            # Extract filename from local path
-            filename = os.path.basename(local_path)
-            
-            # Determine file type based on path structure
-            if "/reference/" in local_path:
-                # Extract speaker from path (e.g., speaker_A, speaker_B)
-                import re
-                speaker_match = re.search(r'speaker_([A-Z])', local_path)
-                if speaker_match:
-                    speaker = speaker_match.group(1)
-                    file_type = f"references/speaker_{speaker}"
-                else:
-                    file_type = "references"
-            elif "/segments/" in local_path:
-                # Extract speaker from path for segments
-                import re
-                speaker_match = re.search(r'speaker_([A-Z])', local_path)
-                if speaker_match:
-                    speaker = speaker_match.group(1)
-                    file_type = f"segments/speaker_{speaker}"
-                else:
-                    file_type = "segments"
-            else:
-                file_type = "segments"
-            
-            # Generate R2 path
-            from datetime import datetime
-            date_prefix = datetime.now().strftime("%Y/%m/%d")
-            r2_path = f"{settings.R2_BASE_PATH}/{date_prefix}/{audio_id}/{file_type}/{filename}"
-            
-            # Return full R2 URL
-            return f"{settings.R2_PUBLIC_URL}/{r2_path}"
-            
-        except Exception as e:
-            logger.warning(f"Failed to convert path to R2 URL: {str(e)}")
-            return local_path
+        return local_path
     
     def load_dia_model(self, repo_id: str = "nari-labs/Dia-1.6B-0626") -> bool:
         """Load Dia model for voice cloning"""

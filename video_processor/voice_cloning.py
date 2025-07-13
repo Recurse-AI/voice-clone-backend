@@ -102,7 +102,9 @@ class VoiceCloningService:
             # Get reference transcript for voice cloning
             ref_transcript = self._get_reference_transcript(reference_audio_path)
             combined_text = f"{ref_transcript} {dia_text}"
-            
+
+            print(f"Combined text: {combined_text}")
+            print(f"Reference audio path: {reference_audio_path}")
             # Generate cloned audio using Dia model
             cloned_audio = self.dia_model.generate(
                 combined_text,
@@ -111,8 +113,8 @@ class VoiceCloningService:
                 cfg_scale=cfg_scale,
                 temperature=temperature,
                 top_p=top_p,
-                cfg_filter_top_k=45,
-                max_tokens=2048,
+                cfg_filter_top_k=50,
+                max_tokens=3072,
                 verbose=False  # Reduce noise
             )
             

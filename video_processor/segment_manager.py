@@ -56,7 +56,56 @@ class SegmentManager:
             if segment:
                 segments.append(segment)
         
-        return segments
+        # Apply combination logic as separate step
+        optimized_segments = self._apply_combination_logic(segments)
+        
+        return optimized_segments
+    
+    def _apply_combination_logic(self, segments: List[Dict]) -> List[Dict]:
+        """Apply combination logic for short segments - separate and clean"""
+        if not segments:
+            return segments
+            
+        optimized = []
+        min_duration = 5.0  # Minimum duration for standalone segment
+        
+        for segment in segments:
+            # Check if this is a short segment that can be combined
+            if (segment['duration'] < min_duration and 
+                optimized and 
+                optimized[-1]['speaker'] == segment['speaker']):
+                
+                # Check if combining won't exceed max duration
+                prev_segment = optimized[-1]
+                combined_duration = segment['end'] - prev_segment['start']
+                
+                if combined_duration <= self.max_duration:
+                    # Combine with previous segment
+                    self._combine_segments(optimized[-1], segment)
+                    logger.info(f"Combined short segment ({segment['duration']:.2f}s) with previous segment. New duration: {combined_duration:.2f}s")
+                    continue
+            
+            # Add segment as standalone
+            optimized.append(segment)
+        
+        return optimized
+    
+    def _combine_segments(self, target_segment: Dict, source_segment: Dict) -> None:
+        """Combine two segments cleanly"""
+        combined_words = target_segment['words'] + source_segment['words']
+        combined_text = ' '.join(w['text'] for w in combined_words)
+        combined_confidence = np.mean([w.get('confidence', 0.5) for w in combined_words])
+        combined_duration = source_segment['end'] - target_segment['start']
+        
+        # Update target segment with combined data
+        target_segment.update({
+            'end': source_segment['end'],
+            'duration': combined_duration,
+            'text': combined_text,
+            'word_count': len(combined_words),
+            'confidence': combined_confidence,
+            'words': combined_words
+        })
     
     def _create_simple_segment(self, words: List[Dict], speaker: str) -> Optional[Dict]:
         """Create a simple segment from words"""
