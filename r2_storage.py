@@ -82,7 +82,8 @@ class R2Storage:
             "segments": {},
             "references": {},
             "metadata": {},
-            "silent_parts": {}
+            "silent_parts": {},
+            "cloned": {}
         }
         
         segments_path = Path(segments_dir)
@@ -126,6 +127,27 @@ class R2Storage:
                             
                             if result["success"]:
                                 upload_results["references"][speaker_id][file_path.name] = result
+                
+                # Upload cloned audio files
+                if (speaker_dir / "segments").exists():
+                    for cloned_file in (speaker_dir / "segments").glob("cloned_*.wav"):
+                        if cloned_file.is_file():
+                            r2_key = self.generate_file_path(
+                                audio_id, 
+                                f"segments/{speaker_id}/cloned", 
+                                cloned_file.name
+                            )
+                            
+                            result = self.upload_file(
+                                str(cloned_file),
+                                r2_key,
+                                "audio/wav"
+                            )
+                            
+                            if result["success"]:
+                                if speaker_id not in upload_results["cloned"]:
+                                    upload_results["cloned"][speaker_id] = {}
+                                upload_results["cloned"][speaker_id][cloned_file.name] = result
         
         # Upload metadata
         metadata_dir = segments_path / "metadata"
@@ -276,3 +298,46 @@ class R2Storage:
                     
         except Exception:
             pass 
+
+    def get_segment_urls(self, audio_id: str, upload_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Get all URLs for uploaded segments"""
+        urls = {
+            "metadata": {},
+            "segments": {},
+            "references": {},
+            "cloned": {},
+            "silent_parts": {}
+        }
+        
+        if "metadata" in upload_results:
+            for filename, result in upload_results["metadata"].items():
+                if result.get("success"):
+                    urls["metadata"][filename] = result.get("url")
+        
+        if "segments" in upload_results:
+            for speaker, files in upload_results["segments"].items():
+                urls["segments"][speaker] = {}
+                for filename, result in files.items():
+                    if result.get("success"):
+                        urls["segments"][speaker][filename] = result.get("url")
+        
+        if "references" in upload_results:
+            for speaker, files in upload_results["references"].items():
+                urls["references"][speaker] = {}
+                for filename, result in files.items():
+                    if result.get("success"):
+                        urls["references"][speaker][filename] = result.get("url")
+        
+        if "cloned" in upload_results:
+            for speaker, files in upload_results["cloned"].items():
+                urls["cloned"][speaker] = {}
+                for filename, result in files.items():
+                    if result.get("success"):
+                        urls["cloned"][speaker][filename] = result.get("url")
+        
+        if "silent_parts" in upload_results:
+            for filename, result in upload_results["silent_parts"].items():
+                if result.get("success"):
+                    urls["silent_parts"][filename] = result.get("url")
+        
+        return urls 

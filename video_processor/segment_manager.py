@@ -209,14 +209,20 @@ class SegmentManager:
         
         for segment in segments:
             if (segment['confidence'] >= self.min_confidence and
-                5.0 <= segment['duration'] <= 10.0 and
+                7.0 <= segment['duration'] <= 15.0 and
                 segment['word_count'] >= 10):
                 candidates.append(segment)
         
         if candidates:
-            # Sort by confidence and duration
-            candidates.sort(key=lambda x: (x['confidence'], abs(7.5 - x['duration'])))
-            return candidates[0]
+            # Sort by confidence and optimal duration (11s is ideal)
+            candidates.sort(key=lambda x: (x['confidence'], abs(11.0 - x['duration'])))
+            best = candidates[0]
+            
+            # Ensure dia_text is included
+            if 'dia_text' not in best:
+                best['dia_text'] = f"[S1] {best.get('text', '')}"
+            
+            return best
         
         return None
     
@@ -229,13 +235,13 @@ class SegmentManager:
         total_duration = 0
         
         for segment in segments:
-            if total_duration + segment['duration'] <= 10.0:
+            if total_duration + segment['duration'] <= 15.0:
                 composite_segments.append(segment)
                 total_duration += segment['duration']
-                if total_duration >= 5.0:
+                if total_duration >= 7.0:
                     break
         
-        if composite_segments and total_duration >= 5.0:
+        if composite_segments and total_duration >= 7.0:
             return {
                 'is_composite': True,
                 'segments': composite_segments,

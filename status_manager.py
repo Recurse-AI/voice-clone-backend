@@ -30,7 +30,7 @@ class StatusManager:
     def __init__(self):
         self._statuses: Dict[str, Dict[str, Any]] = {}
         self._lock = Lock()
-    
+        
     def _get_status_message(self, status: ProcessingStatus) -> str:
         """Get status message"""
         messages = {
@@ -96,8 +96,8 @@ class StatusManager:
                 return {
                     "status": "not_found",
                     "message": f"No processing job found with ID: {audio_id}",
-                    "audio_id": audio_id
-                }
+            "audio_id": audio_id
+        }
     
     def complete_processing(self, audio_id: str, details: Optional[Dict[str, Any]] = None):
         """Mark processing as completed"""

@@ -336,7 +336,7 @@ etc."""
     
     def _synchronize_length(self, audio: np.ndarray, target_duration: float,
                           sample_rate: int) -> np.ndarray:
-        """Synchronize audio length to target duration"""
+        """Synchronize audio length to target duration with tolerance"""
         target_samples = int(target_duration * sample_rate)
         current_samples = len(audio)
         
@@ -346,35 +346,46 @@ etc."""
         # Calculate deviation
         deviation = abs(current_samples - target_samples) / target_samples
         
-        if deviation <= 0.1:  # Within 10% tolerance
-            # Simple trim/pad
+        # If within 20% tolerance, use simple padding/trimming
+        if deviation <= 0.2:
+            if current_samples > target_samples:
+                # Simple trim with fade
+                fade_samples = min(int(0.01 * sample_rate), 100)
+                audio_trimmed = audio[:target_samples]
+                if fade_samples > 0 and len(audio_trimmed) > fade_samples:
+                    fade_out = np.linspace(1, 0, fade_samples)
+                    audio_trimmed[-fade_samples:] *= fade_out
+                return audio_trimmed
+            else:
+                # Simple pad with silence
+                padding = np.zeros(target_samples - current_samples)
+                return np.concatenate([audio, padding])
+        
+        # For larger deviations (>20%), use time stretching
+        try:
+            import librosa
+            stretch_ratio = target_samples / current_samples
+            
+            # Limit stretch ratio to avoid extreme distortion
+            stretch_ratio = np.clip(stretch_ratio, 0.7, 1.3)
+            
+            stretched = librosa.effects.time_stretch(audio, rate=1/stretch_ratio)
+            
+            # Final adjustment with padding/trimming
+            if len(stretched) > target_samples:
+                return stretched[:target_samples]
+            elif len(stretched) < target_samples:
+                padding = np.zeros(target_samples - len(stretched))
+                return np.concatenate([stretched, padding])
+            return stretched
+            
+        except ImportError:
+            # Fallback to simple method
             if current_samples > target_samples:
                 return audio[:target_samples]
             else:
                 padding = np.zeros(target_samples - current_samples)
                 return np.concatenate([audio, padding])
-        else:
-            # Time stretching needed
-            try:
-                import librosa
-                stretch_ratio = target_samples / current_samples
-                stretched = librosa.effects.time_stretch(audio, rate=1/stretch_ratio)
-                
-                # Ensure exact length
-                if len(stretched) > target_samples:
-                    return stretched[:target_samples]
-                elif len(stretched) < target_samples:
-                    padding = np.zeros(target_samples - len(stretched))
-                    return np.concatenate([stretched, padding])
-                return stretched
-                
-            except ImportError:
-                # Fallback to simple trim/pad
-                if current_samples > target_samples:
-                    return audio[:target_samples]
-                else:
-                    padding = np.zeros(target_samples - current_samples)
-                    return np.concatenate([audio, padding])
     
     def _get_reference_transcript(self, reference_path: str) -> str:
         """Get reference transcript from metadata"""

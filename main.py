@@ -427,19 +427,26 @@ def process_video_background(
             status_manager.fail_processing(audio_id, f"File upload failed: {str(e)}")
             return
         
+        # Get all segment URLs
+        segment_urls = {}
+        if r2_segments_result:
+            segment_urls = r2_storage.get_segment_urls(audio_id, r2_segments_result)
+        
         # Mark processing as complete with comprehensive details
         status_manager.complete_processing(audio_id, {
             "final_audio_url": r2_final_result.get("url"),
             "video_url": r2_video_result.get("url") if r2_video_result else None,
             "subtitles_url": r2_subtitle_result.get("url") if r2_subtitle_result else None,
             "segments_url": r2_segments_result.get("url") if r2_segments_result else None,
+            "segment_details": segment_urls,
             "processing_stats": {
                 "total_segments": processing_result.get("total_segments", 0),
                 "cloned_segments": cloning_result.get("cloned_segments_count", 0),
                 "speakers": processing_result.get("speakers", []),
                 "duration": processing_result.get("total_duration", 0),
                 "cloned_by_speaker": cloning_result.get("cloned_by_speaker", {}),
-                "seeds_used": cloning_result.get("seeds_used", {})
+                "seeds_used": cloning_result.get("seeds_used", {}),
+                "reference_selection": cloning_result.get("reference_selection", {})
             }
         })
         

@@ -170,7 +170,8 @@ class AudioProcessor:
                     # Use provided seed as base and add speaker offset
                     speaker_seed = seed + hash(speaker) % 1000
                 else:
-                    speaker_seed = random.randint(1, 1000000)
+                    # Generate completely random seed for each speaker
+                    speaker_seed = random.randint(100000, 999999)
                 
                 seeds_used[speaker] = speaker_seed
                 
@@ -262,7 +263,9 @@ class AudioProcessor:
                 "cloned_by_speaker": cloned_by_speaker,
                 "seeds_used": seeds_used,
                 "audio_id": audio_id,
-                "processing_method": "smart_continuous_non_continuous"
+                "processing_method": "smart_continuous_non_continuous",
+                "reference_selection": {speaker: {"path": info["reference_used"], "seed": info["seed_used"]} 
+                                      for speaker, info in cloned_by_speaker.items()}
             }
             
         except Exception as e:

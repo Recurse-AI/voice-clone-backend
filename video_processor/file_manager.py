@@ -185,7 +185,7 @@ class FileManager:
             if end_sample > len(audio):
                 end_sample = len(audio)
             if start_sample >= end_sample:
-                start_sample = max(0, end_sample - int(5 * sr))  # Fallback to 5 seconds minimum
+                start_sample = max(0, end_sample - int(7 * sr))  # Fallback to 7 seconds minimum
             
             reference_audio = audio[start_sample:end_sample]
             
@@ -207,6 +207,7 @@ class FileManager:
                 'duration': duration,
                 'text': english_text,  # Clean English text for reference
                 'original_text': original_text,
+                'dia_text': ref_segment.get('dia_text', f'[S1] {english_text}'),
                 'word_count': ref_segment.get('word_count', len(english_text.split())),
                 'confidence': ref_segment.get('confidence', 0.5),
                 'selected_reason': 'optimal_word_count_and_quality'
