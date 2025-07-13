@@ -199,15 +199,21 @@ class FileManager:
         ref_audio_path = speaker_dir / ref_audio_name
         sf.write(ref_audio_path, reference_audio, sr)
         
-        # Get clean English text and original text
+        # Get clean English text and preserve actual original text
         english_text = ref_segment.get('english_text', ref_segment.get('text', f'Reference for speaker {speaker}'))
-        original_text = ref_segment.get('original_text', ref_segment.get('text', english_text))
         
-        # Format original text in Dia format for reference (since reference audio is in english)
-        if not original_text.startswith('[S'):
-            original_unformatted = english_text
-            original_text = f"[S1] {english_text.strip()}"
-            logger.info(f"Speaker {speaker}: Added Dia format to reference original text: '{original_unformatted}' -> '{original_text}'")
+        # Preserve the actual original text (not English translation)
+        actual_original_text = ref_segment.get('original_text', ref_segment.get('text', ''))
+        
+        # If no original text exists, use the segment text as original
+        if not actual_original_text:
+            actual_original_text = ref_segment.get('text', english_text)
+        
+        # Format original text in Dia format for reference (using actual original text)
+        original_text_for_dia = actual_original_text
+        if not original_text_for_dia.startswith('[S'):
+            original_text_for_dia = f"[S1] {actual_original_text.strip()}"
+            logger.info(f"Speaker {speaker}: Added Dia format to reference original text")
         
         # Adjust text if duration was changed
         original_duration = ref_segment.get('duration', 5)
@@ -215,26 +221,30 @@ class FileManager:
             # Calculate ratio of duration kept
             duration_ratio = duration / original_duration
             
-            # Split text into words and take proportional amount
-            # Since reference audio is in English, work with english_text for trimming
-            english_text_clean = english_text
-            
-            english_words = english_text_clean.split()
+            # For duration adjustment, we need to trim the English text for cloning
+            # but keep the original text proportion for reference
+            english_words = english_text.split()
+            original_words = actual_original_text.split()
             
             # Take the first portion of words based on duration ratio
             english_words_to_keep = int(len(english_words) * duration_ratio)
+            original_words_to_keep = int(len(original_words) * duration_ratio)
             
             # Ensure we keep at least some words
             english_words_to_keep = max(english_words_to_keep, min(10, len(english_words)))
+            original_words_to_keep = max(original_words_to_keep, min(10, len(original_words)))
             
-            # Trim english text to match duration and set as original_text with Dia format
+            # Trim both texts proportionally
             trimmed_english = ' '.join(english_words[:english_words_to_keep])
-            original_text = f"[S1] {trimmed_english}"  # Set Dia format with trimmed english text
+            trimmed_original = ' '.join(original_words[:original_words_to_keep])
+            
+            # Set Dia format with actual original text (not English)
+            original_text_for_dia = f"[S1] {trimmed_original}"
             english_text = trimmed_english
             
-            logger.info(f"Speaker {speaker}: Adjusted text from {len(ref_segment.get('original_text', '').split())} to {len(trimmed_english.split())} words (original) and {len(english_text.split())} words (english)")
+            logger.info(f"Speaker {speaker}: Adjusted text from {len(original_words)} to {len(trimmed_original.split())} words (original) and {len(english_text.split())} words (english)")
         
-        # Save reference metadata
+        # Save reference metadata with proper original text
         ref_metadata = {
             'speaker': speaker,
             'reference_audio': ref_audio_name,
@@ -242,7 +252,7 @@ class FileManager:
             'end': end_time,
             'duration': duration,
             'english_text': english_text,
-            'original_text': original_text,
+            'original_text': original_text_for_dia,  # This should be actual original text in Dia format
             'word_count': len(english_text.split()),
             'confidence': ref_segment.get('confidence', 0.5),
             'selected_reason': 'best_available_segment',

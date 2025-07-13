@@ -517,11 +517,21 @@ class SegmentManager:
                 # Process text for voice cloning
                 english_text = self.transcription_service.translate_text_clean(segment['text'])
                 
-                # Create metadata for larger segments
+                # Preserve original text and format it for reference
+                original_text = segment['text']  # This is the actual original text
+                
+                # Format for Dia if needed for reference
+                if not original_text.startswith('[S'):
+                    original_text_formatted = f"[S1] {original_text.strip()}"
+                else:
+                    original_text_formatted = original_text
+                
+                # Create metadata with proper original text preservation
                 metadata = {
                     'segment_index': i + 1,
                     'audio_file': audio_filename,
-                    'original_text': segment['text'],
+                    'original_text': original_text,  # Keep actual original text
+                    'original_text_formatted': original_text_formatted,  # Dia formatted version
                     'english_text': english_text,
                     'speaker': speaker,
                     'start': segment['start'],
@@ -544,12 +554,17 @@ class SegmentManager:
                     reference_audio_path = reference_dir / f"speaker_{speaker}_REFERENCE.wav"
                     sf.write(reference_audio_path, segment_audio, sr)
                     
-                    # Save reference metadata
+                    # Save reference metadata with proper original text
                     reference_metadata = {
                         'speaker': speaker,
-                        'reference_text': english_text,
-                        'original_segment_index': i + 1,
+                        'reference_audio': f"speaker_{speaker}_REFERENCE.wav",
+                        'start': segment['start'],
+                        'end': segment['end'],
                         'duration': segment['duration'],
+                        'original_text': original_text,  # Actual original text
+                        'original_text_formatted': original_text_formatted,  # Dia formatted
+                        'english_text': english_text,
+                        'word_count': segment['word_count'],
                         'confidence': segment['confidence'],
                         'reference_type': 'large_segment'
                     }

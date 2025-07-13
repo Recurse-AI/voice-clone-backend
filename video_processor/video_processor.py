@@ -24,9 +24,9 @@ except ImportError:
 
 
 class VideoProcessor:
-    """Simple video processor that replaces original audio with cloned audio"""
+    """Video processing with high-quality subtitle generation"""
     
-    def __init__(self, temp_dir: str = "/tmp/video_processing"):
+    def __init__(self, temp_dir: str = "./tmp/video_processing"):
         self.temp_dir = Path(temp_dir)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         
@@ -34,87 +34,6 @@ class VideoProcessor:
         self.max_words_per_subtitle = 4  # Max 3-4 words at a time
         self.subtitle_font_size = 18  # Smaller font size
         self.subtitle_margin_bottom = 30  # Lower position from bottom
-        
-    def create_video_with_subtitles(self, video_path: str, audio_path: str, 
-                                   segments_dir: str, audio_id: str,
-                                   instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Create video with cloned audio and subtitles"""
-        try:
-            output_path = self.temp_dir / f"video_with_subtitles_{audio_id}.mp4"
-            
-            # Load subtitle data
-            subtitle_data = self._load_subtitles(segments_dir)
-            
-            if not subtitle_data:
-                logger.warning(f"No subtitle data found for {audio_id}")
-                return {"success": False, "error": "No subtitle data found"}
-            
-            logger.info(f"Creating video with {len(subtitle_data)} subtitles for {audio_id}")
-            
-            # Create subtitle file
-            subtitle_path = self.temp_dir / f"subtitles_{audio_id}.srt"
-            self._create_srt_file(subtitle_data, subtitle_path)
-            
-            # Create final audio (cloned + instruments if requested)
-            final_audio_path = self._create_final_audio(audio_path, instruments_path, audio_id)
-            
-            # Create video with new audio and subtitles
-            result = self._create_video_ffmpeg(
-                video_path, final_audio_path, subtitle_path, output_path
-            )
-            
-            if result["success"]:
-                return {
-                    "success": True,
-                    "video_path": str(output_path),
-                    "subtitle_path": str(subtitle_path),
-                    "subtitle_count": len(subtitle_data),
-                    "duration": result.get("duration", 0),
-                    "file_size": os.path.getsize(output_path) / (1024*1024),
-                    "audio_id": audio_id,
-                    "audio_used": str(final_audio_path),
-                    "instruments_mixed": instruments_path is not None and os.path.exists(instruments_path)
-                }
-            else:
-                return result
-                
-        except Exception as e:
-            logger.error(f"Video creation failed for {audio_id}: {str(e)}")
-            return {"success": False, "error": str(e)}
-    
-    def create_video_with_audio(self, video_path: str, audio_path: str, 
-                              audio_id: str, instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Create video with cloned audio only (no subtitles)"""
-        try:
-            output_path = self.temp_dir / f"video_no_subtitles_{audio_id}.mp4"
-            
-            logger.info(f"Creating video without subtitles for {audio_id}")
-            
-            # Create final audio (cloned + instruments if requested)
-            final_audio_path = self._create_final_audio(audio_path, instruments_path, audio_id)
-            
-            # Create video with new audio only
-            result = self._create_video_ffmpeg(
-                video_path, final_audio_path, None, output_path
-            )
-            
-            if result["success"]:
-                return {
-                    "success": True,
-                    "video_path": str(output_path),
-                    "duration": result.get("duration", 0),
-                    "file_size": os.path.getsize(output_path) / (1024*1024),
-                    "subtitles_included": False,
-                    "audio_id": audio_id,
-                    "audio_used": str(final_audio_path),
-                    "instruments_mixed": instruments_path is not None and os.path.exists(instruments_path)
-                }
-            else:
-                return result
-                
-        except Exception as e:
-            logger.error(f"Video creation failed for {audio_id}: {str(e)}")
-            return {"success": False, "error": str(e)}
     
     def _load_subtitles(self, segments_dir: str) -> List[Dict]:
         """Load subtitle data from segments"""
@@ -144,17 +63,18 @@ class VideoProcessor:
                     if not cloned_audio_path.exists():
                         continue
                     
-                    # Use English text for subtitles
-                    english_text = data.get('english_text', data.get('text', ''))
+                    # Use original text for subtitles, fallback to English text
+                    original_text = data.get('original_text', '')
+                    if not original_text:
+                        original_text = data.get('english_text', data.get('text', ''))
                     
-                    if english_text and data.get('start') is not None and data.get('end') is not None:
-                        # Clean mixed segment text (remove speaker tags for display)
-                        if data.get('is_mixed', False):
-                            import re
-                            english_text = re.sub(r'\[S\d+\]\s*', '', english_text)
-                        
-                        # Split into word chunks
-                        word_chunks = self._split_into_chunks(english_text, data['start'], data['end'])
+                    # Clean speaker tags for subtitle display
+                    import re
+                    display_text = re.sub(r'\[S\d+\]\s*', '', original_text)
+                    
+                    if display_text and data.get('start') is not None and data.get('end') is not None:
+                        # Split into word chunks for better subtitle display
+                        word_chunks = self._split_into_chunks(display_text, data['start'], data['end'])
                         subtitle_data.extend(word_chunks)
                 
                 except Exception as e:
@@ -195,6 +115,8 @@ class VideoProcessor:
             })
         
         return chunks
+    
+
     
     def _create_final_audio(self, audio_path: str, instruments_path: Optional[str], audio_id: str) -> Path:
         final_audio_path = self.temp_dir / f"final_mixed_audio_{audio_id}.wav"
@@ -307,4 +229,4 @@ class VideoProcessor:
                     temp_file.unlink()
                     
         except Exception:
-            pass 
+            pass

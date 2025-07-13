@@ -64,8 +64,8 @@ class VoiceCloningService:
             return {"success": False, "error": "No segments provided"}
         
         try:
-            # Set seed for consistency
-            set_seed(seed or 12345)
+            # Set seed for consistency - use constant from settings
+            set_seed(seed or settings.DEFAULT_SEED)
             
             cloned_segments = []
             reference_audio_path = None

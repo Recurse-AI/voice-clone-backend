@@ -318,6 +318,7 @@ def process_video_background(
             temperature=temperature,
             cfg_scale=cfg_scale,
             top_p=top_p,
+            seed=settings.DEFAULT_SEED,  # Use constant seed for consistency
             speed_factor=speed_factor
         )
         

@@ -39,7 +39,9 @@ class Settings(BaseSettings):
     DIA_CFG_FILTER_TOP_K: int = 50  # Optimized from official examples (was 45)
     
     # Processing Configuration
-    DEFAULT_SEED: Optional[int] = 12345
+    DEFAULT_SEED: Optional[int] = 42  # Fixed seed for consistency
+    BASE_SEED: int = 42  # Base seed for speaker-specific seeds
+    SPEAKER_SEED_OFFSET: int = 1000  # Offset for speaker-specific seeds
 
 
     
