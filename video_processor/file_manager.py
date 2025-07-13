@@ -12,6 +12,9 @@ from typing import Dict, Any, List, Tuple, Optional
 from datetime import datetime
 import numpy as np
 import soundfile as sf
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class FileManager:
@@ -153,6 +156,32 @@ class FileManager:
         end_time = ref_segment.get('end', 5)
         duration = ref_segment.get('duration', 5)
         
+        # Apply duration limits: 11-20 seconds for reference
+        MIN_REFERENCE_DURATION = 11.0
+        MAX_REFERENCE_DURATION = 20.0
+        
+        logger.info(f"Speaker {speaker}: Processing reference with duration limits ({MIN_REFERENCE_DURATION}-{MAX_REFERENCE_DURATION}s)")
+        
+        # If duration is too long, trim it to max duration
+        if duration > MAX_REFERENCE_DURATION:
+            logger.info(f"Speaker {speaker}: Trimming reference from {duration:.2f}s to {MAX_REFERENCE_DURATION}s")
+            end_time = start_time + MAX_REFERENCE_DURATION
+            duration = MAX_REFERENCE_DURATION
+        
+        # If duration is too short, try to extend it (if possible)
+        elif duration < MIN_REFERENCE_DURATION:
+            # Try to extend the segment to minimum duration
+            desired_end = start_time + MIN_REFERENCE_DURATION
+            audio_duration = len(audio) / sr
+            
+            if desired_end <= audio_duration:
+                logger.info(f"Speaker {speaker}: Extending reference from {duration:.2f}s to {MIN_REFERENCE_DURATION}s")
+                end_time = desired_end
+                duration = MIN_REFERENCE_DURATION
+            else:
+                # Can't extend, use what we have
+                logger.warning(f"Speaker {speaker}: Cannot extend reference to {MIN_REFERENCE_DURATION}s, using {duration:.2f}s")
+        
         # Extract reference audio
         start_sample = int(start_time * sr)
         end_sample = int(end_time * sr)
@@ -174,6 +203,30 @@ class FileManager:
         english_text = ref_segment.get('english_text', ref_segment.get('text', f'Reference for speaker {speaker}'))
         original_text = ref_segment.get('original_text', ref_segment.get('text', english_text))
         
+        # Adjust text if duration was changed
+        original_duration = ref_segment.get('duration', 5)
+        if duration != original_duration:
+            # Calculate ratio of duration kept
+            duration_ratio = duration / original_duration
+            
+            # Split text into words and take proportional amount
+            original_words = original_text.split()
+            english_words = english_text.split()
+            
+            # Take the first portion of words based on duration ratio
+            original_words_to_keep = int(len(original_words) * duration_ratio)
+            english_words_to_keep = int(len(english_words) * duration_ratio)
+            
+            # Ensure we keep at least some words
+            original_words_to_keep = max(original_words_to_keep, min(10, len(original_words)))
+            english_words_to_keep = max(english_words_to_keep, min(10, len(english_words)))
+            
+            # Trim text to match duration
+            original_text = ' '.join(original_words[:original_words_to_keep])
+            english_text = ' '.join(english_words[:english_words_to_keep])
+            
+            logger.info(f"Speaker {speaker}: Adjusted text from {len(ref_segment.get('english_text', '').split())} to {len(english_text.split())} words")
+        
         # Save reference metadata
         ref_metadata = {
             'speaker': speaker,
@@ -183,10 +236,12 @@ class FileManager:
             'duration': duration,
             'english_text': english_text,
             'original_text': original_text,
-            'word_count': ref_segment.get('word_count', len(english_text.split())),
+            'word_count': len(english_text.split()),
             'confidence': ref_segment.get('confidence', 0.5),
             'selected_reason': 'best_available_segment',
-            'reference_quality': self._assess_reference_quality(ref_segment)
+            'reference_quality': self._assess_reference_quality(ref_segment),
+            'duration_limited': duration != original_duration,
+            'original_duration': original_duration
         }
         
         ref_metadata_path = speaker_dir / f"speaker_{speaker}_REFERENCE_metadata.json"
