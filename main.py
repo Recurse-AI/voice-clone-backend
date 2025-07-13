@@ -193,6 +193,9 @@ async def process_video(
     audio_id = r2_storage.generate_audio_id()
     logger.info(f"Generated audio_id: {audio_id} for video processing request")
     
+    # Initialize status tracking
+    status_manager.initialize_status(audio_id)
+    
     # Start background processing
     background_tasks.add_task(
         process_video_background,
@@ -220,9 +223,7 @@ def process_video_background(
     # Convert empty string to None for proper handling
     final_language_code = language_code if language_code and language_code.strip() else None
     
-    # Start processing tracking
-    logger.info(f"Initializing status tracking for audio_id: {audio_id}")
-    status_manager.start_processing(audio_id)
+    # Status tracking already initialized above
     logger.info(f"Status tracking initialized successfully for audio_id: {audio_id}")
 
     
@@ -297,6 +298,15 @@ def process_video_background(
             "detected_speakers": processing_result.get("detected_speakers", len(processing_result.get("speakers", [])))
         }
         
+        # Update status after segmentation
+        status_manager.update_status(audio_id, ProcessingStatus.PROCESSING, 50, {
+            "segments_dir": processing_result["segments_dir"],
+            "total_segments": processing_result["total_segments"],
+            "speakers": processing_result["speakers"],
+            "detected_speakers": processing_result.get("detected_speakers", len(processing_result["speakers"])),
+            "total_duration": processing_result["total_duration"]
+        })
+        
         # Clone voices with speaker-specific seeds
         logger.info(f"Starting voice cloning for audio_id: {audio_id}")
         status_manager.set_progress(audio_id, 60)
@@ -313,7 +323,12 @@ def process_video_background(
             status_manager.fail_processing(audio_id, f"Voice cloning failed: {cloning_result.get('error', 'Unknown error')}")
             return
         
-        status_manager.set_progress(audio_id, 70)
+        # Update status with cloning details
+        status_manager.update_status(audio_id, ProcessingStatus.PROCESSING, 70, {
+            "cloned_segments": cloning_result.get("cloned_segments_count", 0),
+            "cloned_by_speaker": cloning_result.get("cloned_by_speaker", {}),
+            "seeds_used": cloning_result.get("seeds_used", {})
+        })
         
         # Reconstruct audio
         logger.info(f"Starting audio reconstruction for audio_id: {audio_id}")
@@ -412,52 +427,21 @@ def process_video_background(
             status_manager.fail_processing(audio_id, f"File upload failed: {str(e)}")
             return
         
-        # Complete processing with comprehensive details
-        completion_details = {
-            "final_audio_url": r2_final_result.get("url") if r2_final_result and r2_final_result["success"] else None,
-            "video_url": r2_video_result.get("url") if r2_video_result and r2_video_result["success"] else None,
-            "subtitles_url": r2_subtitle_result.get("url") if r2_subtitle_result and r2_subtitle_result["success"] else None,
-            "segments_processed": cloning_result.get("cloned_segments", 0),
-            "speakers_detected": len(processing_result.get("speakers", [])),
-            "total_duration": original_duration,
-            "raw_assemblyai_response": processing_result.get("raw_assemblyai_response"),  # Store raw response
-            "video_processing": {
-                "audio_used": video_result.get("audio_used"),
-                "instruments_mixed": video_result.get("instruments_mixed", False),
-                "subtitles_generated": generate_subtitles,
-                "subtitle_count": video_result.get("subtitle_count", 0),
-                "video_duration": video_result.get("duration", 0),
-                "video_file_size_mb": video_result.get("file_size", 0)
-            },
-            "audio_processing": {
+        # Mark processing as complete with comprehensive details
+        status_manager.complete_processing(audio_id, {
+            "final_audio_url": r2_final_result.get("url"),
+            "video_url": r2_video_result.get("url") if r2_video_result else None,
+            "subtitles_url": r2_subtitle_result.get("url") if r2_subtitle_result else None,
+            "segments_url": r2_segments_result.get("url") if r2_segments_result else None,
+            "processing_stats": {
+                "total_segments": processing_result.get("total_segments", 0),
+                "cloned_segments": cloning_result.get("cloned_segments_count", 0),
+                "speakers": processing_result.get("speakers", []),
+                "duration": processing_result.get("total_duration", 0),
                 "cloned_by_speaker": cloning_result.get("cloned_by_speaker", {}),
-                "seeds_used": cloning_result.get("seeds_used", {}),
-                "final_audio_file_size_mb": r2_final_result.get("size", 0) / (1024*1024) if r2_final_result and r2_final_result.get("size") else 0,
-                "reconstruction_method": reconstruction_result.get("reconstruction_method", "standard"),
-                "instruments_included": include_instruments,
-                "separation_used": True
-            },
-            "upload_results": {
-                "segments_uploaded": r2_segments_result is not None,
-                "final_audio_uploaded": r2_final_result and r2_final_result["success"],
-                "video_uploaded": r2_video_result and r2_video_result["success"],
-                "subtitles_uploaded": r2_subtitle_result and r2_subtitle_result["success"]
-            },
-            "processing_parameters": {
-                "temperature": temperature,
-                "cfg_scale": cfg_scale,
-                "top_p": top_p,
-                "target_language": target_language,
-                "language_code": final_language_code,
-                "speakers_expected": speakers_expected,
-                "include_instruments": include_instruments,
-                "generate_subtitles": generate_subtitles
+                "seeds_used": cloning_result.get("seeds_used", {})
             }
-        }
-        
-        logger.info(f"Processing completed successfully for audio_id: {audio_id}")
-        logger.info(f"Completion details for audio_id: {audio_id} - segments: {completion_details.get('segments_processed', 0)}, speakers: {completion_details.get('speakers_detected', 0)}, duration: {completion_details.get('total_duration', 0)}s")
-        status_manager.complete_processing(audio_id, completion_details)
+        })
         
         # Create processing summary for R2 with seed information
         processing_data = {

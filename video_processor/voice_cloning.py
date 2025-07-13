@@ -123,6 +123,9 @@ class VoiceCloningService:
             if reference_audio_path and os.path.exists(reference_audio_path):
                 # Load reference transcript
                 ref_transcript = self._get_reference_transcript(reference_audio_path)
+                
+                # Build prompt according to Dia guidelines
+                # Reference transcript should come first, then a space, then the target text
                 prompt_text = f"{ref_transcript} {dia_text}"
                 
                 cloned_audio = self.dia_model.generate(
@@ -131,7 +134,9 @@ class VoiceCloningService:
                     use_torch_compile=False,
                     cfg_scale=cfg_scale,
                     temperature=temperature,
-                    top_p=top_p
+                    top_p=top_p,
+                    cfg_filter_top_k=50,
+                    max_tokens=3072
                 )
             else:
                 cloned_audio = self.dia_model.generate(
@@ -139,7 +144,9 @@ class VoiceCloningService:
                     use_torch_compile=False,
                     cfg_scale=cfg_scale,
                     temperature=temperature,
-                    top_p=top_p
+                    top_p=top_p,
+                    cfg_filter_top_k=50,
+                    max_tokens=3072
                 )
             
             # Length synchronization
@@ -183,7 +190,9 @@ class VoiceCloningService:
                     use_torch_compile=False,
                     cfg_scale=cfg_scale,
                     temperature=temperature,
-                    top_p=top_p
+                    top_p=top_p,
+                    cfg_filter_top_k=50,
+                    max_tokens=3072
                 )
             else:
                 cloned_audio = self.dia_model.generate(
@@ -191,7 +200,9 @@ class VoiceCloningService:
                     use_torch_compile=False,
                     cfg_scale=cfg_scale,
                     temperature=temperature,
-                    top_p=top_p
+                    top_p=top_p,
+                    cfg_filter_top_k=50,
+                    max_tokens=3072
                 )
             
             # Split cloned audio back to original segments
@@ -375,7 +386,10 @@ etc."""
             if metadata_path.exists():
                 with open(metadata_path, 'r', encoding='utf-8') as f:
                     metadata = json.load(f)
-                return metadata.get('text', '[S1] Reference audio.')
+                dia_text = metadata.get('dia_text', '')
+                if dia_text:
+                    return dia_text
+                return '[S1] ' + metadata.get('english_text', metadata.get('text', 'Reference audio.'))
             
             return '[S1] Reference audio.'
             

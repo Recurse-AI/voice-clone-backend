@@ -209,13 +209,13 @@ class SegmentManager:
         
         for segment in segments:
             if (segment['confidence'] >= self.min_confidence and
-                11.0 <= segment['duration'] <= 20.0 and
-                segment['word_count'] >= 20):
+                5.0 <= segment['duration'] <= 10.0 and
+                segment['word_count'] >= 10):
                 candidates.append(segment)
         
         if candidates:
             # Sort by confidence and duration
-            candidates.sort(key=lambda x: (x['confidence'], x['duration']), reverse=True)
+            candidates.sort(key=lambda x: (x['confidence'], abs(7.5 - x['duration'])))
             return candidates[0]
         
         return None
@@ -229,13 +229,13 @@ class SegmentManager:
         total_duration = 0
         
         for segment in segments:
-            if total_duration + segment['duration'] <= 20.0:
+            if total_duration + segment['duration'] <= 10.0:
                 composite_segments.append(segment)
                 total_duration += segment['duration']
-                if total_duration >= 11.0:
+                if total_duration >= 5.0:
                     break
         
-        if composite_segments and total_duration >= 11.0:
+        if composite_segments and total_duration >= 5.0:
             return {
                 'is_composite': True,
                 'segments': composite_segments,
