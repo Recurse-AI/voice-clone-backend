@@ -185,7 +185,7 @@ class FileManager:
             if end_sample > len(audio):
                 end_sample = len(audio)
             if start_sample >= end_sample:
-                start_sample = max(0, end_sample - int(7 * sr))  # Fallback to 7 seconds minimum
+                start_sample = max(0, end_sample - int(5 * sr))  # Fallback to 5 seconds minimum
             
             reference_audio = audio[start_sample:end_sample]
             

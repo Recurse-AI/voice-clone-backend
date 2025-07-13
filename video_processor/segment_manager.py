@@ -24,7 +24,7 @@ class SegmentManager:
         self.max_segment_duration = 20.0
         self.optimal_word_range = (25, 45)
         self.max_gap_for_merge = 2.0
-        self.min_confidence = 0.8
+        self.min_confidence = 0.5
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Create optimal segments with smart chunking"""
@@ -204,21 +204,18 @@ class SegmentManager:
         return references
     
     def _find_best_reference(self, segments: List[Dict]) -> Optional[Dict]:
-        """Find best single reference segment"""
         candidates = []
         
         for segment in segments:
             if (segment['confidence'] >= self.min_confidence and
-                7.0 <= segment['duration'] <= 15.0 and
-                segment['word_count'] >= 10):
+                segment['duration'] <= 17.0 and
+                segment['word_count'] >= 5):
                 candidates.append(segment)
         
         if candidates:
-            # Sort by confidence and optimal duration (11s is ideal)
-            candidates.sort(key=lambda x: (x['confidence'], abs(11.0 - x['duration'])))
+            candidates.sort(key=lambda x: (x['confidence'], x['duration']), reverse=True)
             best = candidates[0]
             
-            # Ensure dia_text is included
             if 'dia_text' not in best:
                 best['dia_text'] = f"[S1] {best.get('text', '')}"
             
@@ -227,21 +224,19 @@ class SegmentManager:
         return None
     
     def _create_composite_reference(self, segments: List[Dict]) -> Optional[Dict]:
-        """Create composite reference from multiple segments"""
-        # Sort by confidence
         segments.sort(key=lambda x: x['confidence'], reverse=True)
         
         composite_segments = []
         total_duration = 0
         
         for segment in segments:
-            if total_duration + segment['duration'] <= 15.0:
+            if total_duration + segment['duration'] <= 17.0:
                 composite_segments.append(segment)
                 total_duration += segment['duration']
-                if total_duration >= 7.0:
+                if total_duration >= 2.0:
                     break
         
-        if composite_segments and total_duration >= 7.0:
+        if composite_segments and total_duration >= 2.0:
             return {
                 'is_composite': True,
                 'segments': composite_segments,
