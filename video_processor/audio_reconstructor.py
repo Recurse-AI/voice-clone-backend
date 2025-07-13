@@ -123,42 +123,36 @@ class AudioReconstructor:
                     start_sample = max(0, min(start_sample, total_samples - 1))
                     end_sample = max(start_sample + 1, min(end_sample, total_samples))
                     
-                    print(f"Processing item: {item['segment_type']} from {item['start']:.2f}s to {item['end']:.2f}s (samples: {start_sample}-{end_sample})")
-                    
                     if item['segment_type'] == 'speech':
                         # Load cloned audio for speech segments
                         cloned_audio = self._load_cloned_speech_audio(segments_path, item)
                         
                         if cloned_audio is not None:
-                            # Simple placement - no complex volume matching
+                            # Adjust length to match exact timing
                             expected_samples = end_sample - start_sample
                             if len(cloned_audio) != expected_samples:
                                 cloned_audio = self._adjust_length(cloned_audio, expected_samples)
                             
-                            # Ensure exact length match before placement
+                            # Place cloned audio in final timeline
                             if len(cloned_audio) == expected_samples:
                                 final_audio[start_sample:end_sample] = cloned_audio
-                                print(f"Placed cloned audio: {item['start']:.2f}s-{item['end']:.2f}s, speaker: {item.get('speaker', 'unknown')}")
+                                logger.debug(f"Placed cloned audio: {item['start']:.2f}s-{item['end']:.2f}s, speaker: {item.get('speaker', 'unknown')}")
                             else:
-                                print(f"ERROR: Length mismatch after adjustment: {len(cloned_audio)} != {expected_samples}")
-                                # Fill with silence if length mismatch
+                                logger.warning(f"Length mismatch for segment {item['start']:.2f}s-{item['end']:.2f}s: {len(cloned_audio)} != {expected_samples}")
                                 final_audio[start_sample:end_sample] = np.zeros(expected_samples, dtype=np.float32)
                         else:
-                            print(f"WARNING: No cloned audio found for segment {item['start']:.2f}s-{item['end']:.2f}s")
-                            # Fill with silence when no cloned audio
+                            logger.warning(f"No cloned audio found for segment {item['start']:.2f}s-{item['end']:.2f}s")
                             expected_samples = end_sample - start_sample
                             final_audio[start_sample:end_sample] = np.zeros(expected_samples, dtype=np.float32)
                             
                     elif item['segment_type'] == 'silent':
-                        duration = item['end'] - item['start']
-                        if duration > 0:
-                            expected_samples = end_sample - start_sample
-                            silent_samples = np.zeros(expected_samples, dtype=np.float32)
-                            final_audio[start_sample:end_sample] = silent_samples
-                            print(f"Placed silence: {item['start']:.2f}s-{item['end']:.2f}s, duration: {duration:.2f}s")
+                        # Place silence
+                        expected_samples = end_sample - start_sample
+                        final_audio[start_sample:end_sample] = np.zeros(expected_samples, dtype=np.float32)
+                        logger.debug(f"Placed silence: {item['start']:.2f}s-{item['end']:.2f}s")
                             
                 except Exception as e:
-                    print(f"Error processing timeline item: {item}, error: {e}")
+                    logger.error(f"Error processing timeline item: {item.get('start', 0):.2f}s-{item.get('end', 0):.2f}s: {str(e)}")
                     continue
             
             return final_audio
@@ -168,66 +162,88 @@ class AudioReconstructor:
             return None
     
     def _load_cloned_speech_audio(self, segments_path: Path, segment: Dict) -> Optional[np.ndarray]:
-        """Load cloned audio for speech segment"""
+        """Load cloned audio for speech segment with proper mapping"""
         speaker = segment.get('speaker', 'A')
         speaker_dir = segments_path / f"speaker_{speaker}" / "segments"
         
-        print(f"Looking for cloned audio in: {speaker_dir}")
-        
         if not speaker_dir.exists():
-            print(f"Speaker directory not found: {speaker_dir}")
+            logger.warning(f"Speaker directory not found: {speaker_dir}")
             return None
         
-        # Find matching segment by timing
-        for json_file in speaker_dir.glob("*.json"):
+        # Find exact matching segment by timing and metadata
+        segment_start = segment.get('start', 0)
+        segment_end = segment.get('end', 0)
+        
+        # First try: exact timing match with metadata files
+        for json_file in speaker_dir.glob("*_metadata.json"):
             try:
                 with open(json_file, 'r', encoding='utf-8') as f:
                     seg_data = json.load(f)
                 
-                # Check timing match (with tolerance)
-                if (abs(seg_data.get('start', 0) - segment['start']) < 0.1 and 
-                    abs(seg_data.get('end', 0) - segment['end']) < 0.1):
+                # Check for exact timing match (with small tolerance)
+                if (abs(seg_data.get('start', 0) - segment_start) < 0.1 and 
+                    abs(seg_data.get('end', 0) - segment_end) < 0.1):
                     
-                    # Get audio file name - try multiple possible keys
-                    audio_file = seg_data.get('audio_file', '') or seg_data.get('filename', '')
-                    if audio_file:
-                        # Look for cloned version first
-                        cloned_file = f"cloned_{audio_file}"
-                        cloned_path = speaker_dir / cloned_file
-                        
-                        print(f"Checking cloned file: {cloned_path}")
-                        
-                        if cloned_path.exists():
-                            audio, _ = sf.read(cloned_path)
-                            print(f"Found cloned audio: {cloned_path}, length: {len(audio)} samples")
-                            return audio
-                        else:
-                            print(f"Cloned file not found: {cloned_path}")
-                            
-                        # Also try without "cloned_" prefix in case naming is different
-                        alt_cloned_file = audio_file.replace('.wav', '_cloned.wav')
-                        alt_cloned_path = speaker_dir / alt_cloned_file
-                        
-                        if alt_cloned_path.exists():
-                            audio, _ = sf.read(alt_cloned_path)
-                            print(f"Found alternative cloned audio: {alt_cloned_path}, length: {len(audio)} samples")
-                            return audio
+                    # Get the base filename
+                    base_name = json_file.stem.replace('_metadata', '')
+                    cloned_file = f"cloned_{base_name}_metadata.wav"
+                    cloned_path = speaker_dir / cloned_file
+                    
+                    if cloned_path.exists():
+                        audio, _ = sf.read(cloned_path)
+                        logger.debug(f"Found exact match cloned audio: {cloned_path} for segment {segment_start:.2f}s-{segment_end:.2f}s")
+                        return audio
+                    else:
+                        logger.debug(f"Cloned file not found: {cloned_path}")
                         
             except Exception as e:
-                logger.warning(f"Error loading segment {json_file}: {str(e)}")
+                logger.warning(f"Error loading segment metadata {json_file}: {str(e)}")
                 continue
-                
-        # If no exact timing match, try to find any cloned audio files
-        print(f"No timing match found, checking all cloned files in {speaker_dir}")
-        for cloned_file in speaker_dir.glob("cloned_*.wav"):
-            try:
-                audio, _ = sf.read(cloned_file)
-                print(f"Found fallback cloned audio: {cloned_file}, length: {len(audio)} samples")
+        
+        # Second try: find by segment index/order if available  
+        segment_index = segment.get('segment_index')
+        if segment_index is not None:
+            cloned_file = f"cloned_segment_{segment_index:03d}_metadata.wav"
+            cloned_path = speaker_dir / cloned_file
+            
+            if cloned_path.exists():
+                audio, _ = sf.read(cloned_path)
+                logger.debug(f"Found index-based cloned audio: {cloned_path} for segment {segment_start:.2f}s-{segment_end:.2f}s")
                 return audio
+        
+        # Third try: find closest timing match (no exact match found)
+        closest_match = None
+        min_time_diff = float('inf')
+        
+        for json_file in speaker_dir.glob("*_metadata.json"):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    seg_data = json.load(f)
+                
+                # Calculate time difference
+                seg_start = seg_data.get('start', 0)
+                seg_end = seg_data.get('end', 0)
+                time_diff = abs(seg_start - segment_start) + abs(seg_end - segment_end)
+                
+                if time_diff < min_time_diff:
+                    min_time_diff = time_diff
+                    base_name = json_file.stem.replace('_metadata', '')
+                    cloned_file = f"cloned_{base_name}_metadata.wav"
+                    cloned_path = speaker_dir / cloned_file
+                    
+                    if cloned_path.exists():
+                        closest_match = cloned_path
+                        
             except Exception as e:
                 continue
         
-        print(f"No cloned audio found for segment {segment['start']:.2f}s-{segment['end']:.2f}s")
+        if closest_match and min_time_diff < 2.0:  # Only use if reasonably close (within 2 seconds)
+            audio, _ = sf.read(closest_match)
+            logger.debug(f"Found closest match cloned audio: {closest_match} for segment {segment_start:.2f}s-{segment_end:.2f}s (time diff: {min_time_diff:.2f}s)")
+            return audio
+        
+        # If no suitable match found, return None instead of using random file
+        logger.warning(f"No suitable cloned audio found for segment {segment_start:.2f}s-{segment_end:.2f}s, speaker: {speaker}")
         return None
     
     def _load_original_speech_audio(self, segments_path: Path, segment: Dict) -> Optional[np.ndarray]:

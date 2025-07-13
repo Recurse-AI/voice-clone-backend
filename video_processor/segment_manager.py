@@ -126,8 +126,8 @@ class SegmentManager:
                 end_sample = int(segment['end'] * sr)
                 segment_audio = audio[start_sample:end_sample]
                 
-                # Simple file naming
-                audio_filename = f"segment_{i+1:03d}.wav"
+                # Simple file naming with consistent format
+                audio_filename = f"segment_{i+1:03d}_metadata.wav"
                 audio_path = speaker_dir / audio_filename
                 sf.write(audio_path, segment_audio, sr)
                 
@@ -135,8 +135,10 @@ class SegmentManager:
                 english_text = self.transcription_service.translate_text_clean(segment['text'])
                 dia_text = f"[S1] {english_text}"
                 
-                # Save metadata
+                # Save metadata with segment index for proper mapping
                 metadata = {
+                    'segment_index': i + 1,  # Add segment index for mapping
+                    'audio_file': audio_filename,
                     'original_text': segment['text'],
                     'english_text': english_text,
                     'dia_text': dia_text,
@@ -153,10 +155,12 @@ class SegmentManager:
                 with open(metadata_path, 'w', encoding='utf-8') as f:
                     json.dump(metadata, f, ensure_ascii=False, indent=2)
                 
-                # Update segment with paths if needed
+                # Update segment with paths and index for timeline
                 segment.update({
+                    'segment_index': i + 1,
                     'audio_path': str(audio_path),
-                    'metadata_path': str(metadata_path)
+                    'metadata_path': str(metadata_path),
+                    'audio_file': audio_filename
                 })
             except Exception as e:
                 logger.error(f"Error saving segment {i+1} for speaker {speaker}: {str(e)}")

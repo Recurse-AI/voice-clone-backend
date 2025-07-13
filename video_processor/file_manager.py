@@ -40,7 +40,7 @@ class FileManager:
         """Create timeline for audio reconstruction"""
         timeline = []
         
-        # Add speech segments
+        # Add speech segments with proper indexing
         for segment in segments:
             timeline.append({
                 'segment_type': 'speech',
@@ -48,6 +48,8 @@ class FileManager:
                 'end': segment['end'],
                 'duration': segment['duration'],
                 'speaker': segment['speaker'],
+                'segment_index': segment.get('segment_index'),  # Add segment index for mapping
+                'audio_file': segment.get('audio_file'),  # Add audio file reference
                 'is_continuous': segment.get('is_continuous', True),
                 'group_id': segment.get('group_id')
             })

@@ -85,55 +85,38 @@ class VoiceCloningService:
     
     def _clone_segment_direct(self, segment: Dict, temperature: float,
                             cfg_scale: float, top_p: float) -> Optional[Dict]:
-        """Clone a segment directly - simple approach"""
+        """Clone a segment directly - clean approach"""
         try:
-            # Get reference audio if available
+            # Get reference audio path
             reference_audio_path = segment.get('reference_audio_path')
+            if not reference_audio_path or not os.path.exists(reference_audio_path):
+                logger.warning(f"No valid reference audio found for segment {segment.get('start', 0):.2f}s-{segment.get('end', 0):.2f}s")
+                return None
             
-            # Get text for Dia (should be already formatted)
+            # Get text for Dia (use dia_text if available, otherwise format from english_text)
             dia_text = segment.get('dia_text', '')
             if not dia_text:
-                # Fallback to english text with speaker tag
                 english_text = segment.get('english_text', segment.get('text', ''))
                 dia_text = f"[S1] {english_text}"
             
-            print(f"VOICE CLONING:")
-            print(f"Text: {dia_text}")
-            print(f"Reference: {reference_audio_path if reference_audio_path else 'None'}")
+            # Get reference transcript for voice cloning
+            ref_transcript = self._get_reference_transcript(reference_audio_path)
+            combined_text = f"{ref_transcript} {dia_text}"
             
-            # Simple direct generation - same as dia_model_readme.md approach
-            if reference_audio_path and os.path.exists(reference_audio_path):
-                # Get reference transcript
-                ref_transcript = self._get_reference_transcript(reference_audio_path)
-                
-                # Combine reference + target text (dia approach)
-                combined_text = f"{ref_transcript} {dia_text}"
-                
-                cloned_audio = self.dia_model.generate(
-                    combined_text,
-                    audio_prompt=reference_audio_path,
-                    use_torch_compile=False,
-                    cfg_scale=cfg_scale,
-                    temperature=temperature,
-                    top_p=top_p,
-                    cfg_filter_top_k=50,
-                    max_tokens=3072,
-                    verbose=True
-                )
-            else:
-                # No reference - direct generation
-                cloned_audio = self.dia_model.generate(
-                    dia_text,
-                    use_torch_compile=False,
-                    cfg_scale=cfg_scale,
-                    temperature=temperature,
-                    top_p=top_p,
-                    cfg_filter_top_k=50,
-                    max_tokens=3072,
-                    verbose=True
-                )
+            # Generate cloned audio using Dia model
+            cloned_audio = self.dia_model.generate(
+                combined_text,
+                audio_prompt=reference_audio_path,
+                use_torch_compile=False,
+                cfg_scale=cfg_scale,
+                temperature=temperature,
+                top_p=top_p,
+                cfg_filter_top_k=45,
+                max_tokens=2048,
+                verbose=False  # Reduce noise
+            )
             
-            # Simple length adjustment if needed
+            # Adjust audio length to match original duration
             original_duration = segment.get('duration', 0)
             if original_duration > 0 and len(cloned_audio) > 0:
                 cloned_audio = self._adjust_audio_length(cloned_audio, original_duration)
@@ -142,15 +125,16 @@ class VoiceCloningService:
                 "success": True,
                 "original_data": segment,
                 "cloned_audio": cloned_audio,
-                "type": "direct"
+                "type": "direct",
+                "reference_used": reference_audio_path
             }
             
         except Exception as e:
-            logger.error(f"Failed to clone segment: {str(e)}")
+            logger.error(f"Failed to clone segment {segment.get('start', 0):.2f}s-{segment.get('end', 0):.2f}s: {str(e)}")
             return None
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Stretch cloned audio to match original duration exactly"""
+        """Adjust cloned audio to match original duration exactly"""
         if len(audio) == 0:
             return audio
             
@@ -161,12 +145,9 @@ class VoiceCloningService:
         if current_samples == target_samples:
             return audio
         
-        # Always use interpolation to stretch/compress audio to exact target length
-        # This ensures cloned audio matches original timing precisely
+        # Use interpolation to stretch/compress audio to exact target length
         indices = np.linspace(0, current_samples - 1, target_samples)
         stretched_audio = np.interp(indices, np.arange(current_samples), audio)
-        
-        print(f"Audio stretched: {current_samples} -> {target_samples} samples ({current_samples/sample_rate:.2f}s -> {target_duration:.2f}s)")
         
         return stretched_audio
     
@@ -180,12 +161,19 @@ class VoiceCloningService:
             if metadata_path.exists():
                 with open(metadata_path, 'r', encoding='utf-8') as f:
                     metadata = json.load(f)
+                
+                # Use dia_text if available, otherwise format from english_text
                 dia_text = metadata.get('dia_text', '')
                 if dia_text:
                     return dia_text
-                return '[S1] ' + metadata.get('english_text', metadata.get('text', 'Reference audio.'))
+                
+                english_text = metadata.get('english_text', metadata.get('text', ''))
+                if english_text:
+                    return f'[S1] {english_text}'
             
+            # Fallback to generic reference
             return '[S1] Reference audio.'
             
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to get reference transcript: {str(e)}")
             return '[S1] Reference audio.' 
