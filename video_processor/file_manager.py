@@ -156,9 +156,9 @@ class FileManager:
         end_time = ref_segment.get('end', 5)
         duration = ref_segment.get('duration', 5)
         
-        # Apply duration limits: 11-20 seconds for reference
+        # Apply duration limits: 11-15 seconds for reference
         MIN_REFERENCE_DURATION = 11.0
-        MAX_REFERENCE_DURATION = 20.0
+        MAX_REFERENCE_DURATION = 15.0
         
         logger.info(f"Speaker {speaker}: Processing reference with duration limits ({MIN_REFERENCE_DURATION}-{MAX_REFERENCE_DURATION}s)")
         
@@ -199,9 +199,15 @@ class FileManager:
         ref_audio_path = speaker_dir / ref_audio_name
         sf.write(ref_audio_path, reference_audio, sr)
         
-        # Get clean English text
+        # Get clean English text and original text
         english_text = ref_segment.get('english_text', ref_segment.get('text', f'Reference for speaker {speaker}'))
         original_text = ref_segment.get('original_text', ref_segment.get('text', english_text))
+        
+        # Format original text in Dia format for reference (since reference audio is in original language)
+        if not original_text.startswith('[S'):
+            original_unformatted = original_text
+            original_text = f"[S1] {original_text.strip()}"
+            logger.info(f"Speaker {speaker}: Added Dia format to reference original text: '{original_unformatted}' -> '{original_text}'")
         
         # Adjust text if duration was changed
         original_duration = ref_segment.get('duration', 5)
@@ -210,8 +216,12 @@ class FileManager:
             duration_ratio = duration / original_duration
             
             # Split text into words and take proportional amount
-            original_words = original_text.split()
-            english_words = english_text.split()
+            # Remove [S1] tag temporarily for word splitting
+            original_text_clean = original_text.replace('[S1] ', '') if original_text.startswith('[S1]') else original_text
+            english_text_clean = english_text
+            
+            original_words = original_text_clean.split()
+            english_words = english_text_clean.split()
             
             # Take the first portion of words based on duration ratio
             original_words_to_keep = int(len(original_words) * duration_ratio)
@@ -221,11 +231,12 @@ class FileManager:
             original_words_to_keep = max(original_words_to_keep, min(10, len(original_words)))
             english_words_to_keep = max(english_words_to_keep, min(10, len(english_words)))
             
-            # Trim text to match duration
-            original_text = ' '.join(original_words[:original_words_to_keep])
+            # Trim text to match duration and re-add Dia format
+            trimmed_original = ' '.join(original_words[:original_words_to_keep])
+            original_text = f"[S1] {trimmed_original}"  # Re-add Dia format
             english_text = ' '.join(english_words[:english_words_to_keep])
             
-            logger.info(f"Speaker {speaker}: Adjusted text from {len(ref_segment.get('english_text', '').split())} to {len(english_text.split())} words")
+            logger.info(f"Speaker {speaker}: Adjusted text from {len(ref_segment.get('original_text', '').split())} to {len(trimmed_original.split())} words (original) and {len(english_text.split())} words (english)")
         
         # Save reference metadata
         ref_metadata = {

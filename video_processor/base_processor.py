@@ -155,8 +155,8 @@ class AudioProcessor:
             seeds_used = {}
             cloned_by_speaker = {}
             
-            # Use constant seed for consistency
-            speaker_seed = seed or 12345
+            # Base seed for generating speaker-specific seeds
+            base_seed = seed or 12345
             
             # Process each speaker separately
             for speaker_dir in segments_path.iterdir():
@@ -171,7 +171,14 @@ class AudioProcessor:
                 if not segments_subdir.exists():
                     continue
                 
+                # Generate unique seed for each speaker but consistent for same speaker
+                # Use hash of speaker name to create deterministic but different seeds
+                speaker_seed = base_seed + hash(speaker) % 10000
+                if speaker_seed < 0:
+                    speaker_seed = abs(speaker_seed)
+                
                 seeds_used[speaker] = speaker_seed
+                logger.info(f"Speaker {speaker}: Using seed {speaker_seed}")
                 
                 # Load reference audio for this speaker
                 reference_audio_path = None

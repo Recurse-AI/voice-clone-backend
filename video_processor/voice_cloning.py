@@ -73,6 +73,7 @@ class VoiceCloningService:
             # Get reference audio from first segment
             if segments and segments[0].get('reference_audio_path'):
                 reference_audio_path = segments[0]['reference_audio_path']
+                logger.info(f"Using reference audio: {reference_audio_path}")
             
             # Process each segment individually for better quality
             for segment in segments:
@@ -84,7 +85,10 @@ class VoiceCloningService:
                     
                     # Create proper Dia text format
                     speaker = segment.get('speaker', 'A')
-                    dia_text = f"[S1] {english_text.strip()}"
+                    if not english_text.startswith('[S'):
+                        dia_text = f"[S1] {english_text.strip()}"
+                    else:
+                        dia_text = english_text.strip()
                     
                     # Generate audio with reference
                     cloned_audio = self._generate_single_segment(

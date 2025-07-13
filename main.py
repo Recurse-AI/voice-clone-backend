@@ -157,7 +157,7 @@ async def process_video(
     temperature: float = Form(settings.DIA_TEMPERATURE, description="Voice cloning temperature"),
     cfg_scale: float = Form(settings.DIA_CFG_SCALE, description="CFG scale for voice cloning"),
     top_p: float = Form(settings.DIA_TOP_P, description="Top-p for voice cloning"),
-    speed_factor: float = Form(0.92, description="Speed factor for voice cloning (0.5-1.5, default 0.92)"),
+    speed_factor: float = Form(0.92, description="Speed factor for voice cloning (0.5-1.5, default 0.92)"), 
     target_language: str = Form("English", description="Target language for translation"),
     language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
     speakers_expected: Optional[int] = Form(None, description="Expected number of speakers (1-10)")
