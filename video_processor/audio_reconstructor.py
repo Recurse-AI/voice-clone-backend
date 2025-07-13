@@ -123,19 +123,20 @@ class AudioReconstructor:
                 end_sample = max(start_sample + 1, min(end_sample, total_samples))
                 
                 if item['segment_type'] == 'speech':
+                    # Load cloned audio for speech segments
                     cloned_audio = self._load_cloned_speech_audio(segments_path, item)
                     
                     if cloned_audio is not None:
-                        original_audio = self._load_original_speech_audio(segments_path, item)
-                        if original_audio is not None:
-                            target_rms = self._calculate_rms(original_audio)
-                            cloned_audio = self._match_target_volume(cloned_audio, target_rms, gain_db=3.0)
-                        
+                        # Simple placement - no complex volume matching
                         expected_samples = end_sample - start_sample
                         if len(cloned_audio) != expected_samples:
                             cloned_audio = self._adjust_length(cloned_audio, expected_samples)
                         
+                        # Place cloned audio directly
                         final_audio[start_sample:end_sample] = cloned_audio
+                        print(f"Placed cloned audio: {item['start']:.2f}s-{item['end']:.2f}s, speaker: {item.get('speaker', 'unknown')}")
+                    else:
+                        print(f"WARNING: No cloned audio found for segment {item['start']:.2f}s-{item['end']:.2f}s")
                         
                 elif item['segment_type'] == 'silent':
                     duration = item['end'] - item['start']
@@ -151,10 +152,13 @@ class AudioReconstructor:
     
     def _load_cloned_speech_audio(self, segments_path: Path, segment: Dict) -> Optional[np.ndarray]:
         """Load cloned audio for speech segment"""
-        speaker = segment['speaker']
+        speaker = segment.get('speaker', 'A')
         speaker_dir = segments_path / f"speaker_{speaker}" / "segments"
         
+        print(f"Looking for cloned audio in: {speaker_dir}")
+        
         if not speaker_dir.exists():
+            print(f"Speaker directory not found: {speaker_dir}")
             return None
         
         # Find matching segment by timing
@@ -163,7 +167,7 @@ class AudioReconstructor:
                 with open(json_file, 'r', encoding='utf-8') as f:
                     seg_data = json.load(f)
                 
-                # Check timing match (with tolerance for speaker-turn based segments)
+                # Check timing match (with tolerance)
                 if (abs(seg_data.get('start', 0) - segment['start']) < 0.1 and 
                     abs(seg_data.get('end', 0) - segment['end']) < 0.1):
                     
@@ -174,20 +178,20 @@ class AudioReconstructor:
                         cloned_file = f"cloned_{audio_file}"
                         cloned_path = speaker_dir / cloned_file
                         
+                        print(f"Checking cloned file: {cloned_path}")
+                        
                         if cloned_path.exists():
                             audio, _ = sf.read(cloned_path)
+                            print(f"Found cloned audio: {cloned_path}, length: {len(audio)} samples")
                             return audio
-                        
-                        # Fallback to original segment if cloned doesn't exist
-                        original_path = speaker_dir / audio_file
-                        if original_path.exists():
-                            audio, _ = sf.read(original_path)
-                            return audio
+                        else:
+                            print(f"Cloned file not found: {cloned_path}")
                         
             except Exception as e:
                 logger.warning(f"Error loading segment {json_file}: {str(e)}")
                 continue
         
+        print(f"No cloned audio found for segment {segment['start']:.2f}s-{segment['end']:.2f}s")
         return None
     
     def _load_original_speech_audio(self, segments_path: Path, segment: Dict) -> Optional[np.ndarray]:

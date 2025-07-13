@@ -150,7 +150,7 @@ class VoiceCloningService:
             return None
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Simple audio length adjustment"""
+        """Stretch cloned audio to match original duration exactly"""
         if len(audio) == 0:
             return audio
             
@@ -161,20 +161,14 @@ class VoiceCloningService:
         if current_samples == target_samples:
             return audio
         
-        # Simple speed adjustment for small differences
-        ratio = target_samples / current_samples
+        # Always use interpolation to stretch/compress audio to exact target length
+        # This ensures cloned audio matches original timing precisely
+        indices = np.linspace(0, current_samples - 1, target_samples)
+        stretched_audio = np.interp(indices, np.arange(current_samples), audio)
         
-        if 0.9 <= ratio <= 1.1:
-            # Use numpy interpolation for small adjustments
-            indices = np.linspace(0, current_samples - 1, target_samples)
-            return np.interp(indices, np.arange(current_samples), audio)
+        print(f"Audio stretched: {current_samples} -> {target_samples} samples ({current_samples/sample_rate:.2f}s -> {target_duration:.2f}s)")
         
-        # For larger differences, just truncate or pad
-        if current_samples > target_samples:
-            return audio[:target_samples]
-        else:
-            padding = np.zeros(target_samples - current_samples)
-            return np.concatenate([audio, padding])
+        return stretched_audio
     
     def _get_reference_transcript(self, reference_path: str) -> str:
         """Get reference transcript from metadata"""
