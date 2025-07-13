@@ -109,11 +109,142 @@ class FileManager:
                 with open(metadata_path, 'w', encoding='utf-8') as f:
                     json.dump(metadata, f, ensure_ascii=False, indent=2)
     
+    def save_reference_segments(self, reference_segments: Dict[str, Dict], 
+                               audio: np.ndarray, sr: int, base_dir: Path, 
+                               speakers: List[str]):
+        """Save reference segments for each speaker with improved logic"""
+        for speaker in speakers:
+            speaker_dir = base_dir / f"speaker_{speaker}" / "reference"
+            
+            # Clear existing reference files to avoid duplicates
+            if speaker_dir.exists():
+                for existing_file in speaker_dir.glob("*"):
+                    if existing_file.is_file():
+                        existing_file.unlink()
+            
+            if speaker not in reference_segments:
+                # Create a note that no reference was found
+                no_ref_note = {
+                    'speaker': speaker,
+                    'reference_type': 'none',
+                    'note': 'No suitable reference segment found for this speaker',
+                    'reason': 'Insufficient audio duration or quality'
+                }
+                
+                no_ref_path = speaker_dir / f"speaker_{speaker}_NO_REFERENCE.json"
+                with open(no_ref_path, 'w', encoding='utf-8') as f:
+                    json.dump(no_ref_note, f, ensure_ascii=False, indent=2)
+                continue
+            
+            ref_segment = reference_segments[speaker]
+            
+            # Handle composite references differently
+            if ref_segment and ref_segment.get('is_composite', False):
+                self._save_composite_reference(ref_segment, speaker_dir, base_dir, speaker)
+                continue
+            
+            # Save regular reference
+            self._save_regular_reference(ref_segment, audio, sr, speaker_dir, base_dir, speaker)
+    
+    def _save_regular_reference(self, ref_segment: Dict, audio: np.ndarray, sr: int, 
+                               speaker_dir: Path, base_dir: Path, speaker: str):
+        """Save regular reference segment with audio"""
+        start_time = ref_segment.get('start', 0)
+        end_time = ref_segment.get('end', 5)
+        duration = ref_segment.get('duration', 5)
+        
+        # Extract reference audio
+        start_sample = int(start_time * sr)
+        end_sample = int(end_time * sr)
+        
+        # Ensure we don't exceed audio bounds
+        if end_sample > len(audio):
+            end_sample = len(audio)
+        if start_sample >= end_sample:
+            start_sample = max(0, end_sample - int(5 * sr))  # Fallback to 5 seconds minimum
+        
+        reference_audio = audio[start_sample:end_sample]
+        
+        # Save reference audio with consistent naming
+        ref_audio_name = f"speaker_{speaker}_REFERENCE.wav"
+        ref_audio_path = speaker_dir / ref_audio_name
+        sf.write(ref_audio_path, reference_audio, sr)
+        
+        # Get clean English text
+        english_text = ref_segment.get('english_text', ref_segment.get('text', f'Reference for speaker {speaker}'))
+        original_text = ref_segment.get('original_text', ref_segment.get('text', english_text))
+        
+        # Save reference metadata
+        ref_metadata = {
+            'speaker': speaker,
+            'reference_audio': ref_audio_name,
+            'start': start_time,
+            'end': end_time,
+            'duration': duration,
+            'english_text': english_text,
+            'original_text': original_text,
+            'word_count': ref_segment.get('word_count', len(english_text.split())),
+            'confidence': ref_segment.get('confidence', 0.5),
+            'selected_reason': 'best_available_segment',
+            'reference_quality': self._assess_reference_quality(ref_segment)
+        }
+        
+        ref_metadata_path = speaker_dir / f"speaker_{speaker}_REFERENCE_metadata.json"
+        with open(ref_metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(ref_metadata, f, ensure_ascii=False, indent=2)
+    
+    def _assess_reference_quality(self, segment: Dict) -> str:
+        """Assess reference quality for better feedback"""
+        duration = segment.get('duration', 0)
+        word_count = segment.get('word_count', 0)
+        confidence = segment.get('confidence', 0)
+        
+        # Assess based on criteria
+        if duration >= 8 and word_count >= 20 and confidence >= 0.7:
+            return 'excellent'
+        elif duration >= 5 and word_count >= 15 and confidence >= 0.5:
+            return 'good'
+        elif duration >= 3 and word_count >= 10 and confidence >= 0.3:
+            return 'acceptable'
+        else:
+            return 'poor'
+    
+    def _save_composite_reference(self, ref_segment: Dict, speaker_dir: Path, 
+                                 base_dir: Path, speaker: str):
+        """Save composite reference created from mixed segments"""
+        ref_metadata = {
+            'speaker': speaker,
+            'reference_type': 'composite',
+            'source': ref_segment.get('source', 'mixed_segments'),
+            'english_text': ref_segment.get('english_text', ref_segment.get('text', '')),
+            'original_text': ref_segment.get('original_text', ''),
+            'word_count': ref_segment.get('word_count', 0),
+            'estimated_duration': ref_segment.get('duration', 10.0),
+            'confidence': ref_segment.get('confidence', 0.5),
+            'is_composite': True,
+            'note': 'Composite reference created from mixed segments - audio will be generated during cloning'
+        }
+        
+        ref_metadata_path = speaker_dir / f"speaker_{speaker}_COMPOSITE_REFERENCE_metadata.json"
+        with open(ref_metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(ref_metadata, f, ensure_ascii=False, indent=2)
+    
     def save_metadata(self, transcript_data: Dict, segments: List[Dict], 
                      silent_parts: List[Tuple[float, float]], 
                      base_dir: Path, audio_id: str, audio_path: str, 
                      additional_metadata: Optional[Dict] = None):
-        """Save comprehensive metadata"""
+        """Save comprehensive metadata with improved segment analysis"""
+        # Calculate better statistics
+        total_speech_duration = sum(seg['duration'] for seg in segments)
+        total_silent_duration = sum(end - start for start, end in silent_parts)
+        
+        # Analyze segment quality
+        segment_quality = {
+            'high_quality': len([s for s in segments if s.get('confidence', 0) > 0.7]),
+            'medium_quality': len([s for s in segments if 0.4 <= s.get('confidence', 0) <= 0.7]),
+            'low_quality': len([s for s in segments if s.get('confidence', 0) < 0.4])
+        }
+        
         metadata = {
             'audio_id': audio_id,
             'original_audio_path': audio_path,
@@ -121,11 +252,20 @@ class FileManager:
             'speakers': transcript_data.get('speakers', ['A']),
             'total_segments': len(segments),
             'total_duration': transcript_data.get('duration', 0),
+            'total_speech_duration': total_speech_duration,
+            'total_silent_duration': total_silent_duration,
+            'speech_ratio': total_speech_duration / max(transcript_data.get('duration', 1), 1),
             'segments_by_speaker': {},
+            'segment_quality': segment_quality,
             'silent_parts_count': len(silent_parts),
             'segments_info': segments,
             'processing_timestamp': datetime.now().isoformat(),
-            'dia_guidelines_followed': True,
+            'improvements_applied': [
+                'better_gap_detection',
+                'improved_reference_selection',
+                'enhanced_word_timing',
+                'reduced_silent_parts'
+            ],
             'raw_assemblyai_response': transcript_data.get('raw_assemblyai_response', {})
         }
         
@@ -133,22 +273,12 @@ class FileManager:
         if additional_metadata:
             metadata.update(additional_metadata)
         
-        # Count segments by speaker with proper handling of mixed segments
+        # Count segments by speaker
         for segment in segments:
             speaker = segment.get('speaker', 'A')
-            
-            # For mixed segments, count toward each speaker involved
-            if segment.get('is_mixed', False) and segment.get('speakers'):
-                # Mixed segment - count toward each speaker involved
-                for mixed_speaker in segment.get('speakers', []):
-                    if mixed_speaker not in metadata['segments_by_speaker']:
-                        metadata['segments_by_speaker'][mixed_speaker] = 0
-                    metadata['segments_by_speaker'][mixed_speaker] += 1
-            else:
-                # Pure segment - count toward the single speaker
-                if speaker not in metadata['segments_by_speaker']:
-                    metadata['segments_by_speaker'][speaker] = 0
-                metadata['segments_by_speaker'][speaker] += 1
+            if speaker not in metadata['segments_by_speaker']:
+                metadata['segments_by_speaker'][speaker] = 0
+            metadata['segments_by_speaker'][speaker] += 1
         
         # Save metadata
         metadata_path = base_dir / "metadata" / f"{audio_id}_metadata.json"
@@ -157,88 +287,6 @@ class FileManager:
         
         # Create and save timeline
         self._create_timeline(segments, silent_parts, base_dir, transcript_data.get('duration', 0))
-    
-    def save_reference_segments(self, reference_segments: Dict[str, Dict], 
-                               audio: np.ndarray, sr: int, base_dir: Path, 
-                               speakers: List[str]):
-        """Save reference segments for each speaker with proper Dia formatting"""
-        for speaker in speakers:
-            if speaker not in reference_segments:
-                continue
-            
-            ref_segment = reference_segments[speaker]
-            speaker_dir = base_dir / f"speaker_{speaker}" / "reference"
-            
-            # Handle composite references differently
-            if ref_segment and ref_segment.get('is_composite', False):
-                # Save composite reference metadata
-                self._save_composite_reference(ref_segment, speaker_dir, base_dir, speaker)
-                continue
-            
-            start_time = ref_segment.get('start', 0)
-            end_time = ref_segment.get('end', 5)
-            duration = ref_segment.get('duration', 5)
-            
-            # Extract reference audio
-            start_sample = int(start_time * sr)
-            end_sample = int(end_time * sr)
-            
-            # Ensure we don't exceed audio bounds
-            if end_sample > len(audio):
-                end_sample = len(audio)
-            if start_sample >= end_sample:
-                start_sample = max(0, end_sample - int(5 * sr))  # Fallback to 5 seconds minimum
-            
-            reference_audio = audio[start_sample:end_sample]
-            
-            # Save reference audio
-            ref_audio_name = f"{base_dir.name}_speaker_{speaker}_REFERENCE.wav"
-            ref_audio_path = speaker_dir / ref_audio_name
-            sf.write(ref_audio_path, reference_audio, sr)
-            
-            # Get clean English text (already cleaned by segment manager)
-            english_text = ref_segment.get('text', f'Reference for speaker {speaker}')
-            original_text = ref_segment.get('original_text', english_text)
-            
-            # Save reference metadata with safe access
-            ref_metadata = {
-                'speaker': speaker,
-                'reference_audio': ref_audio_name,
-                'start': start_time,
-                'end': end_time,
-                'duration': duration,
-                'text': english_text,  # Clean English text for reference
-                'original_text': original_text,
-                'dia_text': ref_segment.get('dia_text', f'[S1] {english_text}'),
-                'word_count': ref_segment.get('word_count', len(english_text.split())),
-                'confidence': ref_segment.get('confidence', 0.5),
-                'selected_reason': 'optimal_word_count_and_quality'
-            }
-            
-            ref_metadata_path = speaker_dir / f"{base_dir.name}_speaker_{speaker}_REFERENCE_metadata.json"
-            with open(ref_metadata_path, 'w', encoding='utf-8') as f:
-                json.dump(ref_metadata, f, ensure_ascii=False, indent=2)
-    
-    def _save_composite_reference(self, ref_segment: Dict, speaker_dir: Path, 
-                                 base_dir: Path, speaker: str):
-        """Save composite reference created from mixed segments"""
-        # For composite references, we save metadata only (no audio file)
-        # The voice cloning service will handle creating the reference from mixed segments
-        
-        ref_metadata = {
-            'speaker': speaker,
-            'reference_type': 'composite',
-            'source': ref_segment.get('source', 'mixed_segments'),
-            'text': ref_segment.get('text', ''),
-            'word_count': ref_segment.get('word_count', 0),
-            'estimated_duration': ref_segment.get('duration', 10.0),
-            'is_composite': True,
-            'note': 'Composite reference created from mixed segments - audio will be generated during cloning'
-        }
-        
-        ref_metadata_path = speaker_dir / f"{base_dir.name}_speaker_{speaker}_COMPOSITE_REFERENCE_metadata.json"
-        with open(ref_metadata_path, 'w', encoding='utf-8') as f:
-            json.dump(ref_metadata, f, ensure_ascii=False, indent=2)
     
     def save_multi_speaker_reference(self, audio: np.ndarray, sr: int, 
                                    base_dir: Path, speakers: List[str]):

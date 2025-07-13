@@ -143,8 +143,9 @@ class AudioProcessor:
     
     def clone_voice_segments_speaker_wise(self, segments_dir: str, audio_id: str, 
                                         temperature: float = 1.3, cfg_scale: float = 3.0, 
-                                        top_p: float = 0.95, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Clone voice segments speaker by speaker for optimal batch processing"""
+                                        top_p: float = 0.95, seed: Optional[int] = None,
+                                        speed_factor: float = 0.92) -> Dict[str, Any]:
+        """Clone voice segments speaker by speaker with speed control"""
         if not self.voice_cloning_service.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -154,8 +155,8 @@ class AudioProcessor:
             seeds_used = {}
             cloned_by_speaker = {}
             
-            # Generate seeds for each speaker
-            import random
+            # Use constant seed for consistency
+            speaker_seed = seed or 12345
             
             # Process each speaker separately
             for speaker_dir in segments_path.iterdir():
@@ -169,18 +170,6 @@ class AudioProcessor:
                 # Check if directories exist
                 if not segments_subdir.exists():
                     continue
-                
-                # Generate unique seed for this speaker
-                # TODO: Dynamic seed generation - commented for now, using constant seed
-                # if seed is not None:
-                #     # Use provided seed as base and add speaker offset
-                #     speaker_seed = seed + hash(speaker) % 1000
-                # else:
-                #     # Generate completely random seed for each speaker
-                #     speaker_seed = random.randint(100000, 999999)
-                
-                # Using constant seed for now
-                speaker_seed = 12345
                 
                 seeds_used[speaker] = speaker_seed
                 
@@ -220,9 +209,9 @@ class AudioProcessor:
                 
                 logger.info(f"Processing {len(speaker_segments)} segments for speaker {speaker}")
                 
-                # Clone all segments for this speaker using new logic
+                # Clone all segments for this speaker with speed control
                 cloning_result = self.voice_cloning_service.clone_voice_segments(
-                    speaker_segments, temperature, cfg_scale, top_p, speaker_seed
+                    speaker_segments, temperature, cfg_scale, top_p, speaker_seed, speed_factor
                 )
                 
                 if not cloning_result.get('success', False):
@@ -240,7 +229,6 @@ class AudioProcessor:
                             # Get original segment file path
                             segment_json_path = Path(segment_data['segment_file'])
                             wav_filename = segment_json_path.stem + '.wav'
-                            original_audio_path = segments_dir_path / wav_filename
                             
                             # Save cloned audio
                             cloned_filename = f"cloned_{segment_json_path.stem}.wav"
@@ -248,7 +236,7 @@ class AudioProcessor:
                             sf.write(cloned_path, cloned_segment['cloned_audio'], 44100)
                             speaker_successful += 1
                             
-                            logger.info(f"Saved cloned audio: {cloned_filename} (type: {cloned_segment.get('type', 'unknown')})")
+                            logger.info(f"Saved cloned audio: {cloned_filename}")
                                 
                         except Exception as e:
                             logger.error(f"Failed to save cloned audio: {str(e)}")
@@ -272,7 +260,8 @@ class AudioProcessor:
                 "cloned_by_speaker": cloned_by_speaker,
                 "seeds_used": seeds_used,
                 "audio_id": audio_id,
-                "processing_method": "smart_continuous_non_continuous",
+                "processing_method": "improved_single_segment",
+                "speed_factor": speed_factor,
                 "reference_selection": {speaker: {"path": info["reference_used"], "seed": info["seed_used"]} 
                                       for speaker, info in cloned_by_speaker.items()}
             }
@@ -280,6 +269,15 @@ class AudioProcessor:
         except Exception as e:
             logger.error(f"Voice cloning failed: {str(e)}")
             return {"success": False, "error": str(e)}
+    
+    def clone_voice_segments(self, segments_dir: str, audio_id: str, 
+                           temperature: float = 1.3, cfg_scale: float = 3.0, 
+                           top_p: float = 0.95, seed: Optional[int] = None,
+                           speed_factor: float = 0.92) -> Dict[str, Any]:
+        """Clone voice segments with speed control"""
+        return self.clone_voice_segments_speaker_wise(
+            segments_dir, audio_id, temperature, cfg_scale, top_p, seed, speed_factor
+        )
     
     def _preserve_exact_length(self, cloned_audio: np.ndarray, target_duration: float, 
                                sample_rate: int) -> np.ndarray:
@@ -294,14 +292,6 @@ class AudioProcessor:
         else:
             padding = np.zeros(target_samples - current_samples)
             return np.concatenate([cloned_audio, padding])
-    
-    def clone_voice_segments(self, segments_dir: str, audio_id: str, 
-                           temperature: float = 1.3, cfg_scale: float = 3.0, 
-                           top_p: float = 0.95, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Clone voice segments using speaker-wise batch processing"""
-        return self.clone_voice_segments_speaker_wise(
-            segments_dir, audio_id, temperature, cfg_scale, top_p, seed
-        )
     
     def reconstruct_final_audio(self, segments_dir: str, audio_id: str, 
                                include_instruments: bool = False,

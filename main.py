@@ -157,6 +157,7 @@ async def process_video(
     temperature: float = Form(settings.DIA_TEMPERATURE, description="Voice cloning temperature"),
     cfg_scale: float = Form(settings.DIA_CFG_SCALE, description="CFG scale for voice cloning"),
     top_p: float = Form(settings.DIA_TOP_P, description="Top-p for voice cloning"),
+    speed_factor: float = Form(0.92, description="Speed factor for voice cloning (0.5-1.5, default 0.92)"),
     target_language: str = Form("English", description="Target language for translation"),
     language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
     speakers_expected: Optional[int] = Form(None, description="Expected number of speakers (1-10)")
@@ -200,7 +201,7 @@ async def process_video(
     background_tasks.add_task(
         process_video_background,
         video_url, audio_id, include_instruments, generate_subtitles,
-        temperature, cfg_scale, top_p, target_language, language_code, speakers_expected
+        temperature, cfg_scale, top_p, speed_factor, target_language, language_code, speakers_expected
     )
     
     logger.info(f"Background processing task started for audio_id: {audio_id}")
@@ -217,7 +218,7 @@ async def process_video(
 
 def process_video_background(
     video_url: str, audio_id: str, include_instruments: bool,
-    generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float,
+    generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float, speed_factor: float,
     target_language: str, language_code: Optional[str], speakers_expected: Optional[int]
 ):
     # Convert empty string to None for proper handling
@@ -316,7 +317,8 @@ def process_video_background(
             audio_id,
             temperature=temperature,
             cfg_scale=cfg_scale,
-            top_p=top_p
+            top_p=top_p,
+            speed_factor=speed_factor
         )
         
         if not cloning_result["success"]:

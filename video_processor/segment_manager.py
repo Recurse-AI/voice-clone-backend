@@ -19,68 +19,89 @@ class SegmentManager:
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.words_per_chunk = 60  # Increased for longer segments
-        self.max_duration = 20.0   # Increased max duration
-        self.min_words = 15        # Increased minimum words for longer segments
-        self.min_duration = 4.0    # Increased minimum duration for longer segments
+        self.words_per_chunk = 80  # Increased for bigger segments
+        self.max_duration = 25.0   # Increased for bigger segments  
+        self.min_words = 20        # Increased minimum words for bigger segments
+        self.min_duration = 8.0    # Much larger minimum duration for bigger segments
+        self.max_gap = 6.0         # Increased gap tolerance for bigger segments
+        self.min_silent_duration = 3.0  # Minimum duration to consider as silent
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Create segments optimized for overlapping voice cloning"""
+        """Create larger segments with better vocal/silent separation"""
         words = transcript_data.get('words', [])
         if not words:
             return []
         
-        # Create initial segments with speaker awareness
+        # Create larger segments with aggressive combining
+        segments = self._create_large_segments(words)
+        
+        # Further combine segments from same speaker
+        combined_segments = self._aggressively_combine_segments(segments)
+        
+        return combined_segments
+    
+    def _create_large_segments(self, words: List[Dict]) -> List[Dict]:
+        """Create larger segments by being more lenient with gaps"""
         segments = []
         current_chunk = []
         current_speaker = None
         
-        for word in words:
+        for i, word in enumerate(words):
             speaker = word.get('speaker', 'A')
+            word_start = word.get('start', 0) / 1000.0
             
-            # Check if we need to split due to speaker change or chunk size
-            should_split = (
-                (speaker != current_speaker and current_chunk) or 
-                len(current_chunk) >= self.words_per_chunk
-            )
-            
-            if should_split:
-                if current_chunk:
-                    segment = self._create_segment(current_chunk, current_speaker or 'A')
-                    if segment:
-                        segments.append(segment)
-                current_chunk = [word]
-                current_speaker = speaker
+            if current_chunk:
+                prev_word = current_chunk[-1]
+                prev_end = prev_word.get('end', 0) / 1000.0
+                gap = word_start - prev_end
+                
+                # Much more lenient - only split on very large gaps or speaker change
+                should_split = (
+                    (speaker != current_speaker) or
+                    (gap > self.max_gap) or  # Increased gap tolerance
+                    (len(current_chunk) >= self.words_per_chunk)
+                )
+                
+                if should_split:
+                    if current_chunk:
+                        segment = self._create_large_segment(current_chunk, current_speaker or 'A')
+                        if segment:
+                            segments.append(segment)
+                    current_chunk = [word]
+                    current_speaker = speaker
+                else:
+                    current_chunk.append(word)
             else:
                 current_chunk.append(word)
                 current_speaker = speaker
         
         # Add final chunk
         if current_chunk:
-            segment = self._create_segment(current_chunk, current_speaker or 'A')
+            segment = self._create_large_segment(current_chunk, current_speaker or 'A')
             if segment:
                 segments.append(segment)
         
-        # Optimize segments for overlapping approach
-        optimized_segments = self._optimize_for_overlapping(segments)
-        
-        return optimized_segments
+        return segments
     
-    def _create_segment(self, words: List[Dict], speaker: str) -> Optional[Dict]:
-        """Create a segment from words with validation"""
-        if len(words) < self.min_words:
+    def _create_large_segment(self, words: List[Dict], speaker: str) -> Optional[Dict]:
+        """Create larger segments with more lenient validation"""
+        if len(words) < 5:  # Very lenient word count
             return None
             
         start_time = words[0]['start'] / 1000.0
         end_time = words[-1]['end'] / 1000.0
         duration = end_time - start_time
         
-        # Validate duration - more lenient
-        if duration > self.max_duration:
+        # More lenient duration check
+        if duration < 1.0:  # Very lenient minimum
             return None
-            
+        
         text = ' '.join(w['text'] for w in words)
         confidence = np.mean([w.get('confidence', 0.5) for w in words])
+        
+        # Basic quality check
+        if len(text.strip()) < 3:
+            return None
         
         return {
             'start': start_time,
@@ -93,57 +114,143 @@ class SegmentManager:
             'words': words
         }
     
-    def _optimize_for_overlapping(self, segments: List[Dict]) -> List[Dict]:
-        """Optimize segments for overlapping voice cloning approach"""
+    def _aggressively_combine_segments(self, segments: List[Dict]) -> List[Dict]:
+        """Aggressively combine segments from same speaker to make bigger segments"""
         if not segments:
             return segments
-            
-        # First filter by basic quality
-        filtered = []
-        for segment in segments:
-            if (segment['confidence'] >= 0.3 and 
-                segment['duration'] >= self.min_duration and 
-                segment['word_count'] >= self.min_words):
-                filtered.append(segment)
         
-        # Then combine small segments to make longer ones
-        optimized = self._combine_small_segments(filtered)
-        
-        return optimized
-    
-    def _combine_small_segments(self, segments: List[Dict]) -> List[Dict]:
-        """Combine small segments from same speaker to create longer segments"""
-        if not segments:
-            return segments
-            
         combined = []
         i = 0
         
         while i < len(segments):
             current_segment = segments[i]
             
-            # Check if current segment is small and can be combined
-            if (current_segment['duration'] < 8.0 and 
-                current_segment['word_count'] < 25 and 
-                i + 1 < len(segments)):
-                
-                next_segment = segments[i + 1]
-                
-                # Check if next segment is from same speaker and close in time
-                if (next_segment['speaker'] == current_segment['speaker'] and
-                    next_segment['start'] - current_segment['end'] < 2.0):
-                    
-                    # Combine segments
-                    combined_segment = self._merge_segments(current_segment, next_segment)
-                    combined.append(combined_segment)
-                    i += 2  # Skip next segment as it's merged
-                    continue
+            # Look for consecutive segments from same speaker to combine
+            segments_to_combine = [current_segment]
+            j = i + 1
             
-            # Add segment as is
-            combined.append(current_segment)
-            i += 1
+            while j < len(segments):
+                next_segment = segments[j]
+                gap = next_segment['start'] - current_segment['end']
+                
+                # Combine if same speaker and gap is reasonable
+                if (next_segment['speaker'] == current_segment['speaker'] and 
+                    gap < 8.0):  # Allow larger gaps for combining
+                    
+                    segments_to_combine.append(next_segment)
+                    current_segment = next_segment  # Update end time
+                    j += 1
+                else:
+                    break
+            
+            # Create combined segment if we have multiple segments
+            if len(segments_to_combine) > 1:
+                combined_segment = self._merge_multiple_segments(segments_to_combine)
+                combined.append(combined_segment)
+            else:
+                # Check if single segment meets minimum requirements
+                if (current_segment['duration'] >= self.min_duration and 
+                    current_segment['word_count'] >= self.min_words):
+                    combined.append(current_segment)
+                elif len(combined) > 0 and combined[-1]['speaker'] == current_segment['speaker']:
+                    # Merge with previous segment if same speaker
+                    combined[-1] = self._merge_segments(combined[-1], current_segment)
+                else:
+                    combined.append(current_segment)  # Keep even if small
+            
+            i = j
         
         return combined
+    
+    def _merge_multiple_segments(self, segments: List[Dict]) -> Dict:
+        """Merge multiple segments into one large segment"""
+        if not segments:
+            return None
+        
+        # Combine all words
+        all_words = []
+        for seg in segments:
+            all_words.extend(seg.get('words', []))
+        
+        # Combine text
+        combined_text = ' '.join(seg['text'] for seg in segments)
+        
+        # Calculate combined metrics
+        start_time = segments[0]['start']
+        end_time = segments[-1]['end']
+        duration = end_time - start_time
+        word_count = sum(seg['word_count'] for seg in segments)
+        confidence = sum(seg['confidence'] * seg['word_count'] for seg in segments) / word_count if word_count > 0 else 0.5
+        
+        return {
+            'start': start_time,
+            'end': end_time,
+            'duration': duration,
+            'text': combined_text,
+            'speaker': segments[0]['speaker'],
+            'word_count': word_count,
+            'confidence': confidence,
+            'words': all_words
+        }
+    
+    def identify_silent_parts(self, segments: List[Dict], total_duration: float) -> List[Tuple[float, float]]:
+        """Identify truly silent parts - only real gaps without any vocal"""
+        silent_parts = []
+        
+        if not segments:
+            return silent_parts
+        
+        # Only consider large gaps as silent (not small pauses)
+        for i in range(len(segments) - 1):
+            current_end = segments[i]['end']
+            next_start = segments[i + 1]['start']
+            gap_duration = next_start - current_end
+            
+            # Only mark as silent if gap is significant AND speakers are different
+            # This avoids marking speech pauses as silent
+            if (gap_duration >= self.min_silent_duration and
+                segments[i]['speaker'] != segments[i + 1]['speaker']):
+                
+                # Further filter: only very large gaps
+                if gap_duration >= 5.0:  # Only gaps of 5+ seconds
+                    silent_parts.append((current_end, next_start))
+        
+        return silent_parts
+    
+    def select_optimal_references(self, segments: List[Dict], speakers: List[str]) -> Dict[str, Dict]:
+        """Select references favoring larger segments"""
+        references = {}
+        
+        for speaker in speakers:
+            speaker_segments = [s for s in segments if s['speaker'] == speaker]
+            
+            if not speaker_segments:
+                continue
+            
+            # Sort by duration and word count - favor larger segments
+            speaker_segments.sort(
+                key=lambda x: (
+                    x['duration'],  # Prioritize duration first
+                    x['word_count'],
+                    x['confidence']
+                ), 
+                reverse=True
+            )
+            
+            # Select the largest segment as reference
+            best_segment = speaker_segments[0]
+            
+            # Very lenient criteria since we want larger segments
+            if (best_segment['confidence'] >= 0.2 and 
+                best_segment['duration'] >= 2.0 and
+                best_segment['word_count'] >= 5):
+                
+                references[speaker] = best_segment
+            else:
+                # If no segment meets criteria, use the longest anyway
+                references[speaker] = best_segment
+        
+        return references
     
     def _merge_segments(self, seg1: Dict, seg2: Dict) -> Dict:
         """Merge two segments into one longer segment"""
@@ -163,41 +270,16 @@ class SegmentManager:
             'words': combined_words
         }
     
-    def select_optimal_references(self, segments: List[Dict], speakers: List[str]) -> Dict[str, Dict]:
-        """Select optimal reference segments for each speaker"""
-        references = {}
-        
-        for speaker in speakers:
-            speaker_segments = [s for s in segments if s['speaker'] == speaker]
-            
-            # Sort by quality metrics - prefer longer segments
-            speaker_segments.sort(
-                key=lambda x: (x['confidence'], x['word_count'], x['duration']), 
-                reverse=True
-            )
-            
-            # Find best reference segment - prefer longer segments
-            for segment in speaker_segments:
-                if (segment['confidence'] >= 0.5 and 
-                    segment['duration'] >= 6.0 and 
-                    segment['duration'] <= 20.0 and
-                    segment['word_count'] >= 15):
-                    
-                    references[speaker] = segment
-                    break
-        
-        return references
-    
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int,
                             output_dir: Path, speakers: List[str], 
                             target_language: str, detected_language: str):
-        """Save segments optimized for overlapping voice cloning"""
+        """Save larger segments optimized for voice cloning"""
         output_dir.mkdir(parents=True, exist_ok=True)
         
         # First, select optimal references for each speaker
         references = self.select_optimal_references(segments, speakers)
         
-        # Process segments for overlapping approach
+        # Process segments with larger segment approach
         for i, segment in enumerate(segments):
             speaker = segment.get('speaker', 'A')
             speaker_dir = output_dir / f"speaker_{speaker}"
@@ -219,10 +301,10 @@ class SegmentManager:
                 audio_path = segments_dir / audio_filename
                 sf.write(audio_path, segment_audio, sr)
                 
-                # Process text for overlapping approach
+                # Process text for voice cloning
                 english_text = self.transcription_service.translate_text_clean(segment['text'])
                 
-                # Create metadata optimized for overlapping approach
+                # Create metadata for larger segments
                 metadata = {
                     'segment_index': i + 1,
                     'audio_file': audio_filename,
@@ -235,7 +317,8 @@ class SegmentManager:
                     'word_count': segment['word_count'],
                     'confidence': segment['confidence'],
                     'detected_language': detected_language,
-                    'target_language': target_language
+                    'target_language': target_language,
+                    'segment_type': 'large_combined'
                 }
                 
                 # Save metadata
@@ -254,7 +337,8 @@ class SegmentManager:
                         'reference_text': english_text,
                         'original_segment_index': i + 1,
                         'duration': segment['duration'],
-                        'confidence': segment['confidence']
+                        'confidence': segment['confidence'],
+                        'reference_type': 'large_segment'
                     }
                     reference_metadata_path = reference_dir / f"speaker_{speaker}_REFERENCE_metadata.json"
                     with open(reference_metadata_path, 'w', encoding='utf-8') as f:
@@ -270,21 +354,5 @@ class SegmentManager:
                 })
                 
             except Exception as e:
-                continue
-    
-    def identify_silent_parts(self, segments: List[Dict], total_duration: float) -> List[Tuple[float, float]]:
-        """Identify silent parts between segments"""
-        silent_parts = []
-        
-        if not segments:
-            return silent_parts
-        
-        # Find gaps between segments
-        for i in range(len(segments) - 1):
-            current_end = segments[i]['end']
-            next_start = segments[i + 1]['start']
-            
-            if next_start - current_end > 0.3:  # Gap > 0.3 seconds
-                silent_parts.append((current_end, next_start))
-        
-        return silent_parts 
+                logger.warning(f"Failed to save segment {i+1}: {str(e)}")
+                continue 

@@ -21,7 +21,7 @@ class TranscriptionService:
     def transcribe_audio(self, audio_path: str, language_code: Optional[str] = None, 
                         speakers_expected: Optional[int] = None) -> Dict[str, Any]:
         """
-        Transcribe audio using AssemblyAI Universal model
+        Transcribe audio using AssemblyAI Universal model with improved word timing
         
         Args:
             audio_path: Path to audio file
@@ -35,7 +35,9 @@ class TranscriptionService:
                 "auto_chapters": False,
                 "punctuate": True,
                 "format_text": True,
-                "speech_model": aai.SpeechModel.universal
+                "speech_model": aai.SpeechModel.universal,
+                "word_boost": ["um", "uh", "ah"],  # Boost common filler words
+                "boost_param": "high"  # High boost for better word detection
             }
             
             # Handle language detection vs manual language code
@@ -58,8 +60,8 @@ class TranscriptionService:
             if transcript.status == "error":
                 raise Exception(f"AssemblyAI transcription failed: {transcript.error}")
             
-            # Extract words with robust error handling
-            words = self._extract_words_from_transcript(transcript)
+            # Extract words with improved timing
+            words = self._extract_words_with_improved_timing(transcript)
             
             speakers = self._extract_speakers(words)
             
@@ -88,7 +90,7 @@ class TranscriptionService:
                 "words": words,
                 "speakers": speakers,
                 "duration": words[-1]['end'] / 1000 if words else 0,
-                "raw_assemblyai_response": raw_response,  # Store raw response for debugging
+                "raw_assemblyai_response": raw_response,
                 "metadata": {
                     "language_code": final_language_code,
                     "language_detection_used": not (language_code and language_code.strip()),
@@ -102,6 +104,122 @@ class TranscriptionService:
             
         except Exception as e:
             raise Exception(f"Transcription failed: {str(e)}")
+
+    def _extract_words_with_improved_timing(self, transcript) -> List[Dict[str, Any]]:
+        """Extract words with improved timing and gap detection"""
+        words = []
+        
+        # Try to extract from transcript.words first
+        if hasattr(transcript, 'words') and transcript.words:
+            prev_end = 0
+            
+            for word in transcript.words:
+                try:
+                    word_start = getattr(word, 'start', 0)
+                    word_end = getattr(word, 'end', 0)
+                    
+                    # Check for reasonable timing
+                    if word_start < prev_end:
+                        word_start = prev_end
+                    
+                    if word_end <= word_start:
+                        word_end = word_start + 200  # Default 200ms
+                    
+                    word_data = {
+                        "text": getattr(word, 'text', '').strip(),
+                        "start": word_start,
+                        "end": word_end,
+                        "speaker": self._get_word_speaker(word),
+                        "confidence": getattr(word, 'confidence', 0.5)
+                    }
+                    
+                    # Skip empty words
+                    if word_data["text"]:
+                        words.append(word_data)
+                        prev_end = word_end
+                        
+                except Exception as e:
+                    continue
+        
+        # Try to extract from utterances if words failed
+        if not words and hasattr(transcript, 'utterances') and transcript.utterances:
+            words = self._extract_words_from_utterances_improved(transcript.utterances)
+        
+        # Final fallback: create from transcript text
+        if not words and transcript.text:
+            words = self._create_fallback_words(transcript.text)
+        
+        return words
+    
+    def _extract_words_from_utterances_improved(self, utterances) -> List[Dict[str, Any]]:
+        """Extract words from utterances with better timing"""
+        words = []
+        
+        for utterance in utterances:
+            try:
+                utterance_speaker = getattr(utterance, 'speaker', 'A')
+                utterance_start = getattr(utterance, 'start', 0)
+                utterance_end = getattr(utterance, 'end', 5000)
+                utterance_text = getattr(utterance, 'text', '')
+                
+                if hasattr(utterance, 'words') and utterance.words:
+                    # Extract individual words
+                    for word in utterance.words:
+                        word_data = {
+                            "text": getattr(word, 'text', '').strip(),
+                            "start": getattr(word, 'start', utterance_start),
+                            "end": getattr(word, 'end', utterance_start + 500),
+                            "speaker": getattr(word, 'speaker', utterance_speaker),
+                            "confidence": getattr(word, 'confidence', 0.5)
+                        }
+                        
+                        if word_data["text"]:
+                            words.append(word_data)
+                else:
+                    # Create word-level data from utterance
+                    word_list = utterance_text.split()
+                    if word_list:
+                        word_duration = (utterance_end - utterance_start) / len(word_list)
+                        
+                        for i, word_text in enumerate(word_list):
+                            word_start = utterance_start + (i * word_duration)
+                            word_end = word_start + word_duration
+                            
+                            words.append({
+                                "text": word_text.strip(),
+                                "start": int(word_start),
+                                "end": int(word_end),
+                                "speaker": utterance_speaker,
+                                "confidence": 0.5
+                            })
+                            
+            except Exception as e:
+                continue
+                
+        return words
+    
+    def _create_fallback_words(self, text: str) -> List[Dict[str, Any]]:
+        """Create fallback word data when no word-level timing is available"""
+        words = []
+        word_list = text.split()
+        
+        if word_list:
+            # Estimate timing: 150ms per word on average
+            word_duration = 150
+            
+            for i, word_text in enumerate(word_list):
+                word_start = i * word_duration
+                word_end = word_start + word_duration
+                
+                words.append({
+                    "text": word_text.strip(),
+                    "start": word_start,
+                    "end": word_end,
+                    "speaker": "A",
+                    "confidence": 0.3  # Lower confidence for fallback
+                })
+        
+        return words
 
     def _extract_words_from_transcript(self, transcript) -> List[Dict[str, Any]]:
         """Extract words from transcript with comprehensive error handling"""
