@@ -236,8 +236,8 @@ Join our [Discord Server](https://discord.gg/bJq6vjRRKv) for discussions.
    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=nari-labs/dia&type=Date" />
  </picture>
 </a>
-from dia.model import Dia
-example code:
+<!-- from dia.model import Dia
+example code: -->
 
 <!-- model = Dia.from_pretrained("nari-labs/Dia-1.6B-0626", compute_dtype="float16")
 

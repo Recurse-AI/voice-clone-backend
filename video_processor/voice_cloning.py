@@ -1,7 +1,7 @@
 """
 Voice Cloning Module
 
-Simple voice cloning using Dia model with direct text-to-speech approach.
+Voice cloning using Dia model with overlapping approach for consistency.
 """
 
 import torch
@@ -15,6 +15,7 @@ from dia.model import Dia
 from config import settings
 import logging
 from pathlib import Path
+import tempfile
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +32,12 @@ def set_seed(seed: int):
 
 
 class VoiceCloningService:
-    """Simple voice cloning service using Dia model"""
+    """Voice cloning service with overlapping approach for consistency"""
     
     def __init__(self):
         self.dia_model = None
         self.device = settings.DIA_DEVICE
+        self.sample_rate = 44100
     
     def load_dia_model(self, repo_id: str = None) -> bool:
         """Load Dia model using official API"""
@@ -43,10 +45,8 @@ class VoiceCloningService:
             repo_id = repo_id or settings.DIA_MODEL_REPO
             compute_dtype = settings.DIA_COMPUTE_DTYPE if self.device == "cuda" else "float32"
             self.dia_model = Dia.from_pretrained(repo_id, compute_dtype=compute_dtype)
-            logger.info(f"Dia model loaded successfully from {repo_id}")
             return True
         except Exception as e:
-            logger.error(f"Error loading Dia model: {e}")
             raise Exception(f"Error loading Dia model: {e}")
         
     def is_model_loaded(self) -> bool:
@@ -56,25 +56,47 @@ class VoiceCloningService:
     def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.2,
                            cfg_scale: float = 3.0, top_p: float = 0.95,
                            seed: Optional[int] = None) -> Dict[str, Any]:
-        """Simple voice cloning for segments"""
+        """Voice cloning with overlapping approach for consistency"""
         if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
+        if not segments:
+            return {"success": False, "error": "No segments provided"}
+        
         try:
-            # TODO: Dynamic seed setting - commented for now, using constant seed
-            # if seed is not None:
-            #     set_seed(seed)
-            
-            # Using constant seed for now
-            set_seed(12345)
+            set_seed(seed or 12345)
             
             cloned_segments = []
+            previous_audio = None
             
-            # Process each segment directly - no complex grouping
-            for segment in segments:
-                cloned = self._clone_segment_direct(segment, temperature, cfg_scale, top_p)
-                if cloned:
-                    cloned_segments.append(cloned)
+            # Group segments by chunks for overlapping approach
+            chunks = self._group_segments_into_chunks(segments)
+            
+            for chunk_index, chunk_segments in enumerate(chunks):
+                # Generate chunk text with speaker overlap
+                chunk_text = self._create_chunk_text(chunk_segments, chunk_index > 0)
+                
+                # Generate audio for this chunk
+                chunk_audio = self._generate_chunk_audio(
+                    chunk_text, previous_audio, temperature, cfg_scale, top_p
+                )
+                
+                if chunk_audio is not None:
+                    # Extract individual segment audio from chunk
+                    segment_audios = self._extract_segment_audios(chunk_audio, chunk_segments)
+                    
+                    # Create cloned segment results
+                    for segment, audio in zip(chunk_segments, segment_audios):
+                        cloned_segments.append({
+                            "success": True,
+                            "original_data": segment,
+                            "cloned_audio": audio,
+                            "type": "overlapping",
+                            "chunk_index": chunk_index
+                        })
+                    
+                    # Store last part of audio for next chunk overlap
+                    previous_audio = self._get_overlap_audio(chunk_audio)
             
             return {
                 "success": True,
@@ -84,102 +106,140 @@ class VoiceCloningService:
             }
             
         except Exception as e:
-            logger.error(f"Voice cloning failed: {str(e)}")
             return {"success": False, "error": str(e)}
     
-    def _clone_segment_direct(self, segment: Dict, temperature: float,
-                            cfg_scale: float, top_p: float) -> Optional[Dict]:
-        """Clone a segment directly - clean approach"""
+    def _group_segments_into_chunks(self, segments: List[Dict]) -> List[List[Dict]]:
+        """Group segments into manageable chunks for processing"""
+        chunks = []
+        current_chunk = []
+        max_words_per_chunk = 40
+        current_words = 0
+        
+        for segment in segments:
+            segment_words = segment.get('word_count', 0)
+            
+            if current_words + segment_words > max_words_per_chunk and current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = [segment]
+                current_words = segment_words
+            else:
+                current_chunk.append(segment)
+                current_words += segment_words
+        
+        if current_chunk:
+            chunks.append(current_chunk)
+        
+        return chunks
+    
+    def _create_chunk_text(self, segments: List[Dict], include_overlap: bool) -> str:
+        """Create text for chunk with proper speaker formatting"""
+        chunk_lines = []
+        
+        # Add current chunk segments
+        for segment in segments:
+            speaker = segment.get('speaker', 'A')
+            speaker_tag = f"[S{1 if speaker == 'A' else 2}]"
+            english_text = segment.get('english_text', segment.get('text', ''))
+            chunk_lines.append(f"{speaker_tag} {english_text}")
+        
+        return " ".join(chunk_lines)
+    
+    def _generate_chunk_audio(self, text: str, previous_audio: Optional[np.ndarray],
+                            temperature: float, cfg_scale: float, top_p: float) -> Optional[np.ndarray]:
+        """Generate audio for a chunk with optional previous audio as prompt"""
         try:
-            # Get reference audio path
-            reference_audio_path = segment.get('reference_audio_path')
-            if not reference_audio_path or not os.path.exists(reference_audio_path):
-                logger.warning(f"No valid reference audio found for segment {segment.get('start', 0):.2f}s-{segment.get('end', 0):.2f}s")
-                return None
+            audio_prompt_path = None
             
-            # Get text for Dia (use dia_text if available, otherwise format from english_text)
-            dia_text = segment.get('dia_text', '')
-            if not dia_text:
-                english_text = segment.get('english_text', segment.get('text', ''))
-                dia_text = f"[S1] {english_text}"
+            if previous_audio is not None:
+                # Save previous audio as temporary prompt
+                audio_prompt_path = self._save_temp_audio(previous_audio)
             
-            # Get reference transcript for voice cloning
-            ref_transcript = self._get_reference_transcript(reference_audio_path)
-            combined_text = f"{ref_transcript} {dia_text}"
-
-            print(f"Combined text: {combined_text}")
-            print(f"Reference audio path: {reference_audio_path}")
-            # Generate cloned audio using Dia model
-            cloned_audio = self.dia_model.generate(
-                combined_text,
-                audio_prompt=reference_audio_path,
-                use_torch_compile=False,
-                cfg_scale=cfg_scale,
-                temperature=temperature,
-                top_p=top_p,
-                cfg_filter_top_k=50,
-                max_tokens=3072,
-                verbose=False  # Reduce noise
-            )
+            # Generate audio using Dia model
+            with torch.inference_mode():
+                audio = self.dia_model.generate(
+                    text,
+                    audio_prompt=audio_prompt_path,
+                    use_torch_compile=False,
+                    cfg_scale=cfg_scale,
+                    temperature=temperature,
+                    top_p=top_p,
+                    cfg_filter_top_k=50,
+                    max_tokens=3072,
+                    verbose=False
+                )
             
-            # Adjust audio length to match original duration
-            original_duration = segment.get('duration', 0)
-            if original_duration > 0 and len(cloned_audio) > 0:
-                cloned_audio = self._adjust_audio_length(cloned_audio, original_duration)
+            # Clean up temporary file
+            if audio_prompt_path and os.path.exists(audio_prompt_path):
+                os.unlink(audio_prompt_path)
             
-            return {
-                "success": True,
-                "original_data": segment,
-                "cloned_audio": cloned_audio,
-                "type": "direct",
-                "reference_used": reference_audio_path
-            }
+            return audio
             
         except Exception as e:
-            logger.error(f"Failed to clone segment {segment.get('start', 0):.2f}s-{segment.get('end', 0):.2f}s: {str(e)}")
             return None
     
+    def _save_temp_audio(self, audio: np.ndarray) -> str:
+        """Save audio to temporary file for use as prompt"""
+        temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+        temp_path = temp_file.name
+        temp_file.close()
+        
+        sf.write(temp_path, audio, self.sample_rate)
+        return temp_path
+    
+    def _extract_segment_audios(self, chunk_audio: np.ndarray, segments: List[Dict]) -> List[np.ndarray]:
+        """Extract individual segment audio from chunk audio"""
+        if not segments:
+            return []
+        
+        # Simple approach: divide chunk audio equally among segments
+        segment_audios = []
+        total_duration = sum(seg.get('duration', 0) for seg in segments)
+        
+        if total_duration > 0:
+            audio_length = len(chunk_audio)
+            start_sample = 0
+            
+            for segment in segments:
+                segment_duration = segment.get('duration', 0)
+                segment_ratio = segment_duration / total_duration
+                segment_samples = int(audio_length * segment_ratio)
+                
+                end_sample = start_sample + segment_samples
+                segment_audio = chunk_audio[start_sample:end_sample]
+                
+                # Adjust length to match original duration
+                target_samples = int(segment_duration * self.sample_rate)
+                if len(segment_audio) != target_samples and target_samples > 0:
+                    segment_audio = self._adjust_audio_length(segment_audio, segment_duration)
+                
+                segment_audios.append(segment_audio)
+                start_sample = end_sample
+        
+        return segment_audios
+    
+    def _get_overlap_audio(self, audio: np.ndarray) -> np.ndarray:
+        """Get last part of audio for next chunk overlap"""
+        overlap_duration = 2.0  # 2 seconds
+        overlap_samples = int(overlap_duration * self.sample_rate)
+        
+        if len(audio) > overlap_samples:
+            return audio[-overlap_samples:]
+        else:
+            return audio
+    
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Adjust cloned audio to match original duration exactly"""
+        """Adjust audio to match target duration"""
         if len(audio) == 0:
             return audio
             
-        sample_rate = 44100  # Standard sample rate
-        target_samples = int(target_duration * sample_rate)
+        target_samples = int(target_duration * self.sample_rate)
         current_samples = len(audio)
         
         if current_samples == target_samples:
             return audio
         
-        # Use interpolation to stretch/compress audio to exact target length
+        # Use interpolation to stretch/compress audio
         indices = np.linspace(0, current_samples - 1, target_samples)
         stretched_audio = np.interp(indices, np.arange(current_samples), audio)
         
-        return stretched_audio
-    
-    def _get_reference_transcript(self, reference_path: str) -> str:
-        """Get reference transcript from metadata"""
-        try:
-            # Look for metadata file
-            ref_path = Path(reference_path)
-            metadata_path = ref_path.parent / f"{ref_path.stem}_metadata.json"
-            
-            if metadata_path.exists():
-                with open(metadata_path, 'r', encoding='utf-8') as f:
-                    metadata = json.load(f)
-                
-                # Use dia_text if available, otherwise format from english_text
-                dia_text = metadata.get('dia_text', '')
-                if dia_text:
-                    return dia_text
-                
-                english_text = metadata.get('english_text', metadata.get('text', ''))
-                if english_text:
-                    return f'[S1] {english_text}'
-            
-            # Fallback to generic reference
-            return '[S1] Reference audio.'
-            
-        except Exception as e:
-            logger.warning(f"Failed to get reference transcript: {str(e)}")
-            return '[S1] Reference audio.' 
+        return stretched_audio 
