@@ -56,18 +56,18 @@ class VoiceCloningService:
     def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.2,
                            cfg_scale: float = 3.0, top_p: float = 0.95,
                            seed: Optional[int] = None) -> Dict[str, Any]:
-        """Clone voice segments one by one - no fallback text"""
         if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
         if not segments:
             return {"success": False, "error": "No segments provided"}
         
+        print(f"Starting voice cloning for {len(segments)} segments")
+        
         try:
             used_seed = seed or settings.DEFAULT_SEED
             set_seed(used_seed)
             
-            # Get reference audio and text from first segment
             reference_audio_path = None
             reference_text = None
             if segments and segments[0].get('reference_audio_path'):
@@ -81,22 +81,25 @@ class VoiceCloningService:
             
             cloned_segments = []
             for i, segment in enumerate(segments):
-                # Get text to clone - no fallback, return error if empty
                 english_text = segment.get('english_text', segment.get('text', ''))
                 if not english_text.strip():
-                    return {"success": False, "error": f"Segment {i+1} has no english_text"}
+                    print(f"Skipping segment {i+1}: No english_text")
+                    continue
                 
                 combined_display = (reference_text + '\n' + english_text) if reference_text else english_text
                 print(f"Combined Text: {combined_display}")
                 
-                # Generate audio
+                print(f"Processing segment {i+1}...")
                 cloned_audio = self._generate_single_segment(
                     english_text, reference_audio_path, reference_text, 
                     temperature, cfg_scale, top_p
                 )
                 
                 if cloned_audio is None:
-                    return {"success": False, "error": f"Failed to generate audio for segment {i+1}"}
+                    print(f"Skipping segment {i+1}: Failed to generate audio")
+                    continue
+                
+                print(f"Successfully generated audio for segment {i+1}")
                 
                 target_duration = segment.get('duration', 5.0)
                 cloned_audio = self._adjust_audio_length(cloned_audio, target_duration)
@@ -149,12 +152,15 @@ class VoiceCloningService:
     def _generate_single_segment(self, text: str, reference_audio_path: Optional[str], 
                                reference_text: Optional[str], temperature: float, 
                                cfg_scale: float, top_p: float) -> Optional[np.ndarray]:
-        """Generate audio for a single segment using Dia"""
         try:
             if reference_text and reference_text.strip():
                 combined_text = reference_text.strip() + "\n" + text.strip()
             else:
                 combined_text = text.strip()
+            
+            if not combined_text:
+                print("Error: Combined text is empty")
+                return None
             
             with torch.inference_mode():
                 if reference_audio_path and os.path.exists(reference_audio_path):
@@ -183,7 +189,8 @@ class VoiceCloningService:
             
             return audio
             
-        except Exception:
+        except Exception as e:
+            print(f"Audio generation failed: {str(e)}")
             return None
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
@@ -224,6 +231,7 @@ class VoiceCloningService:
         """Clean up GPU memory"""
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            torch.cuda.synchronize()
         gc.collect()
     
     def clear_cache(self):

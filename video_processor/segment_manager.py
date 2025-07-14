@@ -566,8 +566,13 @@ class SegmentManager:
             original_text = segment_texts[i] if i < len(segment_texts) else ""
             english_text = english_texts[i] if i < len(english_texts) else ""
             
-            if not original_text or not english_text:
-                raise ValueError(f"Failed to get text for segment {i+1}")
+            if not original_text:
+                print(f"Warning: Segment {i+1} has no original text, skipping")
+                continue
+            
+            if not english_text:
+                print(f"Warning: Segment {i+1} translation failed, using original text")
+                english_text = original_text
             
             metadata = {
                 'segment_index': i + 1,
@@ -645,7 +650,8 @@ class SegmentManager:
             ref_index += 1
             
             if not ref_english_text:
-                raise ValueError(f"Failed to get english text for reference of speaker {speaker}")
+                print(f"Warning: Reference translation failed for speaker {speaker}, using original text")
+                ref_english_text = reference.get('text', '')
             
             reference_metadata = {
                 'speaker': speaker,

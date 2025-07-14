@@ -139,11 +139,9 @@ class AudioProcessor:
                             import json
                             segment_data = json.load(f)
                         
-                        # Simple validation - only check essential fields
-                        if not segment_data.get('english_text', '').strip():
+                        if not segment_data.get('text', '').strip():
                             continue
                         
-                        # Add required fields
                         segment_data['reference_audio_path'] = reference_audio_path
                         segment_data['segments_dir'] = str(segments_subdir)
                         segment_data['segment_file'] = str(json_file)

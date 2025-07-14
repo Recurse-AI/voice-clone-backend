@@ -294,8 +294,8 @@ Convert to natural English dubbing format:"""
                 try:
                     results[index] = future.result()
                 except Exception as e:
-                    # No fallback - raise error if translation fails
-                    raise ValueError(f"Translation failed for text at index {index}: {str(e)}")
+                    print(f"Translation failed for text at index {index}: {str(e)}")
+                    results[index] = f"[S1] {text_list[index]}"
         
         return results
     
