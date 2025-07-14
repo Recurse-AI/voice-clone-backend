@@ -1,26 +1,22 @@
 """
-Voice Cloning Module
-
-Simple and efficient voice cloning using Dia model with improved segment processing.
+Voice Cloning Module - Simplified for Dia
 """
 
 import torch
 import numpy as np
 import random
 import os
-import json
 import soundfile as sf
 from typing import Optional, Dict, Any, List
 from dia.model import Dia
 from config import settings
 import logging
 from pathlib import Path
-import tempfile
 
 logger = logging.getLogger(__name__)
 
 def set_seed(seed: int):
-    """Sets the random seed for reproducibility."""
+    """Set random seed for reproducibility"""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -32,7 +28,7 @@ def set_seed(seed: int):
 
 
 class VoiceCloningService:
-    """Simple and efficient voice cloning service"""
+    """Simplified voice cloning service"""
     
     def __init__(self):
         self.dia_model = None
@@ -40,7 +36,7 @@ class VoiceCloningService:
         self.sample_rate = 44100
     
     def load_dia_model(self, repo_id: str = None) -> bool:
-        """Load Dia model using official API"""
+        """Load Dia model"""
         try:
             repo_id = repo_id or settings.DIA_MODEL_REPO
             compute_dtype = settings.DIA_COMPUTE_DTYPE if self.device == "cuda" else "float32"
@@ -56,7 +52,7 @@ class VoiceCloningService:
     def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.2,
                            cfg_scale: float = 3.0, top_p: float = 0.95,
                            seed: Optional[int] = None, speed_factor: float = 0.92) -> Dict[str, Any]:
-        """Improved voice cloning with proper speed control and reference handling"""
+        """Clone voice segments with speed control"""
         if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -64,54 +60,39 @@ class VoiceCloningService:
             return {"success": False, "error": "No segments provided"}
         
         try:
-            # Set seed for consistency - use constant from settings
             set_seed(seed or settings.DEFAULT_SEED)
             
             cloned_segments = []
             reference_audio_path = None
+            reference_text = None
             
-            # Get reference audio from first segment
+            # Get reference audio and text
             if segments and segments[0].get('reference_audio_path'):
                 reference_audio_path = segments[0]['reference_audio_path']
-                logger.info(f"Using reference audio: {reference_audio_path}")
+                reference_text = self._load_reference_text(reference_audio_path)
             
-            # Process each segment individually for better quality
+            # Process each segment
             for segment in segments:
-                try:
-                    # Get segment text
-                    english_text = segment.get('english_text', segment.get('text', ''))
-                    if not english_text.strip():
-                        continue
-                    
-                    # Create proper Dia text format
-                    speaker = segment.get('speaker', 'A')
-                    if not english_text.startswith('[S'):
-                        dia_text = f"[S1] {english_text.strip()}"
-                    else:
-                        dia_text = english_text.strip()
-                    
-                    # Generate audio with reference
-                    cloned_audio = self._generate_single_segment(
-                        dia_text, reference_audio_path, temperature, 
-                        cfg_scale, top_p, speed_factor
-                    )
-                    
-                    if cloned_audio is not None:
-                        # Adjust length to match original duration
-                        target_duration = segment.get('duration', 5.0)
-                        cloned_audio = self._adjust_audio_length(cloned_audio, target_duration)
-                        
-                        cloned_segments.append({
-                            "success": True,
-                            "original_data": segment,
-                            "cloned_audio": cloned_audio,
-                            "type": "single_segment",
-                            "duration": target_duration
-                        })
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to clone segment: {str(e)}")
+                english_text = segment.get('english_text', segment.get('text', ''))
+                if not english_text.strip():
                     continue
+                
+                # Generate audio using Dia's official approach
+                cloned_audio = self._generate_single_segment(
+                    english_text, reference_audio_path, reference_text, temperature, 
+                    cfg_scale, top_p, speed_factor
+                )
+                
+                if cloned_audio is not None:
+                    target_duration = segment.get('duration', 5.0)
+                    cloned_audio = self._adjust_audio_length(cloned_audio, target_duration)
+                    
+                    cloned_segments.append({
+                        "success": True,
+                        "original_data": segment,
+                        "cloned_audio": cloned_audio,
+                        "duration": target_duration
+                    })
             
             return {
                 "success": True,
@@ -123,17 +104,45 @@ class VoiceCloningService:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
-    def _generate_single_segment(self, text: str, reference_audio_path: Optional[str],
-                               temperature: float, cfg_scale: float, top_p: float,
-                               speed_factor: float) -> Optional[np.ndarray]:
-        """Generate audio for a single segment with proper reference handling"""
+    def _load_reference_text(self, reference_audio_path: str) -> Optional[str]:
+        """Load reference text from reference metadata"""
         try:
-            # Generate audio using Dia model
+            if not reference_audio_path:
+                return None
+            
+            # Get reference metadata path
+            reference_dir = Path(reference_audio_path).parent
+            reference_metadata_files = list(reference_dir.glob("*_REFERENCE_metadata.json"))
+            
+            if not reference_metadata_files:
+                return None
+            
+            # Load reference metadata
+            with open(reference_metadata_files[0], 'r', encoding='utf-8') as f:
+                import json
+                reference_metadata = json.load(f)
+            
+            return reference_metadata.get('english_text', '')
+            
+        except Exception:
+            return None
+    
+    def _generate_single_segment(self, text: str, reference_audio_path: Optional[str], 
+                               reference_text: Optional[str], temperature: float, 
+                               cfg_scale: float, top_p: float, speed_factor: float) -> Optional[np.ndarray]:
+        """Generate audio for a single segment using Dia's official approach"""
+        try:
+            # Prepare text using Dia's official approach: reference_text + new_text
+            if reference_text and reference_text.strip():
+                # Combine reference text with new text (with newline separator)
+                combined_text = reference_text.strip() + "\n" + text.strip()
+            else:
+                combined_text = text.strip()
+            
             with torch.inference_mode():
                 if reference_audio_path and os.path.exists(reference_audio_path):
-                    # Use reference audio for voice cloning
                     audio = self.dia_model.generate(
-                        text,
+                        combined_text,
                         audio_prompt=reference_audio_path,
                         use_torch_compile=False,
                         cfg_scale=cfg_scale,
@@ -144,9 +153,8 @@ class VoiceCloningService:
                         verbose=False
                     )
                 else:
-                    # Generate without reference
                     audio = self.dia_model.generate(
-                        text,
+                        combined_text,
                         use_torch_compile=False,
                         cfg_scale=cfg_scale,
                         temperature=temperature,
@@ -156,14 +164,12 @@ class VoiceCloningService:
                         verbose=False
                     )
             
-            # Apply speed factor if needed
             if speed_factor != 1.0:
                 audio = self._apply_speed_factor(audio, speed_factor)
             
             return audio
             
-        except Exception as e:
-            logger.error(f"Audio generation failed: {str(e)}")
+        except Exception:
             return None
     
     def _apply_speed_factor(self, audio: np.ndarray, speed_factor: float) -> np.ndarray:
@@ -187,15 +193,13 @@ class VoiceCloningService:
             return audio
         
         if current_samples > target_samples:
-            # Truncate with fade out
             audio = audio[:target_samples]
-            # Apply fade out to last 0.1 seconds
+            # Apply fade out
             fade_samples = int(0.1 * self.sample_rate)
             if len(audio) > fade_samples:
                 fade_curve = np.linspace(1, 0, fade_samples)
                 audio[-fade_samples:] *= fade_curve
         else:
-            # Pad with silence
             padding = target_samples - current_samples
             audio = np.pad(audio, (0, padding), mode='constant', constant_values=0)
         
