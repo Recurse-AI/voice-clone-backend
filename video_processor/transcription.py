@@ -200,7 +200,7 @@ class TranscriptionService:
 
 CRITICAL REQUIREMENTS:
 - Translate to natural, conversational English suitable for dubbing
-- Try to keep 7-11 words per line when possible, adjust if needed for natural flow
+- Try to keep 7-15 words per line when possible, adjust if needed for natural flow
 - Don't break lines in the middle of a sentence - keep full sentences together when possible
 - Use [S1], [S2], etc. for speaker identification
 - Current speaker is {speaker}, use [S{speaker_num}] for this speaker
@@ -224,7 +224,7 @@ Convert to natural English dubbing format:"""
 
 CRITICAL REQUIREMENTS:
 - Translate to natural, conversational English suitable for dubbing
-- Try to keep 7-11 words per line when possible, adjust if needed for natural flow
+- Try to keep 7-15 words per line when possible, adjust if needed for natural flow
 - Don't break lines in the middle of a sentence - keep full sentences together when possible
 - Use [S{speaker_num}] tag for all lines (single speaker)
 - Only add non-verbal sounds when truly necessary and natural to the content (don't force them)
@@ -245,7 +245,7 @@ Convert to natural English dubbing format:"""
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are a professional dubbing translator specializing in voice cloning dialogue. Create natural, speakable English text with emotional context. Try to keep 7-11 words per line when possible, adjust if needed for natural flow. Don't break lines in the middle of a sentence - keep full sentences together when possible. Only add non-verbal sounds when truly necessary and natural to the content."},
+                        {"role": "system", "content": "You are a professional dubbing translator specializing in voice cloning dialogue. Create natural, speakable English text with emotional context. Try to keep 7-15 words per line when possible, adjust if needed for natural flow. Don't break lines in the middle of a sentence - keep full sentences together when possible. Only add non-verbal sounds when truly necessary and natural to the content."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=300,
