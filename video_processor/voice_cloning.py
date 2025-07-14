@@ -109,7 +109,12 @@ class VoiceCloningService:
                 print(f"Generated audio shape: {cloned_audio.shape if hasattr(cloned_audio, 'shape') else 'No shape'}")
                 
                 target_duration = segment.get('duration', 5.0)
-                cloned_audio = self._adjust_audio_length(cloned_audio, target_duration)
+                cloned_audio = self._adjust_audio_length(
+                    cloned_audio, 
+                    target_duration, 
+                    use_speed_adjustment=settings.USE_SPEED_ADJUSTMENT,
+                    speed_factor=settings.AUDIO_SPEED_FACTOR
+                )
                 
                 print(f"Adjusted audio shape: {cloned_audio.shape if hasattr(cloned_audio, 'shape') else 'No shape'}")
                 print(f"Successfully generated audio for segment {i+1}")
@@ -208,8 +213,9 @@ class VoiceCloningService:
             print(f"Audio generation failed: {str(e)}")
             return None
     
-    def _adjust_audio_length(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Adjust audio to match target duration using time-stretch - NO padding, only stretching"""
+    def _adjust_audio_length(self, audio: np.ndarray, target_duration: float, 
+                          use_speed_adjustment: bool = False, speed_factor: float = 0.75) -> np.ndarray:
+        """Simple audio length adjustment - padding/truncation or optional speed adjustment"""
         if audio is None:
             print("Warning: Audio is None")
             return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
@@ -237,42 +243,51 @@ class VoiceCloningService:
         target_samples = int(target_duration * self.sample_rate)
         current_samples = len(audio)
 
-        if current_samples == target_samples:
-            return audio
-
-        # Calculate stretch rate (inverse of ratio)
-        stretch_rate = target_samples / current_samples
+        print(f"Adjusting audio from {current_samples} samples to {target_samples} samples")
         
-        print(f"Stretching audio from {current_samples} samples to {target_samples} samples (rate: {stretch_rate:.3f})")
+        # Option 1: Simple padding/truncation (default - no stretching)
+        if not use_speed_adjustment:
+            if current_samples > target_samples:
+                # Truncate if audio is longer
+                adjusted_audio = audio[:target_samples]
+                print(f"Truncated audio to {len(adjusted_audio)} samples")
+            elif current_samples < target_samples:
+                # Pad with zeros if audio is shorter
+                padding_needed = target_samples - current_samples
+                adjusted_audio = np.pad(audio, (0, padding_needed), mode='constant', constant_values=0)
+                print(f"Padded audio with {padding_needed} zero samples")
+            else:
+                # Already correct length
+                adjusted_audio = audio
+                print("Audio already correct length")
         
-        try:
-            # Try different librosa API calls for compatibility
+        # Option 2: Speed adjustment (slower) - optional
+        else:
+            print(f"Using speed adjustment with factor {speed_factor}")
             try:
-                # Try new API (librosa >= 0.10.0)
-                stretched_audio = librosa.effects.time_stretch(y=audio, rate=stretch_rate)
-            except TypeError:
-                # Try old API (librosa < 0.10.0)
-                stretched_audio = librosa.effects.time_stretch(audio, stretch_rate)
+                # Make audio slower by the speed factor
+                adjusted_audio = librosa.effects.time_stretch(y=audio, rate=speed_factor)
+                print(f"Applied speed factor: {speed_factor}, new length: {len(adjusted_audio)} samples")
                 
-            # Ensure exact target samples
-            if len(stretched_audio) != target_samples:
-                if len(stretched_audio) > target_samples:
-                    stretched_audio = stretched_audio[:target_samples]
-                elif len(stretched_audio) < target_samples:
-                    # Use linear interpolation for final adjustment
-                    indices = np.linspace(0, len(stretched_audio) - 1, target_samples)
-                    stretched_audio = np.interp(indices, np.arange(len(stretched_audio)), stretched_audio)
-            
-            print(f"Final stretched audio length: {len(stretched_audio)} samples")
-            return stretched_audio.astype(np.float32)
-            
-        except Exception as e:
-            print(f"Error during time stretching: {e}")
-            print(f"Falling back to linear interpolation for rate {stretch_rate}")
-            # Direct linear interpolation as fallback
-            indices = np.linspace(0, len(audio) - 1, target_samples)
-            stretched_audio = np.interp(indices, np.arange(len(audio)), audio)
-            return stretched_audio.astype(np.float32)
+                # Still pad/truncate to exact target if needed
+                if len(adjusted_audio) > target_samples:
+                    adjusted_audio = adjusted_audio[:target_samples]
+                elif len(adjusted_audio) < target_samples:
+                    padding_needed = target_samples - len(adjusted_audio)
+                    adjusted_audio = np.pad(adjusted_audio, (0, padding_needed), mode='constant', constant_values=0)
+                    
+            except Exception as e:
+                print(f"Speed adjustment failed: {e}, falling back to padding")
+                # Fallback to padding
+                if current_samples > target_samples:
+                    adjusted_audio = audio[:target_samples]
+                elif current_samples < target_samples:
+                    padding_needed = target_samples - current_samples
+                    adjusted_audio = np.pad(audio, (0, padding_needed), mode='constant', constant_values=0)
+                else:
+                    adjusted_audio = audio
+        
+        return adjusted_audio.astype(np.float32)
     
     def _cleanup_memory(self):
         """Clean up GPU memory"""
