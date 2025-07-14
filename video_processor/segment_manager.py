@@ -24,11 +24,7 @@ class SegmentManager:
         self.max_duration = 20.0     
         self.optimal_duration = 12.0 
         self.max_gap = 2.0           
-        self.words_per_chunk = 45    
-        self.ref_min_duration = 3.0
-        self.ref_max_duration = 5.0
-        self.ref_min_words = 3
-        self.ref_max_words = 10
+        self.words_per_chunk = 45
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Create segments with 7-17 seconds duration"""
@@ -305,70 +301,10 @@ class SegmentManager:
             'words': combined_words
         }
     
-    def _extract_sentence_reference(self, segment: Dict) -> Optional[Dict]:
-        """Extract a sentence-based reference from segment"""
-        if not segment or not isinstance(segment, dict):
-            return None
-            
-        words = segment.get('words', [])
-        text = segment.get('text', '')
-        
-        if not words or not text or not isinstance(words, list):
-            return None
-        
-        sentences = re.split(r'[.!?]+', text)
-        
-        for sentence in sentences:
-            sentence = sentence.strip()
-            if not sentence:
-                continue
-                
-            sentence_words = sentence.split()
-            word_count = len(sentence_words)
-            
-            if not (self.ref_min_words <= word_count <= self.ref_max_words):
-                continue
-            
-            sentence_word_objects = []
-            for word_obj in words:
-                if (word_obj and isinstance(word_obj, dict) and 
-                    word_obj.get('text') in sentence_words):
-                    sentence_word_objects.append(word_obj)
-                    if len(sentence_word_objects) == word_count:
-                        break
-            
-            if len(sentence_word_objects) < word_count:
-                continue
-            
-            first_word = sentence_word_objects[0]
-            last_word = sentence_word_objects[-1]
-            
-            if (not first_word or not last_word or 
-                first_word.get('start') is None or 
-                last_word.get('end') is None):
-                continue
-                
-            ref_start = first_word['start'] / 1000.0
-            ref_end = last_word['end'] / 1000.0
-            ref_duration = ref_end - ref_start
-            
-            if self.ref_min_duration <= ref_duration <= self.ref_max_duration:
-                return {
-                    'start': ref_start,
-                    'end': ref_end,
-                    'duration': ref_duration,
-                    'text': sentence,
-                    'speaker': segment.get('speaker', 'A'),
-                    'word_count': word_count,
-                    'confidence': segment.get('confidence', 0.5),
-                    'words': sentence_word_objects,
-                    'is_reference': True
-                }
-        
-        return None
+
     
     def select_optimal_references(self, segments: List[Dict], speakers: List[str]) -> Dict[str, Dict]:
-        """Select best reference for each speaker based on sentence completion"""
+        """Select best reference for each speaker - simplified approach"""
         if not segments or not speakers:
             return {}
             
@@ -378,88 +314,106 @@ class SegmentManager:
             if not speaker:
                 continue
                 
+            # Find segments for this speaker
             speaker_segments = [s for s in segments if s and s.get('speaker') == speaker]
             
             if not speaker_segments:
                 continue
             
-            best_reference = None
-            best_score = 0
-            
-            for segment in speaker_segments:
+            # Sort by quality: duration close to 4 seconds, good confidence, reasonable word count
+            def segment_quality(segment):
                 if not segment:
-                    continue
-                    
-                sentence_ref = self._extract_sentence_reference(segment)
+                    return 0
+                duration = segment.get('duration', 0)
+                confidence = segment.get('confidence', 0)
+                word_count = segment.get('word_count', 0)
                 
-                if sentence_ref:
-                    score = self._calculate_reference_score(sentence_ref)
-                    if score > best_score:
-                        best_score = score
-                        best_reference = sentence_ref
+                # Prefer segments with 3-6 second duration
+                duration_score = 1.0 - abs(duration - 4.0) / 4.0
+                duration_score = max(0, duration_score)
+                
+                # Prefer segments with good confidence
+                confidence_score = confidence
+                
+                # Prefer segments with 5-12 words
+                word_score = 1.0 - abs(word_count - 8) / 8.0
+                word_score = max(0, word_score)
+                
+                return duration_score * 0.5 + confidence_score * 0.3 + word_score * 0.2
             
-            if not best_reference:
-                speaker_segments.sort(key=lambda x: abs(x.get('duration', 0) - 3.5) if x else float('inf'))
-                segment = speaker_segments[0] if speaker_segments else None
-                
-                if not segment:
-                    continue
-                
-                target_duration = min(self.ref_max_duration, segment.get('duration', 0))
-                target_words = min(self.ref_max_words, segment.get('word_count', 0))
-                
-                words = segment.get('words', [])
+            # Sort segments by quality
+            speaker_segments.sort(key=segment_quality, reverse=True)
+            
+            # Take the best segment as reference
+            best_segment = speaker_segments[0]
+            
+            # Create reference from best segment
+            if best_segment:
+                words = best_segment.get('words', [])
                 if not words or not isinstance(words, list):
                     continue
                     
-                words = words[:target_words]
-                if not words:
-                    continue
-                    
-                first_word = words[0]
-                last_word = words[-1]
+                # Get original timing
+                original_start = best_segment.get('start', 0)
+                original_end = best_segment.get('end', 0)
+                original_duration = original_end - original_start
                 
-                if (not first_word or not last_word or 
-                    first_word.get('start') is None or 
-                    last_word.get('end') is None):
-                    continue
+                # Trim if duration > 5 seconds
+                if original_duration > 5.0:
+                    # Keep first 5 seconds
+                    target_end_time = original_start + 5.0
                     
-                ref_start = first_word['start'] / 1000.0
-                ref_end = last_word['end'] / 1000.0
-                ref_duration = ref_end - ref_start
+                    # Find words that fit within 5 seconds
+                    trimmed_words = []
+                    for word in words:
+                        if not word or not isinstance(word, dict):
+                            continue
+                        word_start = word.get('start', 0) / 1000.0
+                        word_end = word.get('end', 0) / 1000.0
+                        
+                        # Include word if it starts within 5 seconds
+                        if word_start <= target_end_time:
+                            trimmed_words.append(word)
+                        else:
+                            break
+                    
+                    if not trimmed_words:
+                        continue
+                        
+                    # Update timing and text
+                    ref_start = original_start
+                    ref_end = min(target_end_time, trimmed_words[-1].get('end', 0) / 1000.0)
+                    ref_duration = ref_end - ref_start
+                    ref_text = ' '.join(w.get('text', '') for w in trimmed_words if w and w.get('text'))
+                    ref_words = trimmed_words
+                    
+                else:
+                    # Use original segment if <= 5 seconds
+                    ref_start = original_start
+                    ref_end = original_end
+                    ref_duration = original_duration
+                    ref_text = best_segment.get('text', '')
+                    ref_words = words
                 
-                if ref_duration >= self.ref_min_duration:
-                    best_reference = {
+                # Ensure minimum duration and valid text
+                if ref_duration >= 2.0 and ref_text.strip():
+                    references[speaker] = {
                         'start': ref_start,
                         'end': ref_end,
                         'duration': ref_duration,
-                        'text': ' '.join(w.get('text', '') for w in words if w and w.get('text')),
+                        'text': ref_text.strip(),
                         'speaker': speaker,
-                        'word_count': len(words),
-                        'confidence': segment.get('confidence', 0.5),
-                        'words': words,
-                        'is_reference': True
+                        'word_count': len(ref_words),
+                        'confidence': best_segment.get('confidence', 0.5),
+                        'words': ref_words,
+                        'is_reference': True,
+                        'reference_type': 'trimmed_segment' if original_duration > 5.0 else 'full_segment',
+                        'original_duration': original_duration
                     }
-            
-            if best_reference:
-                references[speaker] = best_reference
         
         return references
     
-    def _calculate_reference_score(self, reference: Dict) -> float:
-        """Calculate score for reference quality"""
-        if not reference or not isinstance(reference, dict):
-            return 0.0
-            
-        duration = reference.get('duration', 0)
-        word_count = reference.get('word_count', 0)
-        confidence = reference.get('confidence', 0)
-        
-        duration_score = 1.0 - abs(duration - 3.5) / 3.5
-        word_count_score = 1.0 - abs(word_count - 6) / 6
-        confidence_score = confidence
-        
-        return (duration_score * 0.4 + word_count_score * 0.3 + confidence_score * 0.3)
+
     
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int,
                             output_dir: Path, speakers: List[str], 
@@ -625,8 +579,7 @@ class SegmentManager:
                 'word_count': reference.get('word_count', 0),
                 'confidence': reference.get('confidence', 0.5),
                 'is_reference': True,
-                'reference_type': 'sentence_based',
-                'selection_score': self._calculate_reference_score(reference)
+                'reference_type': 'best_segment_based'
             }
             
             reference_metadata_path = reference_dir / f"speaker_{speaker}_REFERENCE_metadata.json"
