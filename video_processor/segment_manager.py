@@ -24,7 +24,7 @@ class SegmentManager:
         self.optimal_duration = 12.0 
         self.max_gap = 2.0           
         self.words_per_chunk = 45    
-        self.ref_min_duration = 2.0
+        self.ref_min_duration = 3.0
         self.ref_max_duration = 5.0
         self.ref_min_words = 3
         self.ref_max_words = 10
@@ -296,18 +296,21 @@ class SegmentManager:
                 words = segment['words'][:target_words]
                 ref_start = words[0]['start'] / 1000.0
                 ref_end = words[-1]['end'] / 1000.0
+                ref_duration = ref_end - ref_start
                 
-                best_reference = {
-                    'start': ref_start,
-                    'end': ref_end,
-                    'duration': ref_end - ref_start,
-                    'text': ' '.join(w['text'] for w in words),
-                    'speaker': speaker,
-                    'word_count': len(words),
-                    'confidence': segment['confidence'],
-                    'words': words,
-                    'is_reference': True
-                }
+                # Only create reference if it meets minimum duration
+                if ref_duration >= self.ref_min_duration:
+                    best_reference = {
+                        'start': ref_start,
+                        'end': ref_end,
+                        'duration': ref_duration,
+                        'text': ' '.join(w['text'] for w in words),
+                        'speaker': speaker,
+                        'word_count': len(words),
+                        'confidence': segment['confidence'],
+                        'words': words,
+                        'is_reference': True
+                    }
             
             references[speaker] = best_reference
         
