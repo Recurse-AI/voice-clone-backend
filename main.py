@@ -165,6 +165,13 @@ async def process_video(
 ):
     """Start video processing with immediate response - accepts either URL or file upload"""
     
+    # Clean up inputs: treat empty strings as None
+    if video_url is not None and not video_url.strip():
+        video_url = None
+    
+    if video_file is not None and (not hasattr(video_file, 'filename') or not video_file.filename):
+        video_file = None
+    
     # Validate input: either video_url or video_file, not both, not both empty
     if not video_url and not video_file:
         raise HTTPException(status_code=400, detail="Either video_url or video_file must be provided")
@@ -176,8 +183,6 @@ async def process_video(
     if video_url:
         if not video_url.startswith(('http://', 'https://')):
             raise HTTPException(status_code=400, detail="Invalid video URL format")
-        if not video_url.strip():
-            raise HTTPException(status_code=400, detail="Video URL cannot be empty")
     
     # Validate file if provided
     if video_file:
