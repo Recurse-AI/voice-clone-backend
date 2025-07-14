@@ -142,7 +142,7 @@ class VoiceCloningService:
             with torch.inference_mode():
                 if reference_audio_path and os.path.exists(reference_audio_path):
                     audio = self.dia_model.generate(
-                        combined_text,
+                        text=combined_text,
                         audio_prompt=reference_audio_path,
                         use_torch_compile=False,
                         cfg_scale=cfg_scale,
@@ -154,7 +154,7 @@ class VoiceCloningService:
                     )
                 else:
                     audio = self.dia_model.generate(
-                        combined_text,
+                        text=combined_text,
                         use_torch_compile=False,
                         cfg_scale=cfg_scale,
                         temperature=temperature,
