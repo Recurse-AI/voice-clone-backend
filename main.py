@@ -171,13 +171,24 @@ async def process_video(
     top_p: float = Form(settings.DIA_TOP_P, description="Top-p for voice cloning"),
     target_language: str = Form("English", description="Target language for translation"),
     language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
-    speakers_expected: Optional[int] = Form(None, description="Expected number of speakers (1-10)")
+    speakers_expected: Optional[str] = Form(None, description="Expected number of speakers (1-10)")
 ):
     """Start video processing with immediate response - accepts either URL or file upload"""
     
     # Clean up inputs
     video_url = video_url.strip() if video_url else None
     language_code = language_code.strip() if language_code else None
+    
+    # Handle speakers_expected: convert empty string to default value 1
+    if speakers_expected is None or speakers_expected == "":
+        speakers_expected_int = 1
+    else:
+        try:
+            speakers_expected_int = int(speakers_expected)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="speakers_expected must be a valid integer")
+    
+    speakers_expected = speakers_expected_int
     
     # Validate input: either video_url or video_file, not both, not both empty
     has_url = bool(video_url)

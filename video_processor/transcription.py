@@ -189,47 +189,20 @@ class TranscriptionService:
             clean_text = self._clean_text(text)
             
             if not clean_text.strip():
-                return f"[S{ord(speaker) - ord('A') + 1}] No text available"
+                return "[S1] No text available"
             
             # Try OpenAI translation and formatting
             try:
-                speaker_num = ord(speaker) - ord('A') + 1
+                # For voice cloning, always use [S1] for individual segments
+                speaker_num = 1
                 
-                if is_multi_speaker:
-                    prompt = f"""You are a professional dubbing translator. Convert this text to natural English dialogue for voice cloning/dubbing. 
+                prompt = f"""You are a professional dubbing translator. Convert this text to natural Engligh.
 
 CRITICAL REQUIREMENTS:
 - Translate to natural, conversational English suitable for dubbing
 - Try to keep 7-15 words per line when possible, adjust if needed for natural flow
 - Don't break lines in the middle of a sentence - keep full sentences together when possible
-- Use [S1], [S2], etc. for speaker identification ONLY ONCE per speaker
-- Current speaker is {speaker}, use [S{speaker_num}] only at the start
-- Continue with new lines WITHOUT repeating speaker tags until a new speaker arrives
-- Only add non-verbal sounds when truly necessary and natural to the content (don't force them)
-- Preserve emotional context and speaking style
-- Each line should be naturally speakable
-- Match the original's rhythm and pacing
-- If speaker changes detected, use appropriate tags
-
-Original text: "{clean_text}"
-
-DUBBING FORMAT EXAMPLE:
-[S1] Hey there how's it going today?
-How is your work progressing?
-Pretty good with everything so far.
-[S2] That's really great to hear.
-Everything is going smoothly right now.
-I'm impressed with the progress.
-
-Convert to natural English dubbing format:"""
-                else:
-                    prompt = f"""You are a professional dubbing translator. Convert this text to natural English dialogue for voice cloning/dubbing.
-
-CRITICAL REQUIREMENTS:
-- Translate to natural, conversational English suitable for dubbing
-- Try to keep 7-15 words per line when possible, adjust if needed for natural flow
-- Don't break lines in the middle of a sentence - keep full sentences together when possible
-- Use [S{speaker_num}] tag ONLY ONCE at the beginning (single speaker)
+- Use [S1] tag ONLY ONCE at the beginning (single speaker segment)
 - Continue with new lines WITHOUT repeating the speaker tag
 - Only add non-verbal sounds when truly necessary and natural to the content (don't force them)
 - Preserve emotional context and speaking style
@@ -240,7 +213,7 @@ CRITICAL REQUIREMENTS:
 Original text: "{clean_text}"
 
 DUBBING FORMAT EXAMPLE:
-[S{speaker_num}] That's really amazing work you did there.
+[S1] That's really amazing work you did there.
 I'm very impressed with the quality.
 The attention to detail is excellent.
 Everything looks professional and polished.
@@ -250,7 +223,7 @@ Convert to natural English dubbing format:"""
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are a professional dubbing translator specializing in voice cloning dialogue. Create natural, speakable English text with emotional context. Try to keep 7-15 words per line when possible, adjust if needed for natural flow. Don't break lines in the middle of a sentence - keep full sentences together when possible. Only add non-verbal sounds when truly necessary and natural to the content. IMPORTANT: Use speaker tags like [S1], [S2] only ONCE per speaker at the beginning, then continue with plain lines until a new speaker appears."},
+                        {"role": "system", "content": "You are a professional dubbing translator specializing in voice cloning dialogue. Create natural, speakable English text with emotional context. Try to keep 7-15 words per line when possible, adjust if needed for natural flow. Don't break lines in the middle of a sentence - keep full sentences together when possible. Only add non-verbal sounds when truly necessary and natural to the content. IMPORTANT: Use [S1] tag ONLY ONCE at the beginning for each segment, then continue with plain lines."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=300,
@@ -274,14 +247,13 @@ Convert to natural English dubbing format:"""
                 
             except Exception as openai_error:
                 # Use simple fallback translation and formatting
-                return self._simple_translate_and_format(clean_text, speaker)
+                return self._simple_translate_and_format(clean_text)
                 
         except Exception as e:
             # Ultimate fallback
-            speaker_tag = f"[S{ord(speaker) - ord('A') + 1}]"
-            return f"{speaker_tag} {text.strip()}" if text.strip() else f"{speaker_tag} Audio segment"
+            return f"[S1] {text.strip()}" if text.strip() else "[S1] Audio segment"
     
-    def _simple_translate_and_format(self, text: str, speaker: str) -> str:
+    def _simple_translate_and_format(self, text: str) -> str:
         """Simple fallback translation and formatting"""
         try:
             # Simple translation attempt
@@ -298,14 +270,14 @@ Convert to natural English dubbing format:"""
             
             if translation_response and translation_response.choices:
                 english_text = translation_response.choices[0].message.content.strip()
-                return self._simple_format_text(english_text, speaker)
+                return self._simple_format_text(english_text)
             else:
                 # If translation fails, format original text
-                return self._simple_format_text(text, speaker)
+                return self._simple_format_text(text)
                 
         except Exception:
             # Final fallback
-            return self._simple_format_text(text, speaker)
+            return self._simple_format_text(text)
     
     def _clean_formatted_text(self, text: str) -> str:
         """Clean formatted text from OpenAI response - handles new format with speaker tags only once"""
@@ -338,7 +310,7 @@ Convert to natural English dubbing format:"""
         
         return '\n'.join(cleaned_lines)
     
-    def _simple_format_text(self, text: str, speaker: str) -> str:
+    def _simple_format_text(self, text: str) -> str:
         """Simple fallback text formatting with speaker tag only once"""
         words = text.split()
         if not words:
@@ -346,7 +318,6 @@ Convert to natural English dubbing format:"""
         
         lines = []
         current_line = []
-        speaker_tag = f"[S{ord(speaker) - ord('A') + 1}]"
         first_line = True
         
         for word in words:
@@ -355,7 +326,7 @@ Convert to natural English dubbing format:"""
             # Break at sentence end if we have enough words (7+)
             if len(current_line) >= 7 and word.endswith(('.', '!', '?')):
                 if first_line:
-                    lines.append(f"{speaker_tag} {' '.join(current_line)}")
+                    lines.append(f"[S1] {' '.join(current_line)}")
                     first_line = False
                 else:
                     lines.append(' '.join(current_line))
@@ -363,7 +334,7 @@ Convert to natural English dubbing format:"""
             # Force break if too long (15+ words)
             elif len(current_line) >= 15:
                 if first_line:
-                    lines.append(f"{speaker_tag} {' '.join(current_line)}")
+                    lines.append(f"[S1] {' '.join(current_line)}")
                     first_line = False
                 else:
                     lines.append(' '.join(current_line))
@@ -371,7 +342,7 @@ Convert to natural English dubbing format:"""
         
         if current_line:
             if first_line:
-                lines.append(f"{speaker_tag} {' '.join(current_line)}")
+                lines.append(f"[S1] {' '.join(current_line)}")
             else:
                 lines.append(' '.join(current_line))
         

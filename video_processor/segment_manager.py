@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 import logging
 from datetime import datetime
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -18,11 +19,15 @@ class SegmentManager:
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.min_duration = 2.0      # Minimum 2 seconds
-        self.max_duration = 20.0     # Maximum 20 seconds  
-        self.optimal_duration = 12.0 # Optimal 12 seconds
-        self.max_gap = 2.0           # Maximum gap tolerance
-        self.words_per_chunk = 45    # Words per chunk
+        self.min_duration = 2.0      
+        self.max_duration = 20.0     
+        self.optimal_duration = 12.0 
+        self.max_gap = 2.0           
+        self.words_per_chunk = 45    
+        self.ref_min_duration = 2.0
+        self.ref_max_duration = 5.0
+        self.ref_min_words = 3
+        self.ref_max_words = 10
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Create segments with 7-17 seconds duration"""
@@ -112,20 +117,16 @@ class SegmentManager:
         while i < len(segments):
             current_segment = segments[i]
             
-            # If current segment is too short, try to merge with previous
             if current_segment['duration'] < self.min_duration and processed:
-                # Try to merge with the last processed segment if same speaker
                 last_segment = processed[-1]
                 if (last_segment['speaker'] == current_segment['speaker'] and 
                     current_segment['start'] - last_segment['end'] <= self.max_gap):
                     
-                    # Merge with previous segment
                     merged_segment = self._merge_segments(last_segment, current_segment)
                     processed[-1] = merged_segment
                     i += 1
                     continue
             
-            # If current segment is still too short, try to merge with next
             if current_segment['duration'] < self.min_duration:
                 merged_segment = self._merge_with_next(segments, i)
                 if merged_segment and merged_segment['duration'] <= self.max_duration:
@@ -133,14 +134,12 @@ class SegmentManager:
                     i = self._find_next_index(segments, i, merged_segment)
                     continue
             
-            # If segment is too long, split it
             if current_segment['duration'] > self.max_duration:
                 split_segments = self._split_segment(current_segment)
                 processed.extend(split_segments)
                 i += 1
                 continue
             
-            # Add segment as is
             processed.append(current_segment)
             i += 1
         
@@ -163,7 +162,6 @@ class SegmentManager:
             
         return self._merge_segments(current, next_seg)
     
-
     def _split_segment(self, segment: Dict) -> List[Dict]:
         """Split long segment into optimal-sized parts"""
         duration = segment['duration']
@@ -216,8 +214,58 @@ class SegmentManager:
             'words': combined_words
         }
     
+    def _extract_sentence_reference(self, segment: Dict) -> Optional[Dict]:
+        """Extract a sentence-based reference from segment"""
+        words = segment.get('words', [])
+        text = segment.get('text', '')
+        
+        if not words or not text:
+            return None
+        
+        sentences = re.split(r'[.!?]+', text)
+        
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if not sentence:
+                continue
+                
+            sentence_words = sentence.split()
+            word_count = len(sentence_words)
+            
+            if not (self.ref_min_words <= word_count <= self.ref_max_words):
+                continue
+            
+            sentence_word_objects = []
+            for word_obj in words:
+                if word_obj['text'] in sentence_words:
+                    sentence_word_objects.append(word_obj)
+                    if len(sentence_word_objects) == word_count:
+                        break
+            
+            if len(sentence_word_objects) < word_count:
+                continue
+            
+            ref_start = sentence_word_objects[0]['start'] / 1000.0
+            ref_end = sentence_word_objects[-1]['end'] / 1000.0
+            ref_duration = ref_end - ref_start
+            
+            if self.ref_min_duration <= ref_duration <= self.ref_max_duration:
+                return {
+                    'start': ref_start,
+                    'end': ref_end,
+                    'duration': ref_duration,
+                    'text': sentence,
+                    'speaker': segment['speaker'],
+                    'word_count': word_count,
+                    'confidence': segment['confidence'],
+                    'words': sentence_word_objects,
+                    'is_reference': True
+                }
+        
+        return None
+    
     def select_optimal_references(self, segments: List[Dict], speakers: List[str]) -> Dict[str, Dict]:
-        """Select best reference for each speaker"""
+        """Select best reference for each speaker based on sentence completion"""
         references = {}
         
         for speaker in speakers:
@@ -226,39 +274,68 @@ class SegmentManager:
             if not speaker_segments:
                 continue
             
-            # Sort by duration (prefer longer segments)
-            speaker_segments.sort(key=lambda x: x['duration'], reverse=True)
+            best_reference = None
+            best_score = 0
             
-            # Select segment closest to optimal duration
-            best_segment = None
             for segment in speaker_segments:
-                if self.min_duration <= segment['duration'] <= self.max_duration:
-                    best_segment = segment
-                    break
+                sentence_ref = self._extract_sentence_reference(segment)
+                
+                if sentence_ref:
+                    score = self._calculate_reference_score(sentence_ref)
+                    if score > best_score:
+                        best_score = score
+                        best_reference = sentence_ref
             
-            if not best_segment:
-                best_segment = speaker_segments[0]
+            if not best_reference:
+                speaker_segments.sort(key=lambda x: abs(x['duration'] - 3.5))
+                segment = speaker_segments[0]
+                
+                target_duration = min(self.ref_max_duration, segment['duration'])
+                target_words = min(self.ref_max_words, segment['word_count'])
+                
+                words = segment['words'][:target_words]
+                ref_start = words[0]['start'] / 1000.0
+                ref_end = words[-1]['end'] / 1000.0
+                
+                best_reference = {
+                    'start': ref_start,
+                    'end': ref_end,
+                    'duration': ref_end - ref_start,
+                    'text': ' '.join(w['text'] for w in words),
+                    'speaker': speaker,
+                    'word_count': len(words),
+                    'confidence': segment['confidence'],
+                    'words': words,
+                    'is_reference': True
+                }
             
-            references[speaker] = best_segment
+            references[speaker] = best_reference
         
         return references
+    
+    def _calculate_reference_score(self, reference: Dict) -> float:
+        """Calculate score for reference quality"""
+        duration_score = 1.0 - abs(reference['duration'] - 3.5) / 3.5
+        word_count_score = 1.0 - abs(reference['word_count'] - 6) / 6
+        confidence_score = reference['confidence']
+        
+        return (duration_score * 0.4 + word_count_score * 0.3 + confidence_score * 0.3)
     
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int,
                             output_dir: Path, speakers: List[str], 
                             target_language: str, detected_language: str):
-        """Save segments for voice cloning with consistent metadata"""
+        """Save segments for voice cloning with sentence-based references"""
         output_dir.mkdir(parents=True, exist_ok=True)
         
         references = self.select_optimal_references(segments, speakers)
         
-        # Save overall metadata
         overall_metadata = {
             "total_segments": len(segments),
             "speakers": speakers,
             "target_language": target_language,
             "detected_language": detected_language,
             "processing_timestamp": str(datetime.now()),
-            "reference_selections": {k: v['segment_index'] if 'segment_index' in v else 0 for k, v in references.items()}
+            "reference_selections": {k: f"{k}_sentence_ref" for k in references.keys()}
         }
         
         metadata_dir = output_dir / "metadata"
@@ -276,49 +353,22 @@ class SegmentManager:
             segments_dir.mkdir(parents=True, exist_ok=True)
             reference_dir.mkdir(parents=True, exist_ok=True)
             
-            # Extract audio segment
             start_sample = int(segment['start'] * sr)
             end_sample = int(segment['end'] * sr)
             segment_audio = audio[start_sample:end_sample]
             
-            # Save audio
             audio_filename = f"segment_{i+1:03d}.wav"
             audio_path = segments_dir / audio_filename
             sf.write(audio_path, segment_audio, sr)
             
-            # Process text with OpenAI formatting - ensure it always works
             original_text = segment.get('text', '').strip()
             if not original_text:
                 original_text = f"Segment {i+1} audio content"
             
-            try:
-                english_text = self.transcription_service.format_dialogue_text(
-                    original_text, speaker, len(speakers) > 1
-                )
-                # Validate the formatted text
-                if not english_text or not english_text.strip():
-                    raise ValueError("Empty formatted text")
-                if '[S' not in english_text:
-                    raise ValueError("Missing speaker tags")
-            except Exception as e:
-                # Create fallback English text with proper formatting
-                speaker_num = ord(speaker) - ord('A') + 1
-                words = original_text.split()
-                lines = []
-                current_line = []
-                
-                for word in words:
-                    current_line.append(word)
-                    if len(current_line) >= 10:
-                        lines.append(f"[S{speaker_num}] {' '.join(current_line)}")
-                        current_line = []
-                
-                if current_line:
-                    lines.append(f"[S{speaker_num}] {' '.join(current_line)}")
-                
-                english_text = '\n'.join(lines) if lines else f"[S{speaker_num}] {original_text}"
+            english_text = self.transcription_service.format_dialogue_text(
+                original_text, speaker, False
+            )
             
-            # Create comprehensive metadata
             metadata = {
                 'segment_index': i + 1,
                 'audio_file': audio_filename,
@@ -332,44 +382,17 @@ class SegmentManager:
                 'duration': segment['duration'],
                 'word_count': segment['word_count'],
                 'confidence': segment['confidence'],
-                'is_reference': speaker in references and references[speaker] == segment,
+                'is_reference': False,
                 'cloned_audio_file': f"cloned_segment_{i+1:03d}.wav",
                 'cloned_audio_path': str(segments_dir / f"cloned_segment_{i+1:03d}.wav"),
                 'metadata_complete': True,
                 'processing_status': 'ready_for_cloning'
             }
             
-            # Save metadata
             metadata_path = segments_dir / f"segment_{i+1:03d}_metadata.json"
             with open(metadata_path, 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
             
-            # Save reference if selected
-            if speaker in references and references[speaker] == segment:
-                reference_audio_path = reference_dir / f"speaker_{speaker}_REFERENCE.wav"
-                sf.write(reference_audio_path, segment_audio, sr)
-                
-                reference_metadata = {
-                    'speaker': speaker,
-                    'speaker_index': ord(speaker) - ord('A') + 1,
-                    'reference_audio': f"speaker_{speaker}_REFERENCE.wav",
-                    'reference_audio_path': str(reference_audio_path),
-                    'start': segment['start'],
-                    'end': segment['end'],
-                    'duration': segment['duration'],
-                    'original_text': original_text,
-                    'english_text': english_text,
-                    'word_count': segment['word_count'],
-                    'confidence': segment['confidence'],
-                    'is_reference': True,
-                    'reference_for_segments': [i + 1]
-                }
-                
-                reference_metadata_path = reference_dir / f"speaker_{speaker}_REFERENCE_metadata.json"
-                with open(reference_metadata_path, 'w', encoding='utf-8') as f:
-                    json.dump(reference_metadata, f, ensure_ascii=False, indent=2)
-            
-            # Update segment with paths
             segment.update({
                 'segment_index': i + 1,
                 'audio_path': str(audio_path),
@@ -377,4 +400,40 @@ class SegmentManager:
                 'audio_file': audio_filename,
                 'english_text': english_text,
                 'metadata_complete': True
-            }) 
+            })
+        
+        for speaker, reference in references.items():
+            speaker_dir = output_dir / f"speaker_{speaker}"
+            reference_dir = speaker_dir / "reference"
+            
+            ref_start_sample = int(reference['start'] * sr)
+            ref_end_sample = int(reference['end'] * sr)
+            ref_audio = audio[ref_start_sample:ref_end_sample]
+            
+            reference_audio_path = reference_dir / f"speaker_{speaker}_REFERENCE.wav"
+            sf.write(reference_audio_path, ref_audio, sr)
+            
+            ref_english_text = self.transcription_service.format_dialogue_text(
+                reference['text'], speaker, False
+            )
+            
+            reference_metadata = {
+                'speaker': speaker,
+                'speaker_index': ord(speaker) - ord('A') + 1,
+                'reference_audio': f"speaker_{speaker}_REFERENCE.wav",
+                'reference_audio_path': str(reference_audio_path),
+                'start': reference['start'],
+                'end': reference['end'],
+                'duration': reference['duration'],
+                'original_text': reference['text'],
+                'english_text': ref_english_text,
+                'word_count': reference['word_count'],
+                'confidence': reference['confidence'],
+                'is_reference': True,
+                'reference_type': 'sentence_based',
+                'selection_score': self._calculate_reference_score(reference)
+            }
+            
+            reference_metadata_path = reference_dir / f"speaker_{speaker}_REFERENCE_metadata.json"
+            with open(reference_metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(reference_metadata, f, ensure_ascii=False, indent=2) 
