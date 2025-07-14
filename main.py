@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Form, HTTPException, BackgroundTasks, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -151,7 +151,8 @@ class StartProcessingResponse(BaseModel):
 @app.post("/process-video", response_model=StartProcessingResponse)
 async def process_video(
     background_tasks: BackgroundTasks,
-    video_url: str = Form(..., description="Video URL (HTTP/HTTPS) for processing with automatic separation"),
+    video_url: Optional[str] = Form(None, description="Video URL (HTTP/HTTPS) for processing with automatic separation"),
+    video_file: Optional[UploadFile] = File(None, description="Video file upload (MP4, AVI, MOV, etc.)"),
     include_instruments: bool = Form(True, description="Whether to include instruments in final audio"),
     generate_subtitles: bool = Form(True, description="Whether to generate subtitles"),
     temperature: float = Form(settings.DIA_TEMPERATURE, description="Voice cloning temperature"),
@@ -162,14 +163,31 @@ async def process_video(
     language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
     speakers_expected: Optional[int] = Form(None, description="Expected number of speakers (1-10)")
 ):
-    """Start video processing with immediate response"""
+    """Start video processing with immediate response - accepts either URL or file upload"""
     
-    # Validate URL format
-    if not video_url.startswith(('http://', 'https://')):
-        raise HTTPException(status_code=400, detail="Invalid video URL format")
+    # Validate input: either video_url or video_file, not both, not both empty
+    if not video_url and not video_file:
+        raise HTTPException(status_code=400, detail="Either video_url or video_file must be provided")
     
-    if not video_url.strip():
-        raise HTTPException(status_code=400, detail="Video URL cannot be empty")
+    if video_url and video_file:
+        raise HTTPException(status_code=400, detail="Provide either video_url or video_file, not both")
+    
+    # Validate URL format if provided
+    if video_url:
+        if not video_url.startswith(('http://', 'https://')):
+            raise HTTPException(status_code=400, detail="Invalid video URL format")
+        if not video_url.strip():
+            raise HTTPException(status_code=400, detail="Video URL cannot be empty")
+    
+    # Validate file if provided
+    if video_file:
+        if not video_file.filename:
+            raise HTTPException(status_code=400, detail="Video file must have a filename")
+        
+        allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
+        file_ext = Path(video_file.filename).suffix.lower()
+        if file_ext not in allowed_extensions:
+            raise HTTPException(status_code=400, detail=f"Unsupported video format. Allowed: {', '.join(allowed_extensions)}")
     
     if speakers_expected is not None and (speakers_expected < 1 or speakers_expected > 10):
         raise HTTPException(status_code=400, detail="speakers_expected must be between 1 and 10")
@@ -177,14 +195,33 @@ async def process_video(
     # Generate unique audio ID
     audio_id = r2_storage.generate_audio_id()
     
+    # Handle file upload if provided
+    video_source = None
+    if video_file:
+        try:
+            # Save uploaded file
+            upload_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_uploaded_video{Path(video_file.filename).suffix}")
+            
+            with open(upload_temp_path, "wb") as buffer:
+                content = await video_file.read()
+                buffer.write(content)
+            
+            video_source = upload_temp_path
+            
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+    else:
+        video_source = video_url
+    
     # Initialize status tracking
     status_manager.initialize_status(audio_id)
     
     # Start background processing
     background_tasks.add_task(
         process_video_background,
-        video_url, audio_id, include_instruments, generate_subtitles,
-        temperature, cfg_scale, top_p, speed_factor, target_language, language_code, speakers_expected
+        video_source, audio_id, include_instruments, generate_subtitles,
+        temperature, cfg_scale, top_p, speed_factor, target_language, language_code, speakers_expected,
+        bool(video_file)  # is_file_upload flag
     )
     
     # Return immediate response
@@ -198,37 +235,44 @@ async def process_video(
     )
 
 def process_video_background(
-    video_url: str, audio_id: str, include_instruments: bool,
+    video_source: str, audio_id: str, include_instruments: bool,
     generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float, speed_factor: float,
-    target_language: str, language_code: Optional[str], speakers_expected: Optional[int]
+    target_language: str, language_code: Optional[str], speakers_expected: Optional[int], is_file_upload: bool
 ):
-    """Background video processing"""
+    """Background video processing - handles both URL and file inputs"""
     final_language_code = language_code if language_code and language_code.strip() else None
     video_temp_path = None
     
     try:
-        # Download video
+        # Handle video source
         status_manager.update_status(audio_id, ProcessingStatus.DOWNLOADING, 10)
-        video_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_video.mp4")
         
-        parsed_url = urllib.parse.urlparse(video_url)
-        filename = os.path.basename(parsed_url.path)
-        if not filename or '.' not in filename:
-            filename = "video.mp4"
+        if is_file_upload:
+            # File upload: video_source is already a local file path
+            video_temp_path = video_source
+            filename = Path(video_source).name
+        else:
+            # URL download: download the video
+            video_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_video.mp4")
+            
+            parsed_url = urllib.parse.urlparse(video_source)
+            filename = os.path.basename(parsed_url.path)
+            if not filename or '.' not in filename:
+                filename = "video.mp4"
+            
+            try:
+                response = requests.get(video_source, stream=True, timeout=300)
+                response.raise_for_status()
+                
+                with open(video_temp_path, "wb") as buffer:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        buffer.write(chunk)
+                
+            except requests.exceptions.RequestException as e:
+                status_manager.fail_processing(audio_id, f"Download failed: {str(e)}")
+                return
         
-        try:
-            response = requests.get(video_url, stream=True, timeout=300)
-            response.raise_for_status()
-            
-            with open(video_temp_path, "wb") as buffer:
-                for chunk in response.iter_content(chunk_size=8192):
-                    buffer.write(chunk)
-            
-            status_manager.set_progress(audio_id, 20)
-            
-        except requests.exceptions.RequestException as e:
-            status_manager.fail_processing(audio_id, f"Download failed: {str(e)}")
-            return
+        status_manager.set_progress(audio_id, 20)
         
         # Process video
         status_manager.update_status(audio_id, ProcessingStatus.PROCESSING, 30)
@@ -257,7 +301,8 @@ def process_video_background(
         
         original_audio_details = {
             "filename": filename,
-            "source_url": video_url,
+            "source_url": video_source if not is_file_upload else None,
+            "source_type": "url" if not is_file_upload else "file_upload",
             "duration": original_duration,
             "sample_rate": original_sr,
             "channels": len(original_audio.shape) if len(original_audio.shape) > 1 else 1,
@@ -340,6 +385,15 @@ def process_video_background(
             r2_segments_result = r2_storage.upload_audio_segments(audio_id, processing_result["segments_dir"])
             r2_final_result = r2_storage.upload_final_audio(audio_id, final_audio_path)
             
+            # Upload vocal and instruments files
+            vocal_filename = f"vocal_separated_{audio_id}.wav"
+            vocal_r2_key = r2_storage.generate_file_path(audio_id, "vocal", vocal_filename)
+            r2_vocal_result = r2_storage.upload_file(vocal_path, vocal_r2_key, "audio/wav")
+            
+            instruments_filename = f"instruments_separated_{audio_id}.wav"
+            instruments_r2_key = r2_storage.generate_file_path(audio_id, "instruments", instruments_filename)
+            r2_instruments_result = r2_storage.upload_file(separated_instruments_path, instruments_r2_key, "audio/wav")
+            
             r2_video_result = None
             r2_subtitle_result = None
             
@@ -388,6 +442,16 @@ def process_video_background(
                     "size_mb": round(r2_final_result.get("size", 0) / (1024 * 1024), 2),
                     "uploaded": r2_final_result.get("success", False)
                 },
+                "vocal_audio": {
+                    "url": r2_vocal_result.get("url"),
+                    "size_mb": round(r2_vocal_result.get("size", 0) / (1024 * 1024), 2),
+                    "uploaded": r2_vocal_result.get("success", False)
+                },
+                "instruments_audio": {
+                    "url": r2_instruments_result.get("url"),
+                    "size_mb": round(r2_instruments_result.get("size", 0) / (1024 * 1024), 2),
+                    "uploaded": r2_instruments_result.get("success", False)
+                },
                 "video": {
                     "url": r2_video_result.get("url"),
                     "size_mb": round(r2_video_result.get("size", 0) / (1024 * 1024), 2),
@@ -427,8 +491,11 @@ def process_video_background(
                 "segments_uploaded": r2_segments_result.get("success", False),
                 "total_files": (r2_segments_result.get("files_uploaded", 0) if r2_segments_result and r2_segments_result.get("success") else 0) + 
                               (1 if r2_final_result.get("success") else 0) + 
+                              (1 if r2_vocal_result.get("success") else 0) + 
+                              (1 if r2_instruments_result.get("success") else 0) + 
                               (1 if r2_video_result and r2_video_result.get("success") else 0) + 
-                              (1 if r2_subtitle_result and r2_subtitle_result.get("success") else 0)
+                              (1 if r2_subtitle_result and r2_subtitle_result.get("success") else 0),
+                "segment_urls": r2_storage.get_segment_urls(audio_id, r2_segments_result) if r2_segments_result else {}
             }
         })
         
@@ -445,8 +512,8 @@ def process_video_background(
                 "include_instruments": include_instruments,
                 "generate_subtitles": generate_subtitles,
                 "video_provided": True,
-                "video_source": "url",
-                "video_url": video_url,
+                "video_source": "url" if not is_file_upload else "file_upload",
+                "video_url": video_source if not is_file_upload else None,
                 "runpod_separation": True
             },
             "processing_stats": audio_processor.get_processing_stats(processing_result["segments_dir"]),

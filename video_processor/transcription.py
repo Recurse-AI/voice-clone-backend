@@ -183,7 +183,7 @@ class TranscriptionService:
             return "en"
     
     def format_dialogue_text(self, text: str, speaker: str, is_multi_speaker: bool = False) -> str:
-        """Translate text to English and format into multi-line dialogue with speaker tags"""
+        """Translate text to English and format into multi-line dialogue with speaker tags - Advanced for Dubbing"""
         try:
             # First clean the text
             clean_text = self._clean_text(text)
@@ -196,49 +196,62 @@ class TranscriptionService:
                 speaker_num = ord(speaker) - ord('A') + 1
                 
                 if is_multi_speaker:
-                    prompt = f"""Translate this text to English and format into multi-line dialogue with speaker tags. Rules:
-- Translate to natural English
-- Maximum 10-11 words per line
-- Use [S1], [S2], etc. for different speakers
+                    prompt = f"""You are a professional dubbing translator. Convert this text to natural English dialogue for voice cloning/dubbing. 
+
+CRITICAL REQUIREMENTS:
+- Translate to natural, conversational English suitable for dubbing
+- 1-11 words per line for smooth voice synthesis (aim for 3-11 words, shorter lines OK)
+- Use [S1], [S2], etc. for speaker identification
 - Current speaker is {speaker}, use [S{speaker_num}] for this speaker
-- If speaker changes in the text, use appropriate tags
-- Keep natural speech flow
-- Each line should be a complete phrase
+- Include natural non-verbal sounds when appropriate: (laughs), (coughs), (sighs), (gasps), (clears throat), (mumbles), (chuckle), (whistles), (humming), (sneezes)
+- Preserve emotional context and speaking style
+- Each line should be naturally speakable
+- Match the original's rhythm and pacing
+- If speaker changes detected, use appropriate tags
 
-Text to translate and format: "{clean_text}"
+Original text: "{clean_text}"
 
-Example format:
-[S1] This is the first line translated to English.
-[S2] This is second speaker with different words.
-[S1] Back to first speaker continuing dialogue.
+DUBBING FORMAT EXAMPLE:
+[S1] Hey there
+[S1] (chuckle) how's it
+[S1] going today?
+[S2] Pretty good
+[S2] (sighs) just working
+[S2] on some projects
 
-Translate and format the text:"""
+Convert to natural English dubbing format:"""
                 else:
-                    prompt = f"""Translate this text to English and format into multi-line dialogue. Rules:
-- Translate to natural English
-- Maximum 10-11 words per line
+                    prompt = f"""You are a professional dubbing translator. Convert this text to natural English dialogue for voice cloning/dubbing.
+
+CRITICAL REQUIREMENTS:
+- Translate to natural, conversational English suitable for dubbing
+- 1-11 words per line for smooth voice synthesis (aim for 3-11 words, shorter lines OK)
 - Use [S{speaker_num}] tag for all lines (single speaker)
-- Keep natural speech flow
-- Each line should be a complete phrase
+- Include natural non-verbal sounds when appropriate: (laughs), (coughs), (sighs), (gasps), (clears throat), (mumbles), (chuckle), (whistles), (humming), (sneezes)
+- Preserve emotional context and speaking style
+- Each line should be naturally speakable
+- Match the original's rhythm and pacing
+- Break at natural speech pauses
 
-Text to translate and format: "{clean_text}"
+Original text: "{clean_text}"
 
-Example format:
-[S{speaker_num}] This is the first line translated to English.
-[S{speaker_num}] This continues with the next part of speech.
-[S{speaker_num}] Final part of the dialogue here.
+DUBBING FORMAT EXAMPLE:
+[S{speaker_num}] That's really
+[S{speaker_num}] (laughs) amazing work
+[S{speaker_num}] you did there
+[S{speaker_num}] (sighs) I'm impressed
 
-Translate and format the text:"""
+Convert to natural English dubbing format:"""
                 
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are a professional translator and dialogue formatter. Translate text to natural English and format with speaker tags, maximum 10-11 words per line."},
+                        {"role": "system", "content": "You are a professional dubbing translator specializing in voice cloning dialogue. Create natural, speakable English text with appropriate non-verbal sounds and emotional context. Each line should be 1-11 words (aim for 3-11 words, shorter lines OK) for optimal voice synthesis."},
                         {"role": "user", "content": prompt}
                     ],
-                    max_tokens=200,
-                    temperature=0.1,
-                    timeout=10
+                    max_tokens=300,
+                    temperature=0.2,
+                    timeout=15
                 )
                 
                 if response and response.choices:
