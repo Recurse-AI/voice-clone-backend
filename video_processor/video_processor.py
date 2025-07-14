@@ -26,6 +26,7 @@ class VideoProcessor:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.subtitle_font_size = 18
         self.subtitle_margin_bottom = 30
+        self.words_per_subtitle = 3
     
     def _load_subtitles(self, segments_dir: str) -> List[Dict]:
         subtitle_data = []
@@ -80,18 +81,46 @@ class VideoProcessor:
                     display_text = re.sub(r'\n', ' ', display_text).strip()
                     
                     if display_text:
-                        subtitle_data.append({
-                            'start': data['start'],
-                            'end': data['end'],
-                            'text': display_text,
-                            'duration': data['end'] - data['start']
-                        })
+                        word_chunks = self._create_word_chunks(
+                            display_text, 
+                            data['start'], 
+                            data['end']
+                        )
+                        subtitle_data.extend(word_chunks)
                 
                 except Exception:
                     continue
         
         subtitle_data.sort(key=lambda x: x['start'])
         return self._resolve_overlaps(subtitle_data)
+    
+    def _create_word_chunks(self, text: str, start_time: float, end_time: float) -> List[Dict]:
+        words = text.split()
+        if not words:
+            return []
+        
+        chunks = []
+        total_duration = end_time - start_time
+        words_per_chunk = self.words_per_subtitle
+        
+        for i in range(0, len(words), words_per_chunk):
+            chunk_words = words[i:i + words_per_chunk]
+            chunk_text = ' '.join(chunk_words)
+            
+            chunk_start = start_time + (i / len(words)) * total_duration
+            chunk_end = start_time + ((i + len(chunk_words)) / len(words)) * total_duration
+            
+            if chunk_end - chunk_start < 0.8:
+                chunk_end = chunk_start + 0.8
+            
+            chunks.append({
+                'start': chunk_start,
+                'end': chunk_end,
+                'text': chunk_text,
+                'duration': chunk_end - chunk_start
+            })
+        
+        return chunks
     
     def _resolve_overlaps(self, subtitle_data: List[Dict]) -> List[Dict]:
         if not subtitle_data:

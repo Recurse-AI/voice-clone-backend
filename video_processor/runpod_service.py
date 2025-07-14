@@ -104,7 +104,7 @@ class RunPodService:
         
         return data
 
-    def wait_for_completion(self, job_id: str, timeout: int = 900) -> Dict[str, Any]:
+    def wait_for_completion(self, job_id: str, timeout: int = 1800) -> Dict[str, Any]:
         """Wait for job completion with timeout"""
         import time
         start_time = time.time()
@@ -118,10 +118,10 @@ class RunPodService:
                 elif status.get('status') == 'FAILED':
                     return status
                 elif status.get('status') in ['IN_QUEUE', 'IN_PROGRESS']:
-                    time.sleep(10)  # Wait 10 seconds before checking again
+                    time.sleep(15)  # Wait 15 seconds before checking again
                     continue
                 else:
-                    time.sleep(5)  # Wait 5 seconds for other statuses
+                    time.sleep(8)  # Wait 8 seconds for other statuses
                     
             except Exception as e:
                 return {
