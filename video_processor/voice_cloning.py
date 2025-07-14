@@ -209,7 +209,7 @@ class VoiceCloningService:
             return None
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Adjust audio to match target duration using time-stretch for small differences"""
+        """Adjust audio to match target duration using time-stretch - NO padding, only stretching"""
         if audio is None:
             print("Warning: Audio is None")
             return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
@@ -240,22 +240,39 @@ class VoiceCloningService:
         if current_samples == target_samples:
             return audio
 
-        if current_samples < target_samples:
-            # Always stretch audio to target duration without padding
-            ratio = target_samples / current_samples
-            stretched = librosa.effects.time_stretch(audio, 1/ratio)
-            # Trim or return as is; no silence or padding
-            if len(stretched) >= target_samples:
-                return stretched[:target_samples]
-            return stretched
-
-        # audio longer than target: truncate with fade out
-        audio = audio[:target_samples]
-        fade_samples = int(0.1 * self.sample_rate)
-        if len(audio) > fade_samples:
-            fade_curve = np.linspace(1, 0, fade_samples)
-            audio[-fade_samples:] *= fade_curve
-        return audio
+        # Calculate stretch rate (inverse of ratio)
+        stretch_rate = target_samples / current_samples
+        
+        print(f"Stretching audio from {current_samples} samples to {target_samples} samples (rate: {stretch_rate:.3f})")
+        
+        try:
+            # Try different librosa API calls for compatibility
+            try:
+                # Try new API (librosa >= 0.10.0)
+                stretched_audio = librosa.effects.time_stretch(y=audio, rate=stretch_rate)
+            except TypeError:
+                # Try old API (librosa < 0.10.0)
+                stretched_audio = librosa.effects.time_stretch(audio, stretch_rate)
+                
+            # Ensure exact target samples
+            if len(stretched_audio) != target_samples:
+                if len(stretched_audio) > target_samples:
+                    stretched_audio = stretched_audio[:target_samples]
+                elif len(stretched_audio) < target_samples:
+                    # Use linear interpolation for final adjustment
+                    indices = np.linspace(0, len(stretched_audio) - 1, target_samples)
+                    stretched_audio = np.interp(indices, np.arange(len(stretched_audio)), stretched_audio)
+            
+            print(f"Final stretched audio length: {len(stretched_audio)} samples")
+            return stretched_audio.astype(np.float32)
+            
+        except Exception as e:
+            print(f"Error during time stretching: {e}")
+            print(f"Falling back to linear interpolation for rate {stretch_rate}")
+            # Direct linear interpolation as fallback
+            indices = np.linspace(0, len(audio) - 1, target_samples)
+            stretched_audio = np.interp(indices, np.arange(len(audio)), audio)
+            return stretched_audio.astype(np.float32)
     
     def _cleanup_memory(self):
         """Clean up GPU memory"""
