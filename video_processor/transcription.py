@@ -200,10 +200,10 @@ class TranscriptionService:
 
 CRITICAL REQUIREMENTS:
 - Translate to natural, conversational English suitable for dubbing
-- 1-11 words per line for smooth voice synthesis (aim for 3-11 words, shorter lines OK)
+- Try to keep 7-11 words per line when possible, adjust if needed for natural flow
 - Use [S1], [S2], etc. for speaker identification
 - Current speaker is {speaker}, use [S{speaker_num}] for this speaker
-- Include natural non-verbal sounds when appropriate: (laughs), (coughs), (sighs), (gasps), (clears throat), (mumbles), (chuckle), (whistles), (humming), (sneezes)
+- Only add non-verbal sounds when truly necessary and natural to the content (don't force them)
 - Preserve emotional context and speaking style
 - Each line should be naturally speakable
 - Match the original's rhythm and pacing
@@ -212,12 +212,10 @@ CRITICAL REQUIREMENTS:
 Original text: "{clean_text}"
 
 DUBBING FORMAT EXAMPLE:
-[S1] Hey there
-[S1] (chuckle) how's it
-[S1] going today?
-[S2] Pretty good
-[S2] (sighs) just working
-[S2] on some projects
+[S1] Hey there how's it going
+[S1] today with your work?
+[S2] Pretty good just working on
+[S2] some important projects right now
 
 Convert to natural English dubbing format:"""
                 else:
@@ -225,9 +223,9 @@ Convert to natural English dubbing format:"""
 
 CRITICAL REQUIREMENTS:
 - Translate to natural, conversational English suitable for dubbing
-- 1-11 words per line for smooth voice synthesis (aim for 3-11 words, shorter lines OK)
+- Try to keep 7-11 words per line when possible, adjust if needed for natural flow
 - Use [S{speaker_num}] tag for all lines (single speaker)
-- Include natural non-verbal sounds when appropriate: (laughs), (coughs), (sighs), (gasps), (clears throat), (mumbles), (chuckle), (whistles), (humming), (sneezes)
+- Only add non-verbal sounds when truly necessary and natural to the content (don't force them)
 - Preserve emotional context and speaking style
 - Each line should be naturally speakable
 - Match the original's rhythm and pacing
@@ -236,17 +234,16 @@ CRITICAL REQUIREMENTS:
 Original text: "{clean_text}"
 
 DUBBING FORMAT EXAMPLE:
-[S{speaker_num}] That's really
-[S{speaker_num}] (laughs) amazing work
-[S{speaker_num}] you did there
-[S{speaker_num}] (sighs) I'm impressed
+[S{speaker_num}] That's really amazing work you
+[S{speaker_num}] did there I'm very impressed
+[S{speaker_num}] with the quality and detail
 
 Convert to natural English dubbing format:"""
                 
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are a professional dubbing translator specializing in voice cloning dialogue. Create natural, speakable English text with appropriate non-verbal sounds and emotional context. Each line should be 1-11 words (aim for 3-11 words, shorter lines OK) for optimal voice synthesis."},
+                        {"role": "system", "content": "You are a professional dubbing translator specializing in voice cloning dialogue. Create natural, speakable English text with emotional context. Try to keep 7-11 words per line when possible, adjust if needed for natural flow. Only add non-verbal sounds when truly necessary and natural to the content."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=300,
@@ -333,7 +330,8 @@ Convert to natural English dubbing format:"""
         for word in words:
             current_line.append(word)
             
-            if len(current_line) >= 10:
+            # Try to keep 7-11 words per line, break at 11
+            if len(current_line) >= 11:
                 lines.append(f"{speaker_tag} {' '.join(current_line)}")
                 current_line = []
         
