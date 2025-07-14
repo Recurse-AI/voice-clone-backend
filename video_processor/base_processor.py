@@ -96,7 +96,7 @@ class AudioProcessor:
     def clone_voice_segments(self, segments_dir: str, audio_id: str, 
                            temperature: float = 1.3, cfg_scale: float = 3.0, 
                            top_p: float = 0.95, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Clone voice segments speaker by speaker with consistent metadata"""
+        """Clone voice segments speaker by speaker - simplified"""
         if not self.voice_cloning_service.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -108,8 +108,9 @@ class AudioProcessor:
             
             base_seed = seed or settings.DEFAULT_SEED
             
+            # Process each speaker directory
             for speaker_dir in segments_path.iterdir():
-                if not (speaker_dir.is_dir() and speaker_dir.name.startswith("speaker_")):
+                if not speaker_dir.is_dir() or not speaker_dir.name.startswith("speaker_"):
                     continue
                 
                 speaker = speaker_dir.name.replace("speaker_", "")
@@ -119,35 +120,34 @@ class AudioProcessor:
                 if not segments_subdir.exists():
                     continue
                 
+                # Calculate speaker seed
                 speaker_index = ord(speaker) - ord('A')
                 speaker_seed = base_seed + (speaker_index * settings.SPEAKER_SEED_OFFSET)
                 
+                # Find reference audio
                 reference_audio_path = None
                 if reference_subdir.exists():
                     for ref_file in reference_subdir.glob("*_REFERENCE.wav"):
                         reference_audio_path = str(ref_file)
                         break
                 
+                # Collect all segments for this speaker
                 speaker_segments = []
-                segment_files = []
-                
                 for json_file in segments_subdir.glob("*_metadata.json"):
                     try:
                         with open(json_file, 'r', encoding='utf-8') as f:
                             import json
                             segment_data = json.load(f)
                         
+                        # Simple validation - only check essential fields
                         if not segment_data.get('english_text', '').strip():
                             continue
                         
-                        if not segment_data.get('segment_index'):
-                            continue
-                        
+                        # Add required fields
                         segment_data['reference_audio_path'] = reference_audio_path
                         segment_data['segments_dir'] = str(segments_subdir)
                         segment_data['segment_file'] = str(json_file)
                         speaker_segments.append(segment_data)
-                        segment_files.append(json_file)
                         
                     except Exception:
                         continue
@@ -155,6 +155,7 @@ class AudioProcessor:
                 if not speaker_segments:
                     continue
                 
+                # Clone segments for this speaker
                 cloning_result = self.voice_cloning_service.clone_voice_segments(
                     speaker_segments, temperature, cfg_scale, top_p, speaker_seed
                 )
@@ -162,8 +163,9 @@ class AudioProcessor:
                 if not cloning_result.get('success', False):
                     continue
                 
-                seeds_used[speaker] = cloning_result.get("seed_used", speaker_seed)
+                seeds_used[speaker] = speaker_seed
                 
+                # Process cloned segments
                 speaker_successful = 0
                 for idx, cloned_segment in enumerate(cloning_result.get('cloned_segments', [])):
                     if cloned_segment.get('success', False) and cloned_segment.get('cloned_audio') is not None:
@@ -175,8 +177,10 @@ class AudioProcessor:
                             cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
                             cloned_path = segments_dir_path / cloned_filename
                             
+                            # Save cloned audio
                             sf.write(cloned_path, cloned_segment['cloned_audio'], 44100)
                             
+                            # Update metadata
                             metadata_file = Path(segment_data['segment_file'])
                             with open(metadata_file, 'r', encoding='utf-8') as f:
                                 metadata = json.load(f)
@@ -186,7 +190,7 @@ class AudioProcessor:
                                 'cloned_audio_path': str(cloned_path),
                                 'cloned_audio_exists': True,
                                 'cloning_successful': True,
-                                'cloning_seed': cloning_result.get("seed_used", speaker_seed),
+                                'cloning_seed': speaker_seed,
                                 'cloning_parameters': {
                                     'temperature': temperature,
                                     'cfg_scale': cfg_scale,
@@ -208,7 +212,7 @@ class AudioProcessor:
                     'total_segments': len(speaker_segments),
                     'successful_clones': speaker_successful,
                     'reference_used': reference_audio_path,
-                    'seed_used': cloning_result.get("seed_used", speaker_seed),
+                    'seed_used': speaker_seed,
                     'cloning_parameters': {
                         'temperature': temperature,
                         'cfg_scale': cfg_scale,
@@ -219,6 +223,7 @@ class AudioProcessor:
                 
                 self.voice_cloning_service.clear_cache()
             
+            # Save cloning summary
             cloning_summary = {
                 'audio_id': audio_id,
                 'total_successful_clones': total_successful_clones,

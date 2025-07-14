@@ -195,13 +195,13 @@ class TranscriptionService:
             return "en"
     
     def format_dialogue_text(self, text: str, speaker: str, is_multi_speaker: bool = False) -> str:
-        """Translate text to English and format into multi-line dialogue with speaker tags - Advanced for Dubbing"""
+        """Translate text to English and format into multi-line dialogue with speaker tags - No fallback"""
         try:
             # First clean the text
             clean_text = self._clean_text(text)
             
             if not clean_text.strip():
-                return "[S1] No text available"
+                raise ValueError(f"No text available for speaker {speaker}")
             
             # Check cache first for repeated translations
             with self.cache_lock:
@@ -271,8 +271,8 @@ Convert to natural English dubbing format:"""
                 return self._simple_translate_and_format(clean_text)
                 
         except Exception as e:
-            # Ultimate fallback
-            return f"[S1] {text.strip()}" if text.strip() else "[S1] Audio segment"
+            # No ultimate fallback - raise error if everything fails
+            raise ValueError(f"Text formatting failed for speaker {speaker}: {str(e)}")
     
     def format_dialogue_batch(self, text_list: List[str], speaker_list: List[str]) -> List[str]:
         """Process multiple dialogue texts in parallel for better performance"""
@@ -294,13 +294,13 @@ Convert to natural English dubbing format:"""
                 try:
                     results[index] = future.result()
                 except Exception as e:
-                    # Fallback for failed translations
-                    results[index] = f"[S1] {text_list[index].strip()}" if text_list[index].strip() else "[S1] Audio segment"
+                    # No fallback - raise error if translation fails
+                    raise ValueError(f"Translation failed for text at index {index}: {str(e)}")
         
         return results
     
     def _simple_translate_and_format(self, text: str) -> str:
-        """Simple fallback translation and formatting"""
+        """Simple translation and formatting - no fallback"""
         try:
             # Simple translation attempt
             translation_response = self.openai_client.chat.completions.create(
@@ -318,12 +318,12 @@ Convert to natural English dubbing format:"""
                 english_text = translation_response.choices[0].message.content.strip()
                 return self._simple_format_text(english_text)
             else:
-                # If translation fails, format original text
-                return self._simple_format_text(text)
+                # If translation fails, raise error
+                raise ValueError("Translation service returned no response")
                 
-        except Exception:
-            # Final fallback
-            return self._simple_format_text(text)
+        except Exception as e:
+            # No fallback - raise error if translation fails
+            raise ValueError(f"Translation failed: {str(e)}")
     
     def _clean_formatted_text(self, text: str) -> str:
         """Clean formatted text from OpenAI response - handles new format with speaker tags only once"""
@@ -348,7 +348,7 @@ Convert to natural English dubbing format:"""
                     cleaned_lines.append(line)
         
         if not cleaned_lines:
-            return f"[S1] {text}"
+            raise ValueError("Text could not be cleaned and formatted")
         
         # Ensure at least one line has a speaker tag
         if not any('[S' in line for line in cleaned_lines):
@@ -357,10 +357,10 @@ Convert to natural English dubbing format:"""
         return '\n'.join(cleaned_lines)
     
     def _simple_format_text(self, text: str) -> str:
-        """Simple fallback text formatting with speaker tag only once"""
+        """Simple text formatting with speaker tag only once - no fallback"""
         words = text.split()
         if not words:
-            return f"[S1] {text}"
+            raise ValueError("Text has no words to format")
         
         lines = []
         current_line = []

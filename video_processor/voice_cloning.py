@@ -56,7 +56,7 @@ class VoiceCloningService:
     def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.2,
                            cfg_scale: float = 3.0, top_p: float = 0.95,
                            seed: Optional[int] = None) -> Dict[str, Any]:
-        """Clone voice segments one by one"""
+        """Clone voice segments one by one - no fallback text"""
         if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -67,6 +67,7 @@ class VoiceCloningService:
             used_seed = seed or settings.DEFAULT_SEED
             set_seed(used_seed)
             
+            # Get reference audio and text from first segment
             reference_audio_path = None
             reference_text = None
             if segments and segments[0].get('reference_audio_path'):
@@ -80,27 +81,32 @@ class VoiceCloningService:
             
             cloned_segments = []
             for i, segment in enumerate(segments):
+                # Get text to clone - no fallback, return error if empty
                 english_text = segment.get('english_text', segment.get('text', ''))
                 if not english_text.strip():
-                    continue
+                    return {"success": False, "error": f"Segment {i+1} has no english_text"}
                 
                 combined_display = (reference_text + '\n' + english_text) if reference_text else english_text
                 print(f"Combined Text: {combined_display}")
+                
+                # Generate audio
                 cloned_audio = self._generate_single_segment(
                     english_text, reference_audio_path, reference_text, 
                     temperature, cfg_scale, top_p
                 )
                 
-                if cloned_audio is not None:
-                    target_duration = segment.get('duration', 5.0)
-                    cloned_audio = self._adjust_audio_length(cloned_audio, target_duration)
-                    
-                    cloned_segments.append({
-                        "success": True,
-                        "original_data": segment,
-                        "cloned_audio": cloned_audio,
-                        "duration": target_duration
-                    })
+                if cloned_audio is None:
+                    return {"success": False, "error": f"Failed to generate audio for segment {i+1}"}
+                
+                target_duration = segment.get('duration', 5.0)
+                cloned_audio = self._adjust_audio_length(cloned_audio, target_duration)
+                
+                cloned_segments.append({
+                    "success": True,
+                    "original_data": segment,
+                    "cloned_audio": cloned_audio,
+                    "duration": target_duration
+                })
                 
                 self._cleanup_memory()
             
