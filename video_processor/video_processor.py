@@ -24,12 +24,10 @@ class VideoProcessor:
     def __init__(self, temp_dir: str = "./tmp/video_processing"):
         self.temp_dir = Path(temp_dir)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
-        self.max_words_per_subtitle = 4
         self.subtitle_font_size = 18
         self.subtitle_margin_bottom = 30
     
     def _load_subtitles(self, segments_dir: str) -> List[Dict]:
-        """Load subtitles from segments with proper metadata validation"""
         subtitle_data = []
         segments_path = Path(segments_dir)
         
@@ -46,7 +44,6 @@ class VideoProcessor:
                     with open(json_file, 'r', encoding='utf-8') as f:
                         data = json.load(f)
                     
-                    # Validate essential fields
                     if not data.get('segment_index'):
                         continue
                     
@@ -56,20 +53,16 @@ class VideoProcessor:
                     if not data.get('end'):
                         continue
                     
-                    # Check for cloned audio file existence
                     cloned_audio_exists = False
                     segment_index = data.get('segment_index', 1)
                     
-                    # Try updated metadata first
                     if data.get('cloned_audio_exists') and data.get('cloned_audio_path'):
                         cloned_audio_exists = Path(data['cloned_audio_path']).exists()
                     
-                    # Fallback to checking expected file name
                     if not cloned_audio_exists:
                         expected_cloned_file = segments_subdir / f"cloned_segment_{segment_index:03d}.wav"
                         cloned_audio_exists = expected_cloned_file.exists()
                     
-                    # Last resort: check old naming convention
                     if not cloned_audio_exists:
                         base_name = json_file.stem.replace('_metadata', '')
                         old_cloned_file = segments_subdir / f"cloned_{base_name}.wav"
@@ -78,73 +71,51 @@ class VideoProcessor:
                     if not cloned_audio_exists:
                         continue
                     
-                    # Use English text for subtitles
                     english_text = data.get('english_text', data.get('text', ''))
                     if not english_text:
                         continue
                     
-                    # Clean speaker tags for display
                     import re
                     display_text = re.sub(r'\[S\d+\]\s*', '', english_text).strip()
+                    display_text = re.sub(r'\n', ' ', display_text).strip()
                     
-                    # Split multi-line dialogue into separate lines
-                    dialogue_lines = english_text.split('\n')
-                    for line in dialogue_lines:
-                        line = line.strip()
-                        if not line:
-                            continue
-                        
-                        # Remove speaker tags for display
-                        clean_line = re.sub(r'\[S\d+\]\s*', '', line).strip()
-                        
-                        if clean_line and data.get('start') is not None and data.get('end') is not None:
-                            word_chunks = self._split_into_chunks(clean_line, data['start'], data['end'])
-                            subtitle_data.extend(word_chunks)
+                    if display_text:
+                        subtitle_data.append({
+                            'start': data['start'],
+                            'end': data['end'],
+                            'text': display_text,
+                            'duration': data['end'] - data['start']
+                        })
                 
                 except Exception:
                     continue
         
         subtitle_data.sort(key=lambda x: x['start'])
-        return self._remove_duplicates(subtitle_data)
+        return self._resolve_overlaps(subtitle_data)
     
-    def _split_into_chunks(self, text: str, start_time: float, end_time: float) -> List[Dict]:
-        words = text.strip().split()
-        if not words:
+    def _resolve_overlaps(self, subtitle_data: List[Dict]) -> List[Dict]:
+        if not subtitle_data:
             return []
         
-        chunks = []
-        total_duration = end_time - start_time
+        resolved = []
         
-        for i in range(0, len(words), self.max_words_per_subtitle):
-            chunk_words = words[i:i + self.max_words_per_subtitle]
-            chunk_text = ' '.join(chunk_words)
+        for current in subtitle_data:
+            if not resolved:
+                resolved.append(current)
+                continue
             
-            chunk_start = start_time + (i / len(words)) * total_duration
-            chunk_end = start_time + ((i + len(chunk_words)) / len(words)) * total_duration
+            last = resolved[-1]
             
-            if chunk_end - chunk_start < 1.0:
-                chunk_end = chunk_start + 1.0
-            
-            chunks.append({
-                'start': chunk_start,
-                'end': chunk_end,
-                'text': chunk_text,
-                'duration': chunk_end - chunk_start
-            })
+            if current['start'] < last['end']:
+                if current['start'] >= last['start']:
+                    last['end'] = current['start']
+                    if last['end'] - last['start'] < 0.5:
+                        resolved.pop()
+                resolved.append(current)
+            else:
+                resolved.append(current)
         
-        return chunks
-    
-    def _remove_duplicates(self, subtitle_data: List[Dict]) -> List[Dict]:
-        seen = set()
-        unique_subtitles = []
-        
-        for subtitle in subtitle_data:
-            key = (subtitle['text'], round(subtitle['start'], 1))
-            if key not in seen:
-                seen.add(key)
-                unique_subtitles.append(subtitle)
-        
-        return unique_subtitles
+        return resolved
     
     def _create_final_audio(self, audio_path: str, instruments_path: Optional[str], audio_id: str) -> Path:
         final_audio_path = self.temp_dir / f"final_mixed_audio_{audio_id}.wav"
