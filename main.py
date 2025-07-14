@@ -1,8 +1,8 @@
-from fastapi import FastAPI, Form, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, Form, HTTPException, BackgroundTasks, UploadFile, File, Depends
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 import os
 import shutil
 from pathlib import Path
@@ -45,6 +45,17 @@ logging.basicConfig(
     handlers=[console_handler, file_handler]
 )
 logger = logging.getLogger(__name__)
+
+# Custom dependency to handle video_file parameter properly
+async def get_video_file(video_file: Union[UploadFile, str, None] = File(None)) -> Optional[UploadFile]:
+    """Handle video_file parameter - convert empty strings to None"""
+    if isinstance(video_file, str):
+        # If it's an empty string, return None
+        if not video_file.strip():
+            return None
+        # If it's a non-empty string, this shouldn't happen but handle gracefully
+        return None
+    return video_file
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -152,7 +163,7 @@ class StartProcessingResponse(BaseModel):
 async def process_video(
     background_tasks: BackgroundTasks,
     video_url: Optional[str] = Form(None, description="Video URL (HTTP/HTTPS) for processing with automatic separation"),
-    video_file: Optional[UploadFile] = File(None, description="Video file upload (MP4, AVI, MOV, etc.)"),
+    video_file: Optional[UploadFile] = Depends(get_video_file),
     include_instruments: bool = Form(True, description="Whether to include instruments in final audio"),
     generate_subtitles: bool = Form(True, description="Whether to generate subtitles"),
     temperature: float = Form(settings.DIA_TEMPERATURE, description="Voice cloning temperature"),
@@ -165,30 +176,26 @@ async def process_video(
 ):
     """Start video processing with immediate response - accepts either URL or file upload"""
     
-    # Clean up inputs: treat empty strings as None
-    if video_url is not None and not video_url.strip():
-        video_url = None
-    
-    if video_file is not None and (not hasattr(video_file, 'filename') or not video_file.filename):
-        video_file = None
+    # Clean up inputs
+    video_url = video_url.strip() if video_url else None
+    language_code = language_code.strip() if language_code else None
     
     # Validate input: either video_url or video_file, not both, not both empty
-    if not video_url and not video_file:
+    has_url = bool(video_url)
+    has_file = bool(video_file and hasattr(video_file, 'filename') and video_file.filename)
+    
+    if not has_url and not has_file:
         raise HTTPException(status_code=400, detail="Either video_url or video_file must be provided")
     
-    if video_url and video_file:
+    if has_url and has_file:
         raise HTTPException(status_code=400, detail="Provide either video_url or video_file, not both")
     
     # Validate URL format if provided
-    if video_url:
-        if not video_url.startswith(('http://', 'https://')):
-            raise HTTPException(status_code=400, detail="Invalid video URL format")
+    if has_url and not video_url.startswith(('http://', 'https://')):
+        raise HTTPException(status_code=400, detail="Invalid video URL format")
     
     # Validate file if provided
-    if video_file:
-        if not video_file.filename:
-            raise HTTPException(status_code=400, detail="Video file must have a filename")
-        
+    if has_file:
         allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
         file_ext = Path(video_file.filename).suffix.lower()
         if file_ext not in allowed_extensions:
@@ -202,7 +209,7 @@ async def process_video(
     
     # Handle file upload if provided
     video_source = None
-    if video_file:
+    if has_file:
         try:
             # Save uploaded file
             upload_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_uploaded_video{Path(video_file.filename).suffix}")
@@ -225,8 +232,8 @@ async def process_video(
     background_tasks.add_task(
         process_video_background,
         video_source, audio_id, include_instruments, generate_subtitles,
-        temperature, cfg_scale, top_p, speed_factor, target_language, language_code, speakers_expected,
-        bool(video_file)  # is_file_upload flag
+        temperature, cfg_scale, top_p, speed_factor, target_language, 
+        language_code, speakers_expected, has_file
     )
     
     # Return immediate response
