@@ -482,6 +482,7 @@ def process_video_background(
                     "cfg_scale": cfg_scale,
                     "top_p": top_p,
                     "speed_factor": speed_factor,
+                    "seed_used": cloning_result.get("seed_used", settings.DEFAULT_SEED),
                     "seeds_used": cloning_result.get("seeds_used", {})
                 },
                 "features_used": {

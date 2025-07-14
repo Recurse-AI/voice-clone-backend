@@ -124,7 +124,6 @@ class AudioProcessor:
                 # Generate seed for speaker
                 speaker_index = ord(speaker) - ord('A')
                 speaker_seed = base_seed + (speaker_index * settings.SPEAKER_SEED_OFFSET)
-                seeds_used[speaker] = speaker_seed
                 
                 # Load reference audio
                 reference_audio_path = None
@@ -170,6 +169,9 @@ class AudioProcessor:
                 if not cloning_result.get('success', False):
                     continue
                 
+                # Update seeds_used with actual seed used
+                seeds_used[speaker] = cloning_result.get("seed_used", speaker_seed)
+                
                 # Save cloned audio with consistent naming and update metadata
                 speaker_successful = 0
                 for idx, cloned_segment in enumerate(cloning_result.get('cloned_segments', [])):
@@ -197,7 +199,7 @@ class AudioProcessor:
                                 'cloned_audio_path': str(cloned_path),
                                 'cloned_audio_exists': True,
                                 'cloning_successful': True,
-                                'cloning_seed': speaker_seed,
+                                'cloning_seed': cloning_result.get("seed_used", speaker_seed),
                                 'cloning_parameters': {
                                     'temperature': temperature,
                                     'cfg_scale': cfg_scale,
@@ -221,7 +223,7 @@ class AudioProcessor:
                     'total_segments': len(speaker_segments),
                     'successful_clones': speaker_successful,
                     'reference_used': reference_audio_path,
-                    'seed_used': speaker_seed,
+                    'seed_used': cloning_result.get("seed_used", speaker_seed),
                     'cloning_parameters': {
                         'temperature': temperature,
                         'cfg_scale': cfg_scale,

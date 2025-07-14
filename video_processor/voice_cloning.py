@@ -60,7 +60,8 @@ class VoiceCloningService:
             return {"success": False, "error": "No segments provided"}
         
         try:
-            set_seed(seed or settings.DEFAULT_SEED)
+            used_seed = seed or settings.DEFAULT_SEED
+            set_seed(used_seed)
             
             cloned_segments = []
             reference_audio_path = None
@@ -98,7 +99,8 @@ class VoiceCloningService:
                 "success": True,
                 "cloned_segments": cloned_segments,
                 "total_segments": len(segments),
-                "successful_clones": len(cloned_segments)
+                "successful_clones": len(cloned_segments),
+                "seed_used": used_seed
             }
             
         except Exception as e:
