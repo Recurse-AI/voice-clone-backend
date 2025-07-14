@@ -241,18 +241,13 @@ class VoiceCloningService:
             return audio
 
         if current_samples < target_samples:
+            # Always stretch audio to target duration without padding
             ratio = target_samples / current_samples
-            if ratio <= 1.2:
-                stretched = librosa.effects.time_stretch(audio, 1/ratio)
-                if len(stretched) > target_samples:
-                    stretched = stretched[:target_samples]
-                else:
-                    padding = target_samples - len(stretched)
-                    stretched = np.pad(stretched, (0, padding), mode='constant', constant_values=0)
-                return stretched
-            else:
-                padding = target_samples - current_samples
-                return np.pad(audio, (0, padding), mode='constant', constant_values=0)
+            stretched = librosa.effects.time_stretch(audio, 1/ratio)
+            # Trim or return as is; no silence or padding
+            if len(stretched) >= target_samples:
+                return stretched[:target_samples]
+            return stretched
 
         # audio longer than target: truncate with fade out
         audio = audio[:target_samples]
