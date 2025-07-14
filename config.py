@@ -48,9 +48,9 @@ class Settings(BaseSettings):
     BATCH_SIZE: int = 4  # Process segments in batches
     MAX_SEGMENT_DURATION: float = 15.0  # Maximum segment duration for optimal processing
     ENABLE_FAST_MODE: bool = True  # Enable fast processing mode
-    
+
     # Audio Length Adjustment Settings
-    USE_SPEED_ADJUSTMENT: bool = False  # Use speed adjustment instead of padding/truncation
+    USE_SPEED_ADJUSTMENT: bool = True  # Use speed adjustment instead of padding/truncation
     AUDIO_SPEED_FACTOR: float = 0.75  # Speed factor for audio (0.75 = 25% slower)
     ENABLE_AUDIO_PADDING: bool = True  # Enable zero-padding for shorter audio
     PARALLEL_PROCESSING: bool = False  # Disable parallel processing to avoid GPU memory issues
