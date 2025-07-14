@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 import time
 import json
+import librosa
 
 logger = logging.getLogger(__name__)
 
@@ -180,26 +181,37 @@ class VoiceCloningService:
             return None
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Adjust audio to match target duration"""
+        """Adjust audio to match target duration using time-stretch for small differences"""
         if len(audio) == 0:
             return audio
-            
+
         target_samples = int(target_duration * self.sample_rate)
         current_samples = len(audio)
-        
+
         if current_samples == target_samples:
             return audio
-        
-        if current_samples > target_samples:
-            audio = audio[:target_samples]
-            fade_samples = int(0.1 * self.sample_rate)
-            if len(audio) > fade_samples:
-                fade_curve = np.linspace(1, 0, fade_samples)
-                audio[-fade_samples:] *= fade_curve
-        else:
-            padding = target_samples - current_samples
-            audio = np.pad(audio, (0, padding), mode='constant', constant_values=0)
-        
+
+        if current_samples < target_samples:
+            ratio = target_samples / current_samples
+            if ratio <= 1.2:
+                audio_float = audio.astype(np.float32)
+                stretched = librosa.effects.time_stretch(audio_float, 1/ratio)
+                if len(stretched) > target_samples:
+                    stretched = stretched[:target_samples]
+                else:
+                    padding = target_samples - len(stretched)
+                    stretched = np.pad(stretched, (0, padding), mode='constant', constant_values=0)
+                return stretched
+            else:
+                padding = target_samples - current_samples
+                return np.pad(audio, (0, padding), mode='constant', constant_values=0)
+
+        # audio longer than target: truncate with fade out
+        audio = audio[:target_samples]
+        fade_samples = int(0.1 * self.sample_rate)
+        if len(audio) > fade_samples:
+            fade_curve = np.linspace(1, 0, fade_samples)
+            audio[-fade_samples:] *= fade_curve
         return audio
     
     def _cleanup_memory(self):
