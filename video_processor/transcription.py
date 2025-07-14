@@ -201,6 +201,7 @@ class TranscriptionService:
 CRITICAL REQUIREMENTS:
 - Translate to natural, conversational English suitable for dubbing
 - Try to keep 7-11 words per line when possible, adjust if needed for natural flow
+- Don't break lines in the middle of a sentence - keep full sentences together when possible
 - Use [S1], [S2], etc. for speaker identification
 - Current speaker is {speaker}, use [S{speaker_num}] for this speaker
 - Only add non-verbal sounds when truly necessary and natural to the content (don't force them)
@@ -212,10 +213,10 @@ CRITICAL REQUIREMENTS:
 Original text: "{clean_text}"
 
 DUBBING FORMAT EXAMPLE:
-[S1] Hey there how's it going
-[S1] today with your work?
-[S2] Pretty good just working on
-[S2] some important projects right now
+[S1] Hey there how's it going today?
+[S1] How is your work progressing?
+[S2] Pretty good, just working on some projects.
+[S2] Everything is going smoothly right now.
 
 Convert to natural English dubbing format:"""
                 else:
@@ -224,6 +225,7 @@ Convert to natural English dubbing format:"""
 CRITICAL REQUIREMENTS:
 - Translate to natural, conversational English suitable for dubbing
 - Try to keep 7-11 words per line when possible, adjust if needed for natural flow
+- Don't break lines in the middle of a sentence - keep full sentences together when possible
 - Use [S{speaker_num}] tag for all lines (single speaker)
 - Only add non-verbal sounds when truly necessary and natural to the content (don't force them)
 - Preserve emotional context and speaking style
@@ -234,16 +236,16 @@ CRITICAL REQUIREMENTS:
 Original text: "{clean_text}"
 
 DUBBING FORMAT EXAMPLE:
-[S{speaker_num}] That's really amazing work you
-[S{speaker_num}] did there I'm very impressed
-[S{speaker_num}] with the quality and detail
+[S{speaker_num}] That's really amazing work you did there.
+[S{speaker_num}] I'm very impressed with the quality.
+[S{speaker_num}] The attention to detail is excellent.
 
 Convert to natural English dubbing format:"""
                 
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are a professional dubbing translator specializing in voice cloning dialogue. Create natural, speakable English text with emotional context. Try to keep 7-11 words per line when possible, adjust if needed for natural flow. Only add non-verbal sounds when truly necessary and natural to the content."},
+                        {"role": "system", "content": "You are a professional dubbing translator specializing in voice cloning dialogue. Create natural, speakable English text with emotional context. Try to keep 7-11 words per line when possible, adjust if needed for natural flow. Don't break lines in the middle of a sentence - keep full sentences together when possible. Only add non-verbal sounds when truly necessary and natural to the content."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=300,
@@ -330,8 +332,12 @@ Convert to natural English dubbing format:"""
         for word in words:
             current_line.append(word)
             
-            # Try to keep 7-11 words per line, break at 11
-            if len(current_line) >= 11:
+            # Break at sentence end if we have enough words (7+)
+            if len(current_line) >= 7 and word.endswith(('.', '!', '?')):
+                lines.append(f"{speaker_tag} {' '.join(current_line)}")
+                current_line = []
+            # Force break if too long (15+ words)
+            elif len(current_line) >= 15:
                 lines.append(f"{speaker_tag} {' '.join(current_line)}")
                 current_line = []
         
