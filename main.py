@@ -162,37 +162,20 @@ async def process_video(
     language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
     speakers_expected: Optional[int] = Form(None, description="Expected number of speakers (1-10)")
 ):
-    """Start video processing with immediate response. Processing happens in background - use status_check_url to monitor progress."""
-    
-    logger.info(f"New video processing request received - video_url: {video_url}")
+    """Start video processing with immediate response"""
     
     # Validate URL format
     if not video_url.startswith(('http://', 'https://')):
-        logger.warning(f"Invalid video URL format: {video_url}")
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid video URL. Must be a valid HTTP/HTTPS URL"
-        )
+        raise HTTPException(status_code=400, detail="Invalid video URL format")
     
-    # Validate URL is not empty
     if not video_url.strip():
-        logger.warning("Empty video URL provided")
-        raise HTTPException(
-            status_code=400,
-            detail="Video URL cannot be empty"
-        )
+        raise HTTPException(status_code=400, detail="Video URL cannot be empty")
     
-    # Validate speakers_expected
     if speakers_expected is not None and (speakers_expected < 1 or speakers_expected > 10):
-        logger.warning(f"Invalid speakers_expected value: {speakers_expected}")
-        raise HTTPException(
-            status_code=400,
-            detail="speakers_expected must be between 1 and 10"
-        )
+        raise HTTPException(status_code=400, detail="speakers_expected must be between 1 and 10")
     
     # Generate unique audio ID
     audio_id = r2_storage.generate_audio_id()
-    logger.info(f"Generated audio_id: {audio_id} for video processing request")
     
     # Initialize status tracking
     status_manager.initialize_status(audio_id)
@@ -204,13 +187,11 @@ async def process_video(
         temperature, cfg_scale, top_p, speed_factor, target_language, language_code, speakers_expected
     )
     
-    logger.info(f"Background processing task started for audio_id: {audio_id}")
-    
     # Return immediate response
     return StartProcessingResponse(
         success=True,
         audio_id=audio_id,
-        message="Video processing started successfully in background. Use status_check_url to monitor progress.",
+        message="Video processing started successfully",
         status="processing",
         estimated_time="10-20 minutes",
         status_check_url=f"/status/{audio_id}",
@@ -221,17 +202,12 @@ def process_video_background(
     generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float, speed_factor: float,
     target_language: str, language_code: Optional[str], speakers_expected: Optional[int]
 ):
-    # Convert empty string to None for proper handling
+    """Background video processing"""
     final_language_code = language_code if language_code and language_code.strip() else None
-    
-    # Status tracking already initialized above
-    logger.info(f"Status tracking initialized successfully for audio_id: {audio_id}")
-
-    
     video_temp_path = None
+    
     try:
         # Download video
-        logger.info(f"Starting video download for audio_id: {audio_id}")
         status_manager.update_status(audio_id, ProcessingStatus.DOWNLOADING, 10)
         video_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_video.mp4")
         
@@ -248,16 +224,13 @@ def process_video_background(
                 for chunk in response.iter_content(chunk_size=8192):
                     buffer.write(chunk)
             
-            logger.info(f"Video downloaded successfully for audio_id: {audio_id}, saved to: {video_temp_path}")
             status_manager.set_progress(audio_id, 20)
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"Video download failed for audio_id: {audio_id}, error: {str(e)}")
             status_manager.fail_processing(audio_id, f"Download failed: {str(e)}")
             return
         
         # Process video
-        logger.info(f"Starting video processing for audio_id: {audio_id}")
         status_manager.update_status(audio_id, ProcessingStatus.PROCESSING, 30)
         
         processing_result = audio_processor.process_video_with_separation(
@@ -269,18 +242,15 @@ def process_video_background(
         )
         
         if not processing_result["success"]:
-            logger.error(f"Video processing failed for audio_id: {audio_id}, error: {processing_result.get('error', 'Unknown error')}")
             status_manager.fail_processing(audio_id, f"Processing failed: {processing_result.get('error', 'Unknown error')}")
             return
         
         status_manager.set_progress(audio_id, 50)
         
-        # Extract paths
-        segments_dir = processing_result["segments_dir"]
+        # Get original audio details
         vocal_path = processing_result["vocal_path"]
         separated_instruments_path = processing_result["instruments_path"]
         
-        # Get original audio details
         original_audio, original_sr = sf.read(vocal_path)
         original_duration = len(original_audio) / original_sr
         file_size = os.path.getsize(video_temp_path)
@@ -294,31 +264,20 @@ def process_video_background(
             "size_mb": file_size / (1024 * 1024),
             "processing_type": "video_with_separation",
             "language_code": final_language_code,
-            "language_detection_used": final_language_code is None,
             "speakers_expected": speakers_expected,
             "detected_speakers": processing_result.get("detected_speakers", len(processing_result.get("speakers", [])))
         }
         
-        # Update status after segmentation
-        status_manager.update_status(audio_id, ProcessingStatus.PROCESSING, 50, {
-            "segments_dir": processing_result["segments_dir"],
-            "total_segments": processing_result["total_segments"],
-            "speakers": processing_result["speakers"],
-            "detected_speakers": processing_result.get("detected_speakers", len(processing_result["speakers"])),
-            "total_duration": processing_result["total_duration"]
-        })
-        
-        # Clone voices with speaker-specific seeds
-        logger.info(f"Starting voice cloning for audio_id: {audio_id}")
+        # Clone voices
         status_manager.set_progress(audio_id, 60)
         
         cloning_result = audio_processor.clone_voice_segments(
-            segments_dir,
+            processing_result["segments_dir"],
             audio_id,
             temperature=temperature,
             cfg_scale=cfg_scale,
             top_p=top_p,
-            seed=settings.DEFAULT_SEED,  # Use constant seed for consistency
+            seed=settings.DEFAULT_SEED,
             speed_factor=speed_factor
         )
         
@@ -326,57 +285,43 @@ def process_video_background(
             status_manager.fail_processing(audio_id, f"Voice cloning failed: {cloning_result.get('error', 'Unknown error')}")
             return
         
-        # Update status with cloning details
-        status_manager.update_status(audio_id, ProcessingStatus.PROCESSING, 70, {
-            "cloned_segments": cloning_result.get("cloned_segments_count", 0),
-            "cloned_by_speaker": cloning_result.get("cloned_by_speaker", {}),
-            "seeds_used": cloning_result.get("seeds_used", {})
-        })
+        status_manager.set_progress(audio_id, 70)
         
         # Reconstruct audio
-        logger.info(f"Starting audio reconstruction for audio_id: {audio_id}")
-        
         if include_instruments:
             reconstruction_result = audio_processor.reconstruct_final_audio(
-                segments_dir,
+                processing_result["segments_dir"],
                 audio_id,
                 include_instruments=True,
                 instruments_path=separated_instruments_path
             )
         else:
             reconstruction_result = audio_processor.reconstruct_final_audio(
-                segments_dir,
+                processing_result["segments_dir"],
                 audio_id,
                 include_instruments=False,
                 instruments_path=None
             )
         
         if not reconstruction_result["success"]:
-            logger.error(f"Audio reconstruction failed for audio_id: {audio_id}, error: {reconstruction_result.get('error', 'Unknown error')}")
             status_manager.fail_processing(audio_id, f"Audio reconstruction failed: {reconstruction_result['error']}")
             return
         
-        logger.info(f"Audio reconstruction completed successfully for audio_id: {audio_id}")
         status_manager.set_progress(audio_id, 80)
         final_audio_path = reconstruction_result["final_audio_path"]
         
-        # Handle video processing  
-        logger.info(f"Starting final video processing for audio_id: {audio_id}")
-        logger.info(f"Using final audio: {final_audio_path} (exists: {os.path.exists(final_audio_path)})")
-        
+        # Create video
         video_result = None
         if generate_subtitles:
             instruments_for_video = separated_instruments_path if include_instruments else None
-            logger.info(f"Creating video with subtitles - instruments: {instruments_for_video}")
             video_result = audio_processor.create_video_with_subtitles(
                 video_temp_path,
                 final_audio_path,
-                segments_dir,
+                processing_result["segments_dir"],
                 audio_id,
                 instruments_for_video
             )
         else:
-            logger.info(f"Creating video without subtitles")
             video_result = audio_processor.create_video_with_audio(
                 video_temp_path,
                 final_audio_path,
@@ -385,19 +330,14 @@ def process_video_background(
         
         if not video_result or not video_result["success"]:
             error_msg = video_result.get('error', 'Unknown error') if video_result else 'No result'
-            logger.error(f"Final video processing failed for audio_id: {audio_id}, error: {error_msg}")
             status_manager.fail_processing(audio_id, f"Video processing failed: {error_msg}")
             return
         
-        logger.info(f"Final video processing completed successfully for audio_id: {audio_id}")
-        logger.info(f"Video result: {video_result}")
-        
         # Upload files
-        logger.info(f"Starting file upload for audio_id: {audio_id}")
         status_manager.update_status(audio_id, ProcessingStatus.UPLOADING, 90)
         
         try:
-            r2_segments_result = r2_storage.upload_audio_segments(audio_id, segments_dir)
+            r2_segments_result = r2_storage.upload_audio_segments(audio_id, processing_result["segments_dir"])
             r2_final_result = r2_storage.upload_final_audio(audio_id, final_audio_path)
             
             r2_video_result = None
@@ -422,38 +362,25 @@ def process_video_background(
                         r2_subtitle_key,
                         "text/srt"
                     )
-            
-            logger.info(f"File upload completed successfully for audio_id: {audio_id}")
-            
+        
         except Exception as e:
-            logger.error(f"File upload failed for audio_id: {audio_id}, error: {str(e)}")
             status_manager.fail_processing(audio_id, f"File upload failed: {str(e)}")
             return
         
-        # Get all segment URLs
-        segment_urls = {}
-        if r2_segments_result:
-            segment_urls = r2_storage.get_segment_urls(audio_id, r2_segments_result)
-        
-        # Mark processing as complete with comprehensive details
+        # Mark as completed
         status_manager.complete_processing(audio_id, {
             "final_audio_url": r2_final_result.get("url"),
             "video_url": r2_video_result.get("url") if r2_video_result else None,
             "subtitles_url": r2_subtitle_result.get("url") if r2_subtitle_result else None,
-            "segments_url": r2_segments_result.get("url") if r2_segments_result else None,
-            "segment_details": segment_urls,
             "processing_stats": {
                 "total_segments": processing_result.get("total_segments", 0),
                 "cloned_segments": cloning_result.get("cloned_segments_count", 0),
                 "speakers": processing_result.get("speakers", []),
-                "duration": processing_result.get("total_duration", 0),
-                "cloned_by_speaker": cloning_result.get("cloned_by_speaker", {}),
-                "seeds_used": cloning_result.get("seeds_used", {}),
-                "reference_selection": cloning_result.get("reference_selection", {})
+                "duration": processing_result.get("total_duration", 0)
             }
         })
         
-        # Create processing summary for R2 with seed information
+        # Create processing summary
         processing_data = {
             "audio_id": audio_id,
             "original_audio": original_audio_details,
@@ -470,7 +397,7 @@ def process_video_background(
                 "video_url": video_url,
                 "runpod_separation": True
             },
-            "processing_stats": audio_processor.get_processing_stats(segments_dir),
+            "processing_stats": audio_processor.get_processing_stats(processing_result["segments_dir"]),
             "cloning_results": cloning_result,
             "reconstruction_results": reconstruction_result,
             "video_generated": video_result is not None and video_result["success"],
@@ -479,23 +406,16 @@ def process_video_background(
         }
         
         r2_storage.create_processing_summary(audio_id, processing_data)
-        logger.info(f"Processing summary created for audio_id: {audio_id}")
 
         
     except Exception as e:
-        # Handle any unexpected errors
-        error_msg = f"Unexpected error: {str(e)}"
-        logger.error(f"Unexpected error in background processing for audio_id: {audio_id}, error: {error_msg}")
-        status_manager.fail_processing(audio_id, error_msg)
+        status_manager.fail_processing(audio_id, f"Unexpected error: {str(e)}")
         
     finally:
-        # Always cleanup temp files
+        # Clean up temp files
         try:
-            logger.info(f"Cleaning up temporary files for audio_id: {audio_id}")
             cleanup_temp_files(audio_id, None, None, video_temp_path)
-            logger.info(f"Temporary files cleaned up successfully for audio_id: {audio_id}")
-        except Exception as cleanup_error:
-            logger.warning(f"Failed to cleanup temp files for audio_id: {audio_id}, error: {str(cleanup_error)}")
+        except Exception:
             pass
 
 @app.get("/download/{audio_id}/{file_type}")
@@ -532,13 +452,10 @@ async def download_file(audio_id: str, file_type: str):
 @app.get("/status/{audio_id}")
 async def get_status(audio_id: str):
     """Get processing status for a specific audio ID"""
-    logger.info(f"Status check requested for audio_id: {audio_id}")
     try:
         status = status_manager.get_status(audio_id)
-        logger.info(f"Status check result for audio_id: {audio_id} - status: {status.get('status', 'unknown')}, message: {status.get('message', 'no message')}")
         return status
     except Exception as e:
-        logger.error(f"Status check failed for audio_id: {audio_id}, error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 def cleanup_temp_files(audio_id: str, audio_temp_path: Optional[str] = None, instruments_temp_path: Optional[str] = None, video_temp_path: Optional[str] = None):

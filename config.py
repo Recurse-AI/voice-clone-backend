@@ -33,10 +33,10 @@ class Settings(BaseSettings):
     
     # Dia Generation Parameters (optimized based on official examples)
     DIA_MAX_TOKENS: int = 3072
-    DIA_CFG_SCALE: float = 4.0  # Optimized from official examples (was 3.0)
-    DIA_TEMPERATURE: float = 1.8  # Optimized from official examples (was 1.3)
-    DIA_TOP_P: float = 0.90  # Optimized from official examples (was 0.95)
-    DIA_CFG_FILTER_TOP_K: int = 50  # Optimized from official examples (was 45)
+    DIA_CFG_SCALE: float = 3.0  # Optimized from official examples (was 3.0)
+    DIA_TEMPERATURE: float = 1.2  # Optimized from official examples (was 1.3)
+    DIA_TOP_P: float = 0.92  # Optimized from official examples (was 0.95)
+    DIA_CFG_FILTER_TOP_K: int = 45  # Optimized from official examples (was 45)
     
     # Processing Configuration
     DEFAULT_SEED: Optional[int] = 42  # Fixed seed for consistency

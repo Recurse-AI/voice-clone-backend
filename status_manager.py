@@ -1,6 +1,5 @@
 """
-Smart Status Manager - Local Memory + MongoDB Final States
-Memory: Active jobs only | MongoDB: Final states only
+Status Manager - Simplified
 """
 import time
 import logging
@@ -25,7 +24,7 @@ class ProcessingStatus(Enum):
 
 
 class StatusManager:
-    """Manages processing status for audio jobs"""
+    """Simplified status manager"""
     
     def __init__(self):
         self._statuses: Dict[str, Dict[str, Any]] = {}
@@ -93,11 +92,12 @@ class StatusManager:
             if audio_id in self._statuses:
                 return self._statuses[audio_id].copy()
             else:
-                return {
-                    "status": "not_found",
-                    "message": f"No processing job found with ID: {audio_id}",
-            "audio_id": audio_id
-        }
+                #check mongo db for status
+                status = self.get_status_from_db(audio_id)
+                if status:
+                    return status
+                else:
+                    return None
     
     def complete_processing(self, audio_id: str, details: Optional[Dict[str, Any]] = None):
         """Mark processing as completed"""
@@ -106,6 +106,32 @@ class StatusManager:
     def fail_processing(self, audio_id: str, error: str):
         """Mark processing as failed"""
         self.update_status(audio_id, ProcessingStatus.FAILED, details={"error": error})
+    
+    def cleanup_old_statuses(self):
+        """Clean up old statuses (older than 24 hours)"""
+        try:
+            cutoff_time = datetime.now().timestamp() - (24 * 3600)  # 24 hours ago
+            
+            with self._lock:
+                keys_to_remove = []
+                for audio_id, status_info in self._statuses.items():
+                    try:
+                        created_at = datetime.fromisoformat(status_info.get("created_at", ""))
+                        if created_at.timestamp() < cutoff_time:
+                            keys_to_remove.append(audio_id)
+                    except:
+                        continue
+                
+                for key in keys_to_remove:
+                    del self._statuses[key]
+                    
+        except Exception:
+            pass
+    
+    def get_all_statuses(self) -> Dict[str, Dict[str, Any]]:
+        """Get all statuses"""
+        with self._lock:
+            return {k: v.copy() for k, v in self._statuses.items()}
 
 
 # Global status manager instance

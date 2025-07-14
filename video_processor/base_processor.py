@@ -1,7 +1,5 @@
 """
-Base Audio Processor Module - Optimized for Dia Voice Cloning
-
-Main orchestrator for voice cloning pipeline with speaker-wise batch processing.
+Base Audio Processor Module - Simplified for Voice Cloning
 """
 
 import os
@@ -25,9 +23,8 @@ from .runpod_service import RunPodService
 from config import settings
 
 
-
 class AudioProcessor:
-    """Main audio processor for voice cloning pipeline"""
+    """Simplified audio processor for voice cloning"""
     
     def __init__(self, temp_dir: str = "./tmp/voice_cloning"):
         self.temp_dir = Path(temp_dir)
@@ -43,10 +40,6 @@ class AudioProcessor:
         self.video_processor = VideoProcessor(str(self.temp_dir))
         self.runpod_service = RunPodService()
     
-    def _convert_local_path_to_r2_url(self, local_path: str, audio_id: str) -> str:
-        """Convert local file path to R2 public URL"""
-        return local_path
-    
     def load_dia_model(self, repo_id: str = "nari-labs/Dia-1.6B-0626") -> bool:
         """Load Dia model for voice cloning"""
         return self.voice_cloning_service.load_dia_model(repo_id)
@@ -55,24 +48,18 @@ class AudioProcessor:
                              target_language: str = "English",
                              language_code: Optional[str] = None,
                              speakers_expected: Optional[int] = 1) -> Dict[str, Any]:
-        """Process audio segments optimized for Dia voice cloning"""
+        """Process audio segments for voice cloning"""
         try:
             # Load audio
             audio, sr = sf.read(audio_path)
             
-            # Transcribe audio with detailed error handling
-            try:
-                transcript_data = self.transcription_service.transcribe_audio(
-                    audio_path, language_code, speakers_expected
-                )
-            except Exception as e:
-                return {"success": False, "error": f"Transcription failed: {str(e)}"}
+            # Transcribe audio
+            transcript_data = self.transcription_service.transcribe_audio(
+                audio_path, language_code, speakers_expected, audio_id
+            )
             
-            # Create optimal segments for Dia model with detailed error handling
-            try:
-                segments = self.segment_manager.create_optimal_segments(transcript_data)
-            except Exception as e:
-                return {"success": False, "error": f"Segment creation failed: {str(e)}"}
+            # Create segments
+            segments = self.segment_manager.create_optimal_segments(transcript_data)
             
             if not segments:
                 return {"success": False, "error": "No viable segments created"}
@@ -82,48 +69,14 @@ class AudioProcessor:
             output_dir.mkdir(parents=True, exist_ok=True)
             
             # Create directory structure
-            try:
-                self.file_manager.create_directory_structure(output_dir, transcript_data['speakers'])
-            except Exception as e:
-                return {"success": False, "error": f"Directory creation failed: {str(e)}"}
+            self.file_manager.create_directory_structure(output_dir, transcript_data['speakers'])
             
-            # Save optimal segments
-            try:
-                detected_language = transcript_data.get('metadata', {}).get('language_code', 'en')
-                self.segment_manager.save_optimal_segments(
-                    segments, audio, sr, output_dir, 
-                    transcript_data['speakers'], target_language, detected_language
-                )
-            except Exception as e:
-                return {"success": False, "error": f"Segment saving failed: {str(e)}"}
-            
-            # Select optimal references
-            try:
-                reference_segments = self.segment_manager.select_optimal_references(
-                    segments, transcript_data['speakers']
-                )
-                self.file_manager.save_reference_segments(
-                    reference_segments, audio, sr, output_dir, transcript_data['speakers']
-                )
-            except Exception as e:
-                return {"success": False, "error": f"Reference segment processing failed: {str(e)}"}
-            
-            # Identify and save silent parts
-            try:
-                silent_parts = self.segment_manager.identify_silent_parts(segments, transcript_data['duration'])
-                self.file_manager.save_silent_parts(silent_parts, audio, sr, output_dir)
-            except Exception as e:
-                logger.warning(f"Failed to process silent parts: {str(e)}")
-                silent_parts = []
-            
-            # Save metadata with raw AssemblyAI response
-            try:
-                self.file_manager.save_metadata(
-                    transcript_data, segments, silent_parts, 
-                    output_dir, audio_id, audio_path
-                )
-            except Exception as e:
-                logger.warning(f"Failed to save metadata: {str(e)}")
+            # Save segments
+            detected_language = transcript_data.get('metadata', {}).get('language_code', 'en')
+            self.segment_manager.save_optimal_segments(
+                segments, audio, sr, output_dir, 
+                transcript_data['speakers'], target_language, detected_language
+            )
             
             return {
                 "success": True,
@@ -134,18 +87,17 @@ class AudioProcessor:
                 "total_duration": transcript_data['duration'],
                 "language_code": language_code,
                 "detected_speakers": len(transcript_data['speakers']),
-                "speakers_expected": speakers_expected,
-                "raw_assemblyai_response": transcript_data.get("raw_assemblyai_response")  # Pass raw response through
+                "speakers_expected": speakers_expected
             }
             
         except Exception as e:
             return {"success": False, "error": f"Audio processing failed: {str(e)}"}
     
-    def clone_voice_segments_speaker_wise(self, segments_dir: str, audio_id: str, 
-                                        temperature: float = 1.3, cfg_scale: float = 3.0, 
-                                        top_p: float = 0.95, seed: Optional[int] = None,
-                                        speed_factor: float = 0.92) -> Dict[str, Any]:
-        """Clone voice segments speaker by speaker with speed control"""
+    def clone_voice_segments(self, segments_dir: str, audio_id: str, 
+                           temperature: float = 1.3, cfg_scale: float = 3.0, 
+                           top_p: float = 0.95, seed: Optional[int] = None,
+                           speed_factor: float = 0.92) -> Dict[str, Any]:
+        """Clone voice segments speaker by speaker with consistent metadata"""
         if not self.voice_cloning_service.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -155,10 +107,9 @@ class AudioProcessor:
             seeds_used = {}
             cloned_by_speaker = {}
             
-            # Base seed for generating speaker-specific seeds - use constant from config
             base_seed = seed or settings.DEFAULT_SEED
             
-            # Process each speaker separately
+            # Process each speaker
             for speaker_dir in segments_path.iterdir():
                 if not (speaker_dir.is_dir() and speaker_dir.name.startswith("speaker_")):
                     continue
@@ -167,98 +118,133 @@ class AudioProcessor:
                 segments_subdir = speaker_dir / "segments"
                 reference_subdir = speaker_dir / "reference"
                 
-                # Check if directories exist
                 if not segments_subdir.exists():
                     continue
                 
-                # Generate constant seed for each speaker - use predictable offset
-                # This ensures same speaker always gets same seed across runs
-                speaker_index = ord(speaker) - ord('A')  # A=0, B=1, C=2, etc.
+                # Generate seed for speaker
+                speaker_index = ord(speaker) - ord('A')
                 speaker_seed = base_seed + (speaker_index * settings.SPEAKER_SEED_OFFSET)
-                
                 seeds_used[speaker] = speaker_seed
-                logger.info(f"Speaker {speaker}: Using constant seed {speaker_seed}")
                 
-                # Load reference audio for this speaker
+                # Load reference audio
                 reference_audio_path = None
                 if reference_subdir.exists():
                     for ref_file in reference_subdir.glob("*_REFERENCE.wav"):
                         reference_audio_path = str(ref_file)
                         break
                 
-                # Load all segments for this speaker
+                # Load segments and validate metadata
                 speaker_segments = []
-                for json_file in segments_subdir.glob("*.json"):
+                segment_files = []
+                
+                for json_file in segments_subdir.glob("*_metadata.json"):
                     try:
                         with open(json_file, 'r', encoding='utf-8') as f:
                             import json
                             segment_data = json.load(f)
                         
-                        # Check if segment has text
-                        text = segment_data.get('english_text', segment_data.get('text', ''))
-                        if not text.strip():
+                        # Validate essential fields
+                        if not segment_data.get('english_text', '').strip():
                             continue
                         
-                        # Prepare segment data for cloning
+                        if not segment_data.get('segment_index'):
+                            continue
+                        
                         segment_data['reference_audio_path'] = reference_audio_path
                         segment_data['segments_dir'] = str(segments_subdir)
                         segment_data['segment_file'] = str(json_file)
                         speaker_segments.append(segment_data)
+                        segment_files.append(json_file)
                         
-                    except Exception as e:
-                        logger.warning(f"Failed to load segment {json_file}: {str(e)}")
+                    except Exception:
                         continue
                 
                 if not speaker_segments:
-                    logger.warning(f"No valid segments found for speaker {speaker}")
                     continue
                 
-                logger.info(f"Processing {len(speaker_segments)} segments for speaker {speaker}")
-                
-                # Clone all segments for this speaker with speed control
+                # Clone segments
                 cloning_result = self.voice_cloning_service.clone_voice_segments(
                     speaker_segments, temperature, cfg_scale, top_p, speaker_seed, speed_factor
                 )
                 
                 if not cloning_result.get('success', False):
-                    logger.error(f"Voice cloning failed for speaker {speaker}: {cloning_result.get('error', 'Unknown error')}")
                     continue
                 
-                # Save cloned audio files
+                # Save cloned audio with consistent naming and update metadata
                 speaker_successful = 0
-                for cloned_segment in cloning_result.get('cloned_segments', []):
+                for idx, cloned_segment in enumerate(cloning_result.get('cloned_segments', [])):
                     if cloned_segment.get('success', False) and cloned_segment.get('cloned_audio') is not None:
                         try:
                             segment_data = cloned_segment['original_data']
                             segments_dir_path = Path(segment_data['segments_dir'])
                             
-                            # Get original segment file path
-                            segment_json_path = Path(segment_data['segment_file'])
-                            wav_filename = segment_json_path.stem + '.wav'
+                            # Use consistent naming: cloned_segment_XXX.wav
+                            segment_index = segment_data.get('segment_index', idx + 1)
+                            cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
+                            cloned_path = segments_dir_path / cloned_filename
                             
                             # Save cloned audio
-                            cloned_filename = f"cloned_{segment_json_path.stem}.wav"
-                            cloned_path = segments_dir_path / cloned_filename
                             sf.write(cloned_path, cloned_segment['cloned_audio'], 44100)
+                            
+                            # Update metadata file with cloning information
+                            metadata_file = Path(segment_data['segment_file'])
+                            with open(metadata_file, 'r', encoding='utf-8') as f:
+                                metadata = json.load(f)
+                            
+                            # Update metadata with cloning results
+                            metadata.update({
+                                'cloned_audio_file': cloned_filename,
+                                'cloned_audio_path': str(cloned_path),
+                                'cloned_audio_exists': True,
+                                'cloning_successful': True,
+                                'cloning_seed': speaker_seed,
+                                'cloning_parameters': {
+                                    'temperature': temperature,
+                                    'cfg_scale': cfg_scale,
+                                    'top_p': top_p,
+                                    'speed_factor': speed_factor
+                                },
+                                'reference_used': reference_audio_path,
+                                'processing_status': 'cloning_completed'
+                            })
+                            
+                            # Save updated metadata
+                            with open(metadata_file, 'w', encoding='utf-8') as f:
+                                json.dump(metadata, f, ensure_ascii=False, indent=2)
+                            
                             speaker_successful += 1
                             
-                            logger.info(f"Saved cloned audio: {cloned_filename}")
-                                
-                        except Exception as e:
-                            logger.error(f"Failed to save cloned audio: {str(e)}")
+                        except Exception:
                             continue
                 
                 cloned_by_speaker[speaker] = {
                     'total_segments': len(speaker_segments),
                     'successful_clones': speaker_successful,
-                    'reference_used': self._convert_local_path_to_r2_url(reference_audio_path, audio_id) if reference_audio_path else None,
-                    'seed_used': speaker_seed
+                    'reference_used': reference_audio_path,
+                    'seed_used': speaker_seed,
+                    'cloning_parameters': {
+                        'temperature': temperature,
+                        'cfg_scale': cfg_scale,
+                        'top_p': top_p,
+                        'speed_factor': speed_factor
+                    }
                 }
                 total_successful_clones += speaker_successful
-                
-                logger.info(f"Speaker {speaker}: {speaker_successful}/{len(speaker_segments)} segments cloned successfully")
             
-            # Return success with proper counts
+            # Save cloning summary
+            cloning_summary = {
+                'audio_id': audio_id,
+                'total_successful_clones': total_successful_clones,
+                'cloned_by_speaker': cloned_by_speaker,
+                'seeds_used': seeds_used,
+                'speed_factor': speed_factor,
+                'cloning_timestamp': str(datetime.now())
+            }
+            
+            summary_path = segments_path / "metadata" / "cloning_summary.json"
+            with open(summary_path, 'w', encoding='utf-8') as f:
+                json.dump(cloning_summary, f, ensure_ascii=False, indent=2)
+            
             return {
                 "success": True,
                 "cloned_segments": total_successful_clones,
@@ -266,38 +252,11 @@ class AudioProcessor:
                 "cloned_by_speaker": cloned_by_speaker,
                 "seeds_used": seeds_used,
                 "audio_id": audio_id,
-                "processing_method": "improved_single_segment",
-                "speed_factor": speed_factor,
-                "reference_selection": {speaker: {"path": info["reference_used"], "seed": info["seed_used"]} 
-                                      for speaker, info in cloned_by_speaker.items()}
+                "speed_factor": speed_factor
             }
             
         except Exception as e:
-            logger.error(f"Voice cloning failed: {str(e)}")
             return {"success": False, "error": str(e)}
-    
-    def clone_voice_segments(self, segments_dir: str, audio_id: str, 
-                           temperature: float = 1.3, cfg_scale: float = 3.0, 
-                           top_p: float = 0.95, seed: Optional[int] = None,
-                           speed_factor: float = 0.92) -> Dict[str, Any]:
-        """Clone voice segments with speed control"""
-        return self.clone_voice_segments_speaker_wise(
-            segments_dir, audio_id, temperature, cfg_scale, top_p, seed, speed_factor
-        )
-    
-    def _preserve_exact_length(self, cloned_audio: np.ndarray, target_duration: float, 
-                               sample_rate: int) -> np.ndarray:
-        target_samples = int(target_duration * sample_rate)
-        current_samples = len(cloned_audio)
-        
-        if current_samples == target_samples:
-            return cloned_audio
-        
-        if current_samples > target_samples:
-            return cloned_audio[:target_samples]
-        else:
-            padding = np.zeros(target_samples - current_samples)
-            return np.concatenate([cloned_audio, padding])
     
     def reconstruct_final_audio(self, segments_dir: str, audio_id: str, 
                                include_instruments: bool = False,
@@ -310,14 +269,14 @@ class AudioProcessor:
     def create_video_with_subtitles(self, video_path: str, audio_path: str, 
                                    segments_dir: str, audio_id: str,
                                    instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Create video with high-quality subtitles"""
+        """Create video with subtitles"""
         return self.video_processor.create_video_with_subtitles(
             video_path, audio_path, segments_dir, audio_id, instruments_path
         )
     
     def create_video_with_audio(self, video_path: str, audio_path: str, 
                                audio_id: str, instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Create video with new audio only (no subtitles)"""
+        """Create video with new audio only"""
         return self.video_processor.create_video_with_audio(
             video_path, audio_path, audio_id, instruments_path
         )
@@ -345,34 +304,27 @@ class AudioProcessor:
             )
             
             if not upload_result["success"]:
-                return {"success": False, "error": f"Failed to upload audio for processing: {upload_result.get('error', 'Unknown error')}"}
+                return {"success": False, "error": f"Failed to upload audio: {upload_result.get('error', 'Unknown error')}"}
             
             audio_url = upload_result["url"]
             
             # Process with RunPod
-            try:
-                separation_result = self.runpod_service.process_audio_separation(audio_url)
-                
-                if not separation_result or not separation_result.get("id"):
-                    return {"success": False, "error": "RunPod service returned invalid response"}
-                
-                # Wait for completion
-                completion_result = self.runpod_service.wait_for_completion(separation_result["id"])
-                
-                if completion_result.get("status") == "FAILED":
-                    return {"success": False, "error": f"RunPod job failed: {completion_result.get('error', 'Unknown error')}"}
-                
-                if completion_result.get("status") != "COMPLETED":
-                    return {"success": False, "error": f"RunPod job did not complete successfully: {completion_result.get('status', 'Unknown status')}"}
-                
-                # Validate output URLs
-                if not completion_result.get("output") or not completion_result["output"].get("vocal_audio") or not completion_result["output"].get("instrument_audio"):
-                    return {"success": False, "error": "RunPod job completed but no output URLs provided"}
-                
-            except Exception as e:
-                return {"success": False, "error": f"RunPod processing failed: {str(e)}"}
+            separation_result = self.runpod_service.process_audio_separation(audio_url)
             
-            # Download separated audio files
+            if not separation_result or not separation_result.get("id"):
+                return {"success": False, "error": "RunPod service returned invalid response"}
+            
+            # Wait for completion
+            completion_result = self.runpod_service.wait_for_completion(separation_result["id"])
+            
+            if completion_result.get("status") != "COMPLETED":
+                return {"success": False, "error": f"RunPod job failed: {completion_result.get('status', 'Unknown status')}"}
+            
+            # Validate output
+            if not completion_result.get("output") or not completion_result["output"].get("vocal_audio"):
+                return {"success": False, "error": "No output URLs provided"}
+            
+            # Download separated audio
             vocal_path = self.temp_dir / f"{audio_id}_vocal.wav"
             instrument_path = self.temp_dir / f"{audio_id}_instruments.wav"
             
@@ -385,16 +337,9 @@ class AudioProcessor:
             )
             
             if not vocal_download["success"] or not instrument_download["success"]:
-                return {"success": False, "error": f"Failed to download separated audio: vocal={vocal_download.get('error', 'Unknown')}, instrument={instrument_download.get('error', 'Unknown')}"}
+                return {"success": False, "error": "Failed to download separated audio"}
             
-            # Validate downloaded files
-            if not vocal_path.exists() or vocal_path.stat().st_size == 0:
-                return {"success": False, "error": "Downloaded vocal file is empty or missing"}
-            
-            if not instrument_path.exists() or instrument_path.stat().st_size == 0:
-                return {"success": False, "error": "Downloaded instrument file is empty or missing"}
-            
-            # Process vocal audio through normal pipeline
+            # Process vocal audio
             segment_result = self.process_audio_segments(
                 str(vocal_path), 
                 audio_id, 
@@ -419,28 +364,23 @@ class AudioProcessor:
             }
             
         except Exception as e:
-            return {"success": False, "error": f"Unexpected error in video processing: {str(e)}"}
+            return {"success": False, "error": f"Video processing failed: {str(e)}"}
     
     def cleanup_temp_files(self, audio_id: str):
         """Clean up temporary files"""
         try:
-            # Clean up file manager temp files
             self.file_manager.cleanup_temp_files(audio_id)
-            
-            # Clean up video processor temp files
             self.video_processor.cleanup_temp_files(audio_id)
-            
-            # Clean up audio reconstructor temp files
             self.audio_reconstructor.cleanup_temp_files(audio_id)
             
-            # Clean up our own temp files
-            temp_files_to_clean = [
+            # Clean up our temp files
+            temp_files = [
                 f"{audio_id}_extracted_audio.wav",
                 f"{audio_id}_vocal.wav",
                 f"{audio_id}_instruments.wav"
             ]
             
-            for temp_file in temp_files_to_clean:
+            for temp_file in temp_files:
                 temp_path = self.temp_dir / temp_file
                 if temp_path.exists():
                     temp_path.unlink()
@@ -453,6 +393,10 @@ class AudioProcessor:
                 
         except Exception:
             pass
+    
+    def validate_and_repair_segments(self, segments_dir: str) -> Dict[str, Any]:
+        """Validate and repair existing segment metadata files"""
+        return self.file_manager.validate_and_repair_metadata(segments_dir)
     
     def get_processing_stats(self, segments_dir: str) -> Dict[str, Any]:
         """Get processing statistics"""
