@@ -99,10 +99,13 @@ class VoiceCloningService:
                     print(f"Skipping segment {i+1}: Failed to generate audio")
                     continue
                 
-                print(f"Successfully generated audio for segment {i+1}")
+                print(f"Generated audio shape: {cloned_audio.shape if hasattr(cloned_audio, 'shape') else 'No shape'}")
                 
                 target_duration = segment.get('duration', 5.0)
                 cloned_audio = self._adjust_audio_length(cloned_audio, target_duration)
+                
+                print(f"Adjusted audio shape: {cloned_audio.shape if hasattr(cloned_audio, 'shape') else 'No shape'}")
+                print(f"Successfully generated audio for segment {i+1}")
                 
                 cloned_segments.append({
                     "success": True,
@@ -195,8 +198,29 @@ class VoiceCloningService:
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
         """Adjust audio to match target duration using time-stretch for small differences"""
+        if audio is None:
+            print("Warning: Audio is None")
+            return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
+        
+        if not isinstance(audio, np.ndarray):
+            print(f"Warning: Audio is not numpy array, type: {type(audio)}")
+            try:
+                audio = np.array(audio, dtype=np.float32)
+            except:
+                print("Error: Could not convert audio to numpy array")
+                return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
+        
         if len(audio) == 0:
-            return audio
+            print("Warning: Audio is empty")
+            return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
+
+        # Ensure audio is float32 for processing
+        if audio.dtype != np.float32:
+            audio = audio.astype(np.float32)
+        
+        # If audio is 2D, take first channel
+        if len(audio.shape) > 1:
+            audio = audio[:, 0] if audio.shape[1] > 0 else audio.flatten()
 
         target_samples = int(target_duration * self.sample_rate)
         current_samples = len(audio)
@@ -207,8 +231,7 @@ class VoiceCloningService:
         if current_samples < target_samples:
             ratio = target_samples / current_samples
             if ratio <= 1.2:
-                audio_float = audio.astype(np.float32)
-                stretched = librosa.effects.time_stretch(audio_float, 1/ratio)
+                stretched = librosa.effects.time_stretch(audio, 1/ratio)
                 if len(stretched) > target_samples:
                     stretched = stretched[:target_samples]
                 else:

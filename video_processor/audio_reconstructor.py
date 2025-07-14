@@ -55,37 +55,37 @@ class AudioReconstructor:
                         if not segment_data.get('end'):
                             continue
                         
-                        # Check for cloned audio file with consistent naming
-                        cloned_audio_path = None
+                        # Simple and direct cloned audio file finding
                         segment_index = segment_data.get('segment_index', 1)
+                        cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
+                        cloned_audio_path = segments_subdir / cloned_filename
                         
-                        # Try updated metadata first
-                        if segment_data.get('cloned_audio_exists') and segment_data.get('cloned_audio_path'):
-                            cloned_audio_path = segment_data['cloned_audio_path']
-                        
-                        # Fallback to checking expected file name
-                        if not cloned_audio_path or not Path(cloned_audio_path).exists():
-                            expected_cloned_file = segments_subdir / f"cloned_segment_{segment_index:03d}.wav"
-                            if expected_cloned_file.exists():
-                                cloned_audio_path = str(expected_cloned_file)
-                        
-                        # Last resort: check old naming convention
-                        if not cloned_audio_path or not Path(cloned_audio_path).exists():
-                            base_name = json_file.stem.replace('_metadata', '')
-                            old_cloned_file = segments_subdir / f"cloned_{base_name}.wav"
-                            if old_cloned_file.exists():
-                                cloned_audio_path = str(old_cloned_file)
-                        
-                        if cloned_audio_path and Path(cloned_audio_path).exists():
-                            segment_data['cloned_audio_path'] = cloned_audio_path
+                        # Check if the cloned audio file exists
+                        if cloned_audio_path.exists():
+                            segment_data['cloned_audio_path'] = str(cloned_audio_path)
                             segment_data['cloned_audio_exists'] = True
                             all_segments.append(segment_data)
+                        else:
+                            print(f"Warning: Cloned audio file not found: {cloned_audio_path}")
+                            continue
                             
-                    except Exception:
+                    except Exception as e:
+                        print(f"Error processing metadata file {json_file}: {e}")
                         continue
             
             if not all_segments:
+                print("No valid cloned segments found. Checking available files...")
+                # Debug: Print what files are actually available
+                for speaker_dir in segments_path.glob("speaker_*"):
+                    if speaker_dir.is_dir():
+                        segments_subdir = speaker_dir / "segments"
+                        if segments_subdir.exists():
+                            print(f"Files in {segments_subdir}:")
+                            for file in segments_subdir.iterdir():
+                                print(f"  - {file.name}")
                 return {"success": False, "error": "No valid cloned segments found"}
+            
+            print(f"Found {len(all_segments)} valid cloned segments")
             
             # Sort segments by start time
             all_segments.sort(key=lambda x: x.get('start', 0))

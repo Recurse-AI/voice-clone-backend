@@ -177,6 +177,12 @@ class AudioProcessor:
                             
                             # Save cloned audio
                             sf.write(cloned_path, cloned_segment['cloned_audio'], 44100)
+                            print(f"Saved cloned audio: {cloned_path}")
+                            
+                            # Verify file was created
+                            if not cloned_path.exists():
+                                print(f"ERROR: Failed to create cloned audio file: {cloned_path}")
+                                continue
                             
                             # Update metadata
                             metadata_file = Path(segment_data['segment_file'])
@@ -201,9 +207,11 @@ class AudioProcessor:
                             with open(metadata_file, 'w', encoding='utf-8') as f:
                                 json.dump(metadata, f, ensure_ascii=False, indent=2)
                             
+                            print(f"Updated metadata for segment {segment_index}: {metadata_file}")
                             speaker_successful += 1
                             
-                        except Exception:
+                        except Exception as e:
+                            print(f"Error saving cloned segment {idx}: {e}")
                             continue
                 
                 cloned_by_speaker[speaker] = {
