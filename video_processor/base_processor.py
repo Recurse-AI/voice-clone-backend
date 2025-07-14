@@ -364,8 +364,13 @@ class AudioProcessor:
             return {"success": False, "error": f"Video processing failed: {str(e)}"}
     
     def cleanup_temp_files(self, audio_id: str):
-        """Clean up temporary files"""
+        """Clean up temporary files and caches"""
         try:
+            # Clear service caches to free memory
+            self.voice_cloning_service.clear_cache()
+            if hasattr(self.transcription_service, 'translation_cache'):
+                self.transcription_service.translation_cache.clear()
+            
             self.file_manager.cleanup_temp_files(audio_id)
             self.video_processor.cleanup_temp_files(audio_id)
             self.audio_reconstructor.cleanup_temp_files(audio_id)
@@ -398,3 +403,11 @@ class AudioProcessor:
     def get_processing_stats(self, segments_dir: str) -> Dict[str, Any]:
         """Get processing statistics"""
         return self.file_manager.get_processing_stats(segments_dir)
+
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics for monitoring"""
+        stats = {
+            "voice_cloning_cache_size": len(self.voice_cloning_service.reference_cache),
+            "translation_cache_size": len(getattr(self.transcription_service, 'translation_cache', {}))
+        }
+        return stats

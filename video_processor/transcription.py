@@ -3,28 +3,36 @@ Transcription and Text Processing Module - Simplified
 """
 
 import re
+import time
 from typing import Dict, Any, List, Optional
 import assemblyai as aai
 from openai import OpenAI
 from config import settings
-
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 class TranscriptionService:
-    """Simplified transcription service"""
+    """Simplified transcription service with parallel processing"""
     
     def __init__(self):
         self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
         aai.settings.api_key = settings.ASSEMBLYAI_API_KEY
+        self.translation_cache = {}  # Cache for translations
+        self.cache_lock = threading.Lock()  # Thread-safe cache access
     
     def transcribe_audio(self, audio_path: str, language_code: Optional[str] = None, 
                         speakers_expected: Optional[int] = None, audio_id: Optional[str] = None) -> Dict[str, Any]:
         """Transcribe audio using AssemblyAI"""
         try:
+            print(f"Starting transcription for audio: {audio_path}")
+            start_time = time.time()
+            
             config_params = {
                 "speaker_labels": True,
                 "punctuate": True,
                 "format_text": True,
-                "speech_model": aai.SpeechModel.universal
+                "speech_model": aai.SpeechModel.universal,
+                "boost_param": "high"  # Increase accuracy for common words
             }
             
             if language_code and language_code.strip():
@@ -41,6 +49,9 @@ class TranscriptionService:
             
             if transcript.status == "error":
                 raise Exception(f"Transcription failed: {transcript.error}")
+            
+            transcription_time = time.time() - start_time
+            print(f"Transcription completed in {transcription_time:.2f} seconds")
             
             # Store complete AssemblyAI response as JSON metadata
             if audio_id:
@@ -59,7 +70,8 @@ class TranscriptionService:
                     "language_code": final_language_code,
                     "speakers_expected": speakers_expected,
                     "detected_speakers": len(speakers),
-                    "transcript_id": transcript.id
+                    "transcript_id": transcript.id,
+                    "transcription_time": transcription_time
                 }
             }
             
@@ -191,6 +203,12 @@ class TranscriptionService:
             if not clean_text.strip():
                 return "[S1] No text available"
             
+            # Check cache first for repeated translations
+            with self.cache_lock:
+                cache_key = f"{clean_text.strip()}_{speaker}"
+                if cache_key in self.translation_cache:
+                    return self.translation_cache[cache_key]
+            
             # Try OpenAI translation and formatting
             try:
                 # For voice cloning, always use [S1] for individual segments
@@ -226,9 +244,9 @@ Convert to natural English dubbing format:"""
                         {"role": "system", "content": "You are a professional dubbing translator specializing in voice cloning dialogue. Create natural, speakable English text with emotional context. Try to keep 7-15 words per line when possible, adjust if needed for natural flow. Don't break lines in the middle of a sentence - keep full sentences together when possible. Only add non-verbal sounds when truly necessary and natural to the content. IMPORTANT: Use [S1] tag ONLY ONCE at the beginning for each segment, then continue with plain lines."},
                         {"role": "user", "content": prompt}
                     ],
-                    max_tokens=300,
-                    temperature=0.2,
-                    timeout=15
+                    max_tokens=320, 
+                    temperature=0.1,  
+                    timeout=30 
                 )
                 
                 if response and response.choices:
@@ -238,6 +256,9 @@ Convert to natural English dubbing format:"""
                     
                     # Validate the formatted text has speaker tags and English content
                     if formatted_text and '[S' in formatted_text:
+                        # Cache the result
+                        with self.cache_lock:
+                            self.translation_cache[cache_key] = formatted_text
                         return formatted_text
                     else:
                         raise ValueError("Invalid OpenAI response format")
@@ -252,6 +273,31 @@ Convert to natural English dubbing format:"""
         except Exception as e:
             # Ultimate fallback
             return f"[S1] {text.strip()}" if text.strip() else "[S1] Audio segment"
+    
+    def format_dialogue_batch(self, text_list: List[str], speaker_list: List[str]) -> List[str]:
+        """Process multiple dialogue texts in parallel for better performance"""
+        if not text_list or len(text_list) != len(speaker_list):
+            return []
+        
+        # Use ThreadPoolExecutor for parallel processing
+        with ThreadPoolExecutor(max_workers=min(4, len(text_list))) as executor:
+            # Submit all tasks
+            future_to_index = {}
+            for i, (text, speaker) in enumerate(zip(text_list, speaker_list)):
+                future = executor.submit(self.format_dialogue_text, text, speaker, False)
+                future_to_index[future] = i
+            
+            # Collect results in order
+            results = [''] * len(text_list)
+            for future in as_completed(future_to_index):
+                index = future_to_index[future]
+                try:
+                    results[index] = future.result()
+                except Exception as e:
+                    # Fallback for failed translations
+                    results[index] = f"[S1] {text_list[index].strip()}" if text_list[index].strip() else "[S1] Audio segment"
+        
+        return results
     
     def _simple_translate_and_format(self, text: str) -> str:
         """Simple fallback translation and formatting"""

@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional
 import logging
 from datetime import datetime
 import re
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,19 @@ class SegmentManager:
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Create segments with 7-17 seconds duration"""
+        if not transcript_data:
+            logger.error("transcript_data is None or empty")
+            return []
+            
         words = transcript_data.get('words', [])
+        if not words or not isinstance(words, list):
+            logger.error("No words found in transcript_data or words is not a list")
+            return []
+        
+        # Filter out None words
+        words = [word for word in words if word is not None and isinstance(word, dict)]
         if not words:
+            logger.error("No valid words found after filtering")
             return []
         
         segments = self._create_initial_segments(words)
@@ -42,17 +54,38 @@ class SegmentManager:
     
     def _create_initial_segments(self, words: List[Dict]) -> List[Dict]:
         """Create initial segments based on speaker changes and gaps"""
+        if not words:
+            return []
+            
         segments = []
         current_chunk = []
         current_speaker = None
         
         for word in words:
+            if not word or not isinstance(word, dict):
+                continue
+                
             speaker = word.get('speaker', 'A')
-            word_start = word.get('start', 0) / 1000.0
+            word_start = word.get('start')
+            
+            if word_start is None:
+                continue
+                
+            word_start = word_start / 1000.0
             
             if current_chunk:
                 prev_word = current_chunk[-1]
-                prev_end = prev_word.get('end', 0) / 1000.0
+                if not prev_word or not isinstance(prev_word, dict):
+                    current_chunk = [word]
+                    current_speaker = speaker
+                    continue
+                    
+                prev_end = prev_word.get('end')
+                if prev_end is None:
+                    current_chunk.append(word)
+                    continue
+                    
+                prev_end = prev_end / 1000.0
                 gap = word_start - prev_end
                 
                 should_split = (
@@ -82,18 +115,35 @@ class SegmentManager:
     
     def _create_segment(self, words: List[Dict], speaker: str) -> Optional[Dict]:
         """Create a segment from words"""
-        if not words:
+        if not words or not isinstance(words, list):
             return None
             
-        start_time = words[0]['start'] / 1000.0
-        end_time = words[-1]['end'] / 1000.0
+        # Filter out None words and validate structure
+        valid_words = []
+        for word in words:
+            if (word and isinstance(word, dict) and 
+                'start' in word and 'end' in word and 
+                'text' in word and 
+                word['start'] is not None and 
+                word['end'] is not None and 
+                word['text'] is not None):
+                valid_words.append(word)
+        
+        if not valid_words:
+            return None
+            
+        start_time = valid_words[0]['start'] / 1000.0
+        end_time = valid_words[-1]['end'] / 1000.0
         duration = end_time - start_time
         
         if duration < 1.0:
             return None
         
-        text = ' '.join(w['text'] for w in words).strip()
-        confidence = np.mean([w.get('confidence', 0.5) for w in words])
+        text = ' '.join(w['text'] for w in valid_words if w.get('text')).strip()
+        if not text:
+            return None
+            
+        confidence = np.mean([w.get('confidence', 0.5) for w in valid_words if w.get('confidence') is not None])
         
         return {
             'start': start_time,
@@ -101,9 +151,9 @@ class SegmentManager:
             'duration': duration,
             'text': text,
             'speaker': speaker,
-            'word_count': len(words),
+            'word_count': len(valid_words),
             'confidence': confidence,
-            'words': words
+            'words': valid_words
         }
     
     def _process_segments_for_duration(self, segments: List[Dict]) -> List[Dict]:
@@ -117,26 +167,33 @@ class SegmentManager:
         while i < len(segments):
             current_segment = segments[i]
             
-            if current_segment['duration'] < self.min_duration and processed:
+            if not current_segment or not isinstance(current_segment, dict):
+                i += 1
+                continue
+                
+            if current_segment.get('duration', 0) < self.min_duration and processed:
                 last_segment = processed[-1]
-                if (last_segment['speaker'] == current_segment['speaker'] and 
-                    current_segment['start'] - last_segment['end'] <= self.max_gap):
+                if (last_segment and 
+                    last_segment.get('speaker') == current_segment.get('speaker') and 
+                    current_segment.get('start', 0) - last_segment.get('end', 0) <= self.max_gap):
                     
                     merged_segment = self._merge_segments(last_segment, current_segment)
-                    processed[-1] = merged_segment
+                    if merged_segment:
+                        processed[-1] = merged_segment
                     i += 1
                     continue
             
-            if current_segment['duration'] < self.min_duration:
+            if current_segment.get('duration', 0) < self.min_duration:
                 merged_segment = self._merge_with_next(segments, i)
-                if merged_segment and merged_segment['duration'] <= self.max_duration:
+                if merged_segment and merged_segment.get('duration', 0) <= self.max_duration:
                     processed.append(merged_segment)
                     i = self._find_next_index(segments, i, merged_segment)
                     continue
             
-            if current_segment['duration'] > self.max_duration:
+            if current_segment.get('duration', 0) > self.max_duration:
                 split_segments = self._split_segment(current_segment)
-                processed.extend(split_segments)
+                if split_segments:
+                    processed.extend(split_segments)
                 i += 1
                 continue
             
@@ -153,10 +210,17 @@ class SegmentManager:
         current = segments[index]
         next_seg = segments[index + 1]
         
-        if current['speaker'] != next_seg['speaker']:
+        if (not current or not next_seg or 
+            not isinstance(current, dict) or not isinstance(next_seg, dict)):
             return None
         
-        gap = next_seg['start'] - current['end']
+        if current.get('speaker') != next_seg.get('speaker'):
+            return None
+        
+        current_end = current.get('end', 0)
+        next_start = next_seg.get('start', 0)
+        
+        gap = next_start - current_end
         if gap > self.max_gap:
             return None
             
@@ -164,62 +228,92 @@ class SegmentManager:
     
     def _split_segment(self, segment: Dict) -> List[Dict]:
         """Split long segment into optimal-sized parts"""
-        duration = segment['duration']
+        if not segment or not isinstance(segment, dict):
+            return []
+            
+        duration = segment.get('duration', 0)
         words = segment.get('words', [])
         
-        if not words:
+        if not words or not isinstance(words, list):
+            return [segment]
+        
+        # Filter valid words
+        valid_words = [w for w in words if w and isinstance(w, dict)]
+        if not valid_words:
             return [segment]
         
         num_parts = max(1, int(duration / self.optimal_duration))
-        words_per_part = len(words) // num_parts
+        words_per_part = len(valid_words) // num_parts
         
         parts = []
         for i in range(num_parts):
             start_idx = i * words_per_part
             if i == num_parts - 1:
-                end_idx = len(words)
+                end_idx = len(valid_words)
             else:
                 end_idx = (i + 1) * words_per_part
             
-            part_words = words[start_idx:end_idx]
-            part = self._create_segment(part_words, segment['speaker'])
-            if part:
-                parts.append(part)
+            part_words = valid_words[start_idx:end_idx]
+            if part_words:
+                part = self._create_segment(part_words, segment.get('speaker', 'A'))
+                if part:
+                    parts.append(part)
         
         return parts if parts else [segment]
     
     def _find_next_index(self, segments: List[Dict], start_index: int, merged_segment: Dict) -> int:
         """Find next index after merged segments"""
-        merged_end = merged_segment['end']
+        if not merged_segment or not isinstance(merged_segment, dict):
+            return start_index + 1
+            
+        merged_end = merged_segment.get('end', 0)
         
         for i in range(start_index, len(segments)):
-            if segments[i]['end'] > merged_end:
+            if segments[i] and segments[i].get('end', 0) > merged_end:
                 return i
         
         return len(segments)
     
-    def _merge_segments(self, seg1: Dict, seg2: Dict) -> Dict:
+    def _merge_segments(self, seg1: Dict, seg2: Dict) -> Optional[Dict]:
         """Merge two segments"""
-        combined_words = seg1.get('words', []) + seg2.get('words', [])
-        combined_text = f"{seg1['text']} {seg2['text']}"
+        if (not seg1 or not seg2 or 
+            not isinstance(seg1, dict) or not isinstance(seg2, dict)):
+            return None
+            
+        seg1_words = seg1.get('words', [])
+        seg2_words = seg2.get('words', [])
+        
+        if not isinstance(seg1_words, list):
+            seg1_words = []
+        if not isinstance(seg2_words, list):
+            seg2_words = []
+            
+        combined_words = seg1_words + seg2_words
+        seg1_text = seg1.get('text', '')
+        seg2_text = seg2.get('text', '')
+        
+        combined_text = f"{seg1_text} {seg2_text}".strip()
         
         return {
-            'start': seg1['start'],
-            'end': seg2['end'],
-            'duration': seg2['end'] - seg1['start'],
+            'start': seg1.get('start', 0),
+            'end': seg2.get('end', 0),
+            'duration': seg2.get('end', 0) - seg1.get('start', 0),
             'text': combined_text,
-            'speaker': seg1['speaker'],
-            'word_count': seg1['word_count'] + seg2['word_count'],
-            'confidence': (seg1['confidence'] + seg2['confidence']) / 2,
+            'speaker': seg1.get('speaker', 'A'),
+            'word_count': seg1.get('word_count', 0) + seg2.get('word_count', 0),
+            'confidence': (seg1.get('confidence', 0.5) + seg2.get('confidence', 0.5)) / 2,
             'words': combined_words
         }
     
     def _extract_sentence_reference(self, segment: Dict) -> Optional[Dict]:
         """Extract a sentence-based reference from segment"""
+        if not segment or not isinstance(segment, dict):
+            return None
+            
         words = segment.get('words', [])
         text = segment.get('text', '')
         
-        if not words or not text:
+        if not words or not text or not isinstance(words, list):
             return None
         
         sentences = re.split(r'[.!?]+', text)
@@ -237,7 +331,8 @@ class SegmentManager:
             
             sentence_word_objects = []
             for word_obj in words:
-                if word_obj['text'] in sentence_words:
+                if (word_obj and isinstance(word_obj, dict) and 
+                    word_obj.get('text') in sentence_words):
                     sentence_word_objects.append(word_obj)
                     if len(sentence_word_objects) == word_count:
                         break
@@ -245,8 +340,16 @@ class SegmentManager:
             if len(sentence_word_objects) < word_count:
                 continue
             
-            ref_start = sentence_word_objects[0]['start'] / 1000.0
-            ref_end = sentence_word_objects[-1]['end'] / 1000.0
+            first_word = sentence_word_objects[0]
+            last_word = sentence_word_objects[-1]
+            
+            if (not first_word or not last_word or 
+                first_word.get('start') is None or 
+                last_word.get('end') is None):
+                continue
+                
+            ref_start = first_word['start'] / 1000.0
+            ref_end = last_word['end'] / 1000.0
             ref_duration = ref_end - ref_start
             
             if self.ref_min_duration <= ref_duration <= self.ref_max_duration:
@@ -255,9 +358,9 @@ class SegmentManager:
                     'end': ref_end,
                     'duration': ref_duration,
                     'text': sentence,
-                    'speaker': segment['speaker'],
+                    'speaker': segment.get('speaker', 'A'),
                     'word_count': word_count,
-                    'confidence': segment['confidence'],
+                    'confidence': segment.get('confidence', 0.5),
                     'words': sentence_word_objects,
                     'is_reference': True
                 }
@@ -266,10 +369,16 @@ class SegmentManager:
     
     def select_optimal_references(self, segments: List[Dict], speakers: List[str]) -> Dict[str, Dict]:
         """Select best reference for each speaker based on sentence completion"""
+        if not segments or not speakers:
+            return {}
+            
         references = {}
         
         for speaker in speakers:
-            speaker_segments = [s for s in segments if s['speaker'] == speaker]
+            if not speaker:
+                continue
+                
+            speaker_segments = [s for s in segments if s and s.get('speaker') == speaker]
             
             if not speaker_segments:
                 continue
@@ -278,6 +387,9 @@ class SegmentManager:
             best_score = 0
             
             for segment in speaker_segments:
+                if not segment:
+                    continue
+                    
                 sentence_ref = self._extract_sentence_reference(segment)
                 
                 if sentence_ref:
@@ -287,47 +399,76 @@ class SegmentManager:
                         best_reference = sentence_ref
             
             if not best_reference:
-                speaker_segments.sort(key=lambda x: abs(x['duration'] - 3.5))
-                segment = speaker_segments[0]
+                speaker_segments.sort(key=lambda x: abs(x.get('duration', 0) - 3.5) if x else float('inf'))
+                segment = speaker_segments[0] if speaker_segments else None
                 
-                target_duration = min(self.ref_max_duration, segment['duration'])
-                target_words = min(self.ref_max_words, segment['word_count'])
+                if not segment:
+                    continue
                 
-                words = segment['words'][:target_words]
-                ref_start = words[0]['start'] / 1000.0
-                ref_end = words[-1]['end'] / 1000.0
+                target_duration = min(self.ref_max_duration, segment.get('duration', 0))
+                target_words = min(self.ref_max_words, segment.get('word_count', 0))
+                
+                words = segment.get('words', [])
+                if not words or not isinstance(words, list):
+                    continue
+                    
+                words = words[:target_words]
+                if not words:
+                    continue
+                    
+                first_word = words[0]
+                last_word = words[-1]
+                
+                if (not first_word or not last_word or 
+                    first_word.get('start') is None or 
+                    last_word.get('end') is None):
+                    continue
+                    
+                ref_start = first_word['start'] / 1000.0
+                ref_end = last_word['end'] / 1000.0
                 ref_duration = ref_end - ref_start
                 
-                # Only create reference if it meets minimum duration
                 if ref_duration >= self.ref_min_duration:
                     best_reference = {
                         'start': ref_start,
                         'end': ref_end,
                         'duration': ref_duration,
-                        'text': ' '.join(w['text'] for w in words),
+                        'text': ' '.join(w.get('text', '') for w in words if w and w.get('text')),
                         'speaker': speaker,
                         'word_count': len(words),
-                        'confidence': segment['confidence'],
+                        'confidence': segment.get('confidence', 0.5),
                         'words': words,
                         'is_reference': True
                     }
             
-            references[speaker] = best_reference
+            if best_reference:
+                references[speaker] = best_reference
         
         return references
     
     def _calculate_reference_score(self, reference: Dict) -> float:
         """Calculate score for reference quality"""
-        duration_score = 1.0 - abs(reference['duration'] - 3.5) / 3.5
-        word_count_score = 1.0 - abs(reference['word_count'] - 6) / 6
-        confidence_score = reference['confidence']
+        if not reference or not isinstance(reference, dict):
+            return 0.0
+            
+        duration = reference.get('duration', 0)
+        word_count = reference.get('word_count', 0)
+        confidence = reference.get('confidence', 0)
+        
+        duration_score = 1.0 - abs(duration - 3.5) / 3.5
+        word_count_score = 1.0 - abs(word_count - 6) / 6
+        confidence_score = confidence
         
         return (duration_score * 0.4 + word_count_score * 0.3 + confidence_score * 0.3)
     
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int,
                             output_dir: Path, speakers: List[str], 
                             target_language: str, detected_language: str):
-        """Save segments for voice cloning with sentence-based references"""
+        """Save segments for voice cloning with sentence-based references and parallel translation"""
+        if not segments or audio is None or sr <= 0:
+            logger.error("Invalid input parameters for save_optimal_segments")
+            return
+            
         output_dir.mkdir(parents=True, exist_ok=True)
         
         references = self.select_optimal_references(segments, speakers)
@@ -347,7 +488,29 @@ class SegmentManager:
         with open(metadata_dir / "processing_metadata.json", 'w', encoding='utf-8') as f:
             json.dump(overall_metadata, f, ensure_ascii=False, indent=2)
         
+        # Prepare all texts for parallel translation
+        print("Starting parallel translation...")
+        translation_start_time = time.time()
+        
+        segment_texts = []
+        segment_speakers = []
+        for segment in segments:
+            original_text = segment.get('text', '').strip()
+            if not original_text:
+                original_text = f"Segment audio content"
+            segment_texts.append(original_text)
+            segment_speakers.append(segment.get('speaker', 'A'))
+        
+        # Process all translations in parallel
+        english_texts = self.transcription_service.format_dialogue_batch(segment_texts, segment_speakers)
+        
+        translation_time = time.time() - translation_start_time
+        print(f"Parallel translation completed in {translation_time:.2f} seconds")
+        
         for i, segment in enumerate(segments):
+            if not segment or not isinstance(segment, dict):
+                continue
+                
             speaker = segment.get('speaker', 'A')
             speaker_dir = output_dir / f"speaker_{speaker}"
             segments_dir = speaker_dir / "segments"
@@ -356,21 +519,23 @@ class SegmentManager:
             segments_dir.mkdir(parents=True, exist_ok=True)
             reference_dir.mkdir(parents=True, exist_ok=True)
             
-            start_sample = int(segment['start'] * sr)
-            end_sample = int(segment['end'] * sr)
+            start_time = segment.get('start', 0)
+            end_time = segment.get('end', 0)
+            
+            start_sample = int(start_time * sr)
+            end_sample = int(end_time * sr)
+            
+            if start_sample >= len(audio) or end_sample > len(audio) or start_sample >= end_sample:
+                continue
+                
             segment_audio = audio[start_sample:end_sample]
             
             audio_filename = f"segment_{i+1:03d}.wav"
             audio_path = segments_dir / audio_filename
             sf.write(audio_path, segment_audio, sr)
             
-            original_text = segment.get('text', '').strip()
-            if not original_text:
-                original_text = f"Segment {i+1} audio content"
-            
-            english_text = self.transcription_service.format_dialogue_text(
-                original_text, speaker, False
-            )
+            original_text = segment_texts[i] if i < len(segment_texts) else f"Segment {i+1} audio content"
+            english_text = english_texts[i] if i < len(english_texts) else f"[S1] Segment {i+1} audio content"
             
             metadata = {
                 'segment_index': i + 1,
@@ -380,11 +545,11 @@ class SegmentManager:
                 'english_text': english_text,
                 'speaker': speaker,
                 'speaker_index': ord(speaker) - ord('A') + 1,
-                'start': segment['start'],
-                'end': segment['end'],
-                'duration': segment['duration'],
-                'word_count': segment['word_count'],
-                'confidence': segment['confidence'],
+                'start': start_time,
+                'end': end_time,
+                'duration': segment.get('duration', 0),
+                'word_count': segment.get('word_count', 0),
+                'confidence': segment.get('confidence', 0.5),
                 'is_reference': False,
                 'cloned_audio_file': f"cloned_segment_{i+1:03d}.wav",
                 'cloned_audio_path': str(segments_dir / f"cloned_segment_{i+1:03d}.wav"),
@@ -405,33 +570,60 @@ class SegmentManager:
                 'metadata_complete': True
             })
         
+        # Process references with parallel translation
+        reference_texts = []
+        reference_speakers = []
         for speaker, reference in references.items():
+            if reference and isinstance(reference, dict):
+                reference_texts.append(reference.get('text', ''))
+                reference_speakers.append(speaker)
+        
+        if reference_texts:
+            print("Starting parallel reference translation...")
+            ref_translation_start = time.time()
+            reference_english_texts = self.transcription_service.format_dialogue_batch(reference_texts, reference_speakers)
+            ref_translation_time = time.time() - ref_translation_start
+            print(f"Reference translation completed in {ref_translation_time:.2f} seconds")
+        else:
+            reference_english_texts = []
+        
+        ref_index = 0
+        for speaker, reference in references.items():
+            if not reference or not isinstance(reference, dict):
+                continue
+                
             speaker_dir = output_dir / f"speaker_{speaker}"
             reference_dir = speaker_dir / "reference"
             
-            ref_start_sample = int(reference['start'] * sr)
-            ref_end_sample = int(reference['end'] * sr)
+            ref_start = reference.get('start', 0)
+            ref_end = reference.get('end', 0)
+            
+            ref_start_sample = int(ref_start * sr)
+            ref_end_sample = int(ref_end * sr)
+            
+            if ref_start_sample >= len(audio) or ref_end_sample > len(audio) or ref_start_sample >= ref_end_sample:
+                continue
+                
             ref_audio = audio[ref_start_sample:ref_end_sample]
             
             reference_audio_path = reference_dir / f"speaker_{speaker}_REFERENCE.wav"
             sf.write(reference_audio_path, ref_audio, sr)
             
-            ref_english_text = self.transcription_service.format_dialogue_text(
-                reference['text'], speaker, False
-            )
+            ref_english_text = reference_english_texts[ref_index] if ref_index < len(reference_english_texts) else f"[S1] {reference.get('text', '')}"
+            ref_index += 1
             
             reference_metadata = {
                 'speaker': speaker,
                 'speaker_index': ord(speaker) - ord('A') + 1,
                 'reference_audio': f"speaker_{speaker}_REFERENCE.wav",
                 'reference_audio_path': str(reference_audio_path),
-                'start': reference['start'],
-                'end': reference['end'],
-                'duration': reference['duration'],
-                'original_text': reference['text'],
+                'start': ref_start,
+                'end': ref_end,
+                'duration': reference.get('duration', 0),
+                'original_text': reference.get('text', ''),
                 'english_text': ref_english_text,
-                'word_count': reference['word_count'],
-                'confidence': reference['confidence'],
+                'word_count': reference.get('word_count', 0),
+                'confidence': reference.get('confidence', 0.5),
                 'is_reference': True,
                 'reference_type': 'sentence_based',
                 'selection_score': self._calculate_reference_score(reference)

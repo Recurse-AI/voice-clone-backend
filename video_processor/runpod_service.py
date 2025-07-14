@@ -36,7 +36,7 @@ class RunPodService:
                 "input_audio": audio_url
             },
             "policy": {
-                "executionTimeout": 900000
+                "executionTimeout": 600000  # Reduced from 900000 to 600000 (10 minutes)
             }
         }
         
@@ -44,7 +44,7 @@ class RunPodService:
             f"{self.base_url}/run",
             json=payload,
             headers=self.headers,
-            timeout=60
+            timeout=30  # Reduced from 60 to 30 seconds
         )
         
         if response.status_code != 200:
@@ -65,7 +65,7 @@ class RunPodService:
         response = requests.get(
             f"{self.base_url}/status/{job_id}",
             headers=self.headers,
-            timeout=30
+            timeout=20  # Reduced from 30 to 20 seconds
         )
         
         if response.status_code != 200:
@@ -104,10 +104,11 @@ class RunPodService:
         
         return data
 
-    def wait_for_completion(self, job_id: str, timeout: int = 1800) -> Dict[str, Any]:
-        """Wait for job completion with timeout"""
-        import time
+    def wait_for_completion(self, job_id: str, timeout: int = 900) -> Dict[str, Any]:
+        """Wait for job completion with optimized timing"""
         start_time = time.time()
+        check_interval = 5  # Start with 5 seconds
+        max_interval = 20   # Maximum 20 seconds
         
         while time.time() - start_time < timeout:
             try:
@@ -118,10 +119,19 @@ class RunPodService:
                 elif status.get('status') == 'FAILED':
                     return status
                 elif status.get('status') in ['IN_QUEUE', 'IN_PROGRESS']:
-                    time.sleep(15)  # Wait 15 seconds before checking again
+                    # Progressive wait - start with 5s, increase gradually
+                    elapsed = time.time() - start_time
+                    if elapsed < 60:  # First minute: 5s intervals
+                        check_interval = 10
+                    elif elapsed < 300:  # Next 4 minutes: 10s intervals
+                        check_interval = 15
+                    else:  # After 5 minutes: 20s intervals
+                        check_interval = max_interval
+                    
+                    time.sleep(check_interval)
                     continue
                 else:
-                    time.sleep(8)  # Wait 8 seconds for other statuses
+                    time.sleep(15)  # Reduced from 8 to 5 seconds
                     
             except Exception as e:
                 return {

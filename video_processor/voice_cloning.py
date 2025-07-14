@@ -12,6 +12,9 @@ from dia.model import Dia
 from config import settings
 import logging
 from pathlib import Path
+import time
+from concurrent.futures import ThreadPoolExecutor
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +31,13 @@ def set_seed(seed: int):
 
 
 class VoiceCloningService:
-    """Simplified voice cloning service"""
+    """Simplified voice cloning service with performance optimizations"""
     
     def __init__(self):
         self.dia_model = None
         self.device = settings.DIA_DEVICE
         self.sample_rate = 44100
+        self.reference_cache = {}  # Cache for reference audio and text
     
     def load_dia_model(self, repo_id: str = None) -> bool:
         """Load Dia model"""
@@ -47,12 +51,12 @@ class VoiceCloningService:
         
     def is_model_loaded(self) -> bool:
         """Check if Dia model is loaded"""
-        return self.dia_model is not None 
+        return self.dia_model is not None
     
     def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.2,
                            cfg_scale: float = 3.0, top_p: float = 0.95,
                            seed: Optional[int] = None) -> Dict[str, Any]:
-        """Clone voice segments at natural speed"""
+        """Clone voice segments with batch processing and caching"""
         if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -63,65 +67,108 @@ class VoiceCloningService:
             used_seed = seed or settings.DEFAULT_SEED
             set_seed(used_seed)
             
-            cloned_segments = []
+            # Load and cache reference audio/text once
             reference_audio_path = None
             reference_text = None
-            
-            # Get reference audio and text
             if segments and segments[0].get('reference_audio_path'):
                 reference_audio_path = segments[0]['reference_audio_path']
-                reference_text = self._load_reference_text(reference_audio_path)
+                reference_text = self._get_cached_reference_text(reference_audio_path)
             
-            # Process each segment
-            for segment in segments:
-                english_text = segment.get('english_text', segment.get('text', ''))
-                if not english_text.strip():
-                    continue
-                
-                # Generate audio using Dia's official approach at natural speed
-                cloned_audio = self._generate_single_segment(
-                    english_text, reference_audio_path, reference_text, temperature, 
-                    cfg_scale, top_p
+            # Print reference info only once
+            print(f"Reference Audio: {reference_audio_path if reference_audio_path else 'None'}")
+            print(f"Reference Text: {reference_text if reference_text else 'None'}")
+            
+            # Start cloning timer
+            cloning_start_time = time.time()
+            
+            # Process segments in batches for better performance
+            batch_size = getattr(settings, 'BATCH_SIZE', 4)
+            cloned_segments = []
+            
+            for i in range(0, len(segments), batch_size):
+                batch = segments[i:i + batch_size]
+                batch_results = self._process_batch(
+                    batch, reference_audio_path, reference_text, 
+                    temperature, cfg_scale, top_p
                 )
+                cloned_segments.extend(batch_results)
                 
-                if cloned_audio is not None:
-                    target_duration = segment.get('duration', 5.0)
-                    cloned_audio = self._adjust_audio_length(cloned_audio, target_duration)
-                    
-                    cloned_segments.append({
-                        "success": True,
-                        "original_data": segment,
-                        "cloned_audio": cloned_audio,
-                        "duration": target_duration
-                    })
+                # Small delay between batches to prevent GPU memory issues
+                if i + batch_size < len(segments):
+                    time.sleep(0.1)
+            
+            cloning_end_time = time.time()
+            cloning_duration = cloning_end_time - cloning_start_time
+            
+            # Print cloning time
+            print(f"Cloning Time: {cloning_duration:.2f} seconds")
             
             return {
                 "success": True,
                 "cloned_segments": cloned_segments,
                 "total_segments": len(segments),
                 "successful_clones": len(cloned_segments),
-                "seed_used": used_seed
+                "seed_used": used_seed,
+                "cloning_duration": cloning_duration
             }
             
         except Exception as e:
             return {"success": False, "error": str(e)}
     
+    def _get_cached_reference_text(self, reference_audio_path: str) -> Optional[str]:
+        """Get reference text with caching"""
+        if not reference_audio_path:
+            return None
+            
+        # Check cache first
+        if reference_audio_path in self.reference_cache:
+            return self.reference_cache[reference_audio_path]
+        
+        # Load and cache reference text
+        reference_text = self._load_reference_text(reference_audio_path)
+        self.reference_cache[reference_audio_path] = reference_text
+        return reference_text
+    
+    def _process_batch(self, batch: List[Dict], reference_audio_path: Optional[str], 
+                      reference_text: Optional[str], temperature: float, 
+                      cfg_scale: float, top_p: float) -> List[Dict]:
+        """Process a batch of segments"""
+        batch_results = []
+        
+        for segment in batch:
+            english_text = segment.get('english_text', segment.get('text', ''))
+            if not english_text.strip():
+                continue
+            
+            # Generate audio using Dia's official approach
+            cloned_audio = self._generate_single_segment(
+                english_text, reference_audio_path, reference_text, 
+                temperature, cfg_scale, top_p
+            )
+            
+            if cloned_audio is not None:
+                target_duration = segment.get('duration', 5.0)
+                cloned_audio = self._adjust_audio_length(cloned_audio, target_duration)
+                
+                batch_results.append({
+                    "success": True,
+                    "original_data": segment,
+                    "cloned_audio": cloned_audio,
+                    "duration": target_duration
+                })
+        
+        return batch_results
+    
     def _load_reference_text(self, reference_audio_path: str) -> Optional[str]:
-        """Load reference text from reference metadata"""
+        """Load reference text from metadata"""
         try:
-            if not reference_audio_path:
+            reference_file = Path(reference_audio_path)
+            metadata_file = reference_file.parent / f"{reference_file.stem}_metadata.json"
+            
+            if not metadata_file.exists():
                 return None
             
-            # Get reference metadata path
-            reference_dir = Path(reference_audio_path).parent
-            reference_metadata_files = list(reference_dir.glob("*_REFERENCE_metadata.json"))
-            
-            if not reference_metadata_files:
-                return None
-            
-            # Load reference metadata
-            with open(reference_metadata_files[0], 'r', encoding='utf-8') as f:
-                import json
+            with open(metadata_file, 'r', encoding='utf-8') as f:
                 reference_metadata = json.load(f)
             
             return reference_metadata.get('english_text', '')
@@ -150,8 +197,8 @@ class VoiceCloningService:
                         cfg_scale=cfg_scale,
                         temperature=temperature,
                         top_p=top_p,
-                        cfg_filter_top_k=45,
-                        max_tokens=3072,
+                        cfg_filter_top_k=settings.DIA_CFG_FILTER_TOP_K,
+                        max_tokens=settings.DIA_MAX_TOKENS,
                         verbose=False
                     )
                 else:
@@ -161,8 +208,8 @@ class VoiceCloningService:
                         cfg_scale=cfg_scale,
                         temperature=temperature,
                         top_p=top_p,
-                        cfg_filter_top_k=45,
-                        max_tokens=3072,
+                        cfg_filter_top_k=settings.DIA_CFG_FILTER_TOP_K,
+                        max_tokens=settings.DIA_MAX_TOKENS,
                         verbose=False
                     )
             
@@ -194,4 +241,8 @@ class VoiceCloningService:
             padding = target_samples - current_samples
             audio = np.pad(audio, (0, padding), mode='constant', constant_values=0)
         
-        return audio 
+        return audio
+    
+    def clear_cache(self):
+        """Clear reference cache"""
+        self.reference_cache.clear() 

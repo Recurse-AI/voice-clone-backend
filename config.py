@@ -34,15 +34,21 @@ class Settings(BaseSettings):
     # Dia Generation Parameters (optimized based on official examples)
     DIA_MAX_TOKENS: int = 3072
     DIA_CFG_SCALE: float = 3.0  # Optimized from official examples (was 3.0)
-    DIA_TEMPERATURE: float = 1.2  # Optimized from official examples (was 1.3)
-    DIA_TOP_P: float = 0.92  # Optimized from official examples (was 0.95)
-    DIA_CFG_FILTER_TOP_K: int = 45  # Optimized from official examples (was 45)
+    DIA_TEMPERATURE: float = 1.3  # Optimized from official examples (was 1.3)
+    DIA_TOP_P: float = 0.95  # Optimized from official examples (was 0.95)
+    DIA_CFG_FILTER_TOP_K: int = 50  # Optimized from official examples (was 45)
     DIA_SPEED_FACTOR: float = 1.0  # Normal speed (was 0.92)
     
     # Processing Configuration
     DEFAULT_SEED: Optional[int] = 42  # Fixed seed for consistency
     BASE_SEED: int = 42  # Base seed for speaker-specific seeds
     SPEAKER_SEED_OFFSET: int = 1000  # Offset for speaker-specific seeds
+    
+    # Performance Optimization Settings
+    BATCH_SIZE: int = 4  # Process segments in batches
+    MAX_SEGMENT_DURATION: float = 15.0  # Maximum segment duration for optimal processing
+    ENABLE_FAST_MODE: bool = True  # Enable fast processing mode
+    PARALLEL_PROCESSING: bool = False  # Disable parallel processing to avoid GPU memory issues
 
 
     
