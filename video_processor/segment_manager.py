@@ -19,10 +19,10 @@ class SegmentManager:
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
         self.min_duration = 2.0      # Minimum 2 seconds
-        self.max_duration = 15.0     # Maximum 15 seconds  
-        self.optimal_duration = 9.0 # Optimal 9 seconds
+        self.max_duration = 20.0     # Maximum 20 seconds  
+        self.optimal_duration = 12.0 # Optimal 12 seconds
         self.max_gap = 2.0           # Maximum gap tolerance
-        self.words_per_chunk = 30    # Words per chunk
+        self.words_per_chunk = 45    # Words per chunk
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Create segments with 7-17 seconds duration"""
