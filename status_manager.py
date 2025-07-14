@@ -133,6 +133,9 @@ class StatusManager:
         with self._lock:
             return {k: v.copy() for k, v in self._statuses.items()}
 
+    def get_status_from_db(self, audio_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
 
 # Global status manager instance
 status_manager = StatusManager() 

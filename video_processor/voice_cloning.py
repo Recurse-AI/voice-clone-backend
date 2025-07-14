@@ -83,7 +83,8 @@ class VoiceCloningService:
                 if not english_text.strip():
                     continue
                 
-                print(f"Combined Text: {reference_text + '\n' + english_text if reference_text else english_text}")
+                combined_display = (reference_text + '\n' + english_text) if reference_text else english_text
+                print(f"Combined Text: {combined_display}")
                 cloned_audio = self._generate_single_segment(
                     english_text, reference_audio_path, reference_text, 
                     temperature, cfg_scale, top_p
