@@ -95,11 +95,11 @@ class R2Storage:
                 upload_results["segments"][speaker_id] = {}
                 upload_results["references"][speaker_id] = {}
                 
-                # Upload speaker segments
+                # Upload speaker segments (excluding cloned files to avoid duplicates)
                 segments_subdir = speaker_dir / "segments"
                 if segments_subdir.exists():
                     for file_path in segments_subdir.iterdir():
-                        if file_path.is_file():
+                        if file_path.is_file() and not file_path.name.startswith("cloned_"):
                             file_type = "audio" if file_path.suffix in [".wav", ".mp3"] else "metadata"
                             r2_key = self.generate_file_path(audio_id, f"segments/{speaker_id}", file_path.name)
                             
@@ -128,7 +128,7 @@ class R2Storage:
                             if result["success"]:
                                 upload_results["references"][speaker_id][file_path.name] = result
                 
-                # Upload cloned audio files
+                # Upload cloned audio files separately to avoid duplicates
                 if (speaker_dir / "segments").exists():
                     for cloned_file in (speaker_dir / "segments").glob("cloned_*.wav"):
                         if cloned_file.is_file():
