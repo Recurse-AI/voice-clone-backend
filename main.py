@@ -377,6 +377,58 @@ def process_video_background(
                 "cloned_segments": cloning_result.get("cloned_segments_count", 0),
                 "speakers": processing_result.get("speakers", []),
                 "duration": processing_result.get("total_duration", 0)
+            },
+            "uploaded_files": {
+                "segments": {
+                    "count": r2_segments_result.get("files_uploaded", 0) if r2_segments_result else 0,
+                    "uploaded": r2_segments_result.get("success", False) if r2_segments_result else False
+                },
+                "final_audio": {
+                    "url": r2_final_result.get("url"),
+                    "size_mb": round(r2_final_result.get("size", 0) / (1024 * 1024), 2),
+                    "uploaded": r2_final_result.get("success", False)
+                },
+                "video": {
+                    "url": r2_video_result.get("url"),
+                    "size_mb": round(r2_video_result.get("size", 0) / (1024 * 1024), 2),
+                    "uploaded": r2_video_result.get("success", False)
+                } if r2_video_result else None,
+                "subtitles": {
+                    "url": r2_subtitle_result.get("url"),
+                    "size_kb": round(r2_subtitle_result.get("size", 0) / 1024, 2),
+                    "uploaded": r2_subtitle_result.get("success", False)
+                } if r2_subtitle_result else None
+            },
+            "processing_details": {
+                "original_audio": original_audio_details,
+                "cloning_parameters": {
+                    "temperature": temperature,
+                    "cfg_scale": cfg_scale,
+                    "top_p": top_p,
+                    "speed_factor": speed_factor,
+                    "seeds_used": cloning_result.get("seeds_used", {})
+                },
+                "features_used": {
+                    "vocal_separation": True,
+                    "voice_cloning": True,
+                    "subtitle_generation": generate_subtitles,
+                    "instrument_mixing": include_instruments
+                },
+                "processing_timeline": {
+                    "transcription_source": "AssemblyAI",
+                    "voice_cloning_model": "Dia",
+                    "separation_service": "RunPod"
+                }
+            },
+            "segment_details": audio_processor.get_processing_stats(processing_result["segments_dir"]),
+            "r2_storage": {
+                "bucket": r2_storage.bucket_name,
+                "base_path": r2_storage.get_storage_info(audio_id)["base_path"],
+                "segments_uploaded": r2_segments_result.get("success", False),
+                "total_files": (r2_segments_result.get("files_uploaded", 0) if r2_segments_result and r2_segments_result.get("success") else 0) + 
+                              (1 if r2_final_result.get("success") else 0) + 
+                              (1 if r2_video_result and r2_video_result.get("success") else 0) + 
+                              (1 if r2_subtitle_result and r2_subtitle_result.get("success") else 0)
             }
         })
         
