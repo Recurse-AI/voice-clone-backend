@@ -61,11 +61,20 @@ async def get_video_file(video_file: Union[UploadFile, str, None] = File(None)) 
 async def lifespan(app: FastAPI):
     """Lifespan event handler"""
     # Load Dia model
-    success = audio_processor.load_dia_model(
-        repo_id=settings.DIA_MODEL_REPO
-    )
-    if not success:
-        logger.warning("Failed to load Dia model on startup")
+    print("Starting Dia model loading...")
+    try:
+        success = audio_processor.load_dia_model(
+            repo_id=settings.DIA_MODEL_REPO
+        )
+        if not success:
+            print("ERROR: Failed to load Dia model on startup")
+            logger.warning("Failed to load Dia model on startup")
+        else:
+            print("Dia model loaded successfully on startup")
+    except Exception as e:
+        print(f"EXCEPTION during model loading: {e}")
+        logger.error(f"Exception during model loading: {e}")
+    
     # Create temp directory
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")

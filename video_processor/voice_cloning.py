@@ -44,14 +44,21 @@ class VoiceCloningService:
         try:
             repo_id = repo_id or settings.DIA_MODEL_REPO
             compute_dtype = settings.DIA_COMPUTE_DTYPE if self.device == "cuda" else "float32"
+            print(f"Loading Dia model from repo: {repo_id}")
+            print(f"Device: {self.device}, Compute dtype: {compute_dtype}")
+            
             self.dia_model = Dia.from_pretrained(repo_id, compute_dtype=compute_dtype)
+            print("Dia model loaded successfully")
             return True
         except Exception as e:
+            print(f"Error loading Dia model: {e}")
             raise Exception(f"Error loading Dia model: {e}")
         
     def is_model_loaded(self) -> bool:
         """Check if Dia model is loaded"""
-        return self.dia_model is not None
+        is_loaded = self.dia_model is not None
+        print(f"Model loaded check: {is_loaded}")
+        return is_loaded
     
     def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.2,
                            cfg_scale: float = 3.0, top_p: float = 0.95,
@@ -165,8 +172,11 @@ class VoiceCloningService:
                 print("Error: Combined text is empty")
                 return None
             
+            print(f"Generating audio for text: {combined_text[:100]}...")
+            
             with torch.inference_mode():
                 if reference_audio_path and os.path.exists(reference_audio_path):
+                    print(f"Using reference audio: {reference_audio_path}")
                     audio = self.dia_model.generate(
                         text=combined_text,
                         audio_prompt=reference_audio_path,
@@ -179,6 +189,7 @@ class VoiceCloningService:
                         verbose=False
                     )
                 else:
+                    print("Using standard generation (no reference)")
                     audio = self.dia_model.generate(
                         text=combined_text,
                         use_torch_compile=False,
@@ -190,6 +201,7 @@ class VoiceCloningService:
                         verbose=False
                     )
             
+            print(f"Audio generation completed, shape: {audio.shape if hasattr(audio, 'shape') else 'No shape'}")
             return audio
             
         except Exception as e:

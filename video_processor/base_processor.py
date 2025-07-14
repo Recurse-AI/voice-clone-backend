@@ -97,75 +97,109 @@ class AudioProcessor:
                            temperature: float = 1.3, cfg_scale: float = 3.0, 
                            top_p: float = 0.95, seed: Optional[int] = None) -> Dict[str, Any]:
         """Clone voice segments speaker by speaker - simplified"""
+        print(f"Starting clone_voice_segments for audio_id: {audio_id}")
+        
         if not self.voice_cloning_service.is_model_loaded():
+            print("ERROR: Dia model not loaded")
             return {"success": False, "error": "Dia model not loaded"}
+        
+        print("Dia model is loaded successfully")
         
         try:
             segments_path = Path(segments_dir)
+            print(f"Segments directory: {segments_path}")
+            
             total_successful_clones = 0
             seeds_used = {}
             cloned_by_speaker = {}
             
             base_seed = seed or settings.DEFAULT_SEED
+            print(f"Base seed: {base_seed}")
             
             # Process each speaker directory
-            for speaker_dir in segments_path.iterdir():
+            speaker_dirs = list(segments_path.iterdir())
+            print(f"Found {len(speaker_dirs)} directories in segments_path")
+            
+            for speaker_dir in speaker_dirs:
                 if not speaker_dir.is_dir() or not speaker_dir.name.startswith("speaker_"):
+                    print(f"Skipping non-speaker directory: {speaker_dir.name}")
                     continue
                 
                 speaker = speaker_dir.name.replace("speaker_", "")
+                print(f"Processing speaker: {speaker}")
+                
                 segments_subdir = speaker_dir / "segments"
                 reference_subdir = speaker_dir / "reference"
                 
                 if not segments_subdir.exists():
+                    print(f"Segments subdirectory not found: {segments_subdir}")
                     continue
                 
                 # Calculate speaker seed
                 speaker_index = ord(speaker) - ord('A')
                 speaker_seed = base_seed + (speaker_index * settings.SPEAKER_SEED_OFFSET)
+                print(f"Speaker {speaker} seed: {speaker_seed}")
                 
                 # Find reference audio
                 reference_audio_path = None
                 if reference_subdir.exists():
-                    for ref_file in reference_subdir.glob("*_REFERENCE.wav"):
+                    ref_files = list(reference_subdir.glob("*_REFERENCE.wav"))
+                    print(f"Found {len(ref_files)} reference files")
+                    for ref_file in ref_files:
                         reference_audio_path = str(ref_file)
+                        print(f"Using reference audio: {reference_audio_path}")
                         break
                 
                 # Collect all segments for this speaker
                 speaker_segments = []
-                for json_file in segments_subdir.glob("*_metadata.json"):
+                json_files = list(segments_subdir.glob("*_metadata.json"))
+                print(f"Found {len(json_files)} metadata files for speaker {speaker}")
+                
+                for json_file in json_files:
                     try:
                         with open(json_file, 'r', encoding='utf-8') as f:
                             import json
                             segment_data = json.load(f)
                         
                         if not segment_data.get('text', '').strip():
+                            print(f"Skipping segment with no text: {json_file}")
                             continue
                         
                         segment_data['reference_audio_path'] = reference_audio_path
                         segment_data['segments_dir'] = str(segments_subdir)
                         segment_data['segment_file'] = str(json_file)
                         speaker_segments.append(segment_data)
+                        print(f"Added segment from {json_file.name} to speaker {speaker}")
                         
-                    except Exception:
+                    except Exception as e:
+                        print(f"Error loading metadata from {json_file}: {e}")
                         continue
                 
                 if not speaker_segments:
+                    print(f"No valid segments found for speaker {speaker}")
                     continue
                 
+                print(f"Collected {len(speaker_segments)} segments for speaker {speaker}")
+                
                 # Clone segments for this speaker
+                print(f"Calling voice cloning service for speaker {speaker}")
                 cloning_result = self.voice_cloning_service.clone_voice_segments(
                     speaker_segments, temperature, cfg_scale, top_p, speaker_seed
                 )
                 
+                print(f"Cloning result success: {cloning_result.get('success', False)}")
                 if not cloning_result.get('success', False):
+                    print(f"Cloning failed for speaker {speaker}: {cloning_result.get('error', 'Unknown error')}")
                     continue
                 
                 seeds_used[speaker] = speaker_seed
                 
                 # Process cloned segments
+                cloned_segments = cloning_result.get('cloned_segments', [])
+                print(f"Received {len(cloned_segments)} cloned segments for speaker {speaker}")
+                
                 speaker_successful = 0
-                for idx, cloned_segment in enumerate(cloning_result.get('cloned_segments', [])):
+                for idx, cloned_segment in enumerate(cloned_segments):
                     if cloned_segment.get('success', False) and cloned_segment.get('cloned_audio') is not None:
                         try:
                             segment_data = cloned_segment['original_data']
@@ -213,6 +247,8 @@ class AudioProcessor:
                         except Exception as e:
                             print(f"Error saving cloned segment {idx}: {e}")
                             continue
+                    else:
+                        print(f"Cloned segment {idx} failed or has no audio data")
                 
                 cloned_by_speaker[speaker] = {
                     'total_segments': len(speaker_segments),
@@ -227,7 +263,11 @@ class AudioProcessor:
                 }
                 total_successful_clones += speaker_successful
                 
+                print(f"Speaker {speaker} completed: {speaker_successful}/{len(speaker_segments)} successful")
+                
                 self.voice_cloning_service.clear_cache()
+            
+            print(f"Total successful clones: {total_successful_clones}")
             
             # Save cloning summary
             cloning_summary = {
@@ -252,6 +292,7 @@ class AudioProcessor:
             }
             
         except Exception as e:
+            print(f"Exception in clone_voice_segments: {e}")
             return {"success": False, "error": str(e)}
         finally:
             self.voice_cloning_service.clear_cache()
