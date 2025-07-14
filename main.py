@@ -169,7 +169,6 @@ async def process_video(
     temperature: float = Form(settings.DIA_TEMPERATURE, description="Voice cloning temperature"),
     cfg_scale: float = Form(settings.DIA_CFG_SCALE, description="CFG scale for voice cloning"),
     top_p: float = Form(settings.DIA_TOP_P, description="Top-p for voice cloning"),
-    speed_factor: float = Form(0.92, description="Speed factor for voice cloning (0.5-1.5, default 0.92)"), 
     target_language: str = Form("English", description="Target language for translation"),
     language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
     speakers_expected: Optional[int] = Form(None, description="Expected number of speakers (1-10)")
@@ -232,7 +231,7 @@ async def process_video(
     background_tasks.add_task(
         process_video_background,
         video_source, audio_id, include_instruments, generate_subtitles,
-        temperature, cfg_scale, top_p, speed_factor, target_language, 
+        temperature, cfg_scale, top_p, target_language, 
         language_code, speakers_expected, has_file
     )
     
@@ -248,7 +247,7 @@ async def process_video(
 
 def process_video_background(
     video_source: str, audio_id: str, include_instruments: bool,
-    generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float, speed_factor: float,
+    generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float,
     target_language: str, language_code: Optional[str], speakers_expected: Optional[int], is_file_upload: bool
 ):
     """Background video processing - handles both URL and file inputs"""
@@ -325,7 +324,7 @@ def process_video_background(
             "detected_speakers": processing_result.get("detected_speakers", len(processing_result.get("speakers", [])))
         }
         
-        # Clone voices
+        # Clone voices at natural speed
         status_manager.set_progress(audio_id, 60)
         
         cloning_result = audio_processor.clone_voice_segments(
@@ -334,8 +333,7 @@ def process_video_background(
             temperature=temperature,
             cfg_scale=cfg_scale,
             top_p=top_p,
-            seed=settings.DEFAULT_SEED,
-            speed_factor=speed_factor
+            seed=settings.DEFAULT_SEED
         )
         
         if not cloning_result["success"]:
@@ -481,7 +479,6 @@ def process_video_background(
                     "temperature": temperature,
                     "cfg_scale": cfg_scale,
                     "top_p": top_p,
-                    "speed_factor": speed_factor,
                     "seed_used": cloning_result.get("seed_used", settings.DEFAULT_SEED),
                     "seeds_used": cloning_result.get("seeds_used", {})
                 },

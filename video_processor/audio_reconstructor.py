@@ -196,7 +196,7 @@ class AudioReconstructor:
             return np.concatenate([audio, padding])
     
     def _mix_with_instruments(self, audio: np.ndarray, instruments_path: str) -> np.ndarray:
-        """Mix audio with instruments"""
+        """Mix audio with instruments at original volume levels"""
         try:
             instruments_audio, _ = sf.read(instruments_path)
             
@@ -204,7 +204,13 @@ class AudioReconstructor:
             audio = audio[:min_length]
             instruments_audio = instruments_audio[:min_length]
             
-            mixed_audio = audio * 0.8 + instruments_audio * 0.2
+            # Keep both at original volume levels
+            mixed_audio = audio + instruments_audio
+            
+            # Normalize to prevent clipping while preserving relative volumes
+            max_val = np.max(np.abs(mixed_audio))
+            if max_val > 1.0:
+                mixed_audio = mixed_audio / max_val
             
             return mixed_audio
             

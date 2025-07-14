@@ -95,8 +95,7 @@ class AudioProcessor:
     
     def clone_voice_segments(self, segments_dir: str, audio_id: str, 
                            temperature: float = 1.3, cfg_scale: float = 3.0, 
-                           top_p: float = 0.95, seed: Optional[int] = None,
-                           speed_factor: float = 0.92) -> Dict[str, Any]:
+                           top_p: float = 0.95, seed: Optional[int] = None) -> Dict[str, Any]:
         """Clone voice segments speaker by speaker with consistent metadata"""
         if not self.voice_cloning_service.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
@@ -161,9 +160,9 @@ class AudioProcessor:
                 if not speaker_segments:
                     continue
                 
-                # Clone segments
+                # Clone segments at natural speed
                 cloning_result = self.voice_cloning_service.clone_voice_segments(
-                    speaker_segments, temperature, cfg_scale, top_p, speaker_seed, speed_factor
+                    speaker_segments, temperature, cfg_scale, top_p, speaker_seed
                 )
                 
                 if not cloning_result.get('success', False):
@@ -203,8 +202,7 @@ class AudioProcessor:
                                 'cloning_parameters': {
                                     'temperature': temperature,
                                     'cfg_scale': cfg_scale,
-                                    'top_p': top_p,
-                                    'speed_factor': speed_factor
+                                    'top_p': top_p
                                 },
                                 'reference_used': reference_audio_path,
                                 'processing_status': 'cloning_completed'
@@ -227,8 +225,7 @@ class AudioProcessor:
                     'cloning_parameters': {
                         'temperature': temperature,
                         'cfg_scale': cfg_scale,
-                        'top_p': top_p,
-                        'speed_factor': speed_factor
+                        'top_p': top_p
                     }
                 }
                 total_successful_clones += speaker_successful
@@ -239,7 +236,6 @@ class AudioProcessor:
                 'total_successful_clones': total_successful_clones,
                 'cloned_by_speaker': cloned_by_speaker,
                 'seeds_used': seeds_used,
-                'speed_factor': speed_factor,
                 'cloning_timestamp': str(datetime.now())
             }
             
@@ -253,8 +249,7 @@ class AudioProcessor:
                 "cloned_segments_count": total_successful_clones,
                 "cloned_by_speaker": cloned_by_speaker,
                 "seeds_used": seeds_used,
-                "audio_id": audio_id,
-                "speed_factor": speed_factor
+                "audio_id": audio_id
             }
             
         except Exception as e:

@@ -102,7 +102,7 @@ class SegmentManager:
         }
     
     def _process_segments_for_duration(self, segments: List[Dict]) -> List[Dict]:
-        """Process segments to optimize for 11s duration, allow 2s minimum"""
+        """Process segments to optimize duration and merge short segments aggressively"""
         if not segments:
             return []
         
@@ -112,21 +112,37 @@ class SegmentManager:
         while i < len(segments):
             current_segment = segments[i]
             
-            if current_segment['duration'] < self.optimal_duration:
+            # If current segment is too short, try to merge with previous
+            if current_segment['duration'] < self.min_duration and processed:
+                # Try to merge with the last processed segment if same speaker
+                last_segment = processed[-1]
+                if (last_segment['speaker'] == current_segment['speaker'] and 
+                    current_segment['start'] - last_segment['end'] <= self.max_gap):
+                    
+                    # Merge with previous segment
+                    merged_segment = self._merge_segments(last_segment, current_segment)
+                    processed[-1] = merged_segment
+                    i += 1
+                    continue
+            
+            # If current segment is still too short, try to merge with next
+            if current_segment['duration'] < self.min_duration:
                 merged_segment = self._merge_with_next(segments, i)
                 if merged_segment and merged_segment['duration'] <= self.max_duration:
                     processed.append(merged_segment)
                     i = self._find_next_index(segments, i, merged_segment)
-                else:
-                    processed.append(current_segment)
-                    i += 1
-            elif current_segment['duration'] > self.max_duration:
+                    continue
+            
+            # If segment is too long, split it
+            if current_segment['duration'] > self.max_duration:
                 split_segments = self._split_segment(current_segment)
                 processed.extend(split_segments)
                 i += 1
-            else:
-                processed.append(current_segment)
-                i += 1
+                continue
+            
+            # Add segment as is
+            processed.append(current_segment)
+            i += 1
         
         return processed
     

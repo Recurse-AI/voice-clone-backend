@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     DIA_TEMPERATURE: float = 1.2  # Optimized from official examples (was 1.3)
     DIA_TOP_P: float = 0.92  # Optimized from official examples (was 0.95)
     DIA_CFG_FILTER_TOP_K: int = 45  # Optimized from official examples (was 45)
+    DIA_SPEED_FACTOR: float = 1.0  # Normal speed (was 0.92)
     
     # Processing Configuration
     DEFAULT_SEED: Optional[int] = 42  # Fixed seed for consistency

@@ -51,8 +51,8 @@ class VoiceCloningService:
     
     def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.2,
                            cfg_scale: float = 3.0, top_p: float = 0.95,
-                           seed: Optional[int] = None, speed_factor: float = 0.92) -> Dict[str, Any]:
-        """Clone voice segments with speed control"""
+                           seed: Optional[int] = None) -> Dict[str, Any]:
+        """Clone voice segments at natural speed"""
         if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -78,10 +78,10 @@ class VoiceCloningService:
                 if not english_text.strip():
                     continue
                 
-                # Generate audio using Dia's official approach
+                # Generate audio using Dia's official approach at natural speed
                 cloned_audio = self._generate_single_segment(
                     english_text, reference_audio_path, reference_text, temperature, 
-                    cfg_scale, top_p, speed_factor
+                    cfg_scale, top_p
                 )
                 
                 if cloned_audio is not None:
@@ -131,7 +131,7 @@ class VoiceCloningService:
     
     def _generate_single_segment(self, text: str, reference_audio_path: Optional[str], 
                                reference_text: Optional[str], temperature: float, 
-                               cfg_scale: float, top_p: float, speed_factor: float) -> Optional[np.ndarray]:
+                               cfg_scale: float, top_p: float) -> Optional[np.ndarray]:
         """Generate audio for a single segment using Dia's official approach"""
         try:
             # Prepare text using Dia's official approach: reference_text + new_text
@@ -166,22 +166,11 @@ class VoiceCloningService:
                         verbose=False
                     )
             
-            if speed_factor != 1.0:
-                audio = self._apply_speed_factor(audio, speed_factor)
-            
+            # Return audio at natural speed without any speed modification
             return audio
             
         except Exception:
             return None
-    
-    def _apply_speed_factor(self, audio: np.ndarray, speed_factor: float) -> np.ndarray:
-        """Apply speed adjustment to audio"""
-        if speed_factor == 1.0:
-            return audio
-        
-        new_length = int(len(audio) / speed_factor)
-        indices = np.linspace(0, len(audio) - 1, new_length)
-        return np.interp(indices, np.arange(len(audio)), audio)
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
         """Adjust audio to match target duration"""
