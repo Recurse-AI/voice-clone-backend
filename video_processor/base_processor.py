@@ -108,7 +108,6 @@ class AudioProcessor:
             
             base_seed = seed or settings.DEFAULT_SEED
             
-            # Process each speaker
             for speaker_dir in segments_path.iterdir():
                 if not (speaker_dir.is_dir() and speaker_dir.name.startswith("speaker_")):
                     continue
@@ -120,18 +119,15 @@ class AudioProcessor:
                 if not segments_subdir.exists():
                     continue
                 
-                # Generate seed for speaker
                 speaker_index = ord(speaker) - ord('A')
                 speaker_seed = base_seed + (speaker_index * settings.SPEAKER_SEED_OFFSET)
                 
-                # Load reference audio
                 reference_audio_path = None
                 if reference_subdir.exists():
                     for ref_file in reference_subdir.glob("*_REFERENCE.wav"):
                         reference_audio_path = str(ref_file)
                         break
                 
-                # Load segments and validate metadata
                 speaker_segments = []
                 segment_files = []
                 
@@ -141,7 +137,6 @@ class AudioProcessor:
                             import json
                             segment_data = json.load(f)
                         
-                        # Validate essential fields
                         if not segment_data.get('english_text', '').strip():
                             continue
                         
@@ -160,7 +155,6 @@ class AudioProcessor:
                 if not speaker_segments:
                     continue
                 
-                # Clone segments at natural speed
                 cloning_result = self.voice_cloning_service.clone_voice_segments(
                     speaker_segments, temperature, cfg_scale, top_p, speaker_seed
                 )
@@ -168,10 +162,8 @@ class AudioProcessor:
                 if not cloning_result.get('success', False):
                     continue
                 
-                # Update seeds_used with actual seed used
                 seeds_used[speaker] = cloning_result.get("seed_used", speaker_seed)
                 
-                # Save cloned audio with consistent naming and update metadata
                 speaker_successful = 0
                 for idx, cloned_segment in enumerate(cloning_result.get('cloned_segments', [])):
                     if cloned_segment.get('success', False) and cloned_segment.get('cloned_audio') is not None:
@@ -179,20 +171,16 @@ class AudioProcessor:
                             segment_data = cloned_segment['original_data']
                             segments_dir_path = Path(segment_data['segments_dir'])
                             
-                            # Use consistent naming: cloned_segment_XXX.wav
                             segment_index = segment_data.get('segment_index', idx + 1)
                             cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
                             cloned_path = segments_dir_path / cloned_filename
                             
-                            # Save cloned audio
                             sf.write(cloned_path, cloned_segment['cloned_audio'], 44100)
                             
-                            # Update metadata file with cloning information
                             metadata_file = Path(segment_data['segment_file'])
                             with open(metadata_file, 'r', encoding='utf-8') as f:
                                 metadata = json.load(f)
                             
-                            # Update metadata with cloning results
                             metadata.update({
                                 'cloned_audio_file': cloned_filename,
                                 'cloned_audio_path': str(cloned_path),
@@ -208,7 +196,6 @@ class AudioProcessor:
                                 'processing_status': 'cloning_completed'
                             })
                             
-                            # Save updated metadata
                             with open(metadata_file, 'w', encoding='utf-8') as f:
                                 json.dump(metadata, f, ensure_ascii=False, indent=2)
                             
@@ -229,8 +216,9 @@ class AudioProcessor:
                     }
                 }
                 total_successful_clones += speaker_successful
+                
+                self.voice_cloning_service.clear_cache()
             
-            # Save cloning summary
             cloning_summary = {
                 'audio_id': audio_id,
                 'total_successful_clones': total_successful_clones,
@@ -254,6 +242,8 @@ class AudioProcessor:
             
         except Exception as e:
             return {"success": False, "error": str(e)}
+        finally:
+            self.voice_cloning_service.clear_cache()
     
     def reconstruct_final_audio(self, segments_dir: str, audio_id: str, 
                                include_instruments: bool = False,
@@ -366,15 +356,14 @@ class AudioProcessor:
     def cleanup_temp_files(self, audio_id: str):
         """Clean up temporary files"""
         try:
-            # Clear translation cache to free memory
             if hasattr(self.transcription_service, 'translation_cache'):
                 self.transcription_service.translation_cache.clear()
             
+            self.voice_cloning_service.clear_cache()
             self.file_manager.cleanup_temp_files(audio_id)
             self.video_processor.cleanup_temp_files(audio_id)
             self.audio_reconstructor.cleanup_temp_files(audio_id)
             
-            # Clean up our temp files
             temp_files = [
                 f"{audio_id}_extracted_audio.wav",
                 f"{audio_id}_vocal.wav",
@@ -386,7 +375,6 @@ class AudioProcessor:
                 if temp_path.exists():
                     temp_path.unlink()
             
-            # Clean up segments directory
             segments_dir = self.temp_dir / f"segments_{audio_id}"
             if segments_dir.exists():
                 import shutil

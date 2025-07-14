@@ -351,6 +351,7 @@ def process_video_background(
             status_manager.fail_processing(audio_id, f"Voice cloning failed: {cloning_result.get('error', 'Unknown error')}")
             return
         
+        audio_processor.voice_cloning_service.clear_cache()
         status_manager.set_progress(audio_id, 70)
         
         # Reconstruct audio

@@ -6,6 +6,7 @@ import torch
 import numpy as np
 import random
 import os
+import gc
 import soundfile as sf
 from typing import Optional, Dict, Any, List
 from dia.model import Dia
@@ -65,28 +66,24 @@ class VoiceCloningService:
             used_seed = seed or settings.DEFAULT_SEED
             set_seed(used_seed)
             
-            # Load reference audio and text
             reference_audio_path = None
             reference_text = None
             if segments and segments[0].get('reference_audio_path'):
                 reference_audio_path = segments[0]['reference_audio_path']
                 reference_text = self._load_reference_text(reference_audio_path)
             
-            # Print reference info
             print(f"Reference Audio: {reference_audio_path if reference_audio_path else 'None'}")
             print(f"Reference Text: {reference_text if reference_text else 'None'}")
             
-            # Start cloning timer
             cloning_start_time = time.time()
             
-            # Process segments one by one
             cloned_segments = []
-            for segment in segments:
+            for i, segment in enumerate(segments):
                 english_text = segment.get('english_text', segment.get('text', ''))
                 if not english_text.strip():
                     continue
                 
-                # Generate audio using Dia
+                print(f"Combined Text: {reference_text + '\n' + english_text if reference_text else english_text}")
                 cloned_audio = self._generate_single_segment(
                     english_text, reference_audio_path, reference_text, 
                     temperature, cfg_scale, top_p
@@ -102,11 +99,12 @@ class VoiceCloningService:
                         "cloned_audio": cloned_audio,
                         "duration": target_duration
                     })
+                
+                self._cleanup_memory()
             
             cloning_end_time = time.time()
             cloning_duration = cloning_end_time - cloning_start_time
             
-            # Print cloning time
             print(f"Cloning Time: {cloning_duration:.2f} seconds")
             
             return {
@@ -120,6 +118,8 @@ class VoiceCloningService:
             
         except Exception as e:
             return {"success": False, "error": str(e)}
+        finally:
+            self._cleanup_memory()
     
     def _load_reference_text(self, reference_audio_path: str) -> Optional[str]:
         """Load reference text from metadata"""
@@ -143,7 +143,6 @@ class VoiceCloningService:
                                cfg_scale: float, top_p: float) -> Optional[np.ndarray]:
         """Generate audio for a single segment using Dia"""
         try:
-            # Prepare text
             if reference_text and reference_text.strip():
                 combined_text = reference_text.strip() + "\n" + text.strip()
             else:
@@ -192,7 +191,6 @@ class VoiceCloningService:
         
         if current_samples > target_samples:
             audio = audio[:target_samples]
-            # Apply fade out
             fade_samples = int(0.1 * self.sample_rate)
             if len(audio) > fade_samples:
                 fade_curve = np.linspace(1, 0, fade_samples)
@@ -203,6 +201,12 @@ class VoiceCloningService:
         
         return audio
     
+    def _cleanup_memory(self):
+        """Clean up GPU memory"""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+    
     def clear_cache(self):
         """Clear any cached data"""
-        pass 
+        self._cleanup_memory() 
