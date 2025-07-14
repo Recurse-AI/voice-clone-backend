@@ -161,8 +161,8 @@ class AudioProcessor:
                             import json
                             segment_data = json.load(f)
                         
-                        if not segment_data.get('text', '').strip():
-                            print(f"Skipping segment with no text: {json_file}")
+                        if not segment_data.get('english_text', '').strip():
+                            print(f"Skipping segment with no english_text: {json_file}")
                             continue
                         
                         segment_data['reference_audio_path'] = reference_audio_path
