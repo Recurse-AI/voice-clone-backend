@@ -23,6 +23,8 @@ from status_manager import status_manager, ProcessingStatus
 
 from contextlib import asynccontextmanager
 
+from schemas import ProcessingResponse, StatusResponse, StartProcessingResponse
+
 # Configure logging with UTF-8 support
 os.makedirs(settings.LOGS_DIR, exist_ok=True)
 log_file_path = os.path.join(settings.LOGS_DIR, 'api.log')
@@ -102,22 +104,6 @@ r2_storage = R2Storage()
 audio_processor = AudioProcessor(settings.TEMP_DIR)
 
 # Response models
-class ProcessingResponse(BaseModel):
-    success: bool
-    audio_id: str
-    message: str
-    processing_details: Optional[Dict[str, Any]] = None
-    r2_storage: Optional[Dict[str, Any]] = None
-    final_audio_url: Optional[str] = None
-    subtitles_url: Optional[str] = None
-    video_url: Optional[str] = None
-    original_audio_details: Optional[Dict[str, Any]] = None
-
-class StatusResponse(BaseModel):
-    status: str
-    message: str
-    audio_id: Optional[str] = None
-    details: Optional[Dict[str, Any]] = None
 
 @app.get("/", response_model=StatusResponse)
 async def root():
@@ -159,14 +145,6 @@ async def health_check():
         }
     )
 
-
-class StartProcessingResponse(BaseModel):
-    success: bool
-    audio_id: str
-    message: str
-    status: str
-    estimated_time: str
-    status_check_url: str
 
 @app.post("/process-video", response_model=StartProcessingResponse)
 async def process_video(
