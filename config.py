@@ -54,7 +54,13 @@ class Settings(BaseSettings):
     AUDIO_SPEED_FACTOR: float = 1.0  # Not used when time stretching is automatic
     ENABLE_AUDIO_PADDING: bool = True  # Enable padding for any remaining gaps
     PARALLEL_PROCESSING: bool = False  # Disable parallel processing to avoid GPU memory issues
-
+    
+    # Audio Adjustment Method
+    AUDIO_ADJUSTMENT_METHOD: str = "librosa"  # Options: "librosa", "fft", "simple", "adaptive"
+    PRESERVE_PITCH: bool = True  # Preserve pitch when time-stretching
+    HIGH_QUALITY_STRETCH: bool = True  # Use high-quality time stretching algorithms
+    ADAPTIVE_GENERATION: bool = True  # Try to generate audio at the right duration first
+    
 
     
     # R2 Bucket Configuration
