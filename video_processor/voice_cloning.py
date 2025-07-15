@@ -15,7 +15,6 @@ import logging
 from pathlib import Path
 import time
 import json
-import librosa
 
 logger = logging.getLogger(__name__)
 
@@ -238,42 +237,34 @@ class VoiceCloningService:
         
         print(f"Adjusting audio: {current_duration:.2f}s -> {target_duration:.2f}s")
         
-        # If speed adjustment is enabled and we have librosa
-        if use_speed_adjustment and current_duration > 0:
+        # If speed adjustment is enabled, use linear interpolation (like official Dia implementation)
+        if use_speed_adjustment and current_duration > 0 and abs(current_duration - target_duration) > 0.1:
             try:
-                # Calculate the stretch factor
-                # If audio is 10s and we need 20s, stretch_factor = 0.5 (slower)
-                # If audio is 20s and we need 10s, stretch_factor = 2.0 (faster)
-                stretch_factor = current_duration / target_duration
+                # Calculate speed factor for adjustment
+                # If we need to go from 10s to 20s, we need to slow down (stretch)
+                # speed_factor = current_duration / target_duration = 10/20 = 0.5
+                speed_factor = current_duration / target_duration
                 
-                print(f"Using time stretch with factor {stretch_factor:.2f}")
+                print(f"Using linear interpolation with speed factor {speed_factor:.2f}")
                 
-                # Use librosa for time stretching
-                stretched_audio = librosa.effects.time_stretch(y=audio, rate=stretch_factor)
+                # Use numpy's linear interpolation (same as official Dia implementation)
+                original_len = len(audio)
+                target_len = target_samples
                 
-                # Now handle any remaining length mismatch
-                stretched_samples = len(stretched_audio)
-                
-                if stretched_samples > target_samples:
-                    # Truncate with fade-out
-                    adjusted_audio = stretched_audio[:target_samples]
-                    fade_samples = min(int(0.05 * self.sample_rate), target_samples // 10)
-                    if fade_samples > 0:
-                        fade_curve = np.linspace(1.0, 0.0, fade_samples)
-                        adjusted_audio[-fade_samples:] *= fade_curve
-                elif stretched_samples < target_samples:
-                    # Pad with silence
-                    padding_needed = target_samples - stretched_samples
-                    padding = np.random.normal(0, 0.001, padding_needed).astype(np.float32)
-                    adjusted_audio = np.concatenate([stretched_audio, padding])
-                else:
-                    adjusted_audio = stretched_audio
+                if target_len != original_len and target_len > 0:
+                    # Create interpolation indices
+                    x_original = np.arange(original_len)
+                    x_resampled = np.linspace(0, original_len - 1, target_len)
                     
-                print(f"Time stretching successful: {current_duration:.2f}s -> {len(adjusted_audio)/self.sample_rate:.2f}s")
-                
+                    # Perform linear interpolation
+                    adjusted_audio = np.interp(x_resampled, x_original, audio)
+                    
+                    print(f"Resampled audio from {original_len} to {target_len} samples (speed factor: {speed_factor:.2f}x)")
+                else:
+                    adjusted_audio = audio
+                    
             except Exception as e:
-                print(f"Time stretching failed: {e}, falling back to simple padding/truncation")
-                # Fallback to simple padding/truncation
+                print(f"Linear interpolation failed: {e}, falling back to simple padding/truncation")
                 use_speed_adjustment = False
         
         # Simple padding or truncation (fallback or if speed adjustment is disabled)
@@ -297,12 +288,15 @@ class VoiceCloningService:
             else:
                 adjusted_audio = audio
         
-        # Normalize to prevent clipping
+        # Ensure float32 output
+        adjusted_audio = adjusted_audio.astype(np.float32)
+        
+        # Normalize to prevent clipping (matching official implementation)
         max_val = np.abs(adjusted_audio).max()
         if max_val > 0.95:
             adjusted_audio = adjusted_audio * (0.95 / max_val)
         
-        return adjusted_audio.astype(np.float32)
+        return adjusted_audio
     
     def _cleanup_memory(self):
         """Clean up GPU memory"""
