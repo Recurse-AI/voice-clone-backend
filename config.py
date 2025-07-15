@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     PRESERVE_PITCH: bool = True  # Preserve pitch when time-stretching
     HIGH_QUALITY_STRETCH: bool = True  # Use high-quality time stretching algorithms
     
+    # Stretch Ratio Limits (to preserve audio quality)
+    MAX_STRETCH_RATIO: float = 1.2  # Maximum 20% slower
+    MIN_STRETCH_RATIO: float = 0.8  # Maximum 20% faster
+    
 
     
     # R2 Bucket Configuration

@@ -244,6 +244,14 @@ class VoiceCloningService:
         # Calculate the stretch ratio
         stretch_ratio = target_duration / current_duration if current_duration > 0 else 1.0
         
+        # Limit stretch ratio to prevent quality degradation
+        # Max stretch: 1.2x (20% slower), Min stretch: 0.8x (20% faster)
+        original_ratio = stretch_ratio
+        stretch_ratio = max(settings.MIN_STRETCH_RATIO, min(settings.MAX_STRETCH_RATIO, stretch_ratio))
+        
+        if original_ratio != stretch_ratio:
+            print(f"Limiting stretch ratio from {original_ratio:.2f} to {stretch_ratio:.2f} to preserve quality")
+        
         # Use librosa for time stretching
         if use_speed_adjustment and abs(1.0 - stretch_ratio) > 0.05:  # Only adjust if difference > 5%
             try:
