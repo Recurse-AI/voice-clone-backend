@@ -56,10 +56,8 @@ class Settings(BaseSettings):
     PARALLEL_PROCESSING: bool = False  # Disable parallel processing to avoid GPU memory issues
     
     # Audio Adjustment Method
-    AUDIO_ADJUSTMENT_METHOD: str = "librosa"  # Options: "librosa", "fft", "simple", "adaptive"
     PRESERVE_PITCH: bool = True  # Preserve pitch when time-stretching
     HIGH_QUALITY_STRETCH: bool = True  # Use high-quality time stretching algorithms
-    ADAPTIVE_GENERATION: bool = True  # Try to generate audio at the right duration first
     
 
     
