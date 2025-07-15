@@ -75,14 +75,26 @@ class VoiceCloningService:
             used_seed = seed or settings.DEFAULT_SEED
             set_seed(used_seed)
             
+            # Check for reference audio and text - REQUIRED
             reference_audio_path = None
             reference_text = None
+            
             if segments and segments[0].get('reference_audio_path'):
                 reference_audio_path = segments[0]['reference_audio_path']
                 reference_text = self._load_reference_text(reference_audio_path)
             
-            print(f"Reference Audio: {reference_audio_path if reference_audio_path else 'None'}")
-            print(f"Reference Text: {reference_text if reference_text else 'None'}")
+            # Throw error if reference is missing
+            if not reference_audio_path:
+                raise ValueError("Reference audio path is missing. Voice cloning requires a reference audio.")
+            
+            if not os.path.exists(reference_audio_path):
+                raise ValueError(f"Reference audio file not found: {reference_audio_path}")
+            
+            if not reference_text or not reference_text.strip():
+                raise ValueError("Reference text is missing or empty. Voice cloning requires reference text.")
+            
+            print(f"Reference Audio: {reference_audio_path}")
+            print(f"Reference Text: {reference_text}")
             
             cloning_start_time = time.time()
             
@@ -93,7 +105,7 @@ class VoiceCloningService:
                     print(f"Skipping segment {i+1}: No english_text")
                     continue
                 
-                combined_display = (reference_text + '\n' + english_text) if reference_text else english_text
+                combined_display = reference_text + '\n' + english_text
                 print(f"Combined Text: {combined_display}")
                 
                 print(f"Processing segment {i+1}...")
@@ -164,47 +176,38 @@ class VoiceCloningService:
         except Exception:
             return None
     
-    def _generate_single_segment(self, text: str, reference_audio_path: Optional[str], 
-                               reference_text: Optional[str], temperature: float, 
+    def _generate_single_segment(self, text: str, reference_audio_path: str, 
+                               reference_text: str, temperature: float, 
                                cfg_scale: float, top_p: float) -> Optional[np.ndarray]:
         try:
-            if reference_text and reference_text.strip():
-                combined_text = reference_text.strip() + "\n" + text.strip()
-            else:
-                combined_text = text.strip()
+            # Both reference text and audio are required
+            if not reference_text or not reference_text.strip():
+                raise ValueError("Reference text is required for voice cloning")
+            
+            if not reference_audio_path or not os.path.exists(reference_audio_path):
+                raise ValueError(f"Reference audio file is required and must exist: {reference_audio_path}")
+            
+            # Combine reference text with target text
+            combined_text = reference_text.strip() + "\n" + text.strip()
             
             if not combined_text:
-                print("Error: Combined text is empty")
-                return None
+                raise ValueError("Combined text is empty")
             
             print(f"Generating audio for text: {combined_text[:100]}...")
+            print(f"Using reference audio: {reference_audio_path}")
             
             with torch.inference_mode():
-                if reference_audio_path and os.path.exists(reference_audio_path):
-                    print(f"Using reference audio: {reference_audio_path}")
-                    audio = self.dia_model.generate(
-                        text=combined_text,
-                        audio_prompt=reference_audio_path,
-                        use_torch_compile=False,
-                        cfg_scale=cfg_scale,
-                        temperature=temperature,
-                        top_p=top_p,
-                        cfg_filter_top_k=settings.DIA_CFG_FILTER_TOP_K,
-                        max_tokens=settings.DIA_MAX_TOKENS,
-                        verbose=False
-                    )
-                else:
-                    print("Using standard generation (no reference)")
-                    audio = self.dia_model.generate(
-                        text=combined_text,
-                        use_torch_compile=False,
-                        cfg_scale=cfg_scale,
-                        temperature=temperature,
-                        top_p=top_p,
-                        cfg_filter_top_k=settings.DIA_CFG_FILTER_TOP_K,
-                        max_tokens=settings.DIA_MAX_TOKENS,
-                        verbose=False
-                    )
+                audio = self.dia_model.generate(
+                    text=combined_text,
+                    audio_prompt=reference_audio_path,
+                    use_torch_compile=False,
+                    cfg_scale=cfg_scale,
+                    temperature=temperature,
+                    top_p=top_p,
+                    cfg_filter_top_k=settings.DIA_CFG_FILTER_TOP_K,
+                    max_tokens=settings.DIA_MAX_TOKENS,
+                    verbose=False
+                )
             
             print(f"Audio generation completed, shape: {audio.shape if hasattr(audio, 'shape') else 'No shape'}")
             return audio
@@ -215,127 +218,49 @@ class VoiceCloningService:
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float, 
                           use_speed_adjustment: bool = False, speed_factor: float = 0.75) -> np.ndarray:
-        """Simple audio length adjustment - padding/truncation or optional speed adjustment"""
-        if audio is None:
-            print("Warning: Audio is None")
+        """Adjust audio length to match target duration"""
+        if audio is None or len(audio) == 0:
             return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
         
+        # Ensure audio is float32 numpy array
         if not isinstance(audio, np.ndarray):
-            print(f"Warning: Audio is not numpy array, type: {type(audio)}")
-            try:
-                audio = np.array(audio, dtype=np.float32)
-            except:
-                print("Error: Could not convert audio to numpy array")
-                return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
-        
-        if len(audio) == 0:
-            print("Warning: Audio is empty")
-            return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
-
-        # Ensure audio is float32 for processing
-        if audio.dtype != np.float32:
+            audio = np.array(audio, dtype=np.float32)
+        elif audio.dtype != np.float32:
             audio = audio.astype(np.float32)
         
-        # If audio is 2D, take mean of channels instead of just first channel
+        # Convert to mono if stereo
         if len(audio.shape) > 1:
-            if audio.shape[1] > 1:
-                # Average all channels for better quality
-                audio = np.mean(audio, axis=1)
-            else:
-                audio = audio[:, 0] if audio.shape[1] > 0 else audio.flatten()
-
+            audio = np.mean(audio, axis=1)
+        
         target_samples = int(target_duration * self.sample_rate)
         current_samples = len(audio)
-
-        print(f"Adjusting audio from {current_samples} samples to {target_samples} samples")
         
-        # Option 1: Simple padding/truncation (default - no stretching)
-        if not use_speed_adjustment:
-            if current_samples > target_samples:
-                # Truncate with fade-out to avoid clicks
-                adjusted_audio = audio[:target_samples]
-                
-                # Apply fade-out to last 0.05 seconds (50ms) to avoid abrupt cuts
-                fade_samples = min(int(0.05 * self.sample_rate), target_samples // 10)
-                if fade_samples > 0:
-                    fade_curve = np.linspace(1.0, 0.0, fade_samples)
-                    adjusted_audio[-fade_samples:] *= fade_curve
-                
-                print(f"Truncated audio to {len(adjusted_audio)} samples with fade-out")
-            elif current_samples < target_samples:
-                # Apply fade-out to original audio end before padding
-                fade_samples = min(int(0.05 * self.sample_rate), current_samples // 10)
-                if fade_samples > 0:
-                    fade_curve = np.linspace(1.0, 0.0, fade_samples)
-                    audio[-fade_samples:] *= fade_curve
-                
-                # Pad with very low-level noise instead of pure zeros for more natural sound
-                padding_needed = target_samples - current_samples
-                # Generate very quiet noise (-60dB)
-                noise_level = 0.001
-                padding = np.random.normal(0, noise_level, padding_needed).astype(np.float32)
-                adjusted_audio = np.concatenate([audio, padding])
-                print(f"Padded audio with {padding_needed} samples of low-level noise")
-            else:
-                # Already correct length
-                adjusted_audio = audio
-                print("Audio already correct length")
+        print(f"Adjusting audio: {current_samples} -> {target_samples} samples")
         
-        # Option 2: Speed adjustment (slower) - optional
+        # Simple padding or truncation
+        if current_samples > target_samples:
+            # Truncate with fade-out
+            adjusted_audio = audio[:target_samples]
+            
+            # Apply 50ms fade-out to avoid clicks
+            fade_samples = min(int(0.05 * self.sample_rate), target_samples // 10)
+            if fade_samples > 0:
+                fade_curve = np.linspace(1.0, 0.0, fade_samples)
+                adjusted_audio[-fade_samples:] *= fade_curve
+                
+        elif current_samples < target_samples:
+            # Pad with silence (very low noise)
+            padding_needed = target_samples - current_samples
+            padding = np.random.normal(0, 0.001, padding_needed).astype(np.float32)
+            adjusted_audio = np.concatenate([audio, padding])
+            
         else:
-            print(f"Using speed adjustment with factor {speed_factor}")
-            try:
-                # Use phase vocoder for better quality time stretching
-                # This preserves pitch better than simple time stretching
-                adjusted_audio = librosa.effects.time_stretch(y=audio, rate=speed_factor)
-                print(f"Applied speed factor: {speed_factor}, new length: {len(adjusted_audio)} samples")
-                
-                # Still pad/truncate to exact target if needed, but with better handling
-                if len(adjusted_audio) > target_samples:
-                    adjusted_audio = adjusted_audio[:target_samples]
-                    # Apply fade-out
-                    fade_samples = min(int(0.05 * self.sample_rate), target_samples // 10)
-                    if fade_samples > 0:
-                        fade_curve = np.linspace(1.0, 0.0, fade_samples)
-                        adjusted_audio[-fade_samples:] *= fade_curve
-                elif len(adjusted_audio) < target_samples:
-                    # Apply fade before padding
-                    fade_samples = min(int(0.05 * self.sample_rate), len(adjusted_audio) // 10)
-                    if fade_samples > 0:
-                        fade_curve = np.linspace(1.0, 0.0, fade_samples)
-                        adjusted_audio[-fade_samples:] *= fade_curve
-                    
-                    padding_needed = target_samples - len(adjusted_audio)
-                    noise_level = 0.001
-                    padding = np.random.normal(0, noise_level, padding_needed).astype(np.float32)
-                    adjusted_audio = np.concatenate([adjusted_audio, padding])
-                    
-            except Exception as e:
-                print(f"Speed adjustment failed: {e}, falling back to padding")
-                # Fallback to padding with fade
-                if current_samples > target_samples:
-                    adjusted_audio = audio[:target_samples]
-                    fade_samples = min(int(0.05 * self.sample_rate), target_samples // 10)
-                    if fade_samples > 0:
-                        fade_curve = np.linspace(1.0, 0.0, fade_samples)
-                        adjusted_audio[-fade_samples:] *= fade_curve
-                elif current_samples < target_samples:
-                    fade_samples = min(int(0.05 * self.sample_rate), current_samples // 10)
-                    if fade_samples > 0:
-                        fade_curve = np.linspace(1.0, 0.0, fade_samples)
-                        audio[-fade_samples:] *= fade_curve
-                    padding_needed = target_samples - current_samples
-                    noise_level = 0.001
-                    padding = np.random.normal(0, noise_level, padding_needed).astype(np.float32)
-                    adjusted_audio = np.concatenate([audio, padding])
-                else:
-                    adjusted_audio = audio
+            adjusted_audio = audio
         
         # Normalize to prevent clipping
         max_val = np.abs(adjusted_audio).max()
         if max_val > 0.95:
             adjusted_audio = adjusted_audio * (0.95 / max_val)
-            print(f"Normalized audio to prevent clipping (max was {max_val:.3f})")
         
         return adjusted_audio.astype(np.float32)
     

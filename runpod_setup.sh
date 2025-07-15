@@ -97,12 +97,12 @@ rotate_api_log() {
         local current_lines=$(wc -l < "$log_file" 2>/dev/null || echo "0")
         
         if [ "$current_lines" -gt "$max_lines" ]; then
-            echo "📋 Rotating log file (current: $current_lines lines, keeping last $max_lines)"
+            echo "📋 Rotating log file (current: $current_lines lines, keeping latest $max_lines)"
             
-            # Keep only the last 100 lines
+            # Keep only the latest/newest lines (remove old lines from head)
             tail -n "$max_lines" "$log_file" > "$log_file.tmp" && mv "$log_file.tmp" "$log_file"
             
-            echo "✅ Log rotated successfully"
+            echo "✅ Log rotated successfully - Latest logs preserved"
         else
             echo "📋 Log file size OK ($current_lines lines)"
         fi
@@ -129,7 +129,8 @@ while true; do
         CURRENT_LINES=$(wc -l < "$LOG_FILE" 2>/dev/null || echo "0")
         
         if [ "$CURRENT_LINES" -gt "$MAX_LINES" ]; then
-            echo "$(date): Rotating log file ($CURRENT_LINES lines -> $MAX_LINES lines)" >> "./logs/rotation.log"
+            echo "$(date): Rotating log file ($CURRENT_LINES lines -> $MAX_LINES lines) - Keeping latest logs" >> "./logs/rotation.log"
+            # Keep only the latest/newest lines (remove old lines from head)
             tail -n "$MAX_LINES" "$LOG_FILE" > "$LOG_FILE.tmp" && mv "$LOG_FILE.tmp" "$LOG_FILE"
         fi
     fi
