@@ -234,28 +234,68 @@ class VoiceCloningService:
         
         target_samples = int(target_duration * self.sample_rate)
         current_samples = len(audio)
+        current_duration = current_samples / self.sample_rate
         
-        print(f"Adjusting audio: {current_samples} -> {target_samples} samples")
+        print(f"Adjusting audio: {current_duration:.2f}s -> {target_duration:.2f}s")
         
-        # Simple padding or truncation
-        if current_samples > target_samples:
-            # Truncate with fade-out
-            adjusted_audio = audio[:target_samples]
-            
-            # Apply 50ms fade-out to avoid clicks
-            fade_samples = min(int(0.05 * self.sample_rate), target_samples // 10)
-            if fade_samples > 0:
-                fade_curve = np.linspace(1.0, 0.0, fade_samples)
-                adjusted_audio[-fade_samples:] *= fade_curve
+        # If speed adjustment is enabled and we have librosa
+        if use_speed_adjustment and current_duration > 0:
+            try:
+                # Calculate the stretch factor
+                # If audio is 10s and we need 20s, stretch_factor = 0.5 (slower)
+                # If audio is 20s and we need 10s, stretch_factor = 2.0 (faster)
+                stretch_factor = current_duration / target_duration
                 
-        elif current_samples < target_samples:
-            # Pad with silence (very low noise)
-            padding_needed = target_samples - current_samples
-            padding = np.random.normal(0, 0.001, padding_needed).astype(np.float32)
-            adjusted_audio = np.concatenate([audio, padding])
-            
-        else:
-            adjusted_audio = audio
+                print(f"Using time stretch with factor {stretch_factor:.2f}")
+                
+                # Use librosa for time stretching
+                stretched_audio = librosa.effects.time_stretch(y=audio, rate=stretch_factor)
+                
+                # Now handle any remaining length mismatch
+                stretched_samples = len(stretched_audio)
+                
+                if stretched_samples > target_samples:
+                    # Truncate with fade-out
+                    adjusted_audio = stretched_audio[:target_samples]
+                    fade_samples = min(int(0.05 * self.sample_rate), target_samples // 10)
+                    if fade_samples > 0:
+                        fade_curve = np.linspace(1.0, 0.0, fade_samples)
+                        adjusted_audio[-fade_samples:] *= fade_curve
+                elif stretched_samples < target_samples:
+                    # Pad with silence
+                    padding_needed = target_samples - stretched_samples
+                    padding = np.random.normal(0, 0.001, padding_needed).astype(np.float32)
+                    adjusted_audio = np.concatenate([stretched_audio, padding])
+                else:
+                    adjusted_audio = stretched_audio
+                    
+                print(f"Time stretching successful: {current_duration:.2f}s -> {len(adjusted_audio)/self.sample_rate:.2f}s")
+                
+            except Exception as e:
+                print(f"Time stretching failed: {e}, falling back to simple padding/truncation")
+                # Fallback to simple padding/truncation
+                use_speed_adjustment = False
+        
+        # Simple padding or truncation (fallback or if speed adjustment is disabled)
+        if not use_speed_adjustment:
+            if current_samples > target_samples:
+                # Truncate with fade-out
+                adjusted_audio = audio[:target_samples]
+                
+                # Apply 50ms fade-out to avoid clicks
+                fade_samples = min(int(0.05 * self.sample_rate), target_samples // 10)
+                if fade_samples > 0:
+                    fade_curve = np.linspace(1.0, 0.0, fade_samples)
+                    adjusted_audio[-fade_samples:] *= fade_curve
+                    
+            elif current_samples < target_samples:
+                # Pad with silence (very low noise)
+                padding_needed = target_samples - current_samples
+                padding = np.random.normal(0, 0.001, padding_needed).astype(np.float32)
+                adjusted_audio = np.concatenate([audio, padding])
+                
+            else:
+                adjusted_audio = audio
         
         # Normalize to prevent clipping
         max_val = np.abs(adjusted_audio).max()
