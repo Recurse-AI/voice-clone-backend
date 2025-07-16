@@ -244,32 +244,29 @@ class VoiceCloningService:
         # Calculate the stretch ratio
         stretch_ratio = target_duration / current_duration if current_duration > 0 else 1.0
         
-        # Limit stretch ratio to prevent quality degradation
-        # Max stretch: 1.2x (20% slower), Min stretch: 0.8x (20% faster)
-        original_ratio = stretch_ratio
-        stretch_ratio = max(settings.MIN_STRETCH_RATIO, min(settings.MAX_STRETCH_RATIO, stretch_ratio))
-        
-        if original_ratio != stretch_ratio:
-            print(f"Limiting stretch ratio from {original_ratio:.2f} to {stretch_ratio:.2f} to preserve quality")
-        
-        # Use librosa for time stretching
-        if use_speed_adjustment and abs(1.0 - stretch_ratio) > 0.05:  # Only adjust if difference > 5%
+        # Only apply time stretching for significant differences
+        if use_speed_adjustment and abs(1.0 - stretch_ratio) > 0.1:  # Changed from 0.05 to 0.1
+            # Limit stretch ratio more conservatively
+            stretch_ratio = max(0.9, min(1.1, stretch_ratio))  # Max 10% change instead of 20%
+            
             try:
-                print(f"Using librosa time-stretch with ratio {stretch_ratio:.2f}")
-                # Time stretch while preserving pitch
+                print(f"Applying minimal time-stretch with ratio {stretch_ratio:.2f}")
+                # Use high quality time stretching
                 adjusted_audio = librosa.effects.time_stretch(audio, rate=1.0/stretch_ratio)
             except Exception as e:
-                print(f"Librosa time stretching failed: {e}")
+                print(f"Time stretching skipped: {e}")
                 adjusted_audio = audio
         else:
+            if not use_speed_adjustment:
+                print("Speed adjustment disabled - preserving original voice quality")
             adjusted_audio = audio
         
-        # Ensure exact target length
+        # Handle length differences with minimal modification
         if len(adjusted_audio) > target_samples:
-            # Truncate with fade-out
+            # Truncate with longer fade-out for smoother transition
             adjusted_audio = adjusted_audio[:target_samples]
-            # Apply 50ms fade-out
-            fade_samples = min(int(0.05 * self.sample_rate), target_samples // 10)
+            # Apply 100ms fade-out instead of 50ms
+            fade_samples = min(int(0.1 * self.sample_rate), target_samples // 5)
             if fade_samples > 0:
                 fade_curve = np.linspace(1.0, 0.0, fade_samples)
                 adjusted_audio[-fade_samples:] *= fade_curve
@@ -278,10 +275,12 @@ class VoiceCloningService:
             padding = target_samples - len(adjusted_audio)
             adjusted_audio = np.pad(adjusted_audio, (0, padding), mode='constant', constant_values=0)
         
-        # Normalize to prevent clipping
+        # Gentle normalization to preserve voice quality
         max_val = np.abs(adjusted_audio).max()
-        if max_val > 0.95:
-            adjusted_audio = adjusted_audio * (0.95 / max_val)
+        if max_val > 1.0:  # Only normalize if clipping would occur
+            adjusted_audio = adjusted_audio * (0.99 / max_val)
+        elif max_val < 0.1:  # Boost very quiet audio
+            adjusted_audio = adjusted_audio * (0.3 / max_val)
         
         return adjusted_audio.astype(np.float32)
     

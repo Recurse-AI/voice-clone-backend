@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     ENABLE_FAST_MODE: bool = True  # Enable fast processing mode
 
     # Audio Length Adjustment Settings
-    USE_SPEED_ADJUSTMENT: bool = True  # Use speed adjustment to match target duration
+    USE_SPEED_ADJUSTMENT: bool = False  # Disable by default to preserve voice quality
     AUDIO_SPEED_FACTOR: float = 1.0  # Not used when time stretching is automatic
     ENABLE_AUDIO_PADDING: bool = True  # Enable padding for any remaining gaps
     PARALLEL_PROCESSING: bool = False  # Disable parallel processing to avoid GPU memory issues
@@ -60,8 +60,8 @@ class Settings(BaseSettings):
     HIGH_QUALITY_STRETCH: bool = True  # Use high-quality time stretching algorithms
     
     # Stretch Ratio Limits (to preserve audio quality)
-    MAX_STRETCH_RATIO: float = 1.2  # Maximum 20% slower
-    MIN_STRETCH_RATIO: float = 0.8  # Maximum 20% faster
+    MAX_STRETCH_RATIO: float = 1.1  # Maximum 10% slower (reduced from 20%)
+    MIN_STRETCH_RATIO: float = 0.9  # Maximum 10% faster (reduced from 20%)
     
 
     

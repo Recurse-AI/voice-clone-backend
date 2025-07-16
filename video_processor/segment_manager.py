@@ -304,9 +304,8 @@ class SegmentManager:
 
     
     def select_optimal_references(self, segments: List[Dict], speakers: List[str]) -> Dict[str, Dict]:
-        """Select best reference for each speaker - 3-11 seconds with good quality"""
+        """Select best reference for each speaker - simple selection"""
         if not segments or not speakers:
-            logger.warning("No segments or speakers provided for reference selection")
             return {}
             
         references = {}
@@ -319,46 +318,11 @@ class SegmentManager:
             speaker_segments = [s for s in segments if s and s.get('speaker') == speaker]
             
             if not speaker_segments:
-                logger.warning(f"No segments found for speaker {speaker}")
                 continue
             
-            logger.info(f"Found {len(speaker_segments)} segments for speaker {speaker}")
-            
-            # Log segment durations for debugging
-            durations = [s.get('duration', 0) for s in speaker_segments]
-            logger.info(f"Segment durations for speaker {speaker}: {durations}")
-            
-            # First try to find segments in the 3-11 second range
-            valid_segments = []
-            for seg in speaker_segments:
-                duration = seg.get('duration', 0)
-                if 3.0 <= duration <= 11.0:
-                    valid_segments.append(seg)
-            
-            logger.info(f"Found {len(valid_segments)} valid segments (3-11s) for speaker {speaker}")
-            
-            # If no valid segments in range, take the best available segment
-            if not valid_segments:
-                logger.warning(f"No segments in 3-11s range for speaker {speaker}, using closest segment")
-                # Sort by how close they are to 7 seconds
-                speaker_segments.sort(key=lambda s: abs(s.get('duration', 0) - 7.0))
-                best_segment = speaker_segments[0]
-                logger.info(f"Using segment with duration {best_segment.get('duration', 0):.2f}s as reference")
-            else:
-                # Sort valid segments by confidence and duration score
-                def score_segment(segment):
-                    duration = segment.get('duration', 0)
-                    confidence = segment.get('confidence', 0.5)
-                    
-                    # Prefer segments closer to 7 seconds (optimal)
-                    duration_score = 1.0 - abs(duration - 7.0) / 4.0
-                    
-                    # Combine confidence and duration scores
-                    return confidence * 0.6 + duration_score * 0.4
-                
-                valid_segments.sort(key=score_segment, reverse=True)
-                best_segment = valid_segments[0]
-                logger.info(f"Selected segment with duration {best_segment.get('duration', 0):.2f}s and confidence {best_segment.get('confidence', 0):.2f}")
+            # Simple selection: pick segment closest to 7 seconds with good confidence
+            best_segment = max(speaker_segments, 
+                             key=lambda s: s.get('confidence', 0.5) - abs(s.get('duration', 0) - 7.0) * 0.1)
             
             # Create reference from the best segment
             references[speaker] = {
@@ -371,10 +335,8 @@ class SegmentManager:
                 'confidence': best_segment.get('confidence', 0.5),
                 'words': best_segment.get('words', []),
                 'is_reference': True,
-                'reference_type': 'best_available_segment'
+                'reference_type': 'best_segment'
             }
-            
-            logger.info(f"Created reference for speaker {speaker}: duration={best_segment.get('duration', 0):.2f}s")
         
         return references
 
