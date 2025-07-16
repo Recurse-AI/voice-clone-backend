@@ -52,7 +52,7 @@ class StatusManager:
     
     def _save_to_mongodb(self, audio_id: str, status_data: Dict[str, Any]):
         """Save status to MongoDB"""
-        if not self._mongo_collection:
+        if self._mongo_collection is None:
             return
         
         try:
@@ -66,7 +66,7 @@ class StatusManager:
     
     def _get_from_mongodb(self, audio_id: str) -> Optional[Dict[str, Any]]:
         """Get status from MongoDB"""
-        if not self._mongo_collection:
+        if self._mongo_collection is None:
             return None
         
         try:
