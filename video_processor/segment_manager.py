@@ -303,64 +303,22 @@ class SegmentManager:
     
 
     
-    def select_optimal_references(self, segments: List[Dict], speakers: List[str]) -> Dict[str, Dict]:
-        """Select best reference for each speaker - simple selection"""
-        if not segments or not speakers:
-            return {}
-            
-        references = {}
-        
-        for speaker in speakers:
-            if not speaker:
-                continue
-                
-            # Find all segments for this speaker
-            speaker_segments = [s for s in segments if s and s.get('speaker') == speaker]
-            
-            if not speaker_segments:
-                continue
-            
-            # Simple selection: pick segment closest to 7 seconds with good confidence
-            best_segment = max(speaker_segments, 
-                             key=lambda s: s.get('confidence', 0.5) - abs(s.get('duration', 0) - 7.0) * 0.1)
-            
-            # Create reference from the best segment
-            references[speaker] = {
-                'start': best_segment.get('start', 0),
-                'end': best_segment.get('end', 0),
-                'duration': best_segment.get('duration', 0),
-                'text': best_segment.get('text', '').strip(),
-                'speaker': speaker,
-                'word_count': best_segment.get('word_count', 0),
-                'confidence': best_segment.get('confidence', 0.5),
-                'words': best_segment.get('words', []),
-                'is_reference': True,
-                'reference_type': 'best_segment'
-            }
-        
-        return references
-
-
-    
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int,
                             output_dir: Path, speakers: List[str], 
                             target_language: str, detected_language: str):
-        """Save segments for voice cloning with sentence-based references and parallel translation"""
+        """Save segments for voice cloning with parallel translation"""
         if not segments or audio is None or sr <= 0:
             logger.error("Invalid input parameters for save_optimal_segments")
             return
             
         output_dir.mkdir(parents=True, exist_ok=True)
         
-        references = self.select_optimal_references(segments, speakers)
-        
         overall_metadata = {
             "total_segments": len(segments),
             "speakers": speakers,
             "target_language": target_language,
             "detected_language": detected_language,
-            "processing_timestamp": str(datetime.now()),
-            "reference_selections": {k: f"{k}_sentence_ref" for k in references.keys()}
+            "processing_timestamp": str(datetime.now())
         }
         
         metadata_dir = output_dir / "metadata"
@@ -395,10 +353,8 @@ class SegmentManager:
             speaker = segment.get('speaker', 'A')
             speaker_dir = output_dir / f"speaker_{speaker}"
             segments_dir = speaker_dir / "segments"
-            reference_dir = speaker_dir / "reference"
             
             segments_dir.mkdir(parents=True, exist_ok=True)
-            reference_dir.mkdir(parents=True, exist_ok=True)
             
             start_time = segment.get('start', 0)
             end_time = segment.get('end', 0)
@@ -439,7 +395,6 @@ class SegmentManager:
                 'duration': segment.get('duration', 0),
                 'word_count': segment.get('word_count', 0),
                 'confidence': segment.get('confidence', 0.5),
-                'is_reference': False,
                 'cloned_audio_file': f"cloned_segment_{i+1:03d}.wav",
                 'cloned_audio_path': str(segments_dir / f"cloned_segment_{i+1:03d}.wav"),
                 'metadata_complete': True,
@@ -457,70 +412,4 @@ class SegmentManager:
                 'audio_file': audio_filename,
                 'english_text': english_text,
                 'metadata_complete': True
-            })
-        
-        # Process references with parallel translation
-        reference_texts = []
-        reference_speakers = []
-        for speaker, reference in references.items():
-            if reference and isinstance(reference, dict):
-                reference_texts.append(reference.get('text', ''))
-                reference_speakers.append(speaker)
-        
-        if reference_texts:
-            print("Starting parallel reference translation...")
-            ref_translation_start = time.time()
-            reference_english_texts = self.transcription_service.format_dialogue_batch(reference_texts, reference_speakers)
-            ref_translation_time = time.time() - ref_translation_start
-            print(f"Reference translation completed in {ref_translation_time:.2f} seconds")
-        else:
-            reference_english_texts = []
-        
-        ref_index = 0
-        for speaker, reference in references.items():
-            if not reference or not isinstance(reference, dict):
-                continue
-                
-            speaker_dir = output_dir / f"speaker_{speaker}"
-            reference_dir = speaker_dir / "reference"
-            
-            ref_start = reference.get('start', 0)
-            ref_end = reference.get('end', 0)
-            
-            ref_start_sample = int(ref_start * sr)
-            ref_end_sample = int(ref_end * sr)
-            
-            if ref_start_sample >= len(audio) or ref_end_sample > len(audio) or ref_start_sample >= ref_end_sample:
-                continue
-                
-            ref_audio = audio[ref_start_sample:ref_end_sample]
-            
-            reference_audio_path = reference_dir / f"speaker_{speaker}_REFERENCE.wav"
-            sf.write(reference_audio_path, ref_audio, sr)
-            
-            ref_english_text = reference_english_texts[ref_index] if ref_index < len(reference_english_texts) else ""
-            ref_index += 1
-            
-            if not ref_english_text:
-                print(f"Warning: Reference translation failed for speaker {speaker}, using original text")
-                ref_english_text = reference.get('text', '')
-            
-            reference_metadata = {
-                'speaker': speaker,
-                'speaker_index': ord(speaker) - ord('A') + 1,
-                'reference_audio': f"speaker_{speaker}_REFERENCE.wav",
-                'reference_audio_path': str(reference_audio_path),
-                'start': ref_start,
-                'end': ref_end,
-                'duration': reference.get('duration', 0),
-                'original_text': reference.get('text', ''),
-                'english_text': ref_english_text,
-                'word_count': reference.get('word_count', 0),
-                'confidence': reference.get('confidence', 0.5),
-                'is_reference': True,
-                'reference_type': 'best_segment_based'
-            }
-            
-            reference_metadata_path = reference_dir / f"speaker_{speaker}_REFERENCE_metadata.json"
-            with open(reference_metadata_path, 'w', encoding='utf-8') as f:
-                json.dump(reference_metadata, f, ensure_ascii=False, indent=2) 
+            }) 

@@ -12,9 +12,7 @@ from typing import Optional, Dict, Any, List
 from dia.model import Dia
 from config import settings
 import logging
-from pathlib import Path
 import time
-import json
 import librosa
 
 logger = logging.getLogger(__name__)
@@ -72,50 +70,45 @@ class VoiceCloningService:
         print(f"Starting voice cloning for {len(segments)} segments")
         
         try:
-            used_seed = seed or settings.DEFAULT_SEED
-            set_seed(used_seed)
-            
-            # Check for reference audio and text - REQUIRED
-            reference_audio_path = None
-            reference_text = None
-            
-            if segments and segments[0].get('reference_audio_path'):
-                reference_audio_path = segments[0]['reference_audio_path']
-                reference_text = self._load_reference_text(reference_audio_path)
-            
-            # Throw error if reference is missing
-            if not reference_audio_path:
-                raise ValueError("Reference audio path is missing. Voice cloning requires a reference audio.")
-            
-            if not os.path.exists(reference_audio_path):
-                raise ValueError(f"Reference audio file not found: {reference_audio_path}")
-            
-            if not reference_text or not reference_text.strip():
-                raise ValueError("Reference text is missing or empty. Voice cloning requires reference text.")
-            
-            print(f"Reference Audio: {reference_audio_path}")
-            print(f"Reference Text: {reference_text}")
-            
+            base_seed = seed or settings.DEFAULT_SEED
             cloning_start_time = time.time()
             
             cloned_segments = []
+            speaker_seeds = {}  # Keep same seed per speaker
+            
             for i, segment in enumerate(segments):
+                if not segment or not isinstance(segment, dict):
+                    continue
+                
+                # Get segment data
                 english_text = segment.get('english_text', segment.get('text', ''))
                 if not english_text.strip():
                     print(f"Skipping segment {i+1}: No english_text")
                     continue
                 
-                combined_display = reference_text + '\n' + english_text
-                print(f"Combined Text: {combined_display}")
+                # Use segment's own audio as reference
+                audio_path = segment.get('audio_path')
+                if not audio_path or not os.path.exists(audio_path):
+                    print(f"Skipping segment {i+1}: No audio file found")
+                    continue
                 
-                print(f"Processing segment {i+1}...")
+                # Get speaker and set consistent seed per speaker
+                speaker = segment.get('speaker', 'A')
+                if speaker not in speaker_seeds:
+                    speaker_seeds[speaker] = base_seed + (ord(speaker) - ord('A'))
+                
+                set_seed(speaker_seeds[speaker])
+                
+                print(f"Processing segment {i+1} (Speaker {speaker})...")
+                print(f"Using segment audio as reference: {audio_path}")
+                print(f"Text: {english_text}")
                 
                 # Get target duration
                 target_duration = segment.get('duration', 5.0)
                 
-                # Generate audio
+                # Generate audio using segment itself as reference
                 cloned_audio = self._generate_single_segment(
-                    english_text, reference_audio_path, reference_text, 
+                    english_text, audio_path, english_text, 
                     temperature, cfg_scale, top_p
                 )
                 
@@ -131,14 +124,14 @@ class VoiceCloningService:
                     speed_factor=settings.AUDIO_SPEED_FACTOR
                 )
                 
-                print(f"Generated audio shape: {cloned_audio.shape if hasattr(cloned_audio, 'shape') else 'No shape'}")
                 print(f"Successfully generated audio for segment {i+1}")
                 
                 cloned_segments.append({
                     "success": True,
                     "original_data": segment,
                     "cloned_audio": cloned_audio,
-                    "duration": target_duration
+                    "duration": target_duration,
+                    "speaker": speaker
                 })
                 
                 self._cleanup_memory()
@@ -153,7 +146,8 @@ class VoiceCloningService:
                 "cloned_segments": cloned_segments,
                 "total_segments": len(segments),
                 "successful_clones": len(cloned_segments),
-                "seed_used": used_seed,
+                "seed_used": base_seed,
+                "speaker_seeds": speaker_seeds,
                 "cloning_duration": cloning_duration
             }
             
@@ -162,42 +156,15 @@ class VoiceCloningService:
         finally:
             self._cleanup_memory()
     
-    def _load_reference_text(self, reference_audio_path: str) -> Optional[str]:
-        """Load reference text from metadata"""
-        try:
-            reference_file = Path(reference_audio_path)
-            metadata_file = reference_file.parent / f"{reference_file.stem}_metadata.json"
-            
-            if not metadata_file.exists():
-                return None
-            
-            with open(metadata_file, 'r', encoding='utf-8') as f:
-                reference_metadata = json.load(f)
-            
-            return reference_metadata.get('english_text', '')
-            
-        except Exception:
-            return None
-    
     def _generate_single_segment(self, text: str, reference_audio_path: str, 
                                reference_text: str, temperature: float, 
                                cfg_scale: float, top_p: float) -> Optional[np.ndarray]:
         try:
-            # Both reference text and audio are required
-            if not reference_text or not reference_text.strip():
-                raise ValueError("Reference text is required for voice cloning")
+            # Since we're using segment as its own reference, text and reference_text are the same
+            # Dia format expects reference text + target text
+            combined_text = text + "\n" + text
             
-            if not reference_audio_path or not os.path.exists(reference_audio_path):
-                raise ValueError(f"Reference audio file is required and must exist: {reference_audio_path}")
-            
-            # Combine reference text with target text
-            combined_text = reference_text.strip() + "\n" + text.strip()
-            
-            if not combined_text:
-                raise ValueError("Combined text is empty")
-            
-            print(f"Generating audio for text: {combined_text[:100]}...")
-            print(f"Using reference audio: {reference_audio_path}")
+            print(f"Generating audio with Dia format...")
             
             with torch.inference_mode():
                 audio = self.dia_model.generate(
@@ -212,7 +179,7 @@ class VoiceCloningService:
                     verbose=False
                 )
             
-            print(f"Audio generation completed, shape: {audio.shape if hasattr(audio, 'shape') else 'No shape'}")
+            print(f"Audio generation completed")
             return audio
             
         except Exception as e:

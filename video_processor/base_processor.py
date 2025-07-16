@@ -129,7 +129,6 @@ class AudioProcessor:
                 print(f"Processing speaker: {speaker}")
                 
                 segments_subdir = speaker_dir / "segments"
-                reference_subdir = speaker_dir / "reference"
                 
                 if not segments_subdir.exists():
                     print(f"Segments subdirectory not found: {segments_subdir}")
@@ -139,16 +138,6 @@ class AudioProcessor:
                 speaker_index = ord(speaker) - ord('A')
                 speaker_seed = base_seed + (speaker_index * settings.SPEAKER_SEED_OFFSET)
                 print(f"Speaker {speaker} seed: {speaker_seed}")
-                
-                # Find reference audio
-                reference_audio_path = None
-                if reference_subdir.exists():
-                    ref_files = list(reference_subdir.glob("*_REFERENCE.wav"))
-                    print(f"Found {len(ref_files)} reference files")
-                    for ref_file in ref_files:
-                        reference_audio_path = str(ref_file)
-                        print(f"Using reference audio: {reference_audio_path}")
-                        break
                 
                 # Collect all segments for this speaker
                 speaker_segments = []
@@ -165,7 +154,6 @@ class AudioProcessor:
                             print(f"Skipping segment with no english_text: {json_file}")
                             continue
                         
-                        segment_data['reference_audio_path'] = reference_audio_path
                         segment_data['segments_dir'] = str(segments_subdir)
                         segment_data['segment_file'] = str(json_file)
                         speaker_segments.append(segment_data)
@@ -234,7 +222,7 @@ class AudioProcessor:
                                     'cfg_scale': cfg_scale,
                                     'top_p': top_p
                                 },
-                                'reference_used': reference_audio_path,
+                                'reference_used': None, # Removed reference_used
                                 'processing_status': 'cloning_completed'
                             })
                             
@@ -253,7 +241,7 @@ class AudioProcessor:
                 cloned_by_speaker[speaker] = {
                     'total_segments': len(speaker_segments),
                     'successful_clones': speaker_successful,
-                    'reference_used': reference_audio_path,
+                    'reference_used': None, # Removed reference_used
                     'seed_used': speaker_seed,
                     'cloning_parameters': {
                         'temperature': temperature,
