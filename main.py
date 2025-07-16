@@ -23,7 +23,7 @@ from status_manager import status_manager, ProcessingStatus
 
 from contextlib import asynccontextmanager
 
-from schemas import ProcessingResponse, StatusResponse, StartProcessingResponse
+from schemas import StatusResponse, StartProcessingResponse, RegenerateSegmentRequest, RegenerateSegmentResponse, ReconstructVideoRequest, ReconstructVideoResponse
 
 # Configure logging with UTF-8 support
 os.makedirs(settings.LOGS_DIR, exist_ok=True)
@@ -110,38 +110,17 @@ async def root():
     """Root endpoint - API status"""
     return StatusResponse(
         status="active",
-        message="Voice Cloning API is running",
+        message=f"Voice Cloning API {settings.API_VERSION} is running",
         details={
             "version": settings.API_VERSION,
-            "features": {
-                "voice_cloning": True,
-                "video_processing": True,
-                "subtitle_generation": settings.ENABLE_SUBTITLES,
-                "instrument_mixing": settings.ENABLE_INSTRUMENTS,
-                "r2_storage": bool(settings.R2_BUCKET_NAME)
-            },
+            "title": settings.API_TITLE,
+            "description": settings.API_DESCRIPTION,
             "endpoints": {
-                "process_video": "/process-video",
+                "process": "/process-video",
                 "status": "/status/{audio_id}",
-                "download": "/download/{audio_id}/{file_type}"
+                "regenerate": "/regenerate-segment", 
+                "reconstruct": "/reconstruct-video"
             }
-        }
-    )
-
-@app.get("/health", response_model=StatusResponse)
-async def health_check():
-    """Health check endpoint"""
-    # Clean up old statuses periodically
-    status_manager.cleanup_old_statuses()
-    
-    return StatusResponse(
-        status="healthy",
-        message="API is healthy and ready to process requests",
-        details={
-            "dia_model_loaded": audio_processor.voice_cloning_service.is_model_loaded(),
-            "r2_configured": bool(settings.R2_BUCKET_NAME),
-            "temp_dir": str(settings.TEMP_DIR),
-            "active_processing_count": len([s for s in status_manager.get_all_statuses().values() if s["status"] == "processing"])
         }
     )
 
@@ -546,36 +525,325 @@ def process_video_background(
         except Exception:
             pass
 
-@app.get("/download/{audio_id}/{file_type}")
-async def download_file(audio_id: str, file_type: str):
-    """Download processed files (for development/testing)"""
+@app.post("/regenerate-segment", response_model=RegenerateSegmentResponse)
+async def regenerate_segment(request: RegenerateSegmentRequest):
+    """Regenerate a single audio segment with custom parameters"""
     try:
-        if file_type == "final":
-            file_path = os.path.join(settings.TEMP_DIR, f"final_output_{audio_id}.wav")
-            media_type = "audio/wav"
-            extension = "wav"
-        elif file_type == "subtitles":
-            file_path = os.path.join(settings.TEMP_DIR, f"subtitles_{audio_id}.srt")
-            media_type = "text/plain"
-            extension = "srt"
-        elif file_type == "video":
-            file_path = os.path.join(settings.TEMP_DIR, f"video_with_subtitles_{audio_id}.mp4")
-            media_type = "video/mp4"
-            extension = "mp4"
-        else:
-            raise HTTPException(status_code=400, detail="Invalid file type")
+        import tempfile
+        import time
+        from datetime import datetime
         
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="File not found")
+        # Validate inputs
+        if not request.text.strip():
+            raise HTTPException(status_code=400, detail="Text cannot be empty")
         
-        return FileResponse(
-            file_path,
-            media_type=media_type,
-            filename=f"{audio_id}_{file_type}.{extension}"
-        )
+        if not request.reference_audio_url.strip():
+            raise HTTPException(status_code=400, detail="Reference audio URL cannot be empty")
         
+        if request.duration <= 0:
+            raise HTTPException(status_code=400, detail="Duration must be positive")
+        
+        # Set parameters with defaults
+        seed = request.seed or settings.DEFAULT_SEED
+        temperature = request.temperature or 1.3
+        cfg_scale = request.cfg_scale or 3.0
+        top_p = request.top_p or 0.95
+        
+        generation_start = time.time()
+        
+        # Set seed for reproducibility
+        set_seed(seed)
+        
+        # Download reference audio to temp file
+        response = requests.get(request.reference_audio_url)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to download reference audio")
+        
+        # Create temporary file for reference audio
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_ref:
+            temp_ref.write(response.content)
+            temp_ref_path = temp_ref.name
+        
+        try:
+            # Load voice cloning service
+            voice_service = audio_processor.voice_cloning_service
+            if not voice_service.is_model_loaded():
+                if not voice_service.load_dia_model():
+                    raise HTTPException(status_code=500, detail="Failed to load Dia model")
+            
+            # Generate audio using Dia format (text + "\n" + text)
+            combined_text = request.text + "\n" + request.text
+            
+            import torch
+            with torch.inference_mode():
+                cloned_audio = voice_service.dia_model.generate(
+                    text=combined_text,
+                    audio_prompt=temp_ref_path,
+                    use_torch_compile=False,
+                    cfg_scale=cfg_scale,
+                    temperature=temperature,
+                    top_p=top_p,
+                    cfg_filter_top_k=settings.DIA_CFG_FILTER_TOP_K,
+                    max_tokens=settings.DIA_MAX_TOKENS,
+                    verbose=False
+                )
+            
+            if cloned_audio is None:
+                raise HTTPException(status_code=500, detail="Audio generation failed")
+            
+            # Adjust audio length
+            adjusted_audio = voice_service._adjust_audio_length(
+                cloned_audio, 
+                request.duration, 
+                use_speed_adjustment=settings.USE_SPEED_ADJUSTMENT
+            )
+            
+            # Create output filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_filename = f"regenerated_segment_{timestamp}_{seed}.wav"
+            output_path = os.path.join(settings.TEMP_DIR, output_filename)
+            
+            # Save the audio
+            sf.write(output_path, adjusted_audio, voice_service.sample_rate)
+            
+            generation_time = time.time() - generation_start
+            
+            # Upload to R2 if available
+            audio_url = None
+            try:
+                r2_key = f"regenerated-segments/{timestamp}/{output_filename}"
+                upload_result = r2_storage.upload_file(output_path, r2_key, "audio/wav")
+                if upload_result.get("success"):
+                    audio_url = upload_result.get("url")
+            except Exception as e:
+                logger.warning(f"R2 upload failed: {e}")
+            
+            return RegenerateSegmentResponse(
+                success=True,
+                message="Segment regenerated successfully",
+                audio_url=audio_url,
+                duration=request.duration,
+                generation_time=generation_time,
+                parameters_used={
+                    "seed": seed,
+                    "temperature": temperature,
+                    "cfg_scale": cfg_scale,
+                    "top_p": top_p,
+                    "text": request.text,
+                    "reference_audio_url": request.reference_audio_url
+                }
+            )
+            
+        finally:
+            # Clean up temp reference file
+            if os.path.exists(temp_ref_path):
+                os.unlink(temp_ref_path)
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error in regenerate_segment: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+@app.post("/reconstruct-video", response_model=ReconstructVideoResponse)
+async def reconstruct_video(request: ReconstructVideoRequest):
+    """Reconstruct video with edited segments and custom timeline"""
+    try:
+        import tempfile
+        import time
+        from datetime import datetime
+        import uuid
+        
+        # Validate inputs
+        if not request.segments:
+            raise HTTPException(status_code=400, detail="At least one segment is required")
+        
+        reconstruction_start = time.time()
+        reconstruction_id = str(uuid.uuid4())[:8]
+        
+        # Create temporary directory for this reconstruction
+        temp_dir = Path(settings.TEMP_DIR) / f"reconstruction_{reconstruction_id}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            # Download all segment audio files
+            segment_files = []
+            for i, segment in enumerate(request.segments):
+                response = requests.get(segment.segment_url)
+                if response.status_code != 200:
+                    raise HTTPException(status_code=400, detail=f"Failed to download segment {i+1}")
+                
+                segment_file = temp_dir / f"segment_{i+1:03d}.wav"
+                with open(segment_file, 'wb') as f:
+                    f.write(response.content)
+                
+                segment_files.append({
+                    'file': segment_file,
+                    'start_time': segment.start_time,
+                    'duration': segment.duration,
+                    'speaker': segment.speaker
+                })
+            
+            # Sort segments by start time
+            segment_files.sort(key=lambda x: x['start_time'])
+            
+            # Calculate total duration
+            total_duration = max(seg['start_time'] + seg['duration'] for seg in segment_files)
+            
+            # Create final audio timeline
+            import numpy as np
+            sample_rate = 44100
+            final_audio = np.zeros(int(total_duration * sample_rate), dtype=np.float32)
+            
+            # Mix segments into timeline
+            for seg_info in segment_files:
+                # Load segment audio
+                import soundfile as sf
+                segment_audio, sr = sf.read(seg_info['file'])
+                
+                # Ensure correct sample rate
+                if sr != sample_rate:
+                    import librosa
+                    segment_audio = librosa.resample(segment_audio, orig_sr=sr, target_sr=sample_rate)
+                
+                # Ensure mono
+                if len(segment_audio.shape) > 1:
+                    segment_audio = np.mean(segment_audio, axis=1)
+                
+                # Adjust segment duration
+                target_samples = int(seg_info['duration'] * sample_rate)
+                if len(segment_audio) != target_samples:
+                    if len(segment_audio) > target_samples:
+                        segment_audio = segment_audio[:target_samples]
+                    else:
+                        segment_audio = np.pad(segment_audio, (0, target_samples - len(segment_audio)))
+                
+                # Place in timeline
+                start_sample = int(seg_info['start_time'] * sample_rate)
+                end_sample = start_sample + len(segment_audio)
+                
+                if end_sample <= len(final_audio):
+                    final_audio[start_sample:end_sample] = segment_audio
+            
+            # Save final audio
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_name = request.output_name or f"reconstructed_{timestamp}_{reconstruction_id}"
+            final_audio_file = temp_dir / f"{output_name}.wav"
+            sf.write(final_audio_file, final_audio, sample_rate)
+            
+            # Download and mix instruments if requested
+            if request.include_instruments and request.instruments_url:
+                try:
+                    response = requests.get(request.instruments_url)
+                    if response.status_code == 200:
+                        instruments_file = temp_dir / "instruments.wav"
+                        with open(instruments_file, 'wb') as f:
+                            f.write(response.content)
+                        
+                        # Mix with instruments
+                        instruments_audio, inst_sr = sf.read(instruments_file)
+                        if inst_sr != sample_rate:
+                            instruments_audio = librosa.resample(instruments_audio, orig_sr=inst_sr, target_sr=sample_rate)
+                        
+                        if len(instruments_audio.shape) > 1:
+                            instruments_audio = np.mean(instruments_audio, axis=1)
+                        
+                        # Adjust length to match final audio
+                        if len(instruments_audio) > len(final_audio):
+                            instruments_audio = instruments_audio[:len(final_audio)]
+                        elif len(instruments_audio) < len(final_audio):
+                            instruments_audio = np.pad(instruments_audio, (0, len(final_audio) - len(instruments_audio)))
+                        
+                        # Mix (70% vocals, 30% instruments)
+                        mixed_audio = final_audio * 0.7 + instruments_audio * 0.3
+                        sf.write(final_audio_file, mixed_audio, sample_rate)
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to include instruments: {e}")
+            
+            # Generate video if video URL is provided
+            video_url_result = None
+            if request.video_url:
+                try:
+                    # Download original video
+                    response = requests.get(request.video_url)
+                    if response.status_code == 200:
+                        video_file = temp_dir / "original_video.mp4"
+                        with open(video_file, 'wb') as f:
+                            f.write(response.content)
+                        
+                        # Replace audio in video using ffmpeg
+                        output_video_file = temp_dir / f"{output_name}.mp4"
+                        import subprocess
+                        
+                        cmd = [
+                            'ffmpeg', '-y',
+                            '-i', str(video_file),
+                            '-i', str(final_audio_file),
+                            '-c:v', 'copy',
+                            '-c:a', 'aac',
+                            '-map', '0:v:0',
+                            '-map', '1:a:0',
+                            '-shortest',
+                            str(output_video_file)
+                        ]
+                        
+                        subprocess.run(cmd, check=True, capture_output=True)
+                        
+                        # Upload video to R2
+                        r2_key = f"reconstructed-videos/{timestamp}/{output_name}.mp4"
+                        upload_result = r2_storage.upload_file(str(output_video_file), r2_key, "video/mp4")
+                        if upload_result.get("success"):
+                            video_url_result = upload_result.get("url")
+                            
+                except Exception as e:
+                    logger.warning(f"Failed to generate video: {e}")
+            
+            # Handle subtitles if requested
+            subtitles_url_result = None
+            if request.include_subtitles and request.subtitles_url:
+                try:
+                    # For now, just return the original subtitles URL
+                    # In a full implementation, you'd adjust subtitle timings based on segment edits
+                    subtitles_url_result = request.subtitles_url
+                except Exception as e:
+                    logger.warning(f"Failed to process subtitles: {e}")
+            
+            # Upload final audio to R2
+            audio_url_result = None
+            try:
+                r2_key = f"reconstructed-audio/{timestamp}/{output_name}.wav"
+                upload_result = r2_storage.upload_file(str(final_audio_file), r2_key, "audio/wav")
+                if upload_result.get("success"):
+                    audio_url_result = upload_result.get("url")
+            except Exception as e:
+                logger.warning(f"R2 upload failed: {e}")
+            
+            reconstruction_time = time.time() - reconstruction_start
+            
+            return ReconstructVideoResponse(
+                success=True,
+                message="Video reconstructed successfully",
+                video_url=video_url_result,
+                audio_url=audio_url_result,
+                subtitles_url=subtitles_url_result,
+                processing_time=reconstruction_time,
+                reconstruction_id=reconstruction_id
+            )
+            
+        finally:
+            # Clean up temp files
+            import shutil
+            try:
+                shutil.rmtree(temp_dir)
+            except:
+                pass
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in reconstruct_video: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @app.get("/status/{audio_id}")
 async def get_status(audio_id: str):

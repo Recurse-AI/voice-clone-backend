@@ -517,3 +517,49 @@ For issues and questions:
 ## License
 
 Production Voice Cloning API - Internal Use 
+
+### Example 5: Reconstruct Video
+
+```bash
+curl -X POST "http://localhost:8000/reconstruct-video" \
+  -H "Content-Type: application/json" \
+  -d @reconstruct_video_request.json
+```
+
+
+```json
+{
+  "segments": [
+    {
+      "segment_url": "https://r2-bucket.com/segments/cloned_segment_001.wav",
+      "start_time": 0.0,
+      "duration": 5.5,
+      "speaker": "A"
+    },
+    {
+      "segment_url": "https://r2-bucket.com/segments/regenerated_segment_123.wav", 
+      "start_time": 6.0,
+      "duration": 8.2,
+      "speaker": "B"
+    }
+  ],
+  "video_url": "https://r2-bucket.com/video/original_video.mp4",
+  "instruments_url": "https://r2-bucket.com/instruments/instruments.wav",
+  "subtitles_url": "https://r2-bucket.com/subtitles/subtitles.srt",
+  "include_subtitles": true,
+  "include_instruments": true,
+  "output_name": "my_edited_video"
+}
+
+#### Response
+```json
+{
+  "success": true,
+  "message": "Video reconstructed successfully",
+  "video_url": "https://r2-bucket.com/reconstructed-videos/my_edited_video.mp4",
+  "audio_url": "https://r2-bucket.com/reconstructed-audio/my_edited_video.wav", 
+  "subtitles_url": "https://r2-bucket.com/subtitles/subtitles.srt",
+  "processing_time": 45.67,
+  "reconstruction_id": "abc12345"
+}
+```
