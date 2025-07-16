@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     ENABLE_FAST_MODE: bool = True  # Enable fast processing mode
 
     # Audio Length Adjustment Settings
-    USE_SPEED_ADJUSTMENT: bool = False  # Disable by default to preserve voice quality
+    USE_SPEED_ADJUSTMENT: bool = True  # Enable time stretching when needed
     AUDIO_SPEED_FACTOR: float = 1.0  # Not used when time stretching is automatic
     ENABLE_AUDIO_PADDING: bool = True  # Enable padding for any remaining gaps
     PARALLEL_PROCESSING: bool = False  # Disable parallel processing to avoid GPU memory issues

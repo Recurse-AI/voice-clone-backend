@@ -211,28 +211,38 @@ class VoiceCloningService:
         # Calculate the stretch ratio
         stretch_ratio = target_duration / current_duration if current_duration > 0 else 1.0
         
-        # Only apply time stretching for significant differences
-        if use_speed_adjustment and abs(1.0 - stretch_ratio) > 0.1:  # Changed from 0.05 to 0.1
-            # Limit stretch ratio more conservatively
-            stretch_ratio = max(0.9, min(1.1, stretch_ratio))  # Max 10% change instead of 20%
-            
+        # Apply time stretching only if:
+        # 1. Speed adjustment is enabled
+        # 2. The difference is more than 5% (not 10% to catch more cases)
+        # 3. The stretch ratio is within our quality limits (0.9 to 1.1)
+        needs_stretching = (
+            use_speed_adjustment and 
+            abs(1.0 - stretch_ratio) > 0.05 and  # More than 5% difference
+            settings.MIN_STRETCH_RATIO <= stretch_ratio <= settings.MAX_STRETCH_RATIO
+        )
+        
+        if needs_stretching:
+            # Apply the stretch ratio as calculated (already within 0.9-1.1 limits)
             try:
-                print(f"Applying minimal time-stretch with ratio {stretch_ratio:.2f}")
-                # Use high quality time stretching
+                print(f"Applying time-stretch with ratio {stretch_ratio:.2f} (within quality limits)")
                 adjusted_audio = librosa.effects.time_stretch(audio, rate=1.0/stretch_ratio)
             except Exception as e:
-                print(f"Time stretching skipped: {e}")
+                print(f"Time stretching failed: {e}, using original audio")
                 adjusted_audio = audio
         else:
             if not use_speed_adjustment:
-                print("Speed adjustment disabled - preserving original voice quality")
+                print("Speed adjustment disabled - preserving original audio")
+            elif abs(1.0 - stretch_ratio) <= 0.05:
+                print(f"Duration difference too small ({abs(1.0 - stretch_ratio)*100:.1f}%), no stretching needed")
+            else:
+                print(f"Stretch ratio {stretch_ratio:.2f} outside quality limits (0.9-1.1), using original audio")
             adjusted_audio = audio
         
         # Handle length differences with minimal modification
         if len(adjusted_audio) > target_samples:
             # Truncate with longer fade-out for smoother transition
             adjusted_audio = adjusted_audio[:target_samples]
-            # Apply 100ms fade-out instead of 50ms
+            # Apply 100ms fade-out
             fade_samples = min(int(0.1 * self.sample_rate), target_samples // 5)
             if fade_samples > 0:
                 fade_curve = np.linspace(1.0, 0.0, fade_samples)

@@ -111,7 +111,7 @@ class AudioProcessor:
             
             total_successful_clones = 0
             seeds_used = {}
-            cloned_by_speaker = {}
+            speaker_results = {}
             
             base_seed = seed or settings.DEFAULT_SEED
             print(f"Base seed: {base_seed}")
@@ -141,7 +141,7 @@ class AudioProcessor:
                 
                 # Collect all segments for this speaker
                 speaker_segments = []
-                json_files = list(segments_subdir.glob("*_metadata.json"))
+                json_files = sorted(list(segments_subdir.glob("*_metadata.json")))  # Sort files for consistent ordering
                 print(f"Found {len(json_files)} metadata files for speaker {speaker}")
                 
                 for json_file in json_files:
@@ -222,7 +222,6 @@ class AudioProcessor:
                                     'cfg_scale': cfg_scale,
                                     'top_p': top_p
                                 },
-                                'reference_used': None, # Removed reference_used
                                 'processing_status': 'cloning_completed'
                             })
                             
@@ -238,10 +237,10 @@ class AudioProcessor:
                     else:
                         print(f"Cloned segment {idx} failed or has no audio data")
                 
-                cloned_by_speaker[speaker] = {
+                speaker_results[speaker] = {
+                    'speaker': speaker,
                     'total_segments': len(speaker_segments),
                     'successful_clones': speaker_successful,
-                    'reference_used': None, # Removed reference_used
                     'seed_used': speaker_seed,
                     'cloning_parameters': {
                         'temperature': temperature,
@@ -261,7 +260,7 @@ class AudioProcessor:
             cloning_summary = {
                 'audio_id': audio_id,
                 'total_successful_clones': total_successful_clones,
-                'cloned_by_speaker': cloned_by_speaker,
+                'cloned_by_speaker': speaker_results,
                 'seeds_used': seeds_used,
                 'cloning_timestamp': str(datetime.now())
             }
@@ -274,7 +273,7 @@ class AudioProcessor:
                 "success": True,
                 "cloned_segments": total_successful_clones,
                 "cloned_segments_count": total_successful_clones,
-                "cloned_by_speaker": cloned_by_speaker,
+                "cloned_by_speaker": speaker_results,
                 "seeds_used": seeds_used,
                 "audio_id": audio_id
             }

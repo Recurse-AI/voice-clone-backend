@@ -80,7 +80,6 @@ class R2Storage:
         upload_results = {
             "audio_id": audio_id,
             "segments": {},
-            "references": {},
             "metadata": {},
             "silent_parts": {},
             "cloned": {}
@@ -112,23 +111,7 @@ class R2Storage:
                             if result["success"]:
                                 upload_results["segments"][speaker_id][file_path.name] = result
                 
-                # Upload speaker references
-                reference_subdir = speaker_dir / "reference"
-                if reference_subdir.exists():
-                    for file_path in reference_subdir.iterdir():
-                        if file_path.is_file():
-                            r2_key = self.generate_file_path(audio_id, f"references/{speaker_id}", file_path.name)
-                            
-                            result = self.upload_file(
-                                str(file_path),
-                                r2_key,
-                                "audio/wav" if file_path.suffix == ".wav" else "application/json"
-                            )
-                            
-                            if result["success"]:
-                                upload_results["references"][speaker_id][file_path.name] = result
-                
-                # Upload cloned audio files separately to avoid duplicates
+                # Upload cloned segments from segments directory
                 if (speaker_dir / "segments").exists():
                     for cloned_file in (speaker_dir / "segments").glob("cloned_*.wav"):
                         if cloned_file.is_file():
@@ -304,7 +287,6 @@ class R2Storage:
         urls = {
             "metadata": {},
             "segments": {},
-            "references": {},
             "cloned": {},
             "silent_parts": {}
         }
@@ -320,13 +302,6 @@ class R2Storage:
                 for filename, result in files.items():
                     if result.get("success"):
                         urls["segments"][speaker][filename] = result.get("url")
-        
-        if "references" in upload_results:
-            for speaker, files in upload_results["references"].items():
-                urls["references"][speaker] = {}
-                for filename, result in files.items():
-                    if result.get("success"):
-                        urls["references"][speaker][filename] = result.get("url")
         
         if "cloned" in upload_results:
             for speaker, files in upload_results["cloned"].items():
