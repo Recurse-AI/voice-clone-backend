@@ -92,7 +92,6 @@ class R2Storage:
             if speaker_dir.is_dir() and speaker_dir.name.startswith("speaker_"):
                 speaker_id = speaker_dir.name
                 upload_results["segments"][speaker_id] = {}
-                upload_results["references"][speaker_id] = {}
                 
                 # Upload speaker segments (excluding cloned files to avoid duplicates)
                 segments_subdir = speaker_dir / "segments"
