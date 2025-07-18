@@ -315,3 +315,9 @@ class R2Storage:
                     urls["silent_parts"][filename] = result.get("url")
         
         return urls 
+    
+    def generate_cloned_segment_url(self, audio_id: str, speaker: str, segment_index: int) -> str:
+        """Generate R2 URL for a cloned segment"""
+        cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
+        r2_key = self.generate_file_path(audio_id, f"segments/speaker_{speaker}/cloned", cloned_filename)
+        return f"{self.public_url}/{r2_key}" 

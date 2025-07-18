@@ -112,15 +112,45 @@ class AudioReconstructor:
                 'sample_rate': self.sample_rate,
                 'instruments_included': include_instruments and instruments_path is not None,
                 'segments_by_speaker': {},
+                'segments': [],  # Added detailed segment information
                 'reconstruction_timestamp': str(datetime.now())
             }
             
-            # Count segments by speaker
+            # Import R2Storage for URL generation
+            from r2_storage import R2Storage
+            r2_storage = R2Storage()
+            
+            # Count segments by speaker and prepare detailed segment info
             for segment in all_segments:
                 speaker = segment.get('speaker', 'Unknown')
                 if speaker not in reconstruction_summary['segments_by_speaker']:
                     reconstruction_summary['segments_by_speaker'][speaker] = 0
                 reconstruction_summary['segments_by_speaker'][speaker] += 1
+                
+                # Generate R2 URL for cloned segment
+                segment_index = segment.get('segment_index', 1)
+                cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
+                
+                # Generate accurate R2 URL using R2Storage class
+                r2_segment_url = r2_storage.generate_cloned_segment_url(audio_id, speaker, segment_index)
+                
+                # Create detailed segment info
+                segment_info = {
+                    "segment_url": r2_segment_url,
+                    "start_time": segment.get('start', 0.0),
+                    "duration": segment.get('duration', segment.get('end', 0.0) - segment.get('start', 0.0)),
+                    "end_time": segment.get('end', 0.0),
+                    "speaker": speaker,
+                    "segment_index": segment_index,
+                    "original_text": segment.get('original_text', ''),
+                    "english_text": segment.get('english_text', ''),
+                    "confidence": segment.get('confidence', 0.0),
+                    "word_count": segment.get('word_count', 0),
+                    "cloned_filename": cloned_filename,
+                    "processing_status": segment.get('processing_status', 'completed')
+                }
+                
+                reconstruction_summary['segments'].append(segment_info)
             
             # Save reconstruction summary
             summary_path = segments_path / "metadata" / "reconstruction_summary.json"
