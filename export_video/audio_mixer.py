@@ -40,31 +40,37 @@ class AudioMixer:
         """
         final_tracks = []
         
+        logger.info(f"Filtering {len(audio_tracks)} tracks with mode={active_mode}, instruments={instruments_enabled}")
+        
         for track in audio_tracks:
             audio_type = track.voice_clone_info.audio_type
+            track_url = track.src if hasattr(track, 'src') else 'No URL'
+            
+            logger.info(f"Track {track.id}: type={audio_type}, url={track_url}")
             
             # Audio mixing logic based on mode
             if active_mode == "english":
                 # English mode: Play cloned audio + instruments (if enabled)
                 if audio_type == "cloned":
                     final_tracks.append(track)
-                    logger.debug(f"Including cloned audio track: {track.id}")
+                    logger.info(f"✅ Including cloned audio track: {track.id}")
                 elif audio_type == "instruments" and instruments_enabled:
                     final_tracks.append(track)
-                    logger.debug(f"Including instruments track: {track.id}")
+                    logger.info(f"✅ Including instruments track: {track.id}")
                 # Skip original/source audio in English mode
                 else:
-                    logger.debug(f"Skipping {audio_type} track in English mode: {track.id}")
+                    logger.info(f"❌ Skipping {audio_type} track in English mode: {track.id}")
                     
             elif active_mode == "original":
                 # Original mode: Play source video audio only
                 if audio_type == "source" or audio_type is None:
                     final_tracks.append(track)
-                    logger.debug(f"Including source audio track: {track.id}")
+                    logger.info(f"✅ Including source audio track: {track.id}")
                 # Skip cloned audio and instruments in Original mode
                 else:
-                    logger.debug(f"Skipping {audio_type} track in Original mode: {track.id}")
+                    logger.info(f"❌ Skipping {audio_type} track in Original mode: {track.id}")
         
+        logger.info(f"Final result: {len(final_tracks)} tracks selected")
         return final_tracks
     
     def apply_volume_changes(self, audio_tracks: List[AudioItem], 

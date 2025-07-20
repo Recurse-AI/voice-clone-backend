@@ -75,16 +75,45 @@ class TimelineProcessor:
             image_overlays=image_overlays
         )
     
+    def _detect_audio_type(self, url: str, metadata: Dict[str, Any]) -> str:
+        """
+        Detect audio type from URL pattern and metadata
+        """
+        if not url:
+            return "unknown"
+        
+        url_lower = url.lower()
+        
+        # Check metadata first
+        if metadata.get("audioType"):
+            return metadata["audioType"]
+        
+        # Detect from URL pattern
+        if "instruments" in url_lower or "instrumental" in url_lower:
+            return "instruments"
+        elif "cloned" in url_lower or "/segments/" in url_lower:
+            return "cloned"
+        elif "original" in url_lower or "source" in url_lower:
+            return "source"
+        else:
+            # Default based on URL structure for voice cloning
+            if "/segments/" in url_lower and "/cloned/" in url_lower:
+                return "cloned"
+            elif "/instruments/" in url_lower:
+                return "instruments"
+            else:
+                return "unknown"
+    
     def _process_video_item(self, item: Dict[str, Any]) -> VideoItem:
         """Process video item with all transformations"""
         details = item.get("details", {})
         display = item.get("display", {})
         trim = item.get("trim", {})
         
-        # Timeline positioning
-        start_time = display.get("from", 0) / 1000  # Convert ms to seconds
-        end_time = display.get("to", 0) / 1000
-        duration = (end_time - start_time)
+        # Timeline positioning - use direct fields from frontend
+        start_time = item.get("startTime", 0) / 1000  # Convert ms to seconds
+        duration = item.get("duration", 0) / 1000      # Convert ms to seconds
+        end_time = start_time + duration
         
         # Video trimming
         trim_start = trim.get("from", 0) / 1000 if trim else 0
@@ -121,7 +150,7 @@ class TimelineProcessor:
         
         return VideoItem(
             id=item.get("id"),
-            src=details.get("src"),
+            src=item.get("url") or details.get("src"),  # Use direct URL from frontend
             start_time=start_time,
             end_time=end_time,
             duration=duration,
@@ -140,18 +169,24 @@ class TimelineProcessor:
         trim = item.get("trim", {})
         metadata = item.get("metadata", {})
         
-        # Timeline positioning
-        start_time = display.get("from", 0) / 1000
-        end_time = display.get("to", 0) / 1000
-        duration = (end_time - start_time)
+        # Timeline positioning - use direct fields from frontend
+        start_time = item.get("startTime", 0) / 1000  # Convert ms to seconds
+        duration = item.get("duration", 0) / 1000      # Convert ms to seconds
+        end_time = start_time + duration
         
         # Audio trimming
         trim_start = trim.get("from", 0) / 1000 if trim else 0
         trim_end = trim.get("to") / 1000 if trim and trim.get("to") else None
         
+        # Get URL from frontend data
+        audio_url = item.get("url") or details.get("src")
+        
+        # Detect audio type from URL pattern and metadata
+        audio_type = self._detect_audio_type(audio_url, metadata)
+        
         # Voice clone metadata
         voice_clone_info = VoiceCloneInfo(
-            audio_type=metadata.get("audioType"),
+            audio_type=audio_type,
             speaker=metadata.get("speaker"),
             segment_index=metadata.get("segmentIndex"),
             original_text=metadata.get("originalText"),
@@ -160,13 +195,13 @@ class TimelineProcessor:
         
         return AudioItem(
             id=item.get("id"),
-            src=details.get("src"),
+            src=audio_url,
             start_time=start_time,
             end_time=end_time,
             duration=duration,
             trim_start=trim_start,
             trim_end=trim_end,
-            volume=details.get("volume", 100) / 100,
+            volume=item.get("volume", 100) / 100,
             playback_rate=item.get("playbackRate", 1),
             voice_clone_info=voice_clone_info
         )

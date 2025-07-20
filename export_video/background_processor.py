@@ -12,6 +12,7 @@ from datetime import datetime
 import requests
 import soundfile as sf
 import numpy as np
+from scipy import signal
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +87,8 @@ class BackgroundProcessor:
             export_job_manager.add_log(job_id, "Audio tracks mixed")
             
             # Step 4: Create final audio file (50%)
-            final_audio_path = self._create_final_audio_file(final_audio_tracks, job_id)
+            timeline_duration = export_data["timeline"]["duration"]
+            final_audio_path = self._create_final_audio_file(final_audio_tracks, job_id, timeline_duration)
             export_job_manager.update_status(job_id, "PROCESSING", 50)
             export_job_manager.add_log(job_id, "Final audio created")
             
@@ -158,42 +160,107 @@ class BackgroundProcessor:
             from .job_manager import export_job_manager
             export_job_manager.fail_job(job_id, f"Unexpected error: {str(e)}")
     
-    def _create_final_audio_file(self, audio_tracks: List, job_id: str) -> str:
+    def _create_final_audio_file(self, audio_tracks: List, job_id: str, timeline_duration: float = None) -> str:
         """Create final audio file from mixed tracks"""
         try:
+            # Use timeline duration or calculate from tracks
+            if timeline_duration:
+                total_duration = timeline_duration / 1000  # Convert ms to seconds
+            else:
+                total_duration = max([track.end_time for track in audio_tracks]) if audio_tracks else 10
+            
+            logger.info(f"Creating final audio with duration: {total_duration}s for {len(audio_tracks)} tracks")
+            
             if not audio_tracks:
-                # Create silent audio
+                # Create silent audio with proper duration
                 temp_audio_path = os.path.join(self.settings.TEMP_DIR, f"silent_audio_{job_id}.wav")
-                silent_audio = np.zeros(int(44100 * 10), dtype=np.float32)  # 10 seconds silent
+                silent_audio = np.zeros(int(44100 * total_duration), dtype=np.float32)
                 sf.write(temp_audio_path, silent_audio, 44100)
                 return temp_audio_path
             
-            # For now, assume first track is the main audio
-            # In a real implementation, you'd mix all tracks properly
-            if len(audio_tracks) == 1:
-                track = audio_tracks[0]
-                if hasattr(track, 'src') and track.src:
-                    # Download the audio track
-                    response = requests.get(track.src, timeout=120)
-                    if response.status_code == 200:
-                        temp_audio_path = os.path.join(self.settings.TEMP_DIR, f"final_audio_{job_id}.wav")
-                        with open(temp_audio_path, 'wb') as f:
-                            f.write(response.content)
-                        return temp_audio_path
-            
-            # Fallback: create silent audio
-            temp_audio_path = os.path.join(self.settings.TEMP_DIR, f"fallback_audio_{job_id}.wav")
-            silent_audio = np.zeros(int(44100 * 10), dtype=np.float32)
-            sf.write(temp_audio_path, silent_audio, 44100)
+            # Mix multiple audio tracks properly
+            final_audio = self._mix_multiple_audio_tracks(audio_tracks, total_duration, job_id)
+            temp_audio_path = os.path.join(self.settings.TEMP_DIR, f"final_mixed_audio_{job_id}.wav")
+            sf.write(temp_audio_path, final_audio, 44100)
             return temp_audio_path
             
         except Exception as e:
             logger.error(f"Failed to create final audio file: {e}")
-            # Create silent audio as fallback
+            # Create silent audio as fallback with proper duration
+            duration = timeline_duration / 1000 if timeline_duration else 10
             temp_audio_path = os.path.join(self.settings.TEMP_DIR, f"error_audio_{job_id}.wav")
-            silent_audio = np.zeros(int(44100 * 10), dtype=np.float32)
+            silent_audio = np.zeros(int(44100 * duration), dtype=np.float32)
             sf.write(temp_audio_path, silent_audio, 44100)
             return temp_audio_path
+    
+    def _mix_multiple_audio_tracks(self, audio_tracks: List, total_duration: float, job_id: str) -> np.ndarray:
+        """Mix multiple audio tracks into a single audio array"""
+        try:
+            # Create base silent audio
+            sample_rate = 44100
+            final_samples = int(sample_rate * total_duration)
+            mixed_audio = np.zeros(final_samples, dtype=np.float32)
+            
+            logger.info(f"Mixing {len(audio_tracks)} audio tracks into {total_duration}s duration")
+            
+            for track in audio_tracks:
+                try:
+                    if not track.src:
+                        continue
+                    
+                    # Download audio track
+                    response = requests.get(track.src, timeout=120)
+                    if response.status_code != 200:
+                        continue
+                    
+                    # Save temporarily
+                    temp_track_path = os.path.join(self.settings.TEMP_DIR, f"temp_track_{track.id}_{job_id}.wav")
+                    with open(temp_track_path, 'wb') as f:
+                        f.write(response.content)
+                    
+                    # Load audio
+                    audio_data, sr = sf.read(temp_track_path)
+                    
+                    # Resample if needed
+                    if sr != sample_rate:
+                        # Simple resampling by interpolation
+                        audio_data = signal.resample(audio_data, int(len(audio_data) * sample_rate / sr))
+                    
+                    # Handle stereo to mono
+                    if len(audio_data.shape) > 1:
+                        audio_data = np.mean(audio_data, axis=1)
+                    
+                    # Calculate positions
+                    start_sample = int(track.start_time * sample_rate)
+                    end_sample = min(start_sample + len(audio_data), final_samples)
+                    audio_length = end_sample - start_sample
+                    
+                    # Apply volume
+                    audio_data = audio_data[:audio_length] * track.volume
+                    
+                    # Mix into final audio
+                    mixed_audio[start_sample:end_sample] += audio_data
+                    
+                    # Cleanup temp file
+                    os.unlink(temp_track_path)
+                    
+                    logger.debug(f"Mixed track {track.id}: {track.start_time:.2f}s-{track.end_time:.2f}s")
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to mix track {track.id}: {e}")
+                    continue
+            
+            # Normalize to prevent clipping
+            max_val = np.max(np.abs(mixed_audio))
+            if max_val > 1.0:
+                mixed_audio = mixed_audio / max_val * 0.95
+            
+            return mixed_audio
+            
+        except Exception as e:
+            logger.error(f"Failed to mix audio tracks: {e}")
+            # Return silent audio
+            return np.zeros(int(44100 * total_duration), dtype=np.float32)
     
     def _cleanup_temp_files(self, job_id: str):
         """Clean up temp files for export job"""

@@ -61,12 +61,12 @@ class VideoRenderer:
                     # Use subtitle file directly with video processor
                     result = self._create_video_with_custom_subtitle(
                         video_path, final_audio_path, subtitle_file, 
-                        instruments_path, job_id
+                        instruments_path, job_id, config
                     )
                 else:
                     # Create video without subtitles
-                    result = self.video_processor.create_video_with_audio(
-                        video_path, final_audio_path, job_id, instruments_path
+                    result = self._create_video_without_subtitles(
+                        video_path, final_audio_path, instruments_path, job_id, config
                     )
             else:
                 # Create blank video with audio
@@ -150,7 +150,7 @@ class VideoRenderer:
     
     def _create_video_with_custom_subtitle(self, video_path: str, audio_path: str, 
                                          subtitle_path: str, instruments_path: Optional[str], 
-                                         job_id: str) -> Dict[str, Any]:
+                                         job_id: str, config: VideoConfig) -> Dict[str, Any]:
         """Create video with custom subtitle file using video processor"""
         try:
             import subprocess
@@ -176,7 +176,7 @@ class VideoRenderer:
                 '-b:a', '128k',
                 '-map', '0:v:0',
                 '-map', '1:a:0',
-                '-shortest',
+                '-t', str(config.duration),  # Use timeline duration
                 str(output_path)
             ]
             
@@ -198,6 +198,56 @@ class VideoRenderer:
             return {
                 "success": False,
                 "error": f"Video creation with custom subtitles failed: {str(e)}"
+            }
+    
+    def _create_video_without_subtitles(self, video_path: str, audio_path: str,
+                                      instruments_path: Optional[str], job_id: str, 
+                                      config: VideoConfig) -> Dict[str, Any]:
+        """Create video without subtitles using timeline duration"""
+        try:
+            import subprocess
+            
+            # Create final audio with instruments if provided
+            final_audio_path = audio_path
+            if instruments_path and os.path.exists(instruments_path):
+                final_audio_path = self._mix_audio_with_instruments(
+                    audio_path, instruments_path, job_id
+                )
+            
+            # Use FFmpeg to create video
+            output_path = self.temp_dir / f"video_no_subtitles_{job_id}.mp4"
+            
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', video_path,
+                '-i', final_audio_path,
+                '-c:v', 'libx264',
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-map', '0:v:0',
+                '-map', '1:a:0',
+                '-t', str(config.duration),  # Use timeline duration
+                str(output_path)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "video_path": str(output_path),
+                    "has_subtitles": False
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"FFmpeg error: {result.stderr}"
+                }
+                
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Video creation without subtitles failed: {str(e)}"
             }
     
     def _mix_audio_with_instruments(self, audio_path: str, instruments_path: str, 
