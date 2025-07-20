@@ -25,7 +25,7 @@ from utils import cleanup_temp_files
 
 from contextlib import asynccontextmanager
 
-from schemas import StatusResponse, StartProcessingResponse, RegenerateSegmentRequest, RegenerateSegmentResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse
+from schemas import StatusResponse, StartProcessingResponse, RegenerateSegmentRequest, RegenerateSegmentResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse
 
 # Configure logging with UTF-8 support
 os.makedirs(settings.LOGS_DIR, exist_ok=True)
@@ -344,6 +344,10 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
             # Clean up temp reference file
             if os.path.exists(temp_ref_path):
                 os.unlink(temp_ref_path)
+            
+            # Clean up generated output file after R2 upload
+            if 'output_path' in locals() and os.path.exists(output_path):
+                os.unlink(output_path)
         
     except HTTPException:
         raise
@@ -397,7 +401,7 @@ async def get_export_status(job_id: str):
             progress=job.progress,
             downloadUrl=job.download_url,
             error=job.error,
-            processingLogs=job.processing_logs
+            processingLogs=ProcessingLogs(logs=job.processing_logs) if job.processing_logs else None
         )
         
     except HTTPException:

@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, validator
 from typing import Optional, Dict, Any
 
 class StatusResponse(BaseModel):
@@ -35,15 +35,35 @@ class RegenerateSegmentResponse(BaseModel):
 
 # Export Video Schemas
 class ExportVideoRequest(BaseModel):
-    audioId: str
-    format: str = "mp4"
-    settings: Dict[str, Any]
-    timeline: Dict[str, Any] 
-    editingChanges: Dict[str, Any]
-    voiceCloneData: Dict[str, Any]
-    exportMetadata: Dict[str, Any]
-    instrumentsUrl: Optional[str] = None  # Optional instruments audio URL
-    subtitlesUrl: Optional[str] = None    # Optional SRT subtitle file URL
+    audioId: str = Field(..., min_length=1, description="Audio ID for the processed video")
+    format: str = Field("mp4", regex="^(mp4|avi|mov|mkv)$", description="Video output format")
+    settings: Dict[str, Any] = Field(..., description="Export settings including quality, resolution, etc.")
+    timeline: Dict[str, Any] = Field(..., description="Timeline data with items and configuration")
+    editingChanges: Dict[str, Any] = Field(..., description="Changes applied during editing")
+    voiceCloneData: Dict[str, Any] = Field(..., description="Voice cloning data and segments")
+    exportMetadata: Dict[str, Any] = Field(..., description="Export metadata like title, description")
+    instrumentsUrl: Optional[str] = Field(None, description="Optional instruments audio URL")
+    subtitlesUrl: Optional[str] = Field(None, description="Optional SRT subtitle file URL")
+    
+    @validator('timeline')
+    def validate_timeline(cls, v):
+        required_fields = ['duration', 'fps', 'size', 'items']
+        for field in required_fields:
+            if field not in v:
+                raise ValueError(f"Timeline missing required field: {field}")
+        
+        if not isinstance(v['items'], list):
+            raise ValueError("Timeline items must be a list")
+        
+        return v
+    
+    @validator('settings')
+    def validate_settings(cls, v):
+        # Validate quality settings
+        if 'quality' in v and v['quality'] not in ['low', 'medium', 'high', 'ultra']:
+            raise ValueError("Quality must be one of: low, medium, high, ultra")
+        
+        return v
 
 class ExportJobResponse(BaseModel):
     jobId: str
@@ -51,13 +71,16 @@ class ExportJobResponse(BaseModel):
     message: str
     estimatedDuration: Optional[int] = None
 
+class ProcessingLogs(BaseModel):
+    logs: list[str]
+
 class ExportStatusResponse(BaseModel):
     jobId: str
     status: str
     progress: int
     downloadUrl: Optional[str] = None
     error: Optional[str] = None
-    processingLogs: Optional[Dict[str, Any]] = None
+    processingLogs: Optional[ProcessingLogs] = None
 
 # Audio Separation API Schemas
 class AudioSeparationRequest(BaseModel):
