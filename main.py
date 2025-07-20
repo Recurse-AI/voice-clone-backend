@@ -218,7 +218,7 @@ async def process_video(
         process_video_background,
         video_source, audio_id, include_instruments, generate_subtitles,
         temperature, cfg_scale, top_p, target_language, 
-        language_code, speakers_expected, has_file
+        language_code, speakers_expected, has_file, audio_processor
     )
     
     # Return immediate response

@@ -12,7 +12,8 @@ import soundfile as sf
 def process_video_background(
     video_source: str, audio_id: str, include_instruments: bool,
     generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float,
-    target_language: str, language_code: Optional[str], speakers_expected: Optional[int], is_file_upload: bool
+    target_language: str, language_code: Optional[str], speakers_expected: Optional[int], is_file_upload: bool,
+    audio_processor=None
 ):
     """Background video processing - handles both URL and file inputs"""
     from config import settings
@@ -24,7 +25,10 @@ def process_video_background(
     
     # Initialize required services
     r2_storage = R2Storage()
-    audio_processor = AudioProcessor(settings.TEMP_DIR)
+    
+    # Use passed audio_processor or create new one
+    if audio_processor is None:
+        audio_processor = AudioProcessor(settings.TEMP_DIR)
     
     final_language_code = language_code if language_code and language_code.strip() else None
     video_temp_path = None
