@@ -29,7 +29,8 @@ class VideoRenderer:
     
     async def render_video(self, video_url: Optional[str], final_audio_path: str,
                           instruments_url: Optional[str], subtitles_url: Optional[str],
-                          config: VideoConfig, job_id: str, processed_items=None) -> Dict[str, Any]:
+                          config: VideoConfig, job_id: str, processed_items=None, 
+                          export_settings: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Main video rendering function using existing video processor
         """
@@ -61,13 +62,13 @@ class VideoRenderer:
                     # Use subtitle file directly with video processor
                     result = self._create_video_with_overlays(
                         video_path, final_audio_path, subtitle_file, 
-                        instruments_path, job_id, config, processed_items
+                        instruments_path, job_id, config, processed_items, export_settings
                     )
                 else:
                     # Create video without subtitles but with overlays
                     result = self._create_video_with_overlays(
                         video_path, final_audio_path, None, 
-                        instruments_path, job_id, config, processed_items
+                        instruments_path, job_id, config, processed_items, export_settings
                     )
             else:
                 # Create blank video with audio
@@ -174,7 +175,7 @@ class VideoRenderer:
                 '-vf', f"subtitles='{subtitle_path}':force_style='Fontname=Arial-Bold,Fontsize=18,Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV=30'",
                 '-c:v', 'libx264',
                 '-preset', 'medium',
-                '-b:v', '2000k',  # Optimal bitrate
+                '-b:v', '2000k',  # Default - should be updated to use settings
                 '-c:a', 'aac',
                 '-b:a', '128k',
                 '-map', '0:v:0',
@@ -257,7 +258,8 @@ class VideoRenderer:
     
     def _create_video_with_overlays(self, video_path: str, audio_path: str,
                                    subtitle_path: Optional[str], instruments_path: Optional[str],
-                                   job_id: str, config: VideoConfig, processed_items=None) -> Dict[str, Any]:
+                                   job_id: str, config: VideoConfig, processed_items=None,
+                                   export_settings: Dict[str, Any] = None) -> Dict[str, Any]:
         """Create video with text/image overlays and subtitles"""
         try:
             import subprocess
@@ -348,12 +350,20 @@ class VideoRenderer:
             else:
                 cmd.extend(['-map', '0:v:0'])
             
+            # Get bitrate from frontend settings or use default
+            bitrate = '2000k'  # Default fallback
+            if export_settings and 'bitrate' in export_settings:
+                bitrate = export_settings['bitrate']
+                logger.info(f"Using frontend bitrate setting: {bitrate}")
+            else:
+                logger.info(f"Using default bitrate: {bitrate}")
+            
             # Add audio mapping and codec settings
             cmd.extend([
                 '-map', '1:a:0',
                 '-c:v', 'libx264',
                 '-preset', 'medium',  # Faster encoding
-                '-b:v', '2000k',  # Optimal bitrate for 1-45min videos
+                '-b:v', bitrate,  # Use bitrate from frontend settings
                 '-c:a', 'aac',
                 '-b:a', '128k',
                 '-t', str(config.duration),

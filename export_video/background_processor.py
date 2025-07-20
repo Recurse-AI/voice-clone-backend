@@ -122,7 +122,8 @@ class BackgroundProcessor:
                 subtitles_url=subtitles_url,
                 config=video_config,
                 job_id=job_id,
-                processed_items=processed_items
+                processed_items=processed_items,
+                export_settings=export_data["settings"]
             ))
             
             if not render_result["success"]:
