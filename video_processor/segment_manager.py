@@ -43,8 +43,24 @@ class SegmentManager:
             logger.error("No valid words found after filtering")
             return []
         
+        # Debug logging for word timestamps
+        logger.info(f"Processing {len(words)} words")
+        if words:
+            first_word = words[0]
+            last_word = words[-1]
+            logger.info(f"First word: '{first_word.get('text', '')}' at {first_word.get('start', 0)/1000.0:.2f}s")
+            logger.info(f"Last word: '{last_word.get('text', '')}' at {last_word.get('end', 0)/1000.0:.2f}s")
+        
         segments = self._create_initial_segments(words)
+        logger.info(f"Created {len(segments)} initial segments")
+        
         final_segments = self._process_segments_for_duration(segments)
+        logger.info(f"Final {len(final_segments)} segments after processing")
+        
+        # Debug final segments
+        for i, seg in enumerate(final_segments):
+            if seg:
+                logger.info(f"Segment {i+1}: {seg.get('start', 0):.2f}s - {seg.get('end', 0):.2f}s ({seg.get('duration', 0):.2f}s) - '{seg.get('text', '')[:50]}...'")
         
         return final_segments
     
@@ -132,13 +148,30 @@ class SegmentManager:
         end_time = valid_words[-1]['end'] / 1000.0
         duration = end_time - start_time
         
-        if duration < 1.0:
-            return None
-        
+        # Relaxed minimum duration check for edge segments
+        # Allow shorter segments if they contain meaningful content
         text = ' '.join(w['text'] for w in valid_words if w.get('text')).strip()
         if not text:
             return None
             
+        # Instead of hard 1.0s minimum, use dynamic minimum based on content
+        # For very short segments, check if they have meaningful words
+        meaningful_words = [w for w in valid_words if len(w.get('text', '').strip()) >= 2]  # Changed from > 1 to >= 2
+        
+        # Allow segments as short as 0.2s if they contain meaningful content
+        # This ensures we don't lose valid speech at the beginning/end of files
+        # Even single meaningful words like "So", "No", "Yes" should be preserved
+        min_duration_threshold = 0.2 if meaningful_words else 1.0
+        
+        # Debug logging for segment decisions
+        logger.debug(f"Segment candidate: '{text[:30]}...' Duration: {duration:.2f}s, Threshold: {min_duration_threshold:.2f}s, Meaningful words: {len(meaningful_words)}")
+        
+        if duration < min_duration_threshold:
+            logger.debug(f"DISCARDED segment: '{text[:30]}...' (duration {duration:.2f}s < {min_duration_threshold:.2f}s)")
+            return None
+        
+        logger.debug(f"CREATED segment: '{text[:30]}...' ({start_time:.2f}s - {end_time:.2f}s)")
+        
         confidence = np.mean([w.get('confidence', 0.5) for w in valid_words if w.get('confidence') is not None])
         
         return {
@@ -153,7 +186,7 @@ class SegmentManager:
         }
     
     def _process_segments_for_duration(self, segments: List[Dict]) -> List[Dict]:
-        """Process segments to optimize duration and merge short segments aggressively"""
+        """Process segments to optimize duration - simple logic: merge segments < 3s with nearest"""
         if not segments:
             return []
         
@@ -167,32 +200,131 @@ class SegmentManager:
                 i += 1
                 continue
                 
-            if current_segment.get('duration', 0) < self.min_duration and processed:
-                last_segment = processed[-1]
-                if (last_segment and 
-                    last_segment.get('speaker') == current_segment.get('speaker') and 
-                    current_segment.get('start', 0) - last_segment.get('end', 0) <= self.max_gap):
-                    
-                    merged_segment = self._merge_segments(last_segment, current_segment)
-                    if merged_segment:
-                        processed[-1] = merged_segment
+            current_duration = current_segment.get('duration', 0)
+            
+            # Simple rule: If segment < 3 seconds, ALWAYS merge with nearest
+            if current_duration < 3.0:
+                merged = False
+                
+                # Try to merge with next segment first (preferred)
+                if i + 1 < len(segments):
+                    next_segment = segments[i + 1]
+                    if next_segment and next_segment.get('speaker') == current_segment.get('speaker'):
+                        
+                        # Always merge, but trim to 15s if needed
+                        merged_segment = self._merge_segments(current_segment, next_segment)
+                        if merged_segment:
+                            # If merged segment exceeds 15s, trim it and create remainder segment
+                            if merged_segment.get('duration', 0) > self.max_duration:
+                                original_end = merged_segment.get('end', 0)
+                                new_end = merged_segment.get('start', 0) + self.max_duration
+                                
+                                # Create main segment (trimmed to 15s)
+                                merged_segment['end'] = new_end
+                                merged_segment['duration'] = self.max_duration
+                                
+                                # Update words and text for main segment
+                                if 'words' in merged_segment:
+                                    main_words = []
+                                    remainder_words = []
+                                    
+                                    for word in merged_segment['words']:
+                                        word_start = word.get('start', 0) / 1000.0
+                                        if word_start <= new_end:
+                                            main_words.append(word)
+                                        else:
+                                            remainder_words.append(word)
+                                    
+                                    merged_segment['words'] = main_words
+                                    merged_segment['text'] = ' '.join(w.get('text', '') for w in main_words if w.get('text'))
+                                    merged_segment['word_count'] = len(main_words)
+                                    
+                                    # Create remainder segment if there are remaining words
+                                    if remainder_words:
+                                        remainder_start = new_end
+                                        remainder_duration = original_end - remainder_start
+                                        
+                                        remainder_segment = {
+                                            'start': remainder_start,
+                                            'end': original_end,
+                                            'duration': remainder_duration,
+                                            'text': ' '.join(w.get('text', '') for w in remainder_words if w.get('text')),
+                                            'speaker': merged_segment.get('speaker', 'A'),
+                                            'word_count': len(remainder_words),
+                                            'confidence': merged_segment.get('confidence', 0.5),
+                                            'words': remainder_words
+                                        }
+                                        
+                                        logger.info(f"Created remainder segment: {remainder_start:.2f}s - {original_end:.2f}s ({remainder_duration:.2f}s)")
+                                        
+                                        # Add both segments
+                                        processed.append(merged_segment)
+                                        processed.append(remainder_segment)
+                                    else:
+                                        processed.append(merged_segment)
+                                else:
+                                    processed.append(merged_segment)
+                                
+                                logger.info(f"Merged and trimmed: {current_duration:.2f}s → {self.max_duration:.2f}s (trimmed to fit limit)")
+                            else:
+                                logger.info(f"Merged short segment with next: {current_duration:.2f}s → {merged_segment.get('duration', 0):.2f}s total")
+                                processed.append(merged_segment)
+                            
+                            i += 2  # Skip next segment as it's merged
+                            merged = True
+                
+                # If couldn't merge with next, try with previous (similar logic)
+                if not merged and processed:
+                    last_segment = processed[-1]
+                    if last_segment and last_segment.get('speaker') == current_segment.get('speaker'):
+                        
+                        # Always merge, but trim to 15s if needed
+                        merged_segment = self._merge_segments(last_segment, current_segment)
+                        if merged_segment:
+                            # If merged segment exceeds 15s, trim it
+                            if merged_segment.get('duration', 0) > self.max_duration:
+                                new_end = merged_segment.get('start', 0) + self.max_duration
+                                merged_segment['end'] = new_end
+                                merged_segment['duration'] = self.max_duration
+                                
+                                # Update words and text to match new duration
+                                if 'words' in merged_segment:
+                                    trimmed_words = []
+                                    for word in merged_segment['words']:
+                                        word_start = word.get('start', 0) / 1000.0
+                                        if word_start <= new_end:
+                                            trimmed_words.append(word)
+                                    
+                                    merged_segment['words'] = trimmed_words
+                                    merged_segment['text'] = ' '.join(w.get('text', '') for w in trimmed_words if w.get('text'))
+                                    merged_segment['word_count'] = len(trimmed_words)
+                                
+                                logger.info(f"Merged and trimmed: {current_duration:.2f}s → {self.max_duration:.2f}s (trimmed to fit limit)")
+                            else:
+                                logger.info(f"Merged short segment with previous: {current_duration:.2f}s → {merged_segment.get('duration', 0):.2f}s total")
+                            
+                            processed[-1] = merged_segment  # Replace last segment
+                            merged = True
+                
+                # If STILL couldn't merge (no compatible segments), keep as is
+                if not merged:
+                    processed.append(current_segment)
+                    logger.info(f"Kept isolated short segment: {current_duration:.2f}s (no compatible segment to merge)")
+                
+                if not merged:
                     i += 1
-                    continue
+                continue
             
-            if current_segment.get('duration', 0) < self.min_duration:
-                merged_segment = self._merge_with_next(segments, i)
-                if merged_segment and merged_segment.get('duration', 0) <= self.max_duration:
-                    processed.append(merged_segment)
-                    i = self._find_next_index(segments, i, merged_segment)
-                    continue
-            
-            if current_segment.get('duration', 0) > self.max_duration:
+            # Handle segments > 15 seconds - split them
+            if current_duration > self.max_duration:
                 split_segments = self._split_segment(current_segment)
                 if split_segments:
                     processed.extend(split_segments)
+                    logger.info(f"Split long segment: {current_duration:.2f}s into {len(split_segments)} parts")
                 i += 1
                 continue
             
+            # Normal segment (3-15 seconds) - keep as is
             processed.append(current_segment)
             i += 1
         
@@ -217,7 +349,20 @@ class SegmentManager:
         next_start = next_seg.get('start', 0)
         
         gap = next_start - current_end
-        if gap > self.max_gap:
+        max_allowed_gap = self.max_gap
+        
+        # For very short segments (< 1s), allow much larger gaps
+        # This is especially important for isolated words at the beginning/end
+        current_duration = current.get('duration', 0)
+        if current_duration < 1.0:
+            # Allow up to 15 seconds gap for very short segments
+            # This handles cases like isolated "So" at the beginning
+            max_allowed_gap = 15.0
+        
+        # Check if merging would exceed max_duration (15s)
+        potential_merged_duration = next_seg.get('end', 0) - current.get('start', 0)
+        
+        if gap > max_allowed_gap or potential_merged_duration > self.max_duration:
             return None
             
         return self._merge_segments(current, next_seg)
