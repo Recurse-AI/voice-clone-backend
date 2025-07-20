@@ -334,17 +334,17 @@ class AudioProcessor:
             
             audio_url = upload_result["url"]
             
-            # Process with RunPod
-            separation_result = self.runpod_service.process_audio_separation(audio_url)
+            # Process with RunPod Queue Service
+            from runpod_queue_service import runpod_queue_service
             
-            if not separation_result or not separation_result.get("id"):
-                return {"success": False, "error": "RunPod service returned invalid response"}
-            
-            # Wait for completion
-            completion_result = self.runpod_service.wait_for_completion(separation_result["id"])
+            completion_result = runpod_queue_service.process_audio_separation_sync(
+                audio_url, 
+                caller_info="video_processing"
+            )
             
             if completion_result.get("status") != "COMPLETED":
-                return {"success": False, "error": f"RunPod job failed: {completion_result.get('status', 'Unknown status')}"}
+                error_msg = completion_result.get("error", "Unknown error")
+                return {"success": False, "error": f"RunPod job failed: {error_msg}"}
             
             # Validate output
             if not completion_result.get("output") or not completion_result["output"].get("vocal_audio"):

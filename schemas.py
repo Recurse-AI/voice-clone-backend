@@ -33,26 +33,63 @@ class RegenerateSegmentResponse(BaseModel):
     generation_time: Optional[float] = None
     parameters_used: Optional[Dict[str, Any]] = None
 
-class SegmentEdit(BaseModel):
-    segment_url: str  # URL to the segment audio (original or regenerated)
-    start_time: float  # New start time in seconds
-    duration: float    # New duration in seconds
-    speaker: str       # Speaker identifier (A, B, etc.)
+# Export Video Schemas
+class ExportVideoRequest(BaseModel):
+    audioId: str
+    format: str = "mp4"
+    settings: Dict[str, Any]
+    timeline: Dict[str, Any] 
+    editingChanges: Dict[str, Any]
+    voiceCloneData: Dict[str, Any]
+    exportMetadata: Dict[str, Any]
+    instrumentsUrl: Optional[str] = None  # Optional instruments audio URL
+    subtitlesUrl: Optional[str] = None    # Optional SRT subtitle file URL
 
-class ReconstructVideoRequest(BaseModel):
-    segments: list[SegmentEdit]  # List of edited segments
-    video_url: Optional[str] = None  # Original video URL (optional)
-    instruments_url: Optional[str] = None  # Instruments audio URL (optional)
-    subtitles_url: Optional[str] = None  # Subtitles file URL (optional)
-    include_subtitles: bool = True
-    include_instruments: bool = True
-    output_name: Optional[str] = None  # Custom output name
-
-class ReconstructVideoResponse(BaseModel):
-    success: bool
+class ExportJobResponse(BaseModel):
+    jobId: str
+    status: str
     message: str
-    video_url: Optional[str] = None
-    audio_url: Optional[str] = None
-    subtitles_url: Optional[str] = None
-    processing_time: Optional[float] = None
-    reconstruction_id: Optional[str] = None 
+    estimatedDuration: Optional[int] = None
+
+class ExportStatusResponse(BaseModel):
+    jobId: str
+    status: str
+    progress: int
+    downloadUrl: Optional[str] = None
+    error: Optional[str] = None
+    processingLogs: Optional[Dict[str, Any]] = None
+
+# Audio Separation API Schemas
+class AudioSeparationRequest(BaseModel):
+    audioUrl: str
+    callerInfo: Optional[str] = None
+
+class AudioSeparationResponse(BaseModel):
+    success: bool
+    requestId: str
+    message: str
+    estimatedTime: str
+    statusCheckUrl: str
+    queuePosition: Optional[int] = None
+
+class SeparationStatusResponse(BaseModel):
+    requestId: str
+    status: str  # pending, processing, completed, failed, cancelled
+    progress: int  # 0-100
+    queuePosition: Optional[int] = None
+    vocalUrl: Optional[str] = None
+    instrumentUrl: Optional[str] = None
+    error: Optional[str] = None
+    createdAt: str
+    startedAt: Optional[str] = None
+    completedAt: Optional[str] = None
+    callerInfo: Optional[str] = None
+
+class QueueStatsResponse(BaseModel):
+    totalRequests: int
+    pending: int
+    processing: int
+    completed: int
+    failed: int
+    maxConcurrent: int
+    queueLength: int 

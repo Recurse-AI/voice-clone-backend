@@ -1,0 +1,282 @@
+"""
+Video Renderer
+Handles final video composition using existing video_processor functionality
+"""
+
+import os
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+import logging
+import requests
+import soundfile as sf
+
+from .models import VideoItem, AudioItem, TextItem, ImageItem, VideoConfig
+
+logger = logging.getLogger(__name__)
+
+class VideoRenderer:
+    """
+    Render final video using existing video_processor functionality
+    """
+    
+    def __init__(self, temp_dir: str):
+        self.temp_dir = Path(temp_dir)
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Use existing video processor
+        from video_processor.video_processor import VideoProcessor
+        self.video_processor = VideoProcessor(str(self.temp_dir))
+    
+    async def render_video(self, video_url: Optional[str], final_audio_path: str,
+                          instruments_url: Optional[str], subtitles_url: Optional[str],
+                          config: VideoConfig, job_id: str) -> Dict[str, Any]:
+        """
+        Main video rendering function using existing video processor
+        """
+        try:
+            job_temp_dir = self.temp_dir / f"render_{job_id}"
+            job_temp_dir.mkdir(exist_ok=True)
+            
+            logger.info(f"Starting video render for job {job_id}")
+            
+            # Download original video if provided
+            video_path = None
+            if video_url:
+                video_path = await self._download_video(video_url, job_temp_dir)
+            
+            # Download instruments if provided
+            instruments_path = None
+            if instruments_url:
+                instruments_path = await self._download_instruments(instruments_url, job_temp_dir)
+            
+            # Download subtitle file if provided
+            subtitle_file = None
+            if subtitles_url:
+                subtitle_file = await self._download_subtitles(subtitles_url, job_temp_dir)
+            
+            # Use existing video processor functionality
+            if video_path:
+                # Create video with existing video
+                if subtitle_file:
+                    # Use subtitle file directly with video processor
+                    result = self._create_video_with_custom_subtitle(
+                        video_path, final_audio_path, subtitle_file, 
+                        instruments_path, job_id
+                    )
+                else:
+                    # Create video without subtitles
+                    result = self.video_processor.create_video_with_audio(
+                        video_path, final_audio_path, job_id, instruments_path
+                    )
+            else:
+                # Create blank video with audio
+                result = self._create_blank_video_with_audio(
+                    final_audio_path, instruments_path, config, job_id
+                )
+            
+            if result and result.get("success"):
+                return {
+                    "success": True,
+                    "video_path": result["video_path"],
+                    "duration": config.duration,
+                    "format": config.format,
+                    "has_subtitles": bool(subtitle_file)
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.get("error", "Video creation failed")
+                }
+            
+        except Exception as e:
+            logger.error(f"Video rendering failed for job {job_id}: {e}")
+            return {
+                "success": False,
+                "error": str(e)
+            }
+    
+    async def _download_video(self, video_url: str, temp_dir: Path) -> str:
+        """Download original video file"""
+        try:
+            response = requests.get(video_url, stream=True, timeout=120)
+            response.raise_for_status()
+            
+            video_path = temp_dir / "original_video.mp4"
+            with open(video_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            logger.info(f"Downloaded video: {video_path}")
+            return str(video_path)
+            
+        except Exception as e:
+            logger.error(f"Failed to download video from {video_url}: {e}")
+            raise
+    
+    async def _download_instruments(self, instruments_url: str, temp_dir: Path) -> str:
+        """Download instruments audio file"""
+        try:
+            response = requests.get(instruments_url, stream=True, timeout=120)
+            response.raise_for_status()
+            
+            instruments_path = temp_dir / "instruments.wav"
+            with open(instruments_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            logger.info(f"Downloaded instruments: {instruments_path}")
+            return str(instruments_path)
+            
+        except Exception as e:
+            logger.error(f"Failed to download instruments from {instruments_url}: {e}")
+            raise
+    
+    async def _download_subtitles(self, subtitles_url: str, temp_dir: Path) -> str:
+        """Download SRT subtitle file"""
+        try:
+            response = requests.get(subtitles_url, stream=True, timeout=60)
+            response.raise_for_status()
+            
+            subtitle_path = temp_dir / "subtitles.srt"
+            with open(subtitle_path, 'w', encoding='utf-8') as f:
+                f.write(response.text)
+            
+            logger.info(f"Downloaded subtitles: {subtitle_path}")
+            return str(subtitle_path)
+            
+        except Exception as e:
+            logger.error(f"Failed to download subtitles from {subtitles_url}: {e}")
+            raise
+    
+    def _create_video_with_custom_subtitle(self, video_path: str, audio_path: str, 
+                                         subtitle_path: str, instruments_path: Optional[str], 
+                                         job_id: str) -> Dict[str, Any]:
+        """Create video with custom subtitle file using video processor"""
+        try:
+            import subprocess
+            import tempfile
+            
+            # Create final audio with instruments if provided
+            final_audio_path = audio_path
+            if instruments_path and os.path.exists(instruments_path):
+                final_audio_path = self._mix_audio_with_instruments(
+                    audio_path, instruments_path, job_id
+                )
+            
+            # Use FFmpeg to create video with custom subtitles
+            output_path = self.temp_dir / f"video_with_custom_subtitles_{job_id}.mp4"
+            
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', video_path,
+                '-i', final_audio_path,
+                '-vf', f"subtitles='{subtitle_path}':force_style='Fontname=Arial-Bold,Fontsize=18,Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV=30'",
+                '-c:v', 'libx264',
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-map', '0:v:0',
+                '-map', '1:a:0',
+                '-shortest',
+                str(output_path)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "video_path": str(output_path),
+                    "has_subtitles": True
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"FFmpeg error: {result.stderr}"
+                }
+                
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Video creation with custom subtitles failed: {str(e)}"
+            }
+    
+    def _mix_audio_with_instruments(self, audio_path: str, instruments_path: str, 
+                                   job_id: str) -> str:
+        """Mix cloned audio with instruments"""
+        try:
+            mixed_audio_path = self.temp_dir / f"mixed_audio_{job_id}.wav"
+            
+            # Load audio files
+            cloned_audio, sr1 = sf.read(audio_path)
+            instruments_audio, sr2 = sf.read(instruments_path)
+            
+            # Ensure same sample rate
+            if sr1 != sr2:
+                # Simple resampling by padding/truncating
+                if sr2 > sr1:
+                    instruments_audio = instruments_audio[::int(sr2/sr1)]
+                
+            # Match lengths
+            min_length = min(len(cloned_audio), len(instruments_audio))
+            cloned_audio = cloned_audio[:min_length]
+            instruments_audio = instruments_audio[:min_length]
+            
+            # Mix: 80% vocals, 20% instruments
+            mixed_audio = cloned_audio * 0.8 + instruments_audio * 0.2
+            
+            # Save mixed audio
+            sf.write(mixed_audio_path, mixed_audio, sr1)
+            
+            return str(mixed_audio_path)
+            
+        except Exception as e:
+            logger.error(f"Failed to mix audio with instruments: {e}")
+            return audio_path
+    
+    def _create_blank_video_with_audio(self, audio_path: str, instruments_path: Optional[str], 
+                                     config: VideoConfig, job_id: str) -> Dict[str, Any]:
+        """Create blank video with audio for audio-only projects"""
+        try:
+            import subprocess
+            
+            # Mix audio with instruments if provided
+            final_audio_path = audio_path
+            if instruments_path and os.path.exists(instruments_path):
+                final_audio_path = self._mix_audio_with_instruments(
+                    audio_path, instruments_path, job_id
+                )
+            
+            # Create blank video with audio
+            output_path = self.temp_dir / f"blank_video_with_audio_{job_id}.mp4"
+            
+            cmd = [
+                'ffmpeg', '-y',
+                '-f', 'lavfi',
+                '-i', f'color=black:size={config.width}x{config.height}:rate={config.fps}',
+                '-i', final_audio_path,
+                '-c:v', 'libx264',
+                '-c:a', 'aac',
+                '-t', str(config.duration),
+                '-shortest',
+                str(output_path)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "video_path": str(output_path),
+                    "has_subtitles": False
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"FFmpeg error: {result.stderr}"
+                }
+                
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Blank video creation failed: {str(e)}"
+            } 
