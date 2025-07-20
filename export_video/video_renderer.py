@@ -29,7 +29,7 @@ class VideoRenderer:
     
     async def render_video(self, video_url: Optional[str], final_audio_path: str,
                           instruments_url: Optional[str], subtitles_url: Optional[str],
-                          config: VideoConfig, job_id: str) -> Dict[str, Any]:
+                          config: VideoConfig, job_id: str, processed_items=None) -> Dict[str, Any]:
         """
         Main video rendering function using existing video processor
         """
@@ -59,14 +59,15 @@ class VideoRenderer:
                 # Create video with existing video
                 if subtitle_file:
                     # Use subtitle file directly with video processor
-                    result = self._create_video_with_custom_subtitle(
+                    result = self._create_video_with_overlays(
                         video_path, final_audio_path, subtitle_file, 
-                        instruments_path, job_id, config
+                        instruments_path, job_id, config, processed_items
                     )
                 else:
-                    # Create video without subtitles
-                    result = self._create_video_without_subtitles(
-                        video_path, final_audio_path, instruments_path, job_id, config
+                    # Create video without subtitles but with overlays
+                    result = self._create_video_with_overlays(
+                        video_path, final_audio_path, None, 
+                        instruments_path, job_id, config, processed_items
                     )
             else:
                 # Create blank video with audio
@@ -172,6 +173,8 @@ class VideoRenderer:
                 '-i', final_audio_path,
                 '-vf', f"subtitles='{subtitle_path}':force_style='Fontname=Arial-Bold,Fontsize=18,Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV=30'",
                 '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-b:v', '2000k',  # Optimal bitrate
                 '-c:a', 'aac',
                 '-b:a', '128k',
                 '-map', '0:v:0',
@@ -222,6 +225,8 @@ class VideoRenderer:
                 '-i', video_path,
                 '-i', final_audio_path,
                 '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-b:v', '2000k',  # Optimal bitrate
                 '-c:a', 'aac',
                 '-b:a', '128k',
                 '-map', '0:v:0',
@@ -250,6 +255,164 @@ class VideoRenderer:
                 "error": f"Video creation without subtitles failed: {str(e)}"
             }
     
+    def _create_video_with_overlays(self, video_path: str, audio_path: str,
+                                   subtitle_path: Optional[str], instruments_path: Optional[str],
+                                   job_id: str, config: VideoConfig, processed_items=None) -> Dict[str, Any]:
+        """Create video with text/image overlays and subtitles"""
+        try:
+            import subprocess
+            
+            # Create final audio with instruments if provided
+            final_audio_path = audio_path
+            if instruments_path and os.path.exists(instruments_path):
+                final_audio_path = self._mix_audio_with_instruments(
+                    audio_path, instruments_path, job_id
+                )
+            
+            # Build FFmpeg command with overlays
+            output_path = self.temp_dir / f"video_with_overlays_{job_id}.mp4"
+            
+            # Start with basic inputs
+            cmd = ['ffmpeg', '-y', '-i', video_path, '-i', final_audio_path]
+            input_count = 2
+            
+            # Download and add image overlays as inputs
+            image_files = []
+            text_overlays = []
+            image_overlays = []
+            
+            if processed_items:
+                # Process text overlays
+                for text_item in processed_items.text_overlays:
+                    if text_item.start_time < text_item.end_time:  # Valid duration
+                        text_overlays.append(text_item)
+                
+                # Download and prepare image overlays
+                for image_item in processed_items.image_overlays:
+                    if image_item.start_time < image_item.end_time and image_item.src:
+                        image_path = self._download_image_overlay(image_item.src, job_id)
+                        if image_path:
+                            cmd.extend(['-i', image_path])
+                            image_files.append((input_count, image_item))
+                            input_count += 1
+            
+            # Build filter complex
+            filter_parts = []
+            last_video_ref = "0:v"
+            
+            # Add image overlays
+            for i, (input_idx, image_item) in enumerate(image_files):
+                next_ref = f"v{i}"
+                overlay_filter = (
+                    f"[{last_video_ref}][{input_idx}:v]"
+                    f"overlay={image_item.position.x}:{image_item.position.y}:"
+                    f"enable='between(t,{image_item.start_time},{image_item.end_time})'"
+                    f"[{next_ref}]"
+                )
+                filter_parts.append(overlay_filter)
+                last_video_ref = next_ref
+            
+            # Add text overlays
+            for i, text_item in enumerate(text_overlays):
+                next_ref = f"t{i}"
+                # Simple text overlay (escape quotes)
+                text_safe = text_item.text.replace("'", "\\'").replace(":", "\\:")
+                
+                text_filter = (
+                    f"[{last_video_ref}]drawtext="
+                    f"text='{text_safe}':"
+                    f"x={text_item.position.x}:y={text_item.position.y}:"
+                    f"fontsize={text_item.styling.font_size}:"
+                    f"fontcolor={text_item.styling.color}:"
+                    f"enable='between(t,{text_item.start_time},{text_item.end_time})'"
+                    f"[{next_ref}]"
+                )
+                filter_parts.append(text_filter)
+                last_video_ref = next_ref
+            
+            # Add subtitle filter if provided
+            if subtitle_path:
+                next_ref = "final"
+                subtitle_filter = (
+                    f"[{last_video_ref}]subtitles='{subtitle_path}':force_style="
+                    f"'Fontname=Arial-Bold,Fontsize=18,Bold=1,PrimaryColour=&H00ffffff,"
+                    f"OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV=30'[{next_ref}]"
+                )
+                filter_parts.append(subtitle_filter)
+                last_video_ref = next_ref
+            
+            # Add filter complex if we have filters
+            if filter_parts:
+                cmd.extend(['-filter_complex', ';'.join(filter_parts)])
+                cmd.extend(['-map', f'[{last_video_ref}]'])
+            else:
+                cmd.extend(['-map', '0:v:0'])
+            
+            # Add audio mapping and codec settings
+            cmd.extend([
+                '-map', '1:a:0',
+                '-c:v', 'libx264',
+                '-preset', 'medium',  # Faster encoding
+                '-b:v', '2000k',  # Optimal bitrate for 1-45min videos
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-t', str(config.duration),
+                str(output_path)
+            ])
+            
+            logger.info(f"Running FFmpeg with overlays: {len(text_overlays)} text, {len(image_files)} images")
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "video_path": str(output_path),
+                    "has_overlays": len(text_overlays) + len(image_files) > 0,
+                    "has_subtitles": bool(subtitle_path)
+                }
+            else:
+                logger.error(f"FFmpeg error: {result.stderr}")
+                return {
+                    "success": False,
+                    "error": f"FFmpeg error: {result.stderr}"
+                }
+        
+        except Exception as e:
+            logger.error(f"Video creation with overlays failed: {e}")
+            return {
+                "success": False,
+                "error": f"Video creation with overlays failed: {str(e)}"
+            }
+    
+    def _download_image_overlay(self, image_url: str, job_id: str) -> Optional[str]:
+        """Download image for overlay"""
+        try:
+            response = requests.get(image_url, timeout=30)
+            response.raise_for_status()
+            
+            # Determine file extension
+            content_type = response.headers.get('content-type', '')
+            if 'png' in content_type:
+                ext = 'png'
+            elif 'gif' in content_type:
+                ext = 'gif'
+            elif 'webp' in content_type:
+                ext = 'webp'
+            else:
+                ext = 'jpg'
+            
+            image_path = self.temp_dir / f"overlay_image_{job_id}.{ext}"
+            with open(image_path, 'wb') as f:
+                f.write(response.content)
+            
+            logger.info(f"Downloaded image overlay: {image_path}")
+            return str(image_path)
+        
+        except Exception as e:
+            logger.warning(f"Failed to download image overlay {image_url}: {e}")
+            return None
+    
     def _mix_audio_with_instruments(self, audio_path: str, instruments_path: str, 
                                    job_id: str) -> str:
         """Mix cloned audio with instruments"""
@@ -271,8 +434,8 @@ class VideoRenderer:
             cloned_audio = cloned_audio[:min_length]
             instruments_audio = instruments_audio[:min_length]
             
-            # Mix: 80% vocals, 20% instruments
-            mixed_audio = cloned_audio * 0.8 + instruments_audio * 0.2
+            # Mix: 100% vocals, 20% instruments for better voice clarity
+            mixed_audio = cloned_audio * 1.0 + instruments_audio * 0.2
             
             # Save mixed audio
             sf.write(mixed_audio_path, mixed_audio, sr1)
@@ -305,7 +468,10 @@ class VideoRenderer:
                 '-i', f'color=black:size={config.width}x{config.height}:rate={config.fps}',
                 '-i', final_audio_path,
                 '-c:v', 'libx264',
+                '-preset', 'medium',
+                '-b:v', '2000k',  # Optimal bitrate
                 '-c:a', 'aac',
+                '-b:a', '128k',
                 '-t', str(config.duration),
                 '-shortest',
                 str(output_path)

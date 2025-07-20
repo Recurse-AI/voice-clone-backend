@@ -211,38 +211,41 @@ class TimelineProcessor:
         details = item.get("details", {})
         display = item.get("display", {})
         
-        # Timeline positioning
-        start_time = display.get("from", 0) / 1000
-        end_time = display.get("to", 0) / 1000
+        # Timeline positioning - use direct fields from frontend like audio/video
+        start_time = item.get("startTime", 0) / 1000  # Convert ms to seconds
+        duration = item.get("duration", 0) / 1000      # Convert ms to seconds
+        end_time = start_time + duration
         
-        # Canvas positioning
+        # Canvas positioning - use direct position data from frontend
+        position_data = item.get("position", {})
         position = Position(
-            x=self.parse_pixel_value(details.get("left", "0px")),
-            y=self.parse_pixel_value(details.get("top", "0px")),
-            width=details.get("width", 300),
-            height=details.get("height", 100)
+            x=position_data.get("x", 0),
+            y=position_data.get("y", 0),
+            width=position_data.get("width", 300),
+            height=position_data.get("height", 100)
         )
         
-        # Text styling
+        # Text styling - use direct style data from frontend
+        style_data = item.get("style", {})
         styling = TextStyling(
-            font_family=details.get("fontFamily", "Arial"),
-            font_size=details.get("fontSize", 24),
-            color=details.get("color", "#ffffff"),
-            background_color=details.get("backgroundColor", "transparent"),
-            text_align=details.get("textAlign", "left"),
-            font_weight=details.get("fontWeight", "normal"),
-            opacity=details.get("opacity", 100) / 100,
-            transform=details.get("transform", "none")
+            font_family=style_data.get("fontFamily", "Arial"),
+            font_size=style_data.get("fontSize", 24),
+            color=style_data.get("color", "#ffffff"),
+            background_color=style_data.get("backgroundColor", "transparent"),
+            text_align=style_data.get("textAlign", "left"),
+            font_weight=style_data.get("fontWeight", "normal"),
+            opacity=style_data.get("opacity", 100) / 100,
+            transform=style_data.get("transform", "none")
         )
         
         return TextItem(
             id=item.get("id"),
-            text=details.get("text", ""),
+            text=item.get("text", ""),
             start_time=start_time,
             end_time=end_time,
             position=position,
             styling=styling,
-            font_url=details.get("fontUrl")
+            font_url=style_data.get("fontUrl")
         )
     
     def _process_image_item(self, item: Dict[str, Any]) -> ImageItem:
@@ -250,36 +253,39 @@ class TimelineProcessor:
         details = item.get("details", {})
         display = item.get("display", {})
         
-        # Timeline positioning
-        start_time = display.get("from", 0) / 1000
-        end_time = display.get("to", 0) / 1000
+        # Timeline positioning - use direct fields from frontend
+        start_time = item.get("startTime", 0) / 1000  # Convert ms to seconds
+        duration = item.get("duration", 0) / 1000      # Convert ms to seconds
+        end_time = start_time + duration
         
-        # Canvas positioning
+        # Canvas positioning - use direct position data from frontend
+        position_data = item.get("position", {})
         position = Position(
-            x=self.parse_pixel_value(details.get("left", "0px")),
-            y=self.parse_pixel_value(details.get("top", "0px")),
-            width=details.get("width", 300),
-            height=details.get("height", 200)
+            x=position_data.get("x", 0),
+            y=position_data.get("y", 0),
+            width=position_data.get("width", 300),
+            height=position_data.get("height", 200)
         )
         
-        # Transformations
+        # Visual effects - use direct effects data from frontend
+        effects_data = item.get("effects", {})
         transform = Transform(
-            scale=self.extract_scale_from_transform(details.get("transform", "scale(1)")),
-            rotation=self.parse_rotation(details.get("rotate", "0deg")),
-            opacity=details.get("opacity", 100) / 100
+            scale=1.0,  # Default scale
+            rotation=0.0,  # Default rotation
+            opacity=effects_data.get("opacity", 100) / 100
         )
         
         # Visual effects
         effects = Effects(
-            brightness=details.get("brightness", 100) / 100,
-            blur=details.get("blur", 0),
-            flipX=details.get("flipX", False),
-            flipY=details.get("flipY", False)
+            brightness=effects_data.get("brightness", 100) / 100,
+            blur=effects_data.get("blur", 0),
+            flipX=effects_data.get("flipX", False),
+            flipY=effects_data.get("flipY", False)
         )
         
         return ImageItem(
             id=item.get("id"),
-            src=details.get("src"),
+            src=item.get("url") or details.get("src"),  # Use direct URL from frontend
             start_time=start_time,
             end_time=end_time,
             position=position,

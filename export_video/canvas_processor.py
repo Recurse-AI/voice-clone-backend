@@ -189,6 +189,8 @@ class CanvasProcessor:
                 
                 item.start_time = new_pos["from"] / 1000  # Convert ms to seconds
                 item.end_time = new_pos["to"] / 1000
+                
+                # Set duration for items that have it (VideoItem, AudioItem)
                 if hasattr(item, 'duration'):
                     item.duration = (new_pos["to"] - new_pos["from"]) / 1000
                 

@@ -59,6 +59,12 @@ class BackgroundProcessor:
                                processed_items.image_overlays)
             canvas_processor.apply_canvas_changes(all_visual_items, export_data["editingChanges"])
             
+            # Apply position timeline changes to text and image overlays
+            canvas_processor.apply_position_timeline_changes(
+                processed_items.text_overlays + processed_items.image_overlays,
+                export_data["editingChanges"].get("positionChanges", [])
+            )
+            
             # Apply audio changes
             editing_changes = export_data["editingChanges"]
             if "volumeChanges" in editing_changes:
@@ -115,7 +121,8 @@ class BackgroundProcessor:
                 instruments_url=instruments_url,
                 subtitles_url=subtitles_url,
                 config=video_config,
-                job_id=job_id
+                job_id=job_id,
+                processed_items=processed_items
             ))
             
             if not render_result["success"]:
@@ -235,8 +242,24 @@ class BackgroundProcessor:
                     end_sample = min(start_sample + len(audio_data), final_samples)
                     audio_length = end_sample - start_sample
                     
-                    # Apply volume
-                    audio_data = audio_data[:audio_length] * track.volume
+                    # Apply volume with type-specific balancing
+                    track_volume = track.volume
+                    audio_type = track.voice_clone_info.audio_type if hasattr(track, 'voice_clone_info') else "unknown"
+                    
+                    # Volume balancing: Voice segments louder, instruments quieter
+                    if audio_type == "cloned":
+                        # Voice segments: boost to 100% + original volume
+                        final_volume = track_volume * 1.0  # Full voice volume
+                        logger.debug(f"Voice track {track.id}: volume={final_volume:.2f}")
+                    elif audio_type == "instruments":
+                        # Instruments: reduce to 25% to be background music
+                        final_volume = track_volume * 0.25  # Background volume
+                        logger.info(f"Instruments track {track.id}: reduced volume={final_volume:.2f}")
+                    else:
+                        # Other tracks: use original volume
+                        final_volume = track_volume
+                    
+                    audio_data = audio_data[:audio_length] * final_volume
                     
                     # Mix into final audio
                     mixed_audio[start_sample:end_sample] += audio_data
@@ -250,10 +273,12 @@ class BackgroundProcessor:
                     logger.warning(f"Failed to mix track {track.id}: {e}")
                     continue
             
-            # Normalize to prevent clipping
+            # Smart normalization to maintain voice clarity
             max_val = np.max(np.abs(mixed_audio))
-            if max_val > 1.0:
-                mixed_audio = mixed_audio / max_val * 0.95
+            if max_val > 0.8:  # More conservative normalization to prevent voice compression
+                mixed_audio = mixed_audio / max_val * 0.8
+            
+            logger.info(f"Final audio: max_level={max_val:.3f}, normalized to 0.8")
             
             return mixed_audio
             
