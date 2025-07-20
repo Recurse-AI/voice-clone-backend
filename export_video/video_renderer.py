@@ -444,8 +444,8 @@ class VideoRenderer:
             cloned_audio = cloned_audio[:min_length]
             instruments_audio = instruments_audio[:min_length]
             
-            # Mix: 100% vocals, 20% instruments for better voice clarity
-            mixed_audio = cloned_audio * 1.0 + instruments_audio * 0.2
+            # Mix: 100% vocals (full volume), 15% instruments (very soft background)
+            mixed_audio = cloned_audio * 1.0 + instruments_audio * 0.15
             
             # Save mixed audio
             sf.write(mixed_audio_path, mixed_audio, sr1)

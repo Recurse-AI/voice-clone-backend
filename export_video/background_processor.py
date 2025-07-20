@@ -211,6 +211,9 @@ class BackgroundProcessor:
             
             logger.info(f"Mixing {len(audio_tracks)} audio tracks into {total_duration}s duration")
             
+            voice_tracks_count = 0
+            instruments_tracks_count = 0
+            
             for track in audio_tracks:
                 try:
                     if not track.src:
@@ -247,15 +250,17 @@ class BackgroundProcessor:
                     track_volume = track.volume
                     audio_type = track.voice_clone_info.audio_type if hasattr(track, 'voice_clone_info') else "unknown"
                     
-                    # Volume balancing: Voice segments louder, instruments quieter
+                    # Volume balancing: Voice segments ALWAYS full, instruments very soft
                     if audio_type == "cloned":
-                        # Voice segments: boost to 100% + original volume
-                        final_volume = track_volume * 1.0  # Full voice volume
-                        logger.debug(f"Voice track {track.id}: volume={final_volume:.2f}")
+                        # Voice segments: ALWAYS full volume regardless of original setting
+                        final_volume = 1.0  # Force full voice volume 
+                        voice_tracks_count += 1
+                        logger.info(f"Voice track {track.id}: FORCED to full volume=1.0 (original was {track_volume:.2f})")
                     elif audio_type == "instruments":
-                        # Instruments: reduce to 25% to be background music
-                        final_volume = track_volume * 0.25  # Background volume
-                        logger.info(f"Instruments track {track.id}: reduced volume={final_volume:.2f}")
+                        # Instruments: reduce to 15% to be very soft background
+                        final_volume = track_volume * 0.15  # Even softer background volume
+                        instruments_tracks_count += 1
+                        logger.info(f"Instruments track {track.id}: reduced volume={final_volume:.2f} (original was {track_volume:.2f})")
                     else:
                         # Other tracks: use original volume
                         final_volume = track_volume
@@ -274,12 +279,16 @@ class BackgroundProcessor:
                     logger.warning(f"Failed to mix track {track.id}: {e}")
                     continue
             
-            # Smart normalization to maintain voice clarity
+            # Voice-optimized normalization - allow higher levels for voice clarity
             max_val = np.max(np.abs(mixed_audio))
-            if max_val > 0.8:  # More conservative normalization to prevent voice compression
-                mixed_audio = mixed_audio / max_val * 0.8
+            if max_val > 0.95:  # Only normalize if really close to clipping
+                mixed_audio = mixed_audio / max_val * 0.95
+                logger.info(f"Final audio: max_level={max_val:.3f}, normalized to 0.95")
+            else:
+                logger.info(f"Final audio: max_level={max_val:.3f}, no normalization needed (voice stays loud)")
             
-            logger.info(f"Final audio: max_level={max_val:.3f}, normalized to 0.8")
+            # Summary of audio mixing
+            logger.info(f"🎵 AUDIO SUMMARY: {voice_tracks_count} voice tracks (1.0 volume) + {instruments_tracks_count} instrument tracks (0.15 volume)")
             
             return mixed_audio
             
