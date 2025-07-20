@@ -36,7 +36,7 @@ class RegenerateSegmentResponse(BaseModel):
 # Export Video Schemas
 class ExportVideoRequest(BaseModel):
     audioId: str = Field(..., min_length=1, description="Audio ID for the processed video")
-    format: str = Field("mp4", regex="^(mp4|avi|mov|mkv)$", description="Video output format")
+    format: str = Field("mp4", pattern="^(mp4|avi|mov|mkv)$", description="Video output format")
     settings: Dict[str, Any] = Field(..., description="Export settings including quality, resolution, etc.")
     timeline: Dict[str, Any] = Field(..., description="Timeline data with items and configuration")
     editingChanges: Dict[str, Any] = Field(..., description="Changes applied during editing")
