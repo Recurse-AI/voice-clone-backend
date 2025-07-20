@@ -2,10 +2,9 @@
 RunPod Queue Service
 
 Wrapper service that integrates the queue manager with RunPod service.
-Provides a clean interface for both sync and async audio separation requests.
+Provides a clean interface for sync audio separation requests.
 """
 
-import asyncio
 import time
 from typing import Dict, Any, Optional
 import logging
@@ -128,63 +127,6 @@ class RunPodQueueService:
             "request_id": request_id
         }
     
-    async def wait_for_completion_async(self, request_id: str, timeout: int = 900, 
-                                      check_interval: int = 5) -> Dict[str, Any]:
-        """
-        Async version of wait_for_completion.
-        
-        Args:
-            request_id: The request ID to wait for
-            timeout: Maximum time to wait in seconds
-            check_interval: How often to check status in seconds
-            
-        Returns:
-            Final result dictionary with vocal and instrument URLs
-        """
-        start_time = time.time()
-        
-        while time.time() - start_time < timeout:
-            status = self.get_separation_status(request_id)
-            
-            if not status:
-                return {
-                    "success": False,
-                    "error": "Request not found",
-                    "request_id": request_id
-                }
-            
-            if status["status"] == QueueStatus.COMPLETED.value:
-                return {
-                    "success": True,
-                    "result": status["result"],
-                    "request_id": request_id,
-                    "processing_time": (time.time() - start_time)
-                }
-            
-            elif status["status"] == QueueStatus.FAILED.value:
-                return {
-                    "success": False,
-                    "error": status["error"],
-                    "request_id": request_id
-                }
-            
-            elif status["status"] == QueueStatus.CANCELLED.value:
-                return {
-                    "success": False,
-                    "error": "Request was cancelled",
-                    "request_id": request_id
-                }
-            
-            # Still pending or processing, wait and check again
-            await asyncio.sleep(check_interval)
-        
-        # Timeout reached
-        return {
-            "success": False,
-            "error": "Request timeout - separation took too long",
-            "request_id": request_id
-        }
-    
     def get_queue_stats(self) -> Dict[str, Any]:
         """Get current queue statistics"""
         return runpod_queue_manager.get_queue_stats()
@@ -214,31 +156,6 @@ class RunPodQueueService:
             return result["result"]
         else:
             # Return error in expected format
-            return {
-                "status": "FAILED",
-                "error": result["error"]
-            }
-    
-    async def process_audio_separation_async(self, audio_url: str, caller_info: str = None) -> Dict[str, Any]:
-        """
-        Process audio separation asynchronously using the queue.
-        
-        Args:
-            audio_url: URL of the audio file to separate
-            caller_info: Information about which API/process is calling
-            
-        Returns:
-            Separation result with vocal and instrument URLs
-        """
-        # Submit request
-        request_id = self.submit_separation_request(audio_url, caller_info)
-        
-        # Wait for completion asynchronously
-        result = await self.wait_for_completion_async(request_id)
-        
-        if result["success"]:
-            return result["result"]
-        else:
             return {
                 "status": "FAILED",
                 "error": result["error"]

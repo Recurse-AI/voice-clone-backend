@@ -5,7 +5,6 @@ Manages a queue for RunPod audio separation requests to prevent overloading the 
 Limits concurrent requests to maximum 2 and provides status tracking.
 """
 
-import asyncio
 import time
 import uuid
 from typing import Dict, Any, Optional, List
@@ -15,6 +14,7 @@ from datetime import datetime
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+import queue
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +57,22 @@ class RunPodQueueManager:
     
     def __init__(self, max_concurrent: int = 2):
         self.max_concurrent = max_concurrent
-        self.semaphore = asyncio.Semaphore(max_concurrent)
         self.requests: Dict[str, QueueRequest] = {}
-        self.queue: List[str] = []  # Request IDs in queue order
-        self.processing: Dict[str, asyncio.Task] = {}  # Currently processing requests
+        self.pending_queue = queue.Queue()  # Thread-safe queue
+        self.processing_count = 0
         self.lock = threading.Lock()
         self.executor = ThreadPoolExecutor(max_workers=max_concurrent)
         self._runpod_service = None
+        self._stop_event = threading.Event()
+        
+        # Start queue processor threads
+        for i in range(max_concurrent):
+            worker_thread = threading.Thread(
+                target=self._queue_processor_worker,
+                name=f"QueueWorker-{i+1}",
+                daemon=True
+            )
+            worker_thread.start()
         
         logger.info(f"RunPod Queue Manager initialized with max_concurrent={max_concurrent}")
     
@@ -91,52 +100,48 @@ class RunPodQueueManager:
                 caller_info=caller_info
             )
             self.requests[request_id] = request
-            self.queue.append(request_id)
+            
+            # Add to queue for processing
+            self.pending_queue.put(request_id)
         
         logger.info(f"Request {request_id} submitted to queue (caller: {caller_info})")
-        
-        # Start processing if slots available
-        asyncio.create_task(self._process_queue())
-        
         return request_id
     
-    async def _process_queue(self):
-        """Process queued requests with concurrency control"""
-        while True:
+    def _queue_processor_worker(self):
+        """Worker thread that processes queued requests"""
+        while not self._stop_event.is_set():
+            try:
+                # Wait for a request (blocking with timeout)
+                try:
+                    request_id = self.pending_queue.get(timeout=1.0)
+                except queue.Empty:
+                    continue
+                
+                # Process the request
+                self._process_single_request(request_id)
+                
+            except Exception as e:
+                logger.error(f"Error in queue processor worker: {e}")
+    
+    def _process_single_request(self, request_id: str):
+        """Process a single RunPod request"""
+        try:
             with self.lock:
-                # Check if we have pending requests and available slots
-                pending_requests = [rid for rid in self.queue 
-                                  if self.requests[rid].status == QueueStatus.PENDING]
-                
-                if not pending_requests:
-                    break
-                
-                # Check available processing slots
-                active_processing = len([task for task in self.processing.values() 
-                                       if not task.done()])
-                
-                if active_processing >= self.max_concurrent:
-                    break
-                
-                # Get next request to process
-                request_id = pending_requests[0]
+                if request_id not in self.requests:
+                    return
                 request = self.requests[request_id]
+                
+                # Check if request was cancelled
+                if request.status == QueueStatus.CANCELLED:
+                    return
                 
                 # Mark as processing
                 request.status = QueueStatus.PROCESSING
                 request.started_at = datetime.now()
                 request.progress = 10
-            
-            # Create processing task
-            task = asyncio.create_task(self._process_single_request(request_id))
-            self.processing[request_id] = task
+                self.processing_count += 1
             
             logger.info(f"Started processing request {request_id}")
-    
-    async def _process_single_request(self, request_id: str):
-        """Process a single RunPod request"""
-        try:
-            request = self.requests[request_id]
             
             if not self._runpod_service:
                 raise Exception("RunPod service not initialized")
@@ -144,13 +149,8 @@ class RunPodQueueManager:
             # Update progress
             request.progress = 20
             
-            # Submit to RunPod (sync call in executor)
-            loop = asyncio.get_event_loop()
-            separation_result = await loop.run_in_executor(
-                self.executor,
-                self._runpod_service.process_audio_separation,
-                request.audio_url
-            )
+            # Submit to RunPod
+            separation_result = self._runpod_service.process_audio_separation(request.audio_url)
             
             if not separation_result or not separation_result.get("id"):
                 raise Exception("RunPod service returned invalid response")
@@ -158,12 +158,8 @@ class RunPodQueueManager:
             # Update progress
             request.progress = 40
             
-            # Wait for completion (sync call in executor)
-            completion_result = await loop.run_in_executor(
-                self.executor,
-                self._runpod_service.wait_for_completion,
-                separation_result["id"]
-            )
+            # Wait for completion
+            completion_result = self._runpod_service.wait_for_completion(separation_result["id"])
             
             # Update progress
             request.progress = 90
@@ -177,6 +173,7 @@ class RunPodQueueManager:
                 request.completed_at = datetime.now()
                 request.result = completion_result
                 request.progress = 100
+                self.processing_count -= 1
             
             logger.info(f"Request {request_id} completed successfully")
             
@@ -187,16 +184,9 @@ class RunPodQueueManager:
                 request.completed_at = datetime.now()
                 request.error = str(e)
                 request.progress = 0
+                self.processing_count -= 1
             
             logger.error(f"Request {request_id} failed: {str(e)}")
-        
-        finally:
-            # Clean up
-            if request_id in self.processing:
-                del self.processing[request_id]
-            
-            # Try to process next request
-            asyncio.create_task(self._process_queue())
     
     def get_request_status(self, request_id: str) -> Optional[Dict[str, Any]]:
         """Get status of a specific request"""
@@ -209,10 +199,8 @@ class RunPodQueueManager:
             # Calculate queue position for pending requests
             queue_position = None
             if request.status == QueueStatus.PENDING:
-                try:
-                    queue_position = self.queue.index(request_id) + 1
-                except ValueError:
-                    queue_position = None
+                # Approximate queue position (rough estimate)
+                queue_position = self.pending_queue.qsize()
             
             return {
                 "request_id": request_id,
@@ -242,16 +230,6 @@ class RunPodQueueManager:
             request.status = QueueStatus.CANCELLED
             request.completed_at = datetime.now()
             request.error = "Cancelled by user"
-            
-            # Remove from queue if pending
-            if request_id in self.queue:
-                self.queue.remove(request_id)
-            
-            # Cancel processing task if running
-            if request_id in self.processing:
-                task = self.processing[request_id]
-                task.cancel()
-                del self.processing[request_id]
         
         logger.info(f"Request {request_id} cancelled")
         return True
@@ -261,7 +239,7 @@ class RunPodQueueManager:
         with self.lock:
             total_requests = len(self.requests)
             pending_count = sum(1 for r in self.requests.values() if r.status == QueueStatus.PENDING)
-            processing_count = sum(1 for r in self.requests.values() if r.status == QueueStatus.PROCESSING)
+            processing_count = self.processing_count
             completed_count = sum(1 for r in self.requests.values() if r.status == QueueStatus.COMPLETED)
             failed_count = sum(1 for r in self.requests.values() if r.status == QueueStatus.FAILED)
             
@@ -272,7 +250,7 @@ class RunPodQueueManager:
                 "completed": completed_count,
                 "failed": failed_count,
                 "max_concurrent": self.max_concurrent,
-                "queue_length": len(self.queue)
+                "queue_length": self.pending_queue.qsize()
             }
     
     def cleanup_old_requests(self, max_age_hours: int = 24):
@@ -288,11 +266,14 @@ class RunPodQueueManager:
             
             for request_id in to_remove:
                 del self.requests[request_id]
-                if request_id in self.queue:
-                    self.queue.remove(request_id)
         
         if to_remove:
             logger.info(f"Cleaned up {len(to_remove)} old requests")
+    
+    def shutdown(self):
+        """Shutdown the queue manager"""
+        self._stop_event.set()
+        self.executor.shutdown(wait=True)
 
 
 # Global queue manager instance
