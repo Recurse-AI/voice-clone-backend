@@ -241,6 +241,27 @@ class BackgroundProcessor:
                     if len(audio_data.shape) > 1:
                         audio_data = np.mean(audio_data, axis=1)
                     
+                    # Apply audio trimming if specified
+                    if track.trim_start > 0 or track.trim_end is not None:
+                        trim_start_sample = int(track.trim_start * sample_rate)
+                        
+                        if track.trim_end is not None:
+                            trim_end_sample = int(track.trim_end * sample_rate)
+                            audio_data = audio_data[trim_start_sample:trim_end_sample]
+                            logger.info(f"Applied trim to {track.id}: {track.trim_start:.2f}s - {track.trim_end:.2f}s")
+                        else:
+                            audio_data = audio_data[trim_start_sample:]
+                            logger.info(f"Applied trim to {track.id}: from {track.trim_start:.2f}s to end")
+                    else:
+                        logger.debug(f"No trim applied to {track.id}")
+                    
+                    # Apply speed changes (playback rate)
+                    if track.playback_rate != 1.0:
+                        # Resample audio to apply speed change
+                        new_length = int(len(audio_data) / track.playback_rate)
+                        audio_data = signal.resample(audio_data, new_length)
+                        logger.info(f"Applied speed change to {track.id}: {track.playback_rate}x (new length: {new_length} samples)")
+                    
                     # Calculate positions
                     start_sample = int(track.start_time * sample_rate)
                     end_sample = min(start_sample + len(audio_data), final_samples)

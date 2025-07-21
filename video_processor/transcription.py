@@ -219,7 +219,7 @@ class TranscriptionService:
             
             # Check cache first for repeated translations
             with self.cache_lock:
-                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_{len(speakers_in_segment)}_v2_7-11words"
+                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_{len(speakers_in_segment)}_v3_5-9words_7optimal"
                 if cache_key in self.translation_cache:
                     return self.translation_cache[cache_key]
             
@@ -235,17 +235,17 @@ TEXT: "{clean_text}"
 
 FORMAT RULES:
 - Use {speaker_tags} for {len(speakers_in_segment)} speakers
-- 7-11 words per line maximum
+- 5-9 words per line (7 words optimal)
 - Start each speaker turn with speaker tag
 - Keep sentences complete when possible
 - Natural, conversational English
 
 EXAMPLE:
-[S1] Hello there my friend, how are you doing today?
-I hope everything is going well in your life.
-[S2] I'm doing absolutely fantastic, thank you so much for asking.
-Life has been treating me very well recently.
-[S1] That's such wonderful and exciting news to hear from you.
+[S1] Hello there my dear friend today.
+How are you doing right now?
+[S2] I'm doing quite well, thank you.
+Life has been treating me well.
+[S1] That's wonderful news to hear today.
 
 OUTPUT (English with speaker tags):"""
                 else:
@@ -256,14 +256,14 @@ TEXT: "{clean_text}"
 
 FORMAT RULES:
 - Start with [S1] tag once
-- 7-11 words per line maximum
+- 5-9 words per line (7 words optimal)
 - Natural, conversational English
 - Keep sentences complete when possible
 
 EXAMPLE:
-[S1] Hello there my friend, how are you doing today?
-I hope everything is going well in your life.
-I'm really glad to hear that things are working out.
+[S1] Hello there my dear friend today.
+How are you doing right now?
+I'm glad to hear things work.
 
 OUTPUT (English with [S1] tag):"""
                 
