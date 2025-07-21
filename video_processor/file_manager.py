@@ -21,13 +21,12 @@ class FileManager:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
     
     def create_directory_structure(self, base_dir: Path, speakers: List[str]):
-        """Create directory structure for segments and references"""
+        """Create directory structure for segments"""
         (base_dir / "metadata").mkdir(parents=True, exist_ok=True)
         
         for speaker in speakers:
             speaker_dir = base_dir / f"speaker_{speaker}"
             (speaker_dir / "segments").mkdir(parents=True, exist_ok=True)
-            (speaker_dir / "reference").mkdir(parents=True, exist_ok=True)
     
     def validate_and_repair_metadata(self, segments_dir: str) -> Dict[str, Any]:
         """Validate and repair metadata files in segments directory"""

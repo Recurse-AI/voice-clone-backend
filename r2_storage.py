@@ -81,7 +81,6 @@ class R2Storage:
             "audio_id": audio_id,
             "segments": {},
             "metadata": {},
-            "silent_parts": {},
             "cloned": {}
         }
         
@@ -147,23 +146,7 @@ class R2Storage:
                     if result["success"]:
                         upload_results["metadata"][file_path.name] = result
         
-        # Upload silent parts
-        silent_dir = segments_path / "silent_parts"
-        if silent_dir.exists():
-            for file_path in silent_dir.iterdir():
-                if file_path.is_file():
-                    r2_key = self.generate_file_path(audio_id, "silent_parts", file_path.name)
-                    
-                    result = self.upload_file(
-                        str(file_path),
-                        r2_key,
-                        "audio/wav"
-                    )
-                    
-                    if result["success"]:
-                        upload_results["silent_parts"][file_path.name] = result
-        
-        return upload_results
+                return upload_results
     
     def upload_final_audio(self, audio_id: str, final_audio_path: str) -> Dict[str, Any]:
         """Upload final processed audio"""
@@ -286,8 +269,7 @@ class R2Storage:
         urls = {
             "metadata": {},
             "segments": {},
-            "cloned": {},
-            "silent_parts": {}
+            "cloned": {}
         }
         
         if "metadata" in upload_results:
@@ -309,12 +291,7 @@ class R2Storage:
                     if result.get("success"):
                         urls["cloned"][speaker][filename] = result.get("url")
         
-        if "silent_parts" in upload_results:
-            for filename, result in upload_results["silent_parts"].items():
-                if result.get("success"):
-                    urls["silent_parts"][filename] = result.get("url")
-        
-        return urls 
+                return urls 
     
     def generate_cloned_segment_url(self, audio_id: str, speaker: str, segment_index: int) -> str:
         """Generate R2 URL for a cloned segment"""

@@ -19,7 +19,7 @@ class SegmentManager:
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.target_words_per_segment = 30  # Target words per segment
+        self.target_words_per_segment = 40  # Target words per segment
         self.min_duration = 3.0             # Minimum segment duration
         self.max_duration = 17.0            # Maximum segment duration
         self.max_gap_seconds = 3.0          # Maximum gap between words

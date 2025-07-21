@@ -93,43 +93,6 @@ class AudioUtils:
         return 'ffmpeg'
     
     @staticmethod
-    def detect_silent_parts(audio: np.ndarray, sr: int, 
-                           silence_threshold: float = 0.01, 
-                           min_silence_duration: float = 0.5) -> List[Tuple[float, float]]:
-        """Detect silent parts in audio"""
-        # Calculate RMS energy
-        hop_length = 512
-        frame_length = 2048
-        rms = librosa.feature.rms(y=audio, hop_length=hop_length, frame_length=frame_length)[0]
-        
-        # Convert to time
-        times = librosa.frames_to_time(np.arange(len(rms)), sr=sr, hop_length=hop_length)
-        
-        # Find silent frames
-        silent_frames = rms < silence_threshold
-        
-        # Group consecutive silent frames
-        silent_parts = []
-        start_time = None
-        
-        for i, is_silent in enumerate(silent_frames):
-            if is_silent and start_time is None:
-                start_time = times[i]
-            elif not is_silent and start_time is not None:
-                duration = times[i] - start_time
-                if duration >= min_silence_duration:
-                    silent_parts.append((start_time, times[i]))
-                start_time = None
-        
-        # Check if the last segment is silent
-        if start_time is not None:
-            duration = times[-1] - start_time
-            if duration >= min_silence_duration:
-                silent_parts.append((start_time, times[-1]))
-        
-        return silent_parts
-    
-    @staticmethod
     def adjust_audio_length(audio: np.ndarray, target_duration: float, 
                            sample_rate: int) -> np.ndarray:
         """Adjust audio length to match target duration"""

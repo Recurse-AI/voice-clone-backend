@@ -74,64 +74,86 @@ class VoiceCloningService:
             speaker_seeds = {}  # Keep same seed per speaker
             
             for i, segment in enumerate(segments):
-                if not segment or not isinstance(segment, dict):
+                try:
+                    if not segment or not isinstance(segment, dict):
+                        logger.warning(f"Skipping segment {i+1}: Invalid segment data")
+                        continue
+                    
+                    # Get segment data
+                    english_text = segment.get('english_text', segment.get('text', ''))
+                    if not english_text.strip():
+                        logger.warning(f"Skipping segment {i+1}: No english_text")
+                        continue
+                    
+                    # Use segment's own audio as reference
+                    audio_path = segment.get('audio_path')
+                    if not audio_path or not os.path.exists(audio_path):
+                        logger.warning(f"Skipping segment {i+1}: No audio file found at {audio_path}")
+                        continue
+                    
+                    # Get speaker and set consistent seed per speaker
+                    speaker = segment.get('speaker', 'A')
+                    if speaker not in speaker_seeds:
+                        speaker_seeds[speaker] = base_seed + (ord(speaker) - ord('A'))
+                    
+                    set_seed(speaker_seeds[speaker])
+                    
+                    logger.info(f"Processing segment {i+1}/{len(segments)} (Speaker {speaker})...")
+                    logger.info(f"Using segment audio as reference: {audio_path}")
+                    logger.info(f"Text: {english_text}")
+                    
+                    # Get target duration
+                    target_duration = segment.get('duration', 5.0)
+                    
+                    try:
+                        # Generate audio using segment itself as reference
+                        cloned_audio = self._generate_single_segment(
+                            english_text, audio_path, english_text, 
+                            temperature, cfg_scale, top_p
+                        )
+                        
+                        if cloned_audio is None:
+                            logger.warning(f"Skipping segment {i+1}: Failed to generate audio")
+                            continue
+                        
+                        # Apply time adjustment
+                        cloned_audio = self._adjust_audio_length(
+                            cloned_audio, 
+                            target_duration, 
+                            use_speed_adjustment=settings.USE_SPEED_ADJUSTMENT,
+                            speed_factor=settings.AUDIO_SPEED_FACTOR
+                        )
+                        
+                        logger.info(f"Successfully generated audio for segment {i+1}")
+                        
+                        cloned_segments.append({
+                            "success": True,
+                            "original_data": segment,
+                            "cloned_audio": cloned_audio,
+                            "duration": target_duration,
+                            "speaker": speaker
+                        })
+                        
+                    except Exception as generation_error:
+                        logger.error(f"Error generating audio for segment {i+1}: {generation_error}")
+                        continue
+                    
+                    # Clear memory after each segment to prevent crashes
+                    self._cleanup_memory()
+                    
+                    # Additional cleanup for large segments
+                    if i > 0 and (i + 1) % 10 == 0:
+                        logger.info(f"Processed {i+1} segments, performing deep cleanup...")
+                        import gc
+                        import torch
+                        gc.collect()
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                            torch.cuda.synchronize()
+                
+                except Exception as segment_error:
+                    logger.error(f"Critical error processing segment {i+1}: {segment_error}")
                     continue
-                
-                # Get segment data
-                english_text = segment.get('english_text', segment.get('text', ''))
-                if not english_text.strip():
-                    logger.warning(f"Skipping segment {i+1}: No english_text")
-                    continue
-                
-                # Use segment's own audio as reference
-                audio_path = segment.get('audio_path')
-                if not audio_path or not os.path.exists(audio_path):
-                    logger.warning(f"Skipping segment {i+1}: No audio file found")
-                    continue
-                
-                # Get speaker and set consistent seed per speaker
-                speaker = segment.get('speaker', 'A')
-                if speaker not in speaker_seeds:
-                    speaker_seeds[speaker] = base_seed + (ord(speaker) - ord('A'))
-                
-                set_seed(speaker_seeds[speaker])
-                
-                logger.info(f"Processing segment {i+1} (Speaker {speaker})...")
-                logger.info(f"Using segment audio as reference: {audio_path}")
-                logger.info(f"Text: {english_text}")
-                
-                # Get target duration
-                target_duration = segment.get('duration', 5.0)
-                
-                # Generate audio using segment itself as reference
-                cloned_audio = self._generate_single_segment(
-                    english_text, audio_path, english_text, 
-                    temperature, cfg_scale, top_p
-                )
-                
-                if cloned_audio is None:
-                    logger.warning(f"Skipping segment {i+1}: Failed to generate audio")
-                    continue
-                
-                # Apply time adjustment
-                cloned_audio = self._adjust_audio_length(
-                    cloned_audio, 
-                    target_duration, 
-                    use_speed_adjustment=settings.USE_SPEED_ADJUSTMENT,
-                    speed_factor=settings.AUDIO_SPEED_FACTOR
-                )
-                
-                logger.info(f"Successfully generated audio for segment {i+1}")
-                
-                cloned_segments.append({
-                    "success": True,
-                    "original_data": segment,
-                    "cloned_audio": cloned_audio,
-                    "duration": target_duration,
-                    "speaker": speaker
-                })
-                
-                self._cleanup_memory()
             
             cloning_end_time = time.time()
             cloning_duration = cloning_end_time - cloning_start_time

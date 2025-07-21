@@ -190,24 +190,29 @@ class AudioProcessor:
                 
                 for idx, cloned_segment in enumerate(cloned_segments):
                     try:
-                        if 'audio_data' not in cloned_segment or cloned_segment['audio_data'] is None:
+                        # Check for cloned_audio key instead of audio_data
+                        audio_data = cloned_segment.get('cloned_audio') or cloned_segment.get('audio_data')
+                        if audio_data is None:
                             logger.warning(f"Cloned segment {idx} failed or has no audio data")
                             continue
                         
-                        # Save the cloned audio
-                        segment_index = cloned_segment.get('segment_index', idx)
-                        cloned_filename = f"segment_{segment_index}_cloned.wav"
+                        # Get segment index from original data or use idx+1
+                        original_data = cloned_segment.get('original_data', {})
+                        segment_index = original_data.get('segment_index', idx + 1)
+                        
+                        # Use the filename pattern expected by audio_reconstructor
+                        cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
                         cloned_path = cloned_dir / cloned_filename
                         
                         try:
-                            sf.write(str(cloned_path), cloned_segment['audio_data'], self.voice_cloning_service.sample_rate)
+                            sf.write(str(cloned_path), audio_data, self.voice_cloning_service.sample_rate)
                             logger.debug(f"Saved cloned audio: {cloned_path}")
                         except Exception as save_error:
                             logger.error(f"Failed to create cloned audio file: {cloned_path}")
                             continue
                         
                         # Update metadata to include cloned audio path
-                        metadata_file = cloned_dir / f"segment_{segment_index}_metadata.json"
+                        metadata_file = cloned_dir / f"segment_{segment_index:03d}_metadata.json"
                         if metadata_file.exists():
                             try:
                                 with open(metadata_file, 'r', encoding='utf-8') as f:
