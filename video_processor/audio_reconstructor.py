@@ -55,38 +55,16 @@ class AudioReconstructor:
                         if not segment_data.get('end'):
                             continue
                         
-                        # Try multiple cloned audio file patterns
+                        # Find cloned audio file
                         segment_index = segment_data.get('segment_index', 1)
-                        cloned_audio_path = None
-                        
-                        # Pattern 1: cloned_segment_XXX.wav (new format)
                         cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
-                        path1 = segments_subdir / cloned_filename
+                        cloned_audio_path = segments_subdir / cloned_filename
                         
-                        # Pattern 2: segment_XXX_cloned.wav (old format)
-                        cloned_filename2 = f"segment_{segment_index}_cloned.wav"
-                        path2 = segments_subdir / cloned_filename2
-                        
-                        # Pattern 3: segment_XXX_cloned.wav with 3-digit padding
-                        cloned_filename3 = f"segment_{segment_index:03d}_cloned.wav"
-                        path3 = segments_subdir / cloned_filename3
-                        
-                        # Use the first existing file
-                        if path1.exists():
-                            cloned_audio_path = path1
-                        elif path2.exists():
-                            cloned_audio_path = path2
-                        elif path3.exists():
-                            cloned_audio_path = path3
-                        
-                        # Check if any cloned audio file exists
-                        if cloned_audio_path and cloned_audio_path.exists():
+                        if cloned_audio_path.exists():
                             segment_data['cloned_audio_path'] = str(cloned_audio_path)
                             segment_data['cloned_audio_exists'] = True
                             all_segments.append(segment_data)
                         else:
-                            print(f"Warning: No cloned audio file found for segment {segment_index}")
-                            print(f"  Tried: {path1}, {path2}, {path3}")
                             continue
                             
                     except Exception as e:
@@ -94,15 +72,6 @@ class AudioReconstructor:
                         continue
             
             if not all_segments:
-                print("No valid cloned segments found. Checking available files...")
-                # Debug: Print what files are actually available
-                for speaker_dir in segments_path.glob("speaker_*"):
-                    if speaker_dir.is_dir():
-                        segments_subdir = speaker_dir / "segments"
-                        if segments_subdir.exists():
-                            print(f"Files in {segments_subdir}:")
-                            for file in segments_subdir.iterdir():
-                                print(f"  - {file.name}")
                 return {"success": False, "error": "No valid cloned segments found"}
             
             print(f"Found {len(all_segments)} valid cloned segments")

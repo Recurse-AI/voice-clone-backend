@@ -190,53 +190,26 @@ class AudioProcessor:
                 
                 for idx, cloned_segment in enumerate(cloned_segments):
                     try:
-                        # Check for cloned_audio key instead of audio_data
-                        audio_data = cloned_segment.get('cloned_audio') or cloned_segment.get('audio_data')
-                        if audio_data is None:
-                            logger.warning(f"Cloned segment {idx} failed or has no audio data")
-                            continue
-                        
-                        # Get segment index from original data or use idx+1
+                        audio_data = cloned_segment.get('cloned_audio')
                         original_data = cloned_segment.get('original_data', {})
                         segment_index = original_data.get('segment_index', idx + 1)
                         
-                        # Use the filename pattern expected by audio_reconstructor
-                        cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
-                        cloned_path = cloned_dir / cloned_filename
-                        
-                        try:
+                        if audio_data is not None and len(audio_data) > 0:
+                            cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
+                            cloned_path = cloned_dir / cloned_filename
                             sf.write(str(cloned_path), audio_data, self.voice_cloning_service.sample_rate)
-                            logger.debug(f"Saved cloned audio: {cloned_path}")
-                        except Exception as save_error:
-                            logger.error(f"Failed to create cloned audio file: {cloned_path}")
-                            continue
-                        
-                        # Update metadata to include cloned audio path
-                        metadata_file = cloned_dir / f"segment_{segment_index:03d}_metadata.json"
-                        if metadata_file.exists():
-                            try:
+                            
+                            # Update metadata
+                            metadata_file = cloned_dir / f"segment_{segment_index:03d}_metadata.json"
+                            if metadata_file.exists():
                                 with open(metadata_file, 'r', encoding='utf-8') as f:
                                     metadata = json.load(f)
-                                
                                 metadata['cloned_audio_path'] = str(cloned_path)
-                                metadata['cloning_parameters'] = {
-                                    'temperature': temperature,
-                                    'cfg_scale': cfg_scale,
-                                    'top_p': top_p,
-                                    'seed': speaker_seed
-                                }
-                                metadata['cloning_timestamp'] = str(datetime.now())
-                                
                                 with open(metadata_file, 'w', encoding='utf-8') as f:
                                     json.dump(metadata, f, ensure_ascii=False, indent=2)
-                                
-                                logger.debug(f"Updated metadata for segment {segment_index}: {metadata_file}")
-                                
-                            except Exception as metadata_error:
-                                logger.error(f"Error updating metadata: {metadata_error}")
-                        
-                        speaker_successful += 1
-                        total_successful_clones += 1
+                            
+                            speaker_successful += 1
+                            total_successful_clones += 1
                         
                     except Exception as e:
                         logger.error(f"Error saving cloned segment {idx}: {e}")
@@ -245,7 +218,6 @@ class AudioProcessor:
                 speaker_results[speaker] = speaker_successful
                 
                 logger.info(f"Speaker {speaker} completed: {speaker_successful}/{len(speaker_segments)} successful")
-                
                 self.voice_cloning_service.clear_cache()
             
             logger.info(f"Total successful clones: {total_successful_clones}")
