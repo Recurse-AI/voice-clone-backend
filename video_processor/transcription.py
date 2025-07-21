@@ -219,7 +219,7 @@ class TranscriptionService:
             
             # Check cache first for repeated translations
             with self.cache_lock:
-                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_{len(speakers_in_segment)}"
+                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_{len(speakers_in_segment)}_v2_7-11words"
                 if cache_key in self.translation_cache:
                     return self.translation_cache[cache_key]
             
