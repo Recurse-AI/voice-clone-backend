@@ -135,7 +135,6 @@ async def root():
 
 @app.post("/process-video", response_model=StartProcessingResponse)
 async def process_video(
-    background_tasks: BackgroundTasks,
     video_url: Optional[str] = Form(None, description="Video URL (HTTP/HTTPS) for processing with automatic separation"),
     video_file: Optional[UploadFile] = Depends(get_video_file),
     include_instruments: bool = Form(True, description="Whether to include instruments in final audio"),
@@ -191,43 +190,71 @@ async def process_video(
     # Generate unique audio ID
     audio_id = r2_storage.generate_audio_id()
     
-    # Handle file upload if provided
+    # Prepare video source for queue processing
     video_source = None
     if has_file:
         try:
-            # Save uploaded file
+            # Save uploaded file temporarily for queue processing
             upload_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_uploaded_video{Path(video_file.filename).suffix}")
             
             with open(upload_temp_path, "wb") as buffer:
                 content = await video_file.read()
                 buffer.write(content)
             
+            # FileHandler will validate this file in queue processing
             video_source = upload_temp_path
             
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
     else:
+        # FileHandler will download this URL in queue processing  
         video_source = video_url
     
     # Initialize status tracking
     status_manager.initialize_status(audio_id)
     
-    # Start background processing
-    from video_processing import process_video_background
-    background_tasks.add_task(
-        process_video_background,
-        video_source, audio_id, include_instruments, generate_subtitles,
-        temperature, cfg_scale, top_p, target_language, 
-        language_code, speakers_expected, has_file, audio_processor
+    # Submit to video processing queue
+    from video_processor.video_queue_manager import video_queue_manager
+    
+    # Prepare parameters for queue processing
+    queue_parameters = {
+        "include_instruments": include_instruments,
+        "generate_subtitles": generate_subtitles,
+        "temperature": temperature,
+        "cfg_scale": cfg_scale,
+        "top_p": top_p,
+        "target_language": target_language,
+        "language_code": language_code,
+        "speakers_expected": speakers_expected
+    }
+    
+    # Submit to queue (this will handle the processing automatically)
+    request_id = video_queue_manager.submit_request(
+        video_source=video_source,
+        audio_id=audio_id,
+        is_file_upload=has_file,
+        parameters=queue_parameters
     )
+    
+    # Get queue information for response
+    queue_stats = video_queue_manager.get_queue_stats()
+    queue_request_status = video_queue_manager.get_request_status(request_id)
+    
+    # Determine initial status message
+    if queue_request_status and queue_request_status.get("queue_position", 0) > 0:
+        message = f"Video processing queued successfully (position: {queue_request_status['queue_position']})"
+        estimated_time = queue_request_status.get("estimated_time", "15-30 minutes")
+    else:
+        message = "Video processing started successfully"
+        estimated_time = "10-20 minutes"
     
     # Return immediate response
     return StartProcessingResponse(
         success=True,
         audio_id=audio_id,
-        message="Video processing started successfully",
+        message=message,
         status="processing",
-        estimated_time="10-20 minutes",
+        estimated_time=estimated_time,
         status_check_url=f"/status/{audio_id}",
     )
 

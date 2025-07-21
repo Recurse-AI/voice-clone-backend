@@ -147,13 +147,46 @@ class StatusManager:
                 self._save_to_mongodb(audio_id, self._statuses[audio_id])
     
     def get_status(self, audio_id: str) -> Optional[Dict[str, Any]]:
-        """Get current status with MongoDB fallback"""
+        """Get current status with MongoDB fallback and queue information"""
         with self._lock:
+            status_data = None
             if audio_id in self._statuses:
-                return self._statuses[audio_id].copy()
-        
-        # Fallback to MongoDB
-        return self._get_from_mongodb(audio_id)
+                status_data = self._statuses[audio_id].copy()
+            else:
+                # Fallback to MongoDB
+                status_data = self._get_from_mongodb(audio_id)
+            
+            if status_data:
+                # Add queue information if available
+                try:
+                    from video_processor.video_queue_manager import video_queue_manager
+                    
+                    # Try to find queue request by audio_id
+                    queue_request = None
+                    for request_id, request in video_queue_manager.requests.items():
+                        if request.audio_id == audio_id:
+                            queue_request = video_queue_manager.get_request_status(request_id)
+                            break
+                    
+                    if queue_request:
+                        status_data["queue_info"] = {
+                            "request_id": queue_request["request_id"],
+                            "queue_status": queue_request["status"],
+                            "queue_position": queue_request.get("queue_position"),
+                            "estimated_time": queue_request.get("estimated_time"),
+                            "timeout_in": queue_request.get("timeout_in"),
+                            "started_at": queue_request.get("started_at"),
+                            "created_at": queue_request.get("created_at")
+                        }
+                    else:
+                        # No queue info available - might be legacy processing
+                        status_data["queue_info"] = None
+                        
+                except Exception as e:
+                    logger.warning(f"Failed to get queue info for {audio_id}: {e}")
+                    status_data["queue_info"] = None
+            
+            return status_data
     
     def complete_processing(self, audio_id: str, details: Optional[Dict[str, Any]] = None):
         """Mark processing as completed"""
