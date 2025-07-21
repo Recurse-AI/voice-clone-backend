@@ -118,9 +118,14 @@ class StatusManager:
             if audio_id not in self._statuses:
                 self._statuses[audio_id] = {}
             
+            # Use custom message if provided in details, otherwise use default
+            message = self._get_status_message(status)
+            if details and details.get("message"):
+                message = details["message"]
+            
             self._statuses[audio_id].update({
                 "status": status.value,
-                "message": self._get_status_message(status),
+                "message": message,
                 "audio_id": audio_id,
                 "updated_at": datetime.now().isoformat()
             })

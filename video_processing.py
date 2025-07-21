@@ -105,7 +105,13 @@ def process_video_background(
         }
         
         # Clone voices at natural speed
-        status_manager.set_progress(audio_id, 60)
+        from status_manager import ProcessingStatus
+        status_manager.update_status(
+            audio_id, 
+            ProcessingStatus.PROCESSING, 
+            progress=60, 
+            details={"message": "Starting voice cloning process..."}
+        )
         
         cloning_result = audio_processor.clone_voice_segments(
             processing_result["segments_dir"],
@@ -121,7 +127,15 @@ def process_video_background(
             return
         
         audio_processor.voice_cloning_service.clear_cache()
-        status_manager.set_progress(audio_id, 70)
+        
+        # Update status after voice cloning completion
+        from status_manager import ProcessingStatus
+        status_manager.update_status(
+            audio_id, 
+            ProcessingStatus.PROCESSING, 
+            progress=90, 
+            details={"message": "Voice cloning completed, reconstructing final audio..."}
+        )
         
         # Reconstruct audio
         if include_instruments:
@@ -437,7 +451,13 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             return {"success": False, "error": "Request was cancelled or timed out"}
         
         # Clone voices at natural speed
-        status_manager.set_progress(audio_id, 60)
+        from status_manager import ProcessingStatus
+        status_manager.update_status(
+            audio_id, 
+            ProcessingStatus.PROCESSING, 
+            progress=60, 
+            details={"message": "Starting voice cloning process..."}
+        )
         
         cloning_result = audio_processor.clone_voice_segments(
             processing_result["segments_dir"],
@@ -457,7 +477,14 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         if queue_request.status != VideoQueueStatus.PROCESSING:
             return {"success": False, "error": "Request was cancelled or timed out"}
         
-        status_manager.set_progress(audio_id, 70)
+        # Update status after voice cloning completion
+        from status_manager import ProcessingStatus
+        status_manager.update_status(
+            audio_id, 
+            ProcessingStatus.PROCESSING, 
+            progress=90, 
+            details={"message": "Voice cloning completed, reconstructing final audio..."}
+        )
         
         # Reconstruct audio
         if include_instruments:

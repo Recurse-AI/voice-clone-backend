@@ -172,7 +172,7 @@ class AudioProcessor:
                 # Clone segments for this speaker
                 logger.info(f"Calling voice cloning service for speaker {speaker}")
                 cloning_result = self.voice_cloning_service.clone_voice_segments(
-                    speaker_segments, temperature, cfg_scale, top_p, speaker_seed
+                    speaker_segments, temperature, cfg_scale, top_p, speaker_seed, audio_id
                 )
                 
                 logger.info(f"Cloning result success: {cloning_result.get('success', False)}")

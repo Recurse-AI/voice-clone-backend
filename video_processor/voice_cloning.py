@@ -57,7 +57,7 @@ class VoiceCloningService:
     
     def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.2,
                            cfg_scale: float = 3.0, top_p: float = 0.95,
-                           seed: Optional[int] = None) -> Dict[str, Any]:
+                           seed: Optional[int] = None, audio_id: Optional[str] = None) -> Dict[str, Any]:
         if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -65,6 +65,20 @@ class VoiceCloningService:
             return {"success": False, "error": "No segments provided"}
         
         logger.info(f"Starting voice cloning for {len(segments)} segments")
+        
+        # Update status to voice cloning if audio_id provided
+        if audio_id:
+            try:
+                from status_manager import status_manager
+                from status_manager import ProcessingStatus
+                status_manager.update_status(
+                    audio_id, 
+                    ProcessingStatus.PROCESSING, 
+                    progress=60, 
+                    details={"message": f"Processing voice cloning: 0/{len(segments)} segments completed"}
+                )
+            except:
+                pass  # Don't fail if status update fails
         
         try:
             base_seed = seed or settings.DEFAULT_SEED
@@ -101,6 +115,21 @@ class VoiceCloningService:
                     logger.info(f"Processing segment {i+1}/{len(segments)} (Speaker {speaker})...")
                     logger.info(f"Using segment audio as reference: {audio_path}")
                     logger.info(f"Text: {english_text}")
+                    
+                    # Update status with current segment progress
+                    if audio_id:
+                        try:
+                            from status_manager import status_manager
+                            from status_manager import ProcessingStatus
+                            progress = 60 + int((i / len(segments)) * 30)  # 60-90% range for voice cloning
+                            status_manager.update_status(
+                                audio_id, 
+                                ProcessingStatus.PROCESSING, 
+                                progress=progress,
+                                details={"message": f"Processing voice cloning: segment {i+1}/{len(segments)} (Speaker {speaker})"}
+                            )
+                        except:
+                            pass
                     
                     # Get target duration
                     target_duration = segment.get('duration', 5.0)

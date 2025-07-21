@@ -235,17 +235,17 @@ TEXT: "{clean_text}"
 
 FORMAT RULES:
 - Use {speaker_tags} for {len(speakers_in_segment)} speakers
-- 3-7 words per line maximum
+- 7-11 words per line maximum
 - Start each speaker turn with speaker tag
 - Keep sentences complete when possible
 - Natural, conversational English
 
 EXAMPLE:
-[S1] Hello there friend.
-How are you today?
-[S2] I'm doing great.
-Thanks for asking.
-[S1] That's wonderful news.
+[S1] Hello there my friend, how are you doing today?
+I hope everything is going well in your life.
+[S2] I'm doing absolutely fantastic, thank you so much for asking.
+Life has been treating me very well recently.
+[S1] That's such wonderful and exciting news to hear from you.
 
 OUTPUT (English with speaker tags):"""
                 else:
@@ -256,14 +256,14 @@ TEXT: "{clean_text}"
 
 FORMAT RULES:
 - Start with [S1] tag once
-- 3-7 words per line maximum
+- 7-11 words per line maximum
 - Natural, conversational English
 - Keep sentences complete when possible
 
 EXAMPLE:
-[S1] Hello there friend.
-How are you today?
-I'm glad to hear.
+[S1] Hello there my friend, how are you doing today?
+I hope everything is going well in your life.
+I'm really glad to hear that things are working out.
 
 OUTPUT (English with [S1] tag):"""
                 
