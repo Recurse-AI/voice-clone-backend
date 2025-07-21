@@ -28,7 +28,13 @@ class VideoQueueStatus(Enum):
 
 
 class VideoQueueRequest:
-    """Individual video processing request"""
+    """Individual video processing request
+    
+    request_id: Unique identifier for tracking this specific processing request
+                Used for queue management, cancellation, and debugging
+    audio_id:   User-facing identifier for the audio/video being processed
+                Used for status checking and file organization
+    """
     
     def __init__(self, request_id: str, video_source: str, audio_id: str, 
                  is_file_upload: bool, parameters: Dict[str, Any]):
@@ -214,6 +220,10 @@ class VideoQueueManager:
                     else:
                         request.status = VideoQueueStatus.FAILED
                         request.error = result.get("error", "Unknown error")
+                        
+                        # Update status manager
+                        from status_manager import status_manager
+                        status_manager.fail_processing(request.audio_id, request.error)
                     
                     request.completed_at = datetime.now()
                     request.progress = 100
@@ -238,6 +248,10 @@ class VideoQueueManager:
                     request.status = VideoQueueStatus.FAILED
                     request.error = f"Processing error: {str(e)}"
                     request.completed_at = datetime.now()
+                    
+                    # Update status manager
+                    from status_manager import status_manager
+                    status_manager.fail_processing(request.audio_id, request.error)
                     
                     if request_id in self.processing:
                         self.processing.remove(request_id)

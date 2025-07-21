@@ -169,10 +169,31 @@ class StatusManager:
                             break
                     
                     if queue_request:
+                        queue_status = queue_request["status"]
+                        
+                        # Sync main status with queue status if inconsistent
+                        if queue_status in ["failed", "timeout", "cancelled"] and status_data.get("status") not in ["failed", "completed"]:
+                            status_data["status"] = ProcessingStatus.FAILED.value
+                            error_msg = queue_request.get("error", "Processing failed")
+                            status_data["message"] = f"Processing failed: {error_msg}"
+                            status_data["updated_at"] = datetime.now().isoformat()
+                            if "details" not in status_data:
+                                status_data["details"] = {}
+                            status_data["details"]["error"] = error_msg
+                            
+                            # Save updated status
+                            self._statuses[audio_id] = status_data
+                            self._save_to_mongodb(audio_id, status_data)
+                        
+                        # Enhance message with queue information
+                        queue_position = queue_request.get("queue_position")
+                        if queue_position and queue_position > 0:
+                            status_data["message"] = f"{status_data.get('message', 'Processing queued')} (Queue position: {queue_position})"
+                        
                         status_data["queue_info"] = {
                             "request_id": queue_request["request_id"],
-                            "queue_status": queue_request["status"],
-                            "queue_position": queue_request.get("queue_position"),
+                            "queue_status": queue_status,
+                            "queue_position": queue_position,
                             "estimated_time": queue_request.get("estimated_time"),
                             "timeout_in": queue_request.get("timeout_in"),
                             "started_at": queue_request.get("started_at"),

@@ -109,10 +109,10 @@ echo "🎬 Testing FFmpeg installation..."
 if command -v ffmpeg &> /dev/null; then
     ffmpeg -version | head -1
     echo "✅ FFmpeg is working"
-elif [[ "$PLATFORM" == "windows" ]] && [ -f "./ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe" ]; then
-    ./ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe -version | head -1
+elif [[ "$PLATFORM" == "windows" ]] && [ -f "./ffmpeg-master-latest-win64-gpl/ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe" ]; then
+    ./ffmpeg-master-latest-win64-gpl/ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe -version | head -1
     echo "✅ FFmpeg is working (local installation)"
-    export PATH="$PWD/ffmpeg-master-latest-win64-gpl/bin:$PATH"
+    export PATH="$PWD/ffmpeg-master-latest-win64-gpl/ffmpeg-master-latest-win64-gpl/bin:$PATH"
 else
     echo "❌ FFmpeg not found! Please install FFmpeg first."
     if [[ "$PLATFORM" == "windows" ]]; then

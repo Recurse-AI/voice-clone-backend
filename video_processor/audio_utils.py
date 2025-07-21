@@ -85,7 +85,7 @@ class AudioUtils:
         # Check local Windows installation
         import platform
         if platform.system() == 'Windows':
-            local_ffmpeg = Path('./ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe')
+            local_ffmpeg = Path('./ffmpeg-master-latest-win64-gpl/ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe')
             if local_ffmpeg.exists():
                 return str(local_ffmpeg)
         

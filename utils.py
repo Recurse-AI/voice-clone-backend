@@ -15,10 +15,10 @@ def cleanup_temp_files(audio_id: str, audio_temp_path: Optional[str] = None,
     """Clean up temporary files and log cache statistics"""
     try:
         from config import settings
-        from video_processor.base_processor import AudioProcessor
         
         # Get audio processor for cache cleanup
-        audio_processor = AudioProcessor(settings.TEMP_DIR)
+        from video_processor import get_audio_processor
+        audio_processor = get_audio_processor()
         
         # Log cache statistics before cleanup
         cache_stats = audio_processor.get_cache_stats()

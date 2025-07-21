@@ -17,7 +17,6 @@ from datetime import datetime
 
 from config import settings
 from r2_storage import R2Storage
-from video_processor.base_processor import AudioProcessor
 from video_processor.voice_cloning import set_seed
 
 from status_manager import status_manager, ProcessingStatus
@@ -64,20 +63,23 @@ async def get_video_file(video_file: Union[UploadFile, str, None] = File(None)) 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler"""
-    # Load Dia model
-    print("Starting Dia model loading...")
+    # Initialize shared audio processor with model loading
+    print("Starting API initialization...")
     try:
-        success = audio_processor.load_dia_model(
-            repo_id=settings.DIA_MODEL_REPO
-        )
-        if not success:
-            print("ERROR: Failed to load Dia model on startup")
-            logger.warning("Failed to load Dia model on startup")
+        # This will create the shared instance and load the model if not already loaded
+        audio_processor = get_audio_processor(load_model=True)
+        from video_processor import is_model_loaded
+        
+        if is_model_loaded():
+            print("Shared AudioProcessor with Dia model initialized successfully")
+            logger.info("Shared AudioProcessor with Dia model initialized successfully")
         else:
-            print("Dia model loaded successfully on startup")
+            print("WARNING: AudioProcessor initialized but Dia model not loaded")
+            logger.warning("AudioProcessor initialized but Dia model not loaded")
+            
     except Exception as e:
-        print(f"EXCEPTION during model loading: {e}")
-        logger.error(f"Exception during model loading: {e}")
+        print(f"EXCEPTION during initialization: {e}")
+        logger.error(f"Exception during initialization: {e}")
     
     # Create temp directory
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
@@ -103,7 +105,9 @@ app.add_middleware(
 
 # Global instances
 r2_storage = R2Storage()
-audio_processor = AudioProcessor(settings.TEMP_DIR)
+from video_processor import get_audio_processor
+# Audio processor will be initialized with model loading in lifespan event
+audio_processor = get_audio_processor(load_model=False)  # Don't load model here, wait for lifespan
 
 # Response models
 
@@ -304,11 +308,16 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
             temp_ref_path = temp_ref.name
         
         try:
-            # Load voice cloning service
+            # Use shared voice cloning service
             voice_service = audio_processor.voice_cloning_service
+            from video_processor import is_model_loaded, get_audio_processor
+            
+            # Ensure model is loaded globally
+            if not is_model_loaded():
+                get_audio_processor(load_model=True)  # Force load if not already loaded
+                
             if not voice_service.is_model_loaded():
-                if not voice_service.load_dia_model():
-                    raise HTTPException(status_code=500, detail="Failed to load Dia model")
+                raise HTTPException(status_code=500, detail="Dia model not available")
             
             # Generate audio using Dia format (text + "\n" + text)
             combined_text = request.text + "\n" + request.text

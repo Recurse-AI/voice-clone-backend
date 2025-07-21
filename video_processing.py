@@ -28,7 +28,8 @@ def process_video_background(
     
     # Use passed audio_processor or create new one
     if audio_processor is None:
-        audio_processor = AudioProcessor(settings.TEMP_DIR)
+        from video_processor import get_audio_processor
+        audio_processor = get_audio_processor()
     
     final_language_code = language_code if language_code and language_code.strip() else None
     video_temp_path = None
@@ -363,7 +364,8 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     
     # Initialize services
     r2_storage = R2Storage()
-    audio_processor = AudioProcessor(settings.TEMP_DIR)
+    from video_processor import get_audio_processor
+    audio_processor = get_audio_processor()
     file_handler = FileHandler(settings.TEMP_DIR)
     
     video_temp_path = None
