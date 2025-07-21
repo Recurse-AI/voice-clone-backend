@@ -237,14 +237,20 @@ async def process_video(
     )
     
     # Get queue information for response
-    queue_stats = video_queue_manager.get_queue_stats()
-    queue_request_status = video_queue_manager.get_request_status(request_id)
-    
-    # Determine initial status message
-    if queue_request_status and queue_request_status.get("queue_position", 0) > 0:
-        message = f"Video processing queued successfully (position: {queue_request_status['queue_position']})"
-        estimated_time = queue_request_status.get("estimated_time", "15-30 minutes")
-    else:
+    try:
+        queue_stats = video_queue_manager.get_queue_stats()
+        queue_request_status = video_queue_manager.get_request_status(request_id)
+        
+        # Determine initial status message
+        queue_position = queue_request_status.get("queue_position") if queue_request_status else None
+        if queue_request_status and queue_position is not None and queue_position > 0:
+            message = f"Video processing queued successfully (position: {queue_position})"
+            estimated_time = queue_request_status.get("estimated_time", "15-30 minutes")
+        else:
+            message = "Video processing started successfully"
+            estimated_time = "10-20 minutes"
+    except Exception as e:
+        logger.warning(f"Failed to get queue info: {e}")
         message = "Video processing started successfully"
         estimated_time = "10-20 minutes"
     

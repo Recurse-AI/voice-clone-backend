@@ -6,7 +6,7 @@ Contains the main video processing function moved from main.py for better organi
 import os
 import urllib.parse
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any
 import soundfile as sf
 
 def process_video_background(

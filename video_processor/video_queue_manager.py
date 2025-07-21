@@ -195,8 +195,7 @@ class VideoQueueManager:
             if not request:
                 return
             
-            # Import here to avoid circular imports
-            from .file_handler import FileHandler
+            # Import here to avoid circular imports  
             from video_processing import process_video_with_queue
             
             # Check if still should process (not cancelled/timed out)
