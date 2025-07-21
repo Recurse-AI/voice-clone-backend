@@ -23,14 +23,20 @@ class AudioMixer:
         active_mode = settings.get("activeAudioMode", "english")  # "original" or "english"
         instruments_enabled = settings.get("instrumentsEnabled", True)
         
-        logger.info(f"Mixing audio tracks: mode={active_mode}, instruments={instruments_enabled}")
+        logger.info(f"🎵 AUDIO MIXER: mode={active_mode}, instruments={instruments_enabled}")
+        logger.info(f"🎵 Input tracks: {len(audio_tracks)} total")
+        
+        # Log input track types
+        for track in audio_tracks:
+            audio_type = track.voice_clone_info.audio_type if hasattr(track, 'voice_clone_info') else "unknown"
+            logger.info(f"  - Track {track.id}: type={audio_type}")
         
         # Filter tracks based on audio mode
         final_audio_tracks = self._filter_tracks_by_mode(
             audio_tracks, active_mode, instruments_enabled
         )
         
-        logger.info(f"Filtered {len(audio_tracks)} tracks to {len(final_audio_tracks)} tracks")
+        logger.info(f"🎵 RESULT: {len(final_audio_tracks)} tracks selected for final mix")
         return final_audio_tracks
     
     def _filter_tracks_by_mode(self, audio_tracks: List[AudioItem], active_mode: str, 
@@ -40,37 +46,34 @@ class AudioMixer:
         """
         final_tracks = []
         
-        logger.info(f"Filtering {len(audio_tracks)} tracks with mode={active_mode}, instruments={instruments_enabled}")
+        logger.info(f"🎛️ FILTERING: mode={active_mode}, instruments_enabled={instruments_enabled}")
         
         for track in audio_tracks:
             audio_type = track.voice_clone_info.audio_type
-            track_url = track.src if hasattr(track, 'src') else 'No URL'
-            
-            logger.info(f"Track {track.id}: type={audio_type}, url={track_url}")
             
             # Audio mixing logic based on mode
             if active_mode == "english":
                 # English mode: Play cloned audio + instruments (if enabled)
                 if audio_type == "cloned":
                     final_tracks.append(track)
-                    logger.info(f"✅ Including cloned audio track: {track.id}")
+                    logger.info(f"✅ INCLUDED: {track.id} (cloned voice - always included in English mode)")
                 elif audio_type == "instruments" and instruments_enabled:
                     final_tracks.append(track)
-                    logger.info(f"✅ Including instruments track: {track.id}")
-                # Skip original/source audio in English mode
+                    logger.info(f"✅ INCLUDED: {track.id} (instruments - enabled in settings)")
+                elif audio_type == "instruments" and not instruments_enabled:
+                    logger.info(f"❌ SKIPPED: {track.id} (instruments - disabled in settings)")
                 else:
-                    logger.info(f"❌ Skipping {audio_type} track in English mode: {track.id}")
+                    logger.info(f"❌ SKIPPED: {track.id} (type={audio_type} - not needed in English mode)")
                     
             elif active_mode == "original":
                 # Original mode: Play source video audio only
                 if audio_type == "source" or audio_type is None:
                     final_tracks.append(track)
-                    logger.info(f"✅ Including source audio track: {track.id}")
-                # Skip cloned audio and instruments in Original mode
+                    logger.info(f"✅ INCLUDED: {track.id} (source audio - required in Original mode)")
                 else:
-                    logger.info(f"❌ Skipping {audio_type} track in Original mode: {track.id}")
+                    logger.info(f"❌ SKIPPED: {track.id} (type={audio_type} - not needed in Original mode)")
         
-        logger.info(f"Final result: {len(final_tracks)} tracks selected")
+        logger.info(f"🎯 FILTER RESULT: {len(final_tracks)} out of {len(audio_tracks)} tracks selected")
         return final_tracks
     
     def apply_volume_changes(self, audio_tracks: List[AudioItem], 

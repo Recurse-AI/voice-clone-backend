@@ -110,10 +110,24 @@ class BackgroundProcessor:
                 format=export_data["format"]
             )
             
-            # Get optional URLs from export data
+            # Get optional URLs from export data - check settings first
             video_url = export_data["voiceCloneData"].get("originalVideoUrl")
-            instruments_url = export_data.get("instrumentsUrl")
-            subtitles_url = export_data.get("subtitlesUrl")
+            
+            # Only include instruments if enabled in settings
+            instruments_url = None
+            if export_data["settings"].get("instrumentsEnabled", False):
+                instruments_url = export_data.get("instrumentsUrl")
+                logger.info(f"Instruments enabled: URL = {instruments_url}")
+            else:
+                logger.info("Instruments disabled in settings")
+            
+            # Only include subtitles if enabled in settings
+            subtitles_url = None
+            if export_data["settings"].get("subtitlesEnabled", False):
+                subtitles_url = export_data["voiceCloneData"].get("subtitlesUrl")
+                logger.info(f"Subtitles enabled: URL = {subtitles_url}")
+            else:
+                logger.info("Subtitles disabled in settings")
             
             render_result = asyncio.run(video_renderer.render_video(
                 video_url=video_url,

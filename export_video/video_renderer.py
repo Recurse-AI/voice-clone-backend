@@ -48,12 +48,18 @@ class VideoRenderer:
             # Download instruments if provided
             instruments_path = None
             if instruments_url:
+                logger.info(f"📁 Downloading instruments from: {instruments_url}")
                 instruments_path = await self._download_instruments(instruments_url, job_temp_dir)
+            else:
+                logger.info("📁 No instruments URL provided - skipping instruments")
             
             # Download subtitle file if provided
             subtitle_file = None
             if subtitles_url:
+                logger.info(f"📄 Downloading subtitles from: {subtitles_url}")
                 subtitle_file = await self._download_subtitles(subtitles_url, job_temp_dir)
+            else:
+                logger.info("📄 No subtitles URL provided - skipping subtitles")
             
             # Use existing video processor functionality
             if video_path:
