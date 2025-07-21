@@ -70,10 +70,7 @@ async def lifespan(app: FastAPI):
         audio_processor = get_audio_processor(load_model=True)
         from video_processor import is_model_loaded
         
-        if is_model_loaded():
-            print("Shared AudioProcessor with Dia model initialized successfully")
-            logger.info("Shared AudioProcessor with Dia model initialized successfully")
-        else:
+        if not is_model_loaded():
             print("WARNING: AudioProcessor initialized but Dia model not loaded")
             logger.warning("AudioProcessor initialized but Dia model not loaded")
             
@@ -106,8 +103,7 @@ app.add_middleware(
 # Global instances
 r2_storage = R2Storage()
 from video_processor import get_audio_processor
-# Audio processor will be initialized with model loading in lifespan event
-audio_processor = get_audio_processor(load_model=False)  # Don't load model here, wait for lifespan
+# Audio processor will be initialized in lifespan event
 
 # Response models
 
@@ -308,14 +304,11 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
             temp_ref_path = temp_ref.name
         
         try:
-            # Use shared voice cloning service
-            voice_service = audio_processor.voice_cloning_service
+            # Get shared audio processor
             from video_processor import is_model_loaded, get_audio_processor
+            audio_processor = get_audio_processor(load_model=True)
+            voice_service = audio_processor.voice_cloning_service
             
-            # Ensure model is loaded globally
-            if not is_model_loaded():
-                get_audio_processor(load_model=True)  # Force load if not already loaded
-                
             if not voice_service.is_model_loaded():
                 raise HTTPException(status_code=500, detail="Dia model not available")
             

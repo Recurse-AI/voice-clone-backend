@@ -44,13 +44,10 @@ def get_audio_processor(load_model: bool = True):
                 if success:
                     _model_loaded = True
                     logger.info("Dia model loaded successfully (global instance)")
-                    print("Dia model loaded successfully (global instance)")
                 else:
                     logger.error("Failed to load Dia model on global instance")
-                    print("ERROR: Failed to load Dia model on global instance")
             except Exception as e:
                 logger.error(f"Exception during global model loading: {e}")
-                print(f"EXCEPTION during global model loading: {e}")
     
     return _audio_processor
 

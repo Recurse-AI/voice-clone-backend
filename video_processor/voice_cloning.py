@@ -42,21 +42,18 @@ class VoiceCloningService:
         try:
             repo_id = repo_id or settings.DIA_MODEL_REPO
             compute_dtype = settings.DIA_COMPUTE_DTYPE if self.device == "cuda" else "float32"
-            print(f"Loading Dia model from repo: {repo_id}")
-            print(f"Device: {self.device}, Compute dtype: {compute_dtype}")
+            logger.info(f"Loading Dia model from repo: {repo_id}, Device: {self.device}, Compute dtype: {compute_dtype}")
             
             self.dia_model = Dia.from_pretrained(repo_id, compute_dtype=compute_dtype)
-            print("Dia model loaded successfully")
+            logger.info("Dia model loaded successfully")
             return True
         except Exception as e:
-            print(f"Error loading Dia model: {e}")
+            logger.error(f"Error loading Dia model: {e}")
             raise Exception(f"Error loading Dia model: {e}")
         
     def is_model_loaded(self) -> bool:
         """Check if Dia model is loaded"""
-        is_loaded = self.dia_model is not None
-        print(f"Model loaded check: {is_loaded}")
-        return is_loaded
+        return self.dia_model is not None
     
     def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.2,
                            cfg_scale: float = 3.0, top_p: float = 0.95,
@@ -67,7 +64,7 @@ class VoiceCloningService:
         if not segments:
             return {"success": False, "error": "No segments provided"}
         
-        print(f"Starting voice cloning for {len(segments)} segments")
+        logger.info(f"Starting voice cloning for {len(segments)} segments")
         
         try:
             base_seed = seed or settings.DEFAULT_SEED
@@ -83,13 +80,13 @@ class VoiceCloningService:
                 # Get segment data
                 english_text = segment.get('english_text', segment.get('text', ''))
                 if not english_text.strip():
-                    print(f"Skipping segment {i+1}: No english_text")
+                    logger.warning(f"Skipping segment {i+1}: No english_text")
                     continue
                 
                 # Use segment's own audio as reference
                 audio_path = segment.get('audio_path')
                 if not audio_path or not os.path.exists(audio_path):
-                    print(f"Skipping segment {i+1}: No audio file found")
+                    logger.warning(f"Skipping segment {i+1}: No audio file found")
                     continue
                 
                 # Get speaker and set consistent seed per speaker
@@ -99,9 +96,9 @@ class VoiceCloningService:
                 
                 set_seed(speaker_seeds[speaker])
                 
-                print(f"Processing segment {i+1} (Speaker {speaker})...")
-                print(f"Using segment audio as reference: {audio_path}")
-                print(f"Text: {english_text}")
+                logger.info(f"Processing segment {i+1} (Speaker {speaker})...")
+                logger.info(f"Using segment audio as reference: {audio_path}")
+                logger.info(f"Text: {english_text}")
                 
                 # Get target duration
                 target_duration = segment.get('duration', 5.0)
@@ -113,7 +110,7 @@ class VoiceCloningService:
                 )
                 
                 if cloned_audio is None:
-                    print(f"Skipping segment {i+1}: Failed to generate audio")
+                    logger.warning(f"Skipping segment {i+1}: Failed to generate audio")
                     continue
                 
                 # Apply time adjustment
@@ -124,7 +121,7 @@ class VoiceCloningService:
                     speed_factor=settings.AUDIO_SPEED_FACTOR
                 )
                 
-                print(f"Successfully generated audio for segment {i+1}")
+                logger.info(f"Successfully generated audio for segment {i+1}")
                 
                 cloned_segments.append({
                     "success": True,
@@ -139,7 +136,7 @@ class VoiceCloningService:
             cloning_end_time = time.time()
             cloning_duration = cloning_end_time - cloning_start_time
             
-            print(f"Cloning Time: {cloning_duration:.2f} seconds")
+            logger.info(f"Cloning Time: {cloning_duration:.2f} seconds")
             
             return {
                 "success": True,
@@ -164,7 +161,7 @@ class VoiceCloningService:
             # Dia format expects reference text + target text
             combined_text = text + "\n" + text
             
-            print(f"Generating audio with Dia format...")
+            logger.info(f"Generating audio with Dia format...")
             
             with torch.inference_mode():
                 audio = self.dia_model.generate(
@@ -179,11 +176,11 @@ class VoiceCloningService:
                     verbose=False
                 )
             
-            print(f"Audio generation completed")
+            logger.info(f"Audio generation completed")
             return audio
             
         except Exception as e:
-            print(f"Audio generation failed: {str(e)}")
+            logger.error(f"Audio generation failed: {str(e)}")
             return None
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float, 
@@ -206,7 +203,7 @@ class VoiceCloningService:
         current_samples = len(audio)
         current_duration = current_samples / self.sample_rate
         
-        print(f"Adjusting audio: {current_duration:.2f}s -> {target_duration:.2f}s")
+        logger.info(f"Adjusting audio: {current_duration:.2f}s -> {target_duration:.2f}s")
         
         # Calculate the stretch ratio
         stretch_ratio = target_duration / current_duration if current_duration > 0 else 1.0
@@ -224,18 +221,18 @@ class VoiceCloningService:
         if needs_stretching:
             # Apply the stretch ratio as calculated (already within 0.9-1.1 limits)
             try:
-                print(f"Applying time-stretch with ratio {stretch_ratio:.2f} (within quality limits)")
+                logger.info(f"Applying time-stretch with ratio {stretch_ratio:.2f} (within quality limits)")
                 adjusted_audio = librosa.effects.time_stretch(audio, rate=1.0/stretch_ratio)
             except Exception as e:
-                print(f"Time stretching failed: {e}, using original audio")
+                logger.error(f"Time stretching failed: {e}, using original audio")
                 adjusted_audio = audio
         else:
             if not use_speed_adjustment:
-                print("Speed adjustment disabled - preserving original audio")
+                logger.info("Speed adjustment disabled - preserving original audio")
             elif abs(1.0 - stretch_ratio) <= 0.05:
-                print(f"Duration difference too small ({abs(1.0 - stretch_ratio)*100:.1f}%), no stretching needed")
+                logger.info(f"Duration difference too small ({abs(1.0 - stretch_ratio)*100:.1f}%), no stretching needed")
             else:
-                print(f"Stretch ratio {stretch_ratio:.2f} outside quality limits (0.9-1.1), using original audio")
+                logger.info(f"Stretch ratio {stretch_ratio:.2f} outside quality limits (0.9-1.1), using original audio")
             adjusted_audio = audio
         
         # Handle length differences with minimal modification
