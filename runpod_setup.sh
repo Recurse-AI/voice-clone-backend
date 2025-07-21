@@ -140,12 +140,6 @@ echo "🔄 Stopping existing processes..."
 pkill -f "python.*main.py" || true
 sleep 3
 
-# Rotate logs before starting
-echo "📋 Checking and rotating logs..."
-rotate_api_log
-
-# Setup automatic log rotation
-setup_log_rotation
 
 # Start API with proper virtual environment
 echo "🚀 Starting API server..."
@@ -154,6 +148,5 @@ nohup ./venv/bin/python main.py > ./logs/api.log 2>&1 &
 
 # Wait for API to start
 echo "⏳ Waiting for API to start..."
-sleep 10
 
 echo "🎉 Setup complete! Your Voice Cloning API is ready!" 

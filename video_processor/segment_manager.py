@@ -19,10 +19,10 @@ class SegmentManager:
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.target_words_per_segment = 40  # Target words per segment
+        self.target_words_per_segment = 30  # Target words per segment
         self.min_duration = 3.0             # Minimum segment duration
         self.max_duration = 17.0            # Maximum segment duration
-        self.max_gap_seconds = 3.0          # Maximum gap between words
+        # Removed max_gap_seconds as requested
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Create segments with simple word-based chunking"""
@@ -31,7 +31,7 @@ class SegmentManager:
             return []
             
         words = transcript_data.get('words', [])
-        # Filter out invalid words
+        # Filter out invalid words but maintain them exactly as they are
         valid_words = [w for w in words if w and isinstance(w, dict) and 
                       w.get('text') and w.get('start') is not None and w.get('end') is not None]
         
@@ -50,12 +50,13 @@ class SegmentManager:
                 duration = seg.get('duration', 0)
                 word_count = seg.get('word_count', 0)
                 text_preview = seg.get('text', '')[:50] + "..." if len(seg.get('text', '')) > 50 else seg.get('text', '')
-                logger.info(f"Segment {i+1}: {duration:.2f}s, {word_count} words - '{text_preview}'")
+                speakers_in_segment = seg.get('speakers_in_segment', [])
+                logger.info(f"Segment {i+1}: {duration:.2f}s, {word_count} words, speakers: {speakers_in_segment} - '{text_preview}'")
         
         return segments
     
     def _create_word_based_segments(self, words: List[Dict]) -> List[Dict]:
-        """Create segments based on word count with duration validation"""
+        """Create segments based on word count with duration validation - allow multi-speaker"""
         segments = []
         current_chunk = []
         
@@ -81,7 +82,7 @@ class SegmentManager:
         return segments
     
     def _should_create_segment(self, current_chunk: List[Dict], current_index: int, all_words: List[Dict]) -> bool:
-        """Determine if we should create a segment now"""
+        """Determine if we should create a segment now - reduced speaker change impact"""
         if not current_chunk:
             return False
         
@@ -92,22 +93,8 @@ class SegmentManager:
         end_time = current_chunk[-1].get('end', 0) / 1000.0
         duration = end_time - start_time
         
-        # Check for speaker change (if next word exists)
-        if current_index + 1 < len(all_words):
-            current_speaker = current_chunk[-1].get('speaker', 'A')
-            next_speaker = all_words[current_index + 1].get('speaker', 'A')
-            if current_speaker != next_speaker:
-                logger.debug(f"Speaker change detected: {current_speaker} -> {next_speaker}")
-                return True
-        
-        # Check for long gap
-        if current_index + 1 < len(all_words):
-            current_end = current_chunk[-1].get('end', 0) / 1000.0
-            next_start = all_words[current_index + 1].get('start', 0) / 1000.0
-            gap = next_start - current_end
-            if gap > self.max_gap_seconds:
-                logger.debug(f"Long gap detected: {gap:.2f}s")
-                return True
+        # Removed speaker change check to allow multi-speaker segments
+        # Removed max_gap_seconds check as requested
         
         # Check if reached target word count and minimum duration
         if word_count >= self.target_words_per_segment and duration >= self.min_duration:
@@ -125,7 +112,7 @@ class SegmentManager:
         return False
     
     def _create_segment_from_words(self, words: List[Dict]) -> Optional[Dict]:
-        """Create a segment from a list of words"""
+        """Create a segment from a list of words - support multi-speaker segments"""
         if not words:
             return None
         
@@ -134,14 +121,23 @@ class SegmentManager:
         end_time = words[-1].get('end', 0) / 1000.0
         duration = end_time - start_time
         
-        # Build text
+        # Build text exactly as the words are - maintain original words
         text = ' '.join(w.get('text', '') for w in words if w.get('text')).strip()
         if not text:
             return None
         
-        # Get speaker (use most common speaker in the segment)
-        speakers = [w.get('speaker', 'A') for w in words if w.get('speaker')]
-        speaker = max(set(speakers), key=speakers.count) if speakers else 'A'
+        # Get all speakers in the segment and their word counts
+        speakers_in_segment = []
+        speaker_word_counts = {}
+        for w in words:
+            speaker = w.get('speaker', 'A')
+            if speaker not in speaker_word_counts:
+                speaker_word_counts[speaker] = 0
+                speakers_in_segment.append(speaker)
+            speaker_word_counts[speaker] += 1
+        
+        # Always use the first speaker as the primary speaker for folder assignment
+        primary_speaker = speakers_in_segment[0] if speakers_in_segment else 'A'
         
         # Calculate confidence
         confidences = [w.get('confidence', 0.5) for w in words if w.get('confidence') is not None]
@@ -152,23 +148,26 @@ class SegmentManager:
             logger.debug(f"Segment too short: {duration:.2f}s, text: '{text[:30]}...'")
             return None
         
-        logger.debug(f"Created segment: {duration:.2f}s, {len(words)} words, speaker: {speaker}")
+        logger.debug(f"Created segment: {duration:.2f}s, {len(words)} words, speakers: {speakers_in_segment}, primary: {primary_speaker}")
         
         return {
             'start': start_time,
             'end': end_time,
             'duration': duration,
             'text': text,
-            'speaker': speaker,
+            'speaker': primary_speaker,  # Always assign to first speaker
+            'speakers_in_segment': speakers_in_segment,  # Track all speakers
+            'speaker_word_counts': speaker_word_counts,  # Track word distribution
             'word_count': len(words),
             'confidence': confidence,
-            'words': words
+            'words': words,  # Keep exact words as they are
+            'is_multi_speaker': len(speakers_in_segment) > 1
         }
     
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int,
                             output_dir: Path, speakers: List[str], 
                             target_language: str, detected_language: str):
-        """Save segments for voice cloning with parallel translation"""
+        """Save segments for voice cloning with parallel translation - support multi-speaker"""
         if not segments or audio is None or sr <= 0:
             logger.error("Invalid input parameters for save_optimal_segments")
             return
@@ -194,16 +193,25 @@ class SegmentManager:
         translation_start_time = time.time()
         
         segment_texts = []
-        segment_speakers = []
+        segment_speakers_data = []
         for segment in segments:
             original_text = segment.get('text', '').strip()
             if not original_text:
                 raise ValueError(f"Segment has no text: {segment}")
             segment_texts.append(original_text)
-            segment_speakers.append(segment.get('speaker', 'A'))
+            
+            # Prepare speaker data for multi-speaker formatting
+            speakers_in_segment = segment.get('speakers_in_segment', [segment.get('speaker', 'A')])
+            segment_speakers_data.append({
+                'speakers': speakers_in_segment,
+                'is_multi_speaker': segment.get('is_multi_speaker', False),
+                'primary_speaker': segment.get('speaker', 'A')
+            })
         
-        # Process all translations in parallel
-        english_texts = self.transcription_service.format_dialogue_batch(segment_texts, segment_speakers)
+        # Process all translations in parallel with multi-speaker support
+        english_texts = self.transcription_service.format_dialogue_batch(
+            segment_texts, segment_speakers_data
+        )
         
         translation_time = time.time() - translation_start_time
         print(f"Parallel translation completed in {translation_time:.2f} seconds")
@@ -212,6 +220,7 @@ class SegmentManager:
             if not segment or not isinstance(segment, dict):
                 continue
                 
+            # Always use primary speaker (first speaker) for folder assignment
             speaker = segment.get('speaker', 'A')
             speaker_dir = output_dir / f"speaker_{speaker}"
             segments_dir = speaker_dir / "segments"
@@ -250,7 +259,10 @@ class SegmentManager:
                 'audio_path': str(audio_path),
                 'original_text': original_text,
                 'english_text': english_text,
-                'speaker': speaker,
+                'speaker': speaker,  # Primary speaker for folder assignment
+                'speakers_in_segment': segment.get('speakers_in_segment', [speaker]),
+                'is_multi_speaker': segment.get('is_multi_speaker', False),
+                'speaker_word_counts': segment.get('speaker_word_counts', {}),
                 'speaker_index': ord(speaker) - ord('A') + 1,
                 'start': start_time,
                 'end': end_time,
