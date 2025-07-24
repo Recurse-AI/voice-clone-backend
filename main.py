@@ -192,6 +192,9 @@ async def process_video(
     
     # Prepare video source for queue processing
     video_source = None
+    original_filename = None
+    original_source_url = None
+    
     if has_file:
         try:
             # Save uploaded file temporarily for queue processing
@@ -201,7 +204,8 @@ async def process_video(
                 content = await video_file.read()
                 buffer.write(content)
             
-            # FileHandler will validate this file in queue processing
+            # Store original filename and track source
+            original_filename = video_file.filename
             video_source = upload_temp_path
             
         except Exception as e:
@@ -209,6 +213,7 @@ async def process_video(
     else:
         # FileHandler will download this URL in queue processing  
         video_source = video_url
+        original_source_url = video_url
     
     # Initialize status tracking
     status_manager.initialize_status(audio_id)
@@ -225,7 +230,9 @@ async def process_video(
         "top_p": top_p,
         "target_language": target_language,
         "language_code": language_code,
-        "speakers_expected": speakers_expected
+        "speakers_expected": speakers_expected,
+        "original_filename": original_filename,
+        "original_source_url": original_source_url
     }
     
     # Submit to queue (this will handle the processing automatically)

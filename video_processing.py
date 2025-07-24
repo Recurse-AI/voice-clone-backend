@@ -13,7 +13,7 @@ def process_video_background(
     video_source: str, audio_id: str, include_instruments: bool,
     generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float,
     target_language: str, language_code: Optional[str], speakers_expected: Optional[int], is_file_upload: bool,
-    audio_processor=None
+    audio_processor=None, original_filename: Optional[str] = None, original_source_url: Optional[str] = None
 ):
     """Background video processing - handles both URL and file inputs"""
     from config import settings
@@ -41,7 +41,7 @@ def process_video_background(
         if is_file_upload:
             # File upload: video_source is already a local file path
             video_temp_path = video_source
-            filename = Path(video_source).name
+            filename = original_filename if original_filename else Path(video_source).name
         else:
             # URL download: download the video
             video_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_video.mp4")
@@ -90,9 +90,15 @@ def process_video_background(
         original_duration = len(original_audio) / original_sr
         file_size = os.path.getsize(video_temp_path)
         
+        # Set proper source URL for consistency
+        if is_file_upload:
+            source_url = original_filename if original_filename else filename
+        else:
+            source_url = original_source_url if original_source_url else video_source
+        
         original_audio_details = {
             "filename": filename,
-            "source_url": video_source if not is_file_upload else None,
+            "source_url": source_url,
             "source_type": "url" if not is_file_upload else "file_upload",
             "duration": original_duration,
             "sample_rate": original_sr,
@@ -375,6 +381,8 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     target_language = parameters.get("target_language", "English")
     language_code = parameters.get("language_code")
     speakers_expected = parameters.get("speakers_expected", 1)
+    original_filename = parameters.get("original_filename")
+    original_source_url = parameters.get("original_source_url")
     
     # Initialize services
     r2_storage = R2Storage()
@@ -431,10 +439,18 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         original_audio, original_sr = sf.read(vocal_path)
         original_duration = len(original_audio) / original_sr
         file_size = os.path.getsize(video_temp_path)
+         
+        # Set proper filename and source URL (will be updated after R2 upload)
+        if is_file_upload:
+            display_filename = original_filename if original_filename else os.path.basename(video_temp_path)
+            source_url = original_filename  # Temporary - will be updated with R2 URL
+        else:
+            display_filename = os.path.basename(video_temp_path)
+            source_url = original_source_url if original_source_url else video_source
         
         original_audio_details = {
-            "filename": os.path.basename(video_temp_path),
-            "source_url": video_source if not is_file_upload else None,
+            "filename": display_filename,
+            "source_url": source_url,
             "source_type": "url" if not is_file_upload else "file_upload",
             "duration": original_duration,
             "sample_rate": original_sr,
@@ -550,6 +566,17 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             instruments_filename = f"instruments_separated_{audio_id}.wav"
             instruments_r2_key = r2_storage.generate_file_path(audio_id, "instruments", instruments_filename)
             r2_instruments_result = r2_storage.upload_file(separated_instruments_path, instruments_r2_key, "audio/wav")
+            
+            # Upload original video file for reference (especially for file uploads)
+            r2_original_video_result = None
+            if is_file_upload:
+                original_video_filename = f"original_{display_filename}"
+                original_video_r2_key = r2_storage.generate_file_path(audio_id, "original", original_video_filename)
+                r2_original_video_result = r2_storage.upload_file(video_temp_path, original_video_r2_key, "video/mp4")
+                
+                # Update source_url with uploaded original video URL
+                if r2_original_video_result and r2_original_video_result.get("success"):
+                    original_audio_details["source_url"] = r2_original_video_result.get("url")
             
             r2_video_result = None
             r2_subtitle_result = None
