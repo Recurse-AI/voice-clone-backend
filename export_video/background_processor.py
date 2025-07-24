@@ -14,6 +14,8 @@ import soundfile as sf
 import numpy as np
 from scipy import signal
 
+from .constants import AUDIO_SAMPLE_RATE, VOICE_SEGMENT_VOLUME, INSTRUMENT_VOLUME_RATIO
+
 logger = logging.getLogger(__name__)
 
 class BackgroundProcessor:
@@ -67,13 +69,17 @@ class BackgroundProcessor:
             
             # Apply audio changes
             editing_changes = export_data["editingChanges"]
-            if "volumeChanges" in editing_changes:
+            if "volumeAdjustments" in editing_changes:
                 audio_mixer.apply_volume_changes(
-                    processed_items.audio_tracks, editing_changes["volumeChanges"]
+                    processed_items.audio_tracks, editing_changes["volumeAdjustments"]
                 )
             if "speedChanges" in editing_changes:
                 audio_mixer.apply_speed_changes(
                     processed_items.audio_tracks, editing_changes["speedChanges"]
+                )
+            if "trimChanges" in editing_changes:
+                audio_mixer.apply_trim_changes(
+                    processed_items.audio_tracks, editing_changes["trimChanges"]
                 )
             if "positionChanges" in editing_changes:
                 audio_mixer.apply_position_changes(
@@ -196,14 +202,14 @@ class BackgroundProcessor:
             if not audio_tracks:
                 # Create silent audio with proper duration
                 temp_audio_path = os.path.join(self.settings.TEMP_DIR, f"silent_audio_{job_id}.wav")
-                silent_audio = np.zeros(int(44100 * total_duration), dtype=np.float32)
-                sf.write(temp_audio_path, silent_audio, 44100)
+                silent_audio = np.zeros(int(AUDIO_SAMPLE_RATE * total_duration), dtype=np.float32)
+                sf.write(temp_audio_path, silent_audio, AUDIO_SAMPLE_RATE)
                 return temp_audio_path
             
             # Mix multiple audio tracks properly
             final_audio = self._mix_multiple_audio_tracks(audio_tracks, total_duration, job_id)
             temp_audio_path = os.path.join(self.settings.TEMP_DIR, f"final_mixed_audio_{job_id}.wav")
-            sf.write(temp_audio_path, final_audio, 44100)
+            sf.write(temp_audio_path, final_audio, AUDIO_SAMPLE_RATE)
             return temp_audio_path
             
         except Exception as e:
@@ -211,126 +217,138 @@ class BackgroundProcessor:
             # Create silent audio as fallback with proper duration
             duration = timeline_duration / 1000 if timeline_duration else 10
             temp_audio_path = os.path.join(self.settings.TEMP_DIR, f"error_audio_{job_id}.wav")
-            silent_audio = np.zeros(int(44100 * duration), dtype=np.float32)
-            sf.write(temp_audio_path, silent_audio, 44100)
+            silent_audio = np.zeros(int(AUDIO_SAMPLE_RATE * duration), dtype=np.float32)
+            sf.write(temp_audio_path, silent_audio, AUDIO_SAMPLE_RATE)
             return temp_audio_path
     
     def _mix_multiple_audio_tracks(self, audio_tracks: List, total_duration: float, job_id: str) -> np.ndarray:
-        """Mix multiple audio tracks into a single audio array"""
+        """
+        Mix audio tracks: voice segments + instruments (if enabled)
+        """
         try:
-            # Create base silent audio
-            sample_rate = 44100
+            sample_rate = AUDIO_SAMPLE_RATE
             final_samples = int(sample_rate * total_duration)
             mixed_audio = np.zeros(final_samples, dtype=np.float32)
             
-            logger.info(f"Mixing {len(audio_tracks)} audio tracks into {total_duration}s duration")
+            logger.info(f"🎵 Mixing {len(audio_tracks)} tracks for {total_duration}s")
             
-            voice_tracks_count = 0
-            instruments_tracks_count = 0
+            # Separate tracks by type
+            voice_segments = []
+            instrument_tracks = []
             
             for track in audio_tracks:
-                try:
-                    if not track.src:
-                        continue
-                    
-                    # Download audio track
-                    response = requests.get(track.src, timeout=120)
-                    if response.status_code != 200:
-                        continue
-                    
-                    # Save temporarily
-                    temp_track_path = os.path.join(self.settings.TEMP_DIR, f"temp_track_{track.id}_{job_id}.wav")
-                    with open(temp_track_path, 'wb') as f:
-                        f.write(response.content)
-                    
-                    # Load audio
-                    audio_data, sr = sf.read(temp_track_path)
-                    
-                    # Resample if needed
-                    if sr != sample_rate:
-                        # Simple resampling by interpolation
-                        audio_data = signal.resample(audio_data, int(len(audio_data) * sample_rate / sr))
-                    
-                    # Handle stereo to mono
-                    if len(audio_data.shape) > 1:
-                        audio_data = np.mean(audio_data, axis=1)
-                    
-                    # Apply audio trimming if specified
-                    if track.trim_start > 0 or track.trim_end is not None:
-                        trim_start_sample = int(track.trim_start * sample_rate)
-                        
-                        if track.trim_end is not None:
-                            trim_end_sample = int(track.trim_end * sample_rate)
-                            audio_data = audio_data[trim_start_sample:trim_end_sample]
-                            logger.info(f"Applied trim to {track.id}: {track.trim_start:.2f}s - {track.trim_end:.2f}s")
-                        else:
-                            audio_data = audio_data[trim_start_sample:]
-                            logger.info(f"Applied trim to {track.id}: from {track.trim_start:.2f}s to end")
-                    else:
-                        logger.debug(f"No trim applied to {track.id}")
-                    
-                    # Apply speed changes (playback rate)
-                    if track.playback_rate != 1.0:
-                        # Resample audio to apply speed change
-                        new_length = int(len(audio_data) / track.playback_rate)
-                        audio_data = signal.resample(audio_data, new_length)
-                        logger.info(f"Applied speed change to {track.id}: {track.playback_rate}x (new length: {new_length} samples)")
-                    
-                    # Calculate positions
-                    start_sample = int(track.start_time * sample_rate)
-                    end_sample = min(start_sample + len(audio_data), final_samples)
-                    audio_length = end_sample - start_sample
-                    
-                    # Apply volume with type-specific balancing
-                    track_volume = track.volume
-                    audio_type = track.voice_clone_info.audio_type if hasattr(track, 'voice_clone_info') else "unknown"
-                    
-                    # Volume balancing: Voice segments ALWAYS full, instruments very soft
-                    if audio_type == "cloned":
-                        # Voice segments: ALWAYS full volume regardless of original setting
-                        final_volume = 1.0  # Force full voice volume 
-                        voice_tracks_count += 1
-                        logger.info(f"Voice track {track.id}: FORCED to full volume=1.0 (original was {track_volume:.2f})")
-                    elif audio_type == "instruments":
-                        # Instruments: reduce to 15% to be very soft background
-                        final_volume = track_volume * 0.15  # Even softer background volume
-                        instruments_tracks_count += 1
-                        logger.info(f"Instruments track {track.id}: reduced volume={final_volume:.2f} (original was {track_volume:.2f})")
-                    else:
-                        # Other tracks: use original volume
-                        final_volume = track_volume
-                    
-                    audio_data = audio_data[:audio_length] * final_volume
-                    
-                    # Mix into final audio
-                    mixed_audio[start_sample:end_sample] += audio_data
-                    
-                    # Cleanup temp file
-                    os.unlink(temp_track_path)
-                    
-                    logger.debug(f"Mixed track {track.id}: {track.start_time:.2f}s-{track.end_time:.2f}s")
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to mix track {track.id}: {e}")
-                    continue
+                audio_type = track.voice_clone_info.audio_type if hasattr(track, 'voice_clone_info') else "unknown"
+                if audio_type == "cloned":
+                    voice_segments.append(track)
+                elif audio_type == "instruments":
+                    instrument_tracks.append(track)
             
-            # Voice-optimized normalization - allow higher levels for voice clarity
+            # 1. Process voice segments with proper trim handling
+            if voice_segments:
+                voice_audio = self._process_voice_segments(voice_segments, total_duration, job_id)
+                mixed_audio += voice_audio
+                logger.info(f"✅ Added {len(voice_segments)} voice segments")
+            
+            # 2. Process instruments (simple mixing)
+            for track in instrument_tracks:
+                instrument_audio = self._process_single_track(track, job_id, "instrument")
+                if instrument_audio is not None:
+                    # Apply soft volume and mix across entire timeline
+                    instrument_audio = instrument_audio * INSTRUMENT_VOLUME_RATIO
+                    mixed_audio[:min(len(instrument_audio), final_samples)] += instrument_audio[:final_samples]
+                    logger.info(f"✅ Added instrument track: {track.id}")
+            
+            # Simple normalization
             max_val = np.max(np.abs(mixed_audio))
-            if max_val > 0.95:  # Only normalize if really close to clipping
-                mixed_audio = mixed_audio / max_val * 0.95
-                logger.info(f"Final audio: max_level={max_val:.3f}, normalized to 0.95")
-            else:
-                logger.info(f"Final audio: max_level={max_val:.3f}, no normalization needed (voice stays loud)")
-            
-            # Summary of audio mixing
-            logger.info(f"🎵 AUDIO SUMMARY: {voice_tracks_count} voice tracks (1.0 volume) + {instruments_tracks_count} instrument tracks (0.15 volume)")
+            if max_val > 0.95:
+                mixed_audio = mixed_audio * (0.95 / max_val)
             
             return mixed_audio
             
         except Exception as e:
-            logger.error(f"Failed to mix audio tracks: {e}")
-            # Return silent audio
-            return np.zeros(int(44100 * total_duration), dtype=np.float32)
+            logger.error(f"Audio mixing failed: {e}")
+            return np.zeros(final_samples, dtype=np.float32)
+    
+    def _process_voice_segments(self, voice_segments: List, total_duration: float, job_id: str) -> np.ndarray:
+        """
+        Process voice segments with proper trim handling and gap filling
+        """
+        sample_rate = AUDIO_SAMPLE_RATE
+        final_samples = int(sample_rate * total_duration)
+        voice_audio = np.zeros(final_samples, dtype=np.float32)
+        
+        # Sort by start time
+        sorted_segments = sorted(voice_segments, key=lambda x: x.start_time)
+        
+        for segment in sorted_segments:
+            segment_audio = self._process_single_track(segment, job_id, "voice")
+            if segment_audio is None:
+                continue
+            
+            # Apply trim if specified (IMPORTANT as user requested)
+            if segment.trim_start > 0 or segment.trim_end is not None:
+                trim_start_sample = int(segment.trim_start * sample_rate)
+                if segment.trim_end is not None:
+                    trim_end_sample = int(segment.trim_end * sample_rate)
+                    segment_audio = segment_audio[trim_start_sample:trim_end_sample]
+                else:
+                    segment_audio = segment_audio[trim_start_sample:]
+                logger.debug(f"Applied trim to segment {segment.id}")
+            
+            # Apply speed changes
+            if segment.playback_rate != 1.0:
+                new_length = int(len(segment_audio) / segment.playback_rate)
+                segment_audio = signal.resample(segment_audio, new_length)
+            
+            # Place in timeline at correct position
+            start_sample = int(segment.start_time * sample_rate)
+            end_sample = min(start_sample + len(segment_audio), final_samples)
+            
+            if end_sample > start_sample:
+                voice_audio[start_sample:end_sample] += segment_audio[:end_sample-start_sample] * VOICE_SEGMENT_VOLUME
+        
+        return voice_audio
+    
+    def _process_single_track(self, track, job_id: str, track_type: str) -> np.ndarray:
+        """
+        Download and process a single audio track
+        """
+        try:
+            if not track.src:
+                return None
+            
+            # Download audio
+            response = requests.get(track.src, timeout=120)
+            if response.status_code != 200:
+                logger.warning(f"Failed to download {track_type} track: {track.id}")
+                return None
+            
+            # Save temporarily
+            temp_path = os.path.join(self.settings.TEMP_DIR, f"{track_type}_{track.id}_{job_id}.wav")
+            with open(temp_path, 'wb') as f:
+                f.write(response.content)
+            
+            # Load and process audio
+            audio_data, sr = sf.read(temp_path)
+            
+            # Resample if needed
+            if sr != AUDIO_SAMPLE_RATE:
+                audio_data = signal.resample(audio_data, int(len(audio_data) * AUDIO_SAMPLE_RATE / sr))
+            
+            # Convert stereo to mono
+            if len(audio_data.shape) > 1:
+                audio_data = np.mean(audio_data, axis=1)
+            
+            # Cleanup temp file
+            os.unlink(temp_path)
+            
+            return audio_data.astype(np.float32)
+            
+        except Exception as e:
+            logger.warning(f"Failed to process {track_type} track {track.id}: {e}")
+            return None
+
+
     
     def _cleanup_temp_files(self, job_id: str):
         """Clean up temp files for export job"""

@@ -11,6 +11,10 @@ from .models import (
     VideoItem, AudioItem, TextItem, ImageItem, ProcessedItems,
     Position, Transform, Effects, AudioProperties, VoiceCloneInfo, TextStyling
 )
+from .constants import (
+    DEFAULT_VIDEO_WIDTH, DEFAULT_VIDEO_HEIGHT, 
+    DEFAULT_OVERLAY_WIDTH, DEFAULT_OVERLAY_HEIGHT, DEFAULT_TEXT_OVERLAY_HEIGHT
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,8 +127,8 @@ class TimelineProcessor:
         position = Position(
             x=self.parse_pixel_value(details.get("left", "0px")),
             y=self.parse_pixel_value(details.get("top", "0px")),
-            width=details.get("width", 1920),
-            height=details.get("height", 1080)
+            width=details.get("width", DEFAULT_VIDEO_WIDTH),
+            height=details.get("height", DEFAULT_VIDEO_HEIGHT)
         )
         
         # Transformations
@@ -221,8 +225,8 @@ class TimelineProcessor:
         position = Position(
             x=position_data.get("x", 0),
             y=position_data.get("y", 0),
-            width=position_data.get("width", 300),
-            height=position_data.get("height", 100)
+            width=position_data.get("width", DEFAULT_OVERLAY_WIDTH),
+            height=position_data.get("height", DEFAULT_TEXT_OVERLAY_HEIGHT)
         )
         
         # Text styling - use direct style data from frontend
@@ -263,8 +267,8 @@ class TimelineProcessor:
         position = Position(
             x=position_data.get("x", 0),
             y=position_data.get("y", 0),
-            width=position_data.get("width", 300),
-            height=position_data.get("height", 200)
+            width=position_data.get("width", DEFAULT_OVERLAY_WIDTH),
+            height=position_data.get("height", DEFAULT_OVERLAY_HEIGHT)
         )
         
         # Visual effects - use direct effects data from frontend

@@ -19,11 +19,11 @@ class AudioMixer:
                         voice_clone_data: Dict[str, Any]) -> List[AudioItem]:
         """
         Mix audio based on user's audio mode settings
+        IMPORTANT: Original video is ALWAYS muted, only segment audio is used
         """
-        active_mode = settings.get("activeAudioMode", "english")  # "original" or "english"
         instruments_enabled = settings.get("instrumentsEnabled", True)
         
-        logger.info(f"🎵 AUDIO MIXER: mode={active_mode}, instruments={instruments_enabled}")
+        logger.info(f"🎵 AUDIO MIXER: instruments={instruments_enabled}")
         logger.info(f"🎵 Input tracks: {len(audio_tracks)} total")
         
         # Log input track types
@@ -31,63 +31,60 @@ class AudioMixer:
             audio_type = track.voice_clone_info.audio_type if hasattr(track, 'voice_clone_info') else "unknown"
             logger.info(f"  - Track {track.id}: type={audio_type}")
         
-        # Filter tracks based on audio mode
-        final_audio_tracks = self._filter_tracks_by_mode(
-            audio_tracks, active_mode, instruments_enabled
+        # Filter tracks based on new logic: ALWAYS mute original video
+        final_audio_tracks = self._filter_tracks_for_export(
+            audio_tracks, instruments_enabled
         )
         
         logger.info(f"🎵 RESULT: {len(final_audio_tracks)} tracks selected for final mix")
         return final_audio_tracks
     
-    def _filter_tracks_by_mode(self, audio_tracks: List[AudioItem], active_mode: str, 
-                              instruments_enabled: bool) -> List[AudioItem]:
+    def _filter_tracks_for_export(self, audio_tracks: List[AudioItem], 
+                                 instruments_enabled: bool) -> List[AudioItem]:
         """
-        Filter audio tracks based on active mode
+        Filter audio tracks for export: Always use segment audio, optionally add instruments
+        CRITICAL: Original video audio is ALWAYS muted
         """
         final_tracks = []
         
-        logger.info(f"🎛️ FILTERING: mode={active_mode}, instruments_enabled={instruments_enabled}")
+        logger.info(f"🎛️ FILTERING: instruments_enabled={instruments_enabled}")
         
         for track in audio_tracks:
             audio_type = track.voice_clone_info.audio_type
             
-            # Audio mixing logic based on mode
-            if active_mode == "english":
-                # English mode: Play cloned audio + instruments (if enabled)
-                if audio_type == "cloned":
-                    final_tracks.append(track)
-                    logger.info(f"✅ INCLUDED: {track.id} (cloned voice - always included in English mode)")
-                elif audio_type == "instruments" and instruments_enabled:
-                    final_tracks.append(track)
-                    logger.info(f"✅ INCLUDED: {track.id} (instruments - enabled in settings)")
-                elif audio_type == "instruments" and not instruments_enabled:
-                    logger.info(f"❌ SKIPPED: {track.id} (instruments - disabled in settings)")
-                else:
-                    logger.info(f"❌ SKIPPED: {track.id} (type={audio_type} - not needed in English mode)")
-                    
-            elif active_mode == "original":
-                # Original mode: Play source video audio only
-                if audio_type == "source" or audio_type is None:
-                    final_tracks.append(track)
-                    logger.info(f"✅ INCLUDED: {track.id} (source audio - required in Original mode)")
-                else:
-                    logger.info(f"❌ SKIPPED: {track.id} (type={audio_type} - not needed in Original mode)")
+            # NEW LOGIC: Original video is ALWAYS muted, only segment audio is used
+            if audio_type == "cloned":
+                # Always include cloned/segment audio - this is the main audio track
+                final_tracks.append(track)
+                logger.info(f"✅ INCLUDED: {track.id} (cloned voice - main audio track)")
+                
+            elif audio_type == "instruments" and instruments_enabled:
+                # Only include instruments if enabled in settings
+                final_tracks.append(track)
+                logger.info(f"✅ INCLUDED: {track.id} (instruments - enabled in settings)")
+                
+            elif audio_type == "instruments" and not instruments_enabled:
+                logger.info(f"❌ SKIPPED: {track.id} (instruments - disabled in settings)")
+                
+            elif audio_type in ["source", None]:
+                # ALWAYS skip original video audio - it's muted
+                logger.info(f"❌ MUTED: {track.id} (original video audio - always muted as per requirement)")
+                
+            else:
+                logger.info(f"❌ SKIPPED: {track.id} (type={audio_type} - unknown type)")
         
         logger.info(f"🎯 FILTER RESULT: {len(final_tracks)} out of {len(audio_tracks)} tracks selected")
         return final_tracks
     
     def apply_volume_changes(self, audio_tracks: List[AudioItem], 
-                           volume_changes: List[Dict[str, Any]]) -> List[AudioItem]:
+                           volume_changes: Dict[str, float]) -> List[AudioItem]:
         """
-        Apply volume changes to audio tracks
+        Apply volume changes to audio tracks from editingChanges.volumeAdjustments
         """
-        volume_map = {change["itemId"]: change["newVolume"] / 100 
-                     for change in volume_changes}
-        
         for track in audio_tracks:
-            if track.id in volume_map:
+            if track.id in volume_changes:
                 original_volume = track.volume
-                track.volume = volume_map[track.id]
+                track.volume = volume_changes[track.id]  # Already 0-1 scale
                 logger.debug(f"Volume change for {track.id}: {original_volume} -> {track.volume}")
         
         return audio_tracks
@@ -105,6 +102,29 @@ class AudioMixer:
                 original_speed = track.playback_rate
                 track.playback_rate = speed_map[track.id]
                 logger.debug(f"Speed change for {track.id}: {original_speed} -> {track.playback_rate}")
+        
+        return audio_tracks
+    
+    def apply_trim_changes(self, audio_tracks: List[AudioItem], 
+                         trim_changes: List[Dict[str, Any]]) -> List[AudioItem]:
+        """
+        Apply trim changes to audio tracks
+        """
+        trim_map = {change["itemId"]: change.get("newTrim") 
+                   for change in trim_changes if change.get("newTrim")}
+        
+        for track in audio_tracks:
+            if track.id in trim_map:
+                new_trim = trim_map[track.id]
+                original_trim_start = track.trim_start
+                original_trim_end = track.trim_end
+                
+                track.trim_start = new_trim.get("from", 0) / 1000  # Convert ms to seconds
+                track.trim_end = new_trim.get("to") / 1000 if new_trim.get("to") else None
+                
+                logger.debug(f"Trim change for {track.id}: "
+                           f"{original_trim_start:.2f}-{original_trim_end}s -> "
+                           f"{track.trim_start:.2f}-{track.trim_end}s")
         
         return audio_tracks
     
@@ -130,28 +150,4 @@ class AudioMixer:
                            f"{original_start:.2f}-{original_end:.2f}s -> "
                            f"{track.start_time:.2f}-{track.end_time:.2f}s")
         
-        return audio_tracks
-    
-    def get_active_audio_tracks(self, all_tracks: List[AudioItem], active_mode: str, 
-                               instruments_enabled: bool) -> List[AudioItem]:
-        """
-        EXACT audio filtering based on user settings
-        """
-        active_tracks = []
-        
-        for track in all_tracks:
-            audio_type = track.voice_clone_info.audio_type
-            
-            if active_mode == "english":
-                # English mode: cloned voices + instruments (if enabled)
-                if audio_type == "cloned":
-                    active_tracks.append(track)
-                elif audio_type == "instruments" and instruments_enabled:
-                    active_tracks.append(track)
-                    
-            elif active_mode == "original": 
-                # Original mode: source video audio only
-                if audio_type in ["source", None]:
-                    active_tracks.append(track)
-        
-        return active_tracks 
+        return audio_tracks 

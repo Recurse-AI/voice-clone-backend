@@ -11,6 +11,10 @@ import requests
 import soundfile as sf
 
 from .models import VideoItem, AudioItem, TextItem, ImageItem, VideoConfig
+from .constants import (
+    HTTP_TIMEOUT_LONG, HTTP_TIMEOUT_MEDIUM, HTTP_TIMEOUT_SHORT,
+    DEFAULT_CHUNK_SIZE, SUBTITLE_FONT_SIZE, SUBTITLE_MARGIN_BOTTOM
+)
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +110,12 @@ class VideoRenderer:
     async def _download_video(self, video_url: str, temp_dir: Path) -> str:
         """Download original video file"""
         try:
-            response = requests.get(video_url, stream=True, timeout=120)
+            response = requests.get(video_url, stream=True, timeout=HTTP_TIMEOUT_LONG)
             response.raise_for_status()
             
             video_path = temp_dir / "original_video.mp4"
             with open(video_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
+                for chunk in response.iter_content(chunk_size=DEFAULT_CHUNK_SIZE):
                     f.write(chunk)
             
             logger.info(f"Downloaded video: {video_path}")
@@ -124,12 +128,12 @@ class VideoRenderer:
     async def _download_instruments(self, instruments_url: str, temp_dir: Path) -> str:
         """Download instruments audio file"""
         try:
-            response = requests.get(instruments_url, stream=True, timeout=120)
+            response = requests.get(instruments_url, stream=True, timeout=HTTP_TIMEOUT_LONG)
             response.raise_for_status()
             
             instruments_path = temp_dir / "instruments.wav"
             with open(instruments_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
+                for chunk in response.iter_content(chunk_size=DEFAULT_CHUNK_SIZE):
                     f.write(chunk)
             
             logger.info(f"Downloaded instruments: {instruments_path}")
@@ -142,7 +146,7 @@ class VideoRenderer:
     async def _download_subtitles(self, subtitles_url: str, temp_dir: Path) -> str:
         """Download SRT subtitle file"""
         try:
-            response = requests.get(subtitles_url, stream=True, timeout=60)
+            response = requests.get(subtitles_url, stream=True, timeout=HTTP_TIMEOUT_MEDIUM)
             response.raise_for_status()
             
             subtitle_path = temp_dir / "subtitles.srt"
@@ -404,7 +408,7 @@ class VideoRenderer:
     def _download_image_overlay(self, image_url: str, job_id: str) -> Optional[str]:
         """Download image for overlay"""
         try:
-            response = requests.get(image_url, timeout=30)
+            response = requests.get(image_url, timeout=HTTP_TIMEOUT_SHORT)
             response.raise_for_status()
             
             # Determine file extension
