@@ -130,7 +130,7 @@ class BackgroundProcessor:
             # Only include subtitles if enabled in settings
             subtitles_url = None
             if export_data["settings"].get("subtitlesEnabled", False):
-                subtitles_url = export_data["voiceCloneData"].get("subtitlesUrl")
+                subtitles_url = export_data.get("subtitlesUrl")
                 logger.info(f"Subtitles enabled: URL = {subtitles_url}")
             else:
                 logger.info("Subtitles disabled in settings")
@@ -253,8 +253,9 @@ class BackgroundProcessor:
             for track in instrument_tracks:
                 instrument_audio = self._process_single_track(track, job_id, "instrument")
                 if instrument_audio is not None:
-                    # Apply soft volume and mix across entire timeline
-                    instrument_audio = instrument_audio * INSTRUMENT_VOLUME_RATIO
+                    # Apply track volume + soft background ratio
+                    final_volume = track.volume * INSTRUMENT_VOLUME_RATIO
+                    instrument_audio = instrument_audio * final_volume
                     mixed_audio[:min(len(instrument_audio), final_samples)] += instrument_audio[:final_samples]
                     logger.info(f"✅ Added instrument track: {track.id}")
             

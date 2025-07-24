@@ -123,32 +123,34 @@ class TimelineProcessor:
         trim_start = trim.get("from", 0) / 1000 if trim else 0
         trim_end = trim.get("to") / 1000 if trim and trim.get("to") else None
         
-        # Canvas positioning
+        # Canvas positioning - use direct position data from frontend
+        position_data = item.get("position", {})
         position = Position(
-            x=self.parse_pixel_value(details.get("left", "0px")),
-            y=self.parse_pixel_value(details.get("top", "0px")),
-            width=details.get("width", DEFAULT_VIDEO_WIDTH),
-            height=details.get("height", DEFAULT_VIDEO_HEIGHT)
+            x=self.parse_pixel_value(position_data.get("x", "0px")),
+            y=self.parse_pixel_value(position_data.get("y", "0px")),
+            width=position_data.get("width", DEFAULT_VIDEO_WIDTH),
+            height=position_data.get("height", DEFAULT_VIDEO_HEIGHT)
         )
         
-        # Transformations
+        # Transformations - use effects for opacity, default for others
         transform = Transform(
-            scale=self.extract_scale_from_transform(details.get("transform", "scale(1)")),
-            rotation=self.parse_rotation(details.get("rotate", "0deg")),
-            opacity=details.get("opacity", 100) / 100
+            scale=1.0,  # Default scale (no transform data in frontend schema)
+            rotation=0.0,  # Default rotation
+            opacity=effects_data.get("opacity", 100) / 100
         )
         
-        # Visual effects
+        # Visual effects - use direct effects data from frontend
+        effects_data = item.get("effects", {})
         effects = Effects(
-            brightness=details.get("brightness", 100) / 100,
-            blur=details.get("blur", 0),
-            flipX=details.get("flipX", False),
-            flipY=details.get("flipY", False)
+            brightness=effects_data.get("brightness", 100) / 100,
+            blur=effects_data.get("blur", 0),
+            flipX=effects_data.get("flipX", False),
+            flipY=effects_data.get("flipY", False)
         )
         
-        # Audio settings
+        # Audio settings - use direct volume from item level
         audio = AudioProperties(
-            volume=details.get("volume", 100) / 100,
+            volume=item.get("volume", 1.0),  # Frontend sends 0-1 scale directly
             playback_rate=item.get("playbackRate", 1)
         )
         
@@ -205,7 +207,7 @@ class TimelineProcessor:
             duration=duration,
             trim_start=trim_start,
             trim_end=trim_end,
-            volume=item.get("volume", 100) / 100,
+            volume=item.get("volume", 1.0),  # Frontend sends 0-1 scale directly
             playback_rate=item.get("playbackRate", 1),
             voice_clone_info=voice_clone_info
         )
