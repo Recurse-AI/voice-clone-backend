@@ -65,7 +65,7 @@ def process_video_background(
                 
                 downloaded = 0
                 chunk_size = 8192
-                last_progress = 5
+                progress_updated = False
                 
                 with open(video_temp_path, "wb") as buffer:
                     for chunk in response.iter_content(chunk_size=chunk_size):
@@ -73,16 +73,12 @@ def process_video_background(
                             buffer.write(chunk)
                             downloaded += len(chunk)
                             
-                            # Update progress between 5% and 20% (15% range for download)
-                            if content_length:
-                                download_progress = (downloaded / content_length) * 15  # 15% range
-                                current_progress = min(20, 5 + download_progress)
-                                
-                                # Update every 1% to make it more visible
-                                if int(current_progress) > last_progress:
-                                    status_manager.set_progress(audio_id, int(current_progress))
-                                    last_progress = int(current_progress)
-                                    logger.info(f"Download progress: {int(current_progress)}%")
+                            # Simple progress - only once at 50% completion
+                            if content_length and not progress_updated:
+                                if downloaded >= content_length * 0.5:
+                                    status_manager.set_progress(audio_id, 15)
+                                    logger.info("Download 50% completed")
+                                    progress_updated = True
                 
             except requests.exceptions.RequestException as e:
                 status_manager.fail_processing(audio_id, f"Download failed: {str(e)}")

@@ -118,7 +118,7 @@ class FileHandler:
             
             downloaded = 0
             chunk_size = 8192
-            last_progress = 5
+            progress_updated = False
             
             with open(local_file_path, "wb") as buffer:
                 for chunk in response.iter_content(chunk_size=chunk_size):
@@ -126,16 +126,12 @@ class FileHandler:
                         buffer.write(chunk)
                         downloaded += len(chunk)
                         
-                        # Update progress between 5% and 20% (15% range for download)
-                        if content_length and status_manager:
-                            download_progress = (downloaded / content_length) * 15  # 15% range for download
-                            current_progress = min(20, 5 + download_progress)
-                            
-                            # Update every 1% to make it more visible
-                            if int(current_progress) > last_progress:
-                                status_manager.set_progress(audio_id, int(current_progress))
-                                last_progress = int(current_progress)
-                                logger.info(f"Download progress: {int(current_progress)}%")
+                        # Simple progress update - only once at 50% completion
+                        if content_length and status_manager and not progress_updated:
+                            if downloaded >= content_length * 0.5:  # 50% downloaded
+                                status_manager.set_progress(audio_id, 15)
+                                logger.info("Download 50% completed")
+                                progress_updated = True
             
             # Verify downloaded file
             if not os.path.exists(local_file_path):

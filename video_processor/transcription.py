@@ -221,33 +221,50 @@ class TranscriptionService:
             
             # Simple translation and formatting
             try:
-                if is_multi_speaker and len(speakers_in_segment) > 1:
+                if len(speakers_in_segment) > 1:
                     # Multi-speaker format
-                    speaker_tags = ", ".join([f"[S{i+1}]" for i in range(len(speakers_in_segment))])
-                    prompt = f"""Translate to natural English with speaker tags.
+                    prompt = f"""Translate to natural English with proper speaker tags.
 
-TEXT: "{clean_text}"
+TEXT: {clean_text}
 
 RULES:
-- Use {speaker_tags} for {len(speakers_in_segment)} speakers
-- 3-11 words per line optimal
+- Use [S1] tag only when Speaker 1 starts talking
+- Use [S2] tag only when Speaker 2 starts talking and so on
+- NO tags for continuation lines of same speaker
+- 3-9 words per line optimal for best Dia performance
 - Natural conversational English
-- Keep it simple and clear
+- No quotes in output
+- Each line should be clear and simple
 
-OUTPUT (English with speaker tags):"""
+EXAMPLE OUTPUT:
+[S1] Hello this is example text
+how dia model working perfectly
+it is example for best
+[S2] Performance with clean structure
+yes I understand this completely
+great let's continue discussion
+
+OUTPUT (English with speaker tags only on speaker change):"""
                 else:
                     # Single speaker format
                     prompt = f"""Translate to natural English with speaker tag.
 
-TEXT: "{clean_text}"
+TEXT: {clean_text}
 
 RULES:
-- Start with [S1] tag
-- 3-11 words per line optimal  
+- Start with [S1] tag only at beginning
+- NO tags for continuation lines
+- 3-9 words per line optimal for best Dia performance
 - Natural conversational English
+- No quotes in output
 - Keep it simple and clear
 
-OUTPUT (English with [S1] tag):"""
+EXAMPLE OUTPUT:
+[S1] Hello this is example text
+yes I understand perfectly now
+great let's continue the discussion
+
+OUTPUT (English with [S1] tag only at start):"""
                 
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",

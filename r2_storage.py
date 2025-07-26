@@ -76,7 +76,7 @@ class R2Storage:
             }
     
     def upload_audio_segments(self, audio_id: str, segments_dir: str) -> Dict[str, Any]:
-        """Upload all audio segments and metadata to R2 using unified folder structure"""
+        """Upload all audio segments and metadata to R2 with direct storage"""
         upload_results = {
             "audio_id": audio_id,
             "segments": {},
@@ -89,11 +89,9 @@ class R2Storage:
         segments_path = Path(segments_dir)
         
         try:
-            # Upload segments from unified segments folder
+            # Upload segments directly
             segments_folder = segments_path / "segments"
             if segments_folder.exists():
-                upload_results["segments"]["unified"] = {}
-                
                 for file_path in segments_folder.iterdir():
                     if file_path.is_file():
                         file_type = "audio" if file_path.suffix in [".wav", ".mp3"] else "metadata"
@@ -106,14 +104,12 @@ class R2Storage:
                         )
                         
                         if result["success"]:
-                            upload_results["segments"]["unified"][file_path.name] = result
+                            upload_results["segments"][file_path.name] = result
                             upload_results["files_uploaded"] += 1
             
-            # Upload cloned segments from unified cloned folder
+            # Upload cloned segments directly
             cloned_folder = segments_path / "cloned"
             if cloned_folder.exists():
-                upload_results["cloned"]["unified"] = {}
-                
                 for cloned_file in cloned_folder.iterdir():
                     if cloned_file.is_file() and cloned_file.suffix == ".wav":
                         r2_key = self.generate_file_path(
@@ -129,7 +125,7 @@ class R2Storage:
                         )
                         
                         if result["success"]:
-                            upload_results["cloned"]["unified"][cloned_file.name] = result
+                            upload_results["cloned"][cloned_file.name] = result
                             upload_results["files_uploaded"] += 1
             
             # Upload metadata
@@ -273,7 +269,7 @@ class R2Storage:
             pass 
 
     def get_segment_urls(self, audio_id: str, upload_results: Dict[str, Any]) -> Dict[str, Any]:
-        """Get all URLs for uploaded segments using unified structure"""
+        """Get all URLs for uploaded segments with direct storage"""
         urls = {
             "metadata": {},
             "segments": {},
@@ -285,35 +281,17 @@ class R2Storage:
                 if result.get("success"):
                     urls["metadata"][filename] = result.get("url")
         
-        # Handle unified segments structure
+        # Handle direct segments storage
         if "segments" in upload_results:
-            if "unified" in upload_results["segments"]:
-                urls["segments"]["unified"] = {}
-                for filename, result in upload_results["segments"]["unified"].items():
-                    if result.get("success"):
-                        urls["segments"]["unified"][filename] = result.get("url")
-            else:
-                # Backward compatibility for old speaker-wise structure
-                for speaker, files in upload_results["segments"].items():
-                    urls["segments"][speaker] = {}
-                    for filename, result in files.items():
-                        if result.get("success"):
-                            urls["segments"][speaker][filename] = result.get("url")
+            for filename, result in upload_results["segments"].items():
+                if result.get("success"):
+                    urls["segments"][filename] = result.get("url")
         
-        # Handle unified cloned structure
+        # Handle direct cloned storage
         if "cloned" in upload_results:
-            if "unified" in upload_results["cloned"]:
-                urls["cloned"]["unified"] = {}
-                for filename, result in upload_results["cloned"]["unified"].items():
-                    if result.get("success"):
-                        urls["cloned"]["unified"][filename] = result.get("url")
-            else:
-                # Backward compatibility for old speaker-wise structure
-                for speaker, files in upload_results["cloned"].items():
-                    urls["cloned"][speaker] = {}
-                    for filename, result in files.items():
-                        if result.get("success"):
-                            urls["cloned"][speaker][filename] = result.get("url")
+            for filename, result in upload_results["cloned"].items():
+                if result.get("success"):
+                    urls["cloned"][filename] = result.get("url")
         
         return urls 
     

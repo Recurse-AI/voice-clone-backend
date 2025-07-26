@@ -7,6 +7,7 @@ import numpy as np
 import random
 import os
 import gc
+import json
 import soundfile as sf
 from typing import Optional, Dict, Any, List
 from dia.model import Dia
@@ -297,7 +298,6 @@ class VoiceCloningService:
                         metadata_file = segments_dir / f"segment_{segment_index:03d}_metadata.json"
                         if metadata_file.exists():
                             with open(metadata_file, 'r', encoding='utf-8') as f:
-                                import json
                                 metadata = json.load(f)
                             
                             metadata['cloned_audio_path'] = str(cloned_path)

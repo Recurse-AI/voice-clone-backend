@@ -218,10 +218,10 @@ class AudioReconstructor:
         summary_path.parent.mkdir(parents=True, exist_ok=True)
 
         reconstruction_summary = {
-            'audio_id': audio_id,
-            'total_segments_used': len(all_segments),
-            'final_duration': sum(s['duration'] for s in all_segments),
-            'sample_rate': all_segments[0]['sample_rate'],
+            'audio_id': str(audio_id),
+            'total_segments_used': int(len(all_segments)),
+            'final_duration': float(sum(s['duration'] for s in all_segments)),
+            'sample_rate': int(all_segments[0]['sample_rate']) if all_segments else 44100,
             'instruments_included': False, # This will be updated based on instruments_path
             'segments_by_speaker': {},
             'segments': [],  # Added detailed segment information
@@ -246,20 +246,21 @@ class AudioReconstructor:
             # Generate accurate R2 URL using R2Storage class
             r2_segment_url = r2_storage.generate_cloned_segment_url(audio_id, speaker, segment_index)
             
-            # Create detailed segment info
+            # Create detailed segment info - exclude numpy arrays for JSON serialization
             segment_info = {
                 "segment_url": r2_segment_url,
-                "start_time": segment.get('start', 0.0),
-                "duration": segment.get('duration', segment.get('end', 0.0) - segment.get('start', 0.0)),
-                "end_time": segment.get('end', 0.0),
-                "speaker": speaker,
-                "segment_index": segment_index,
-                "original_text": segment.get('original_text', ''),
-                "english_text": segment.get('english_text', ''),
-                "confidence": segment.get('confidence', 0.0),
-                "word_count": segment.get('word_count', 0),
-                "cloned_filename": cloned_filename,
-                "processing_status": segment.get('processing_status', 'completed')
+                "start_time": float(segment.get('start', 0.0)),
+                "duration": float(segment.get('duration', segment.get('end', 0.0) - segment.get('start', 0.0))),
+                "end_time": float(segment.get('end', 0.0)),
+                "speaker": str(speaker),
+                "segment_index": int(segment_index),
+                "original_text": str(segment.get('original_text', '')),
+                "english_text": str(segment.get('english_text', '')),
+                "confidence": float(segment.get('confidence', 0.0)),
+                "word_count": int(segment.get('word_count', 0)),
+                "cloned_filename": str(cloned_filename),
+                "processing_status": str(segment.get('processing_status', 'completed'))
+                # Note: 'audio' key excluded to prevent numpy array serialization
             }
             
             reconstruction_summary['segments'].append(segment_info)

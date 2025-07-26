@@ -257,7 +257,7 @@ class SegmentManager:
                 'word_count': segment.get('word_count', 0),
                 'confidence': segment.get('confidence', 0.5),
                 'cloned_audio_file': f"cloned_segment_{i+1:03d}.wav",
-                'cloned_audio_path': str(segments_dir / f"cloned_segment_{i+1:03d}.wav"),
+                'cloned_audio_path': str(output_dir / "cloned" / f"cloned_segment_{i+1:03d}.wav"),
                 'metadata_complete': True,
                 'processing_status': 'ready_for_cloning'
             }
