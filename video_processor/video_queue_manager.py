@@ -58,21 +58,23 @@ class VideoQueueRequest:
 
 
 class VideoQueueManager:
-    """Manages video processing queue with timeout and concurrency control"""
+    """Manages video processing queue with configurable concurrency"""
     
     def __init__(self, max_concurrent: int = 2):
         self.max_concurrent = max_concurrent
         self.requests: Dict[str, VideoQueueRequest] = {}
-        self.queue: List[str] = []  # Queue of pending request IDs
-        self.processing: List[str] = []  # Currently processing request IDs
-        
+        self.queue: List[str] = []  # Request IDs waiting to be processed
+        self.processing: List[str] = []  # Request IDs currently being processed
         self._lock = Lock()
         self._processing_threads: Dict[str, Thread] = {}
-        self._timeout_monitor_thread = None
-        self._shutdown = False
         
-        # Start timeout monitor
-        self._start_timeout_monitor()
+        # Cleanup policy - keep completed requests for 30 minutes
+        self.completed_retention_seconds = 30 * 60
+        
+        # Start cleanup thread
+        self._cleanup_thread = Thread(target=self._periodic_cleanup, daemon=True)
+        self._cleanup_thread.start()
+        
         logger.info(f"VideoQueueManager initialized with max_concurrent={max_concurrent}")
     
     def _start_timeout_monitor(self):
@@ -134,6 +136,44 @@ class VideoQueueManager:
                 
                 # Start next queued request
                 self._start_next_request()
+    
+    def _periodic_cleanup(self):
+        """Periodically clean up old completed requests"""
+        import time
+        
+        while True:
+            try:
+                time.sleep(300)  # Check every 5 minutes
+                self._cleanup_old_requests()
+            except Exception as e:
+                logger.error(f"Error in periodic cleanup: {e}")
+    
+    def _cleanup_old_requests(self):
+        """Remove old completed requests to prevent memory buildup"""
+        current_time = datetime.now()
+        to_remove = []
+        
+        with self._lock:
+            for request_id, request in self.requests.items():
+                if request.status in [VideoQueueStatus.COMPLETED, VideoQueueStatus.FAILED, 
+                                    VideoQueueStatus.CANCELLED, VideoQueueStatus.TIMEOUT]:
+                    if request.completed_at:
+                        time_since_completion = (current_time - request.completed_at).total_seconds()
+                        if time_since_completion > self.completed_retention_seconds:
+                            to_remove.append(request_id)
+            
+            # Remove old requests
+            for request_id in to_remove:
+                if request_id in self.requests:
+                    logger.info(f"Cleaning up old completed request: {request_id}")
+                    del self.requests[request_id]
+                    
+                # Also clean up any lingering thread references
+                if request_id in self._processing_threads:
+                    del self._processing_threads[request_id]
+        
+        if to_remove:
+            logger.info(f"Cleaned up {len(to_remove)} old completed requests")
     
     def submit_request(self, video_source: str, audio_id: str, is_file_upload: bool,
                       parameters: Dict[str, Any]) -> str:
@@ -362,24 +402,93 @@ class VideoQueueManager:
                 "queue_length": len(self.queue)
             }
     
-    def cleanup_old_requests(self, max_age_hours: int = 24):
-        """Clean up old completed/failed requests"""
-        cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
-        
+    def get_health_status(self) -> Dict[str, Any]:
+        """Get health status of the queue system"""
         with self._lock:
-            request_ids_to_remove = []
+            current_time = datetime.now()
+            
+            # Count requests by status
+            status_counts = {status.value: 0 for status in VideoQueueStatus}
+            stuck_requests = []
             
             for request_id, request in self.requests.items():
-                if (request.status in [VideoQueueStatus.COMPLETED, VideoQueueStatus.FAILED, 
-                                     VideoQueueStatus.CANCELLED, VideoQueueStatus.TIMEOUT] and
-                    request.completed_at and request.completed_at < cutoff_time):
-                    request_ids_to_remove.append(request_id)
+                status_counts[request.status.value] += 1
+                
+                # Check for stuck requests (processing for too long)
+                if request.status == VideoQueueStatus.PROCESSING and request.started_at:
+                    processing_time = (current_time - request.started_at).total_seconds()
+                    if processing_time > request.timeout_seconds:
+                        stuck_requests.append({
+                            "request_id": request_id,
+                            "audio_id": request.audio_id,
+                            "processing_time_seconds": processing_time,
+                            "timeout_seconds": request.timeout_seconds
+                        })
             
-            for request_id in request_ids_to_remove:
-                del self.requests[request_id]
+            # Calculate queue health metrics
+            queue_health = {
+                "total_requests": len(self.requests),
+                "queue_size": len(self.queue),
+                "processing_count": len(self.processing),
+                "max_concurrent": self.max_concurrent,
+                "status_counts": status_counts,
+                "stuck_requests": stuck_requests,
+                "threads_active": len(self._processing_threads),
+                "retention_policy_seconds": self.completed_retention_seconds,
+                "is_healthy": len(stuck_requests) == 0 and len(self.processing) <= self.max_concurrent
+            }
             
-            logger.info(f"Cleaned up {len(request_ids_to_remove)} old video processing requests")
+            return queue_health
     
+    def force_cleanup_stuck_requests(self) -> int:
+        """Force cleanup of stuck requests and return count of cleaned up requests"""
+        cleaned_count = 0
+        current_time = datetime.now()
+        
+        with self._lock:
+            stuck_request_ids = []
+            
+            for request_id, request in self.requests.items():
+                if request.status == VideoQueueStatus.PROCESSING and request.started_at:
+                    processing_time = (current_time - request.started_at).total_seconds()
+                    if processing_time > request.timeout_seconds:
+                        stuck_request_ids.append(request_id)
+            
+            # Clean up stuck requests
+            for request_id in stuck_request_ids:
+                logger.warning(f"Force cleaning up stuck request: {request_id}")
+                request = self.requests[request_id]
+                request.status = VideoQueueStatus.TIMEOUT
+                request.completed_at = current_time
+                request.error = "Force terminated due to timeout"
+                
+                # Remove from processing list
+                if request_id in self.processing:
+                    self.processing.remove(request_id)
+                
+                # Clean up thread reference
+                if request_id in self._processing_threads:
+                    del self._processing_threads[request_id]
+                
+                cleaned_count += 1
+                
+                # Update status manager
+                try:
+                    from status_manager import status_manager
+                    status_manager.force_terminate_process(request.audio_id, "Force terminated due to timeout")
+                except Exception as e:
+                    logger.error(f"Error updating status manager for stuck request {request_id}: {e}")
+            
+            # Start next requests if slots are available
+            if cleaned_count > 0:
+                for _ in range(min(cleaned_count, len(self.queue))):
+                    self._start_next_request()
+        
+        if cleaned_count > 0:
+            logger.info(f"Force cleaned up {cleaned_count} stuck requests")
+        
+        return cleaned_count
+
     def shutdown(self):
         """Shutdown the queue manager"""
         self._shutdown = True

@@ -209,10 +209,11 @@ class AudioProcessor:
         )
     
     def create_video_with_audio(self, video_path: str, audio_path: str, 
-                               audio_id: str, instruments_path: Optional[str] = None) -> Dict[str, Any]:
+                               audio_id: str, instruments_path: Optional[str] = None,
+                               segments_dir: Optional[str] = None) -> Dict[str, Any]:
         """Create video with new audio only"""
         return self.video_processor.create_video_with_audio(
-            video_path, audio_path, audio_id, instruments_path
+            video_path, audio_path, audio_id, instruments_path, segments_dir
         )
     
     def process_video_with_separation(self, video_path: str, audio_id: str, 

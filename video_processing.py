@@ -199,10 +199,13 @@ def process_video_background(
                 instruments_for_video
             )
         else:
+            instruments_for_video = separated_instruments_path if include_instruments else None
             video_result = audio_processor.create_video_with_audio(
                 video_temp_path,
                 final_audio_path,
-                audio_id
+                audio_id,
+                instruments_for_video,
+                processing_result["segments_dir"]
             )
         
         if not video_result or not video_result["success"]:
@@ -561,10 +564,13 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
                 instruments_for_video
             )
         else:
+            instruments_for_video = separated_instruments_path if include_instruments else None
             video_result = audio_processor.create_video_with_audio(
                 video_temp_path,
                 final_audio_path,
-                audio_id
+                audio_id,
+                instruments_for_video,
+                processing_result["segments_dir"]
             )
         
         if not video_result or not video_result["success"]:

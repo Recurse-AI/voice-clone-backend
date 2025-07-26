@@ -163,54 +163,114 @@ class StatusManager:
             
             if status_data:
                 # Add queue information if available
+                queue_request = None
                 try:
                     from video_processor.video_queue_manager import video_queue_manager
                     
-                    # Try to find queue request by audio_id
-                    queue_request = None
-                    for request_id, request in video_queue_manager.requests.items():
-                        if request.audio_id == audio_id:
-                            queue_request = video_queue_manager.get_request_status(request_id)
-                            break
+                    # Try to find queue request by audio_id with better error handling
+                    found_request_id = None
+                    found_request = None
                     
-                    if queue_request:
-                        queue_status = queue_request["status"]
+                    with video_queue_manager._lock:
+                        for request_id, request in video_queue_manager.requests.items():
+                            if request.audio_id == audio_id:
+                                found_request_id = request_id
+                                found_request = request
+                                break
+                    
+                    if found_request_id and found_request:
+                        # Get detailed queue status
+                        queue_request = video_queue_manager.get_request_status(found_request_id)
                         
-                        # Sync main status with queue status if inconsistent
-                        if queue_status in ["failed", "timeout", "cancelled"] and status_data.get("status") not in ["failed", "completed"]:
-                            status_data["status"] = ProcessingStatus.FAILED.value
-                            error_msg = queue_request.get("error", "Processing failed")
-                            status_data["message"] = f"Processing failed: {error_msg}"
-                            status_data["updated_at"] = datetime.now().isoformat()
-                            if "details" not in status_data:
-                                status_data["details"] = {}
-                            status_data["details"]["error"] = error_msg
+                        if queue_request:
+                            queue_status = queue_request["status"]
                             
-                            # Save updated status
-                            self._statuses[audio_id] = status_data
-                            self._save_to_mongodb(audio_id, status_data)
-                        
-                        # Enhance message with queue information
-                        queue_position = queue_request.get("queue_position")
-                        if queue_position and queue_position > 0:
-                            status_data["message"] = f"{status_data.get('message', 'Processing queued')} (Queue position: {queue_position})"
-                        
-                        status_data["queue_info"] = {
-                            "request_id": queue_request["request_id"],
-                            "queue_status": queue_status,
-                            "queue_position": queue_position,
-                            "estimated_time": queue_request.get("estimated_time"),
-                            "timeout_in": queue_request.get("timeout_in"),
-                            "started_at": queue_request.get("started_at"),
-                            "created_at": queue_request.get("created_at")
-                        }
+                            # Check for critical failures that need immediate termination
+                            if queue_status in ["failed", "timeout", "cancelled"]:
+                                error_msg = queue_request.get("error", "Processing failed")
+                                logger.error(f"Critical failure detected for {audio_id}: {error_msg}")
+                                
+                                # Immediate termination logic
+                                self._terminate_failed_process(audio_id, found_request_id, error_msg)
+                                
+                                # Update status to reflect failure
+                                status_data["status"] = ProcessingStatus.FAILED.value
+                                status_data["message"] = f"Processing terminated: {error_msg}"
+                                status_data["updated_at"] = datetime.now().isoformat()
+                                if "details" not in status_data:
+                                    status_data["details"] = {}
+                                status_data["details"]["error"] = error_msg
+                                status_data["details"]["terminated"] = True
+                                
+                                # Save updated status
+                                self._statuses[audio_id] = status_data
+                                self._save_to_mongodb(audio_id, status_data)
+                            
+                            # Enhance message with queue information for active processes
+                            elif queue_status in ["pending", "processing"]:
+                                queue_position = queue_request.get("queue_position")
+                                if queue_position and queue_position > 0:
+                                    status_data["message"] = f"{status_data.get('message', 'Processing queued')} (Queue position: {queue_position})"
+                            
+                            # Always include queue_info when request is found
+                            status_data["queue_info"] = {
+                                "request_id": queue_request["request_id"],
+                                "queue_status": queue_status,
+                                "queue_position": queue_request.get("queue_position"),
+                                "estimated_time": queue_request.get("estimated_time"),
+                                "timeout_in": queue_request.get("timeout_in"),
+                                "started_at": queue_request.get("started_at"),
+                                "created_at": queue_request.get("created_at")
+                            }
+                        else:
+                            # Request found but status retrieval failed
+                            logger.warning(f"Found queue request for {audio_id} but failed to get status")
+                            status_data["queue_info"] = {
+                                "request_id": found_request_id,
+                                "queue_status": found_request.status.value,
+                                "queue_position": found_request.queue_position,
+                                "error": "Failed to retrieve detailed status"
+                            }
                     else:
-                        # No queue info available - might be legacy processing
+                        # No queue request found - could be legacy processing or completed
+                        logger.info(f"No active queue request found for {audio_id}")
+                        
+                        # Check if this is a stale process that needs cleanup
+                        if status_data.get("status") in ["downloading", "processing"] and status_data.get("progress", 0) < 100:
+                            # Check how long it's been since last update
+                            try:
+                                from datetime import datetime
+                                last_update = datetime.fromisoformat(status_data.get("updated_at", datetime.now().isoformat()))
+                                time_diff = (datetime.now() - last_update).total_seconds()
+                                
+                                # If no update for more than 5 minutes, consider it stale
+                                if time_diff > 300:  # 5 minutes
+                                    logger.error(f"Stale process detected for {audio_id}, terminating")
+                                    self._terminate_stale_process(audio_id)
+                                    
+                                    status_data["status"] = ProcessingStatus.FAILED.value
+                                    status_data["message"] = "Processing terminated due to inactivity"
+                                    status_data["updated_at"] = datetime.now().isoformat()
+                                    if "details" not in status_data:
+                                        status_data["details"] = {}
+                                    status_data["details"]["error"] = "Process became unresponsive"
+                                    status_data["details"]["terminated"] = True
+                                    
+                                    self._statuses[audio_id] = status_data
+                                    self._save_to_mongodb(audio_id, status_data)
+                            except Exception as e:
+                                logger.error(f"Error checking stale process for {audio_id}: {e}")
+                        
+                        # Set queue_info to indicate no active queue request
                         status_data["queue_info"] = None
                         
                 except Exception as e:
-                    logger.warning(f"Failed to get queue info for {audio_id}: {e}")
+                    logger.error(f"Failed to get queue info for {audio_id}: {e}")
+                    # Don't fail the entire status check, just log the error
                     status_data["queue_info"] = None
+                    if "details" not in status_data:
+                        status_data["details"] = {}
+                    status_data["details"]["queue_error"] = str(e)
             
             return status_data
     
@@ -247,6 +307,114 @@ class StatusManager:
         """Get all statuses"""
         with self._lock:
             return {k: v.copy() for k, v in self._statuses.items()}
+
+    def _terminate_failed_process(self, audio_id: str, request_id: str, error_msg: str):
+        """Terminate a failed process and clean up resources"""
+        try:
+            logger.info(f"Terminating failed process for {audio_id} (request_id: {request_id})")
+            
+            # Cancel the queue request
+            from video_processor.video_queue_manager import video_queue_manager
+            video_queue_manager.cancel_request(request_id)
+            
+            # Clean up temp files
+            self._cleanup_process_files(audio_id)
+            
+            # Update internal tracking
+            if audio_id in self._statuses:
+                self._statuses[audio_id]["terminated"] = True
+                self._statuses[audio_id]["termination_reason"] = error_msg
+                
+        except Exception as e:
+            logger.error(f"Error terminating failed process {audio_id}: {e}")
+    
+    def _terminate_stale_process(self, audio_id: str):
+        """Terminate a stale process that has no active queue request"""
+        try:
+            logger.info(f"Terminating stale process for {audio_id}")
+            
+            # Try to find and cancel any related queue requests
+            from video_processor.video_queue_manager import video_queue_manager
+            with video_queue_manager._lock:
+                for request_id, request in video_queue_manager.requests.items():
+                    if request.audio_id == audio_id:
+                        video_queue_manager.cancel_request(request_id)
+                        break
+            
+            # Clean up temp files
+            self._cleanup_process_files(audio_id)
+            
+            # Update internal tracking
+            if audio_id in self._statuses:
+                self._statuses[audio_id]["terminated"] = True
+                self._statuses[audio_id]["termination_reason"] = "Stale process cleanup"
+                
+        except Exception as e:
+            logger.error(f"Error terminating stale process {audio_id}: {e}")
+    
+    def _cleanup_process_files(self, audio_id: str):
+        """Clean up temporary files for a terminated process"""
+        try:
+            # Import cleanup utilities
+            from utils import cleanup_temp_files
+            from config import settings
+            import os
+            import shutil
+            from pathlib import Path
+            
+            # Clean up temp files
+            cleanup_temp_files(audio_id, None, None, None)
+            
+            # Clean up any remaining audio-specific temp files
+            temp_dir = Path(settings.TEMP_DIR)
+            if temp_dir.exists():
+                for file_path in temp_dir.glob(f"*{audio_id}*"):
+                    try:
+                        if file_path.is_file():
+                            file_path.unlink()
+                        elif file_path.is_dir():
+                            shutil.rmtree(file_path)
+                    except Exception as e:
+                        logger.warning(f"Could not remove temp file {file_path}: {e}")
+            
+            # Clean up segments directory
+            segments_dir = temp_dir / f"segments_{audio_id}"
+            if segments_dir.exists():
+                try:
+                    shutil.rmtree(segments_dir)
+                except Exception as e:
+                    logger.warning(f"Could not remove segments directory {segments_dir}: {e}")
+                    
+            logger.info(f"Cleaned up temporary files for {audio_id}")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up files for {audio_id}: {e}")
+    
+    def force_terminate_process(self, audio_id: str, reason: str = "Manual termination"):
+        """Force terminate a process immediately"""
+        logger.warning(f"Force terminating process {audio_id}: {reason}")
+        
+        try:
+            # Update status to failed
+            self.fail_processing(audio_id, reason)
+            
+            # Find and cancel queue request
+            from video_processor.video_queue_manager import video_queue_manager
+            with video_queue_manager._lock:
+                for request_id, request in video_queue_manager.requests.items():
+                    if request.audio_id == audio_id:
+                        video_queue_manager.cancel_request(request_id)
+                        self._terminate_failed_process(audio_id, request_id, reason)
+                        break
+                else:
+                    # No active queue request, just clean up
+                    self._terminate_stale_process(audio_id)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error force terminating {audio_id}: {e}")
+            return False
 
 
 # Global status manager instance

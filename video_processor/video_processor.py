@@ -254,7 +254,7 @@ class VideoProcessor:
             subtitle_data = self._load_subtitles(segments_dir)
             
             if not subtitle_data:
-                return self.create_video_with_audio(video_path, str(final_audio_path), audio_id)
+                return self.create_video_with_audio(video_path, str(final_audio_path), audio_id, instruments_path, segments_dir)
             
             subtitle_path = self.temp_dir / f"subtitles_{audio_id}.srt"
             self._create_srt_file(subtitle_data, subtitle_path)
@@ -284,21 +284,35 @@ class VideoProcessor:
             }
     
     def create_video_with_audio(self, video_path: str, audio_path: str, 
-                               audio_id: str, instruments_path: Optional[str] = None) -> Dict[str, Any]:
+                               audio_id: str, instruments_path: Optional[str] = None,
+                               segments_dir: Optional[str] = None) -> Dict[str, Any]:
         try:
             if instruments_path and os.path.exists(instruments_path):
                 final_audio_path = self._create_final_audio(audio_path, instruments_path, audio_id)
             else:
                 final_audio_path = Path(audio_path)
             
+            # Always create subtitle file even when not attaching to video
+            subtitle_path = None
+            subtitle_count = 0
+            if segments_dir:
+                subtitle_data = self._load_subtitles(segments_dir)
+                if subtitle_data:
+                    subtitle_path = self.temp_dir / f"subtitles_{audio_id}.srt"
+                    self._create_srt_file(subtitle_data, subtitle_path)
+                    subtitle_count = len(subtitle_data)
+            
             output_path = self.temp_dir / f"video_no_subtitles_{audio_id}.mp4"
             
+            # Create video without attaching subtitles (subtitle_path=None)
             result = self._create_video_ffmpeg(video_path, str(final_audio_path), None, output_path)
             
             if result["success"]:
                 return {
                     "success": True,
                     "video_path": str(output_path),
+                    "subtitle_path": str(subtitle_path) if subtitle_path else None,
+                    "subtitle_count": subtitle_count,
                     "has_subtitles": False
                 }
             else:

@@ -596,6 +596,108 @@ async def get_status(audio_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/terminate/{audio_id}")
+async def terminate_process(audio_id: str, reason: Optional[str] = None):
+    """Force terminate a processing request immediately"""
+    try:
+        if not audio_id:
+            raise HTTPException(status_code=400, detail="Audio ID is required")
+        
+        # Check if process exists
+        status = status_manager.get_status(audio_id)
+        if not status:
+            raise HTTPException(status_code=404, detail="Process not found")
+        
+        # Check if already completed or failed
+        if status.get("status") in ["completed", "failed"]:
+            return {
+                "success": False, 
+                "message": f"Process already {status.get('status')}",
+                "current_status": status.get("status")
+            }
+        
+        # Force terminate the process
+        termination_reason = reason or "Manual termination via API"
+        success = status_manager.force_terminate_process(audio_id, termination_reason)
+        
+        if success:
+            logger.info(f"Successfully terminated process {audio_id}: {termination_reason}")
+            return {
+                "success": True,
+                "message": "Process terminated successfully",
+                "audio_id": audio_id,
+                "reason": termination_reason,
+                "terminated_at": datetime.now().isoformat()
+            }
+        else:
+            return {
+                "success": False,
+                "message": "Failed to terminate process - it may have already completed",
+                "audio_id": audio_id
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to terminate process {audio_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Termination failed: {str(e)}")
+
+@app.get("/api/queue-health")
+async def get_queue_health():
+    """Get health status of the processing queue system"""
+    try:
+        from video_processor.video_queue_manager import video_queue_manager
+        
+        health_status = video_queue_manager.get_health_status()
+        
+        # Add timestamp
+        health_status["checked_at"] = datetime.now().isoformat()
+        
+        return health_status
+        
+    except Exception as e:
+        logger.error(f"Failed to get queue health: {e}")
+        raise HTTPException(status_code=500, detail=f"Health check failed: {str(e)}")
+
+@app.post("/api/cleanup-stuck-requests")
+async def cleanup_stuck_requests():
+    """Force cleanup of stuck processing requests"""
+    try:
+        from video_processor.video_queue_manager import video_queue_manager
+        
+        # Get health status first
+        health_status = video_queue_manager.get_health_status()
+        stuck_count = len(health_status.get("stuck_requests", []))
+        
+        if stuck_count == 0:
+            return {
+                "success": True,
+                "message": "No stuck requests found",
+                "cleaned_count": 0,
+                "health_status": health_status
+            }
+        
+        # Force cleanup stuck requests
+        cleaned_count = video_queue_manager.force_cleanup_stuck_requests()
+        
+        # Get updated health status
+        updated_health = video_queue_manager.get_health_status()
+        
+        logger.info(f"Cleaned up {cleaned_count} stuck requests")
+        
+        return {
+            "success": True,
+            "message": f"Successfully cleaned up {cleaned_count} stuck requests",
+            "cleaned_count": cleaned_count,
+            "stuck_before": stuck_count,
+            "health_status": updated_health,
+            "cleaned_at": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to cleanup stuck requests: {e}")
+        raise HTTPException(status_code=500, detail=f"Cleanup failed: {str(e)}")
+
 @app.post("/api/download-video", response_model=VideoDownloadResponse)
 async def download_video(request: VideoDownloadRequest):
     """Download video from URL and upload to Cloudflare R2"""
