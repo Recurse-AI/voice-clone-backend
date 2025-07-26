@@ -233,16 +233,11 @@ class VoiceCloningService:
             return None
     
     def _adjust_audio_length_simple(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Enhanced audio length adjustment that preserves voice quality"""
+        """Simple audio length adjustment that preserves voice quality"""
         if audio is None or len(audio) == 0:
             return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
         
-        # Ensure proper format
-        if not isinstance(audio, np.ndarray):
-            audio = np.array(audio, dtype=np.float32)
-        elif audio.dtype != np.float32:
-            audio = audio.astype(np.float32)
-        
+        audio = np.array(audio, dtype=np.float32)
         if len(audio.shape) > 1:
             audio = np.mean(audio, axis=1)
         
@@ -252,53 +247,20 @@ class VoiceCloningService:
         
         logger.info(f"Adjusting audio: {current_duration:.2f}s -> {target_duration:.2f}s")
         
-        # Calculate stretch ratio
-        stretch_ratio = target_duration / current_duration if current_duration > 0 else 1.0
+        stretch_ratio = target_duration / current_duration
         
-        # Only apply stretching if the difference is significant (>10%)
-        if abs(stretch_ratio - 1.0) > 0.1:
-            # Use high-quality time stretching with voice preservation
-            try:
-                adjusted_audio = librosa.effects.time_stretch(
-                    audio, 
-                    rate=1.0/stretch_ratio,
-                    n_fft=2048,  # Higher FFT for better quality
-                    hop_length=512  # Better temporal resolution
-                )
-            except Exception as e:
-                logger.warning(f"Time stretch failed: {e}, using simple resize")
-                # Fallback to simple resampling if stretch fails
-                adjusted_audio = librosa.resample(audio, orig_sr=self.sample_rate, target_sr=int(self.sample_rate/stretch_ratio))
-        else:
-            # If difference is small, just use the original
-            adjusted_audio = audio.copy()
+        adjusted_audio = librosa.effects.time_stretch(
+            audio, 
+            rate=1.0/stretch_ratio,
+            n_fft=2048,
+            hop_length=512
+        )
         
-        # Handle length differences with proper padding/trimming
         if len(adjusted_audio) > target_samples:
-            # Trim from the end with a gentle fade-out to avoid clicks
-            trim_samples = len(adjusted_audio) - target_samples
-            if trim_samples < self.sample_rate * 0.1:  # Less than 100ms
-                # Simple trim for small differences
-                adjusted_audio = adjusted_audio[:target_samples]
-            else:
-                # Apply fade-out for larger trims
-                fade_samples = min(int(self.sample_rate * 0.05), trim_samples // 2)  # 50ms fade max
-                adjusted_audio = adjusted_audio[:target_samples]
-                if fade_samples > 0:
-                    fade_curve = np.linspace(1.0, 0.0, fade_samples)
-                    adjusted_audio[-fade_samples:] *= fade_curve
-                    
+            adjusted_audio = adjusted_audio[:target_samples]
         elif len(adjusted_audio) < target_samples:
-            # Pad with silence
             padding = target_samples - len(adjusted_audio)
             adjusted_audio = np.pad(adjusted_audio, (0, padding), mode='constant', constant_values=0)
-        
-        # Gentle normalization to preserve dynamic range
-        max_val = np.abs(adjusted_audio).max()
-        if max_val > 0.95:  # Only normalize if clipping risk
-            adjusted_audio = adjusted_audio * (0.95 / max_val)
-        elif max_val < 0.05 and max_val > 0:  # Boost very quiet audio
-            adjusted_audio = adjusted_audio * (0.3 / max_val)
         
         return adjusted_audio.astype(np.float32)
     

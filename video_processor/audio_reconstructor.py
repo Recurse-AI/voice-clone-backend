@@ -126,7 +126,7 @@ class AudioReconstructor:
             return {"success": False, "error": f"Audio reconstruction failed: {str(e)}"}
     
     def _reconstruct_from_segments(self, segments: List[Dict]) -> Optional[np.ndarray]:
-        """Reconstruct audio from segments"""
+        """Reconstruct audio from segments using pre-loaded audio data"""
         try:
             if not segments:
                 return None
@@ -141,8 +141,11 @@ class AudioReconstructor:
             # Process each segment
             for segment in segments:
                 try:
-                    # Load cloned audio
-                    cloned_audio, _ = sf.read(segment['cloned_audio_path'])
+                    # Use pre-loaded audio data (not reading from file again)
+                    cloned_audio = segment.get('audio')
+                    if cloned_audio is None or len(cloned_audio) == 0:
+                        logger.warning(f"No audio data for segment {segment.get('segment_index', 'unknown')}")
+                        continue
                     
                     # Calculate position in final audio
                     start_sample = int(segment['start'] * self.sample_rate)
@@ -157,15 +160,19 @@ class AudioReconstructor:
                     if len(cloned_audio) != expected_samples:
                         cloned_audio = self._adjust_length(cloned_audio, expected_samples)
                     
-                    # Place in final audio
+                    # Place cloned voice in final audio (NOT replacing, but ensuring it's there)
                     final_audio[start_sample:end_sample] = cloned_audio
                     
-                except Exception:
+                    logger.debug(f"Placed segment {segment.get('segment_index')} audio: {start_sample}-{end_sample} samples")
+                    
+                except Exception as e:
+                    logger.error(f"Error processing segment {segment.get('segment_index', 'unknown')}: {e}")
                     continue
             
             return final_audio
             
-        except Exception:
+        except Exception as e:
+            logger.error(f"Audio reconstruction failed: {e}")
             return None
     
     def _adjust_length(self, audio: np.ndarray, target_samples: int) -> np.ndarray:
@@ -217,7 +224,7 @@ class AudioReconstructor:
             pass
 
     def _save_reconstruction_summary(self, segments_path: Path, all_segments: List[Dict], audio_id: str):
-        """Saves a reconstruction summary to the segments_path/metadata directory."""
+        """Clean reconstruction summary without unnecessary speaker statistics"""
         summary_path = segments_path / "metadata" / "reconstruction_summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -226,9 +233,8 @@ class AudioReconstructor:
             'total_segments_used': int(len(all_segments)),
             'final_duration': float(sum(s['duration'] for s in all_segments)),
             'sample_rate': int(all_segments[0]['sample_rate']) if all_segments else 44100,
-            'instruments_included': False, # This will be updated based on instruments_path
-            'segments_by_speaker': {},
-            'segments': [],  # Added detailed segment information
+            'instruments_included': False,
+            'segments': [],
             'reconstruction_timestamp': str(datetime.now())
         }
 
@@ -236,21 +242,16 @@ class AudioReconstructor:
         from r2_storage import R2Storage
         r2_storage = R2Storage()
 
-        # Count segments by speaker and prepare detailed segment info
+        # Prepare clean segment info
         for segment in all_segments:
-            speaker = segment.get('speaker', 'Unknown')
-            if speaker not in reconstruction_summary['segments_by_speaker']:
-                reconstruction_summary['segments_by_speaker'][speaker] = 0
-            reconstruction_summary['segments_by_speaker'][speaker] += 1
-            
-            # Generate R2 URL for cloned segment
+            speaker = segment.get('speaker', 'A')
             segment_index = segment.get('segment_index', 1)
             cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
             
             # Generate accurate R2 URL using R2Storage class
             r2_segment_url = r2_storage.generate_cloned_segment_url(audio_id, speaker, segment_index)
             
-            # Create detailed segment info - exclude numpy arrays for JSON serialization
+            # Create clean segment info
             segment_info = {
                 "segment_url": r2_segment_url,
                 "start_time": float(segment.get('start', 0.0)),
@@ -264,7 +265,6 @@ class AudioReconstructor:
                 "word_count": int(segment.get('word_count', 0)),
                 "cloned_filename": str(cloned_filename),
                 "processing_status": str(segment.get('processing_status', 'completed'))
-                # Note: 'audio' key excluded to prevent numpy array serialization
             }
             
             reconstruction_summary['segments'].append(segment_info)

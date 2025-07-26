@@ -322,7 +322,7 @@ class AudioProcessor:
         return self.file_manager.validate_and_repair_metadata(segments_dir)
     
     def get_processing_stats(self, segments_dir: str) -> Dict[str, Any]:
-        """Get processing statistics from unified segments directory"""
+        """Get clean processing statistics without unnecessary speaker breakdown"""
         try:
             segments_path = Path(segments_dir)
             
@@ -335,8 +335,6 @@ class AudioProcessor:
                 "total_segments": 0,
                 "total_cloned": 0,
                 "speakers": [],
-                "segments_by_speaker": {},
-                "cloned_by_speaker": {},
                 "completion_rate": 0,
                 "has_processing_summary": False,
                 "has_cloning_summary": False,
@@ -348,16 +346,15 @@ class AudioProcessor:
                 logger.warning(f"Segments folder not found: {segments_folder}")
                 return stats
             
-            # Collect segment statistics
+            # Collect basic statistics
             metadata_files = list(segments_folder.glob("*_metadata.json"))
             cloned_files = list(cloned_folder.glob("*.wav")) if cloned_folder.exists() else []
             
             stats["total_segments"] = len(metadata_files)
             stats["total_cloned"] = len(cloned_files)
             
-            # Analyze speakers from metadata
-            speaker_segments = {}
-            speaker_cloned = {}
+            # Get unique speakers (simple list)
+            speakers_found = set()
             
             for metadata_file in metadata_files:
                 try:
@@ -366,23 +363,13 @@ class AudioProcessor:
                         metadata = json.load(f)
                     
                     speaker = metadata.get('speaker', 'A')
-                    if speaker not in speaker_segments:
-                        speaker_segments[speaker] = 0
-                        speaker_cloned[speaker] = 0
-                    
-                    speaker_segments[speaker] += 1
-                    
-                    # Check if cloned
-                    if metadata.get('cloning_completed', False):
-                        speaker_cloned[speaker] += 1
+                    speakers_found.add(speaker)
                     
                 except Exception as e:
                     logger.error(f"Error reading metadata {metadata_file.name}: {e}")
                     continue
             
-            stats["speakers"] = sorted(list(speaker_segments.keys()))
-            stats["segments_by_speaker"] = speaker_segments
-            stats["cloned_by_speaker"] = speaker_cloned
+            stats["speakers"] = sorted(list(speakers_found))
             
             # Calculate completion rate
             if stats["total_segments"] > 0:
@@ -403,14 +390,11 @@ class AudioProcessor:
                 "total_segments": 0,
                 "total_cloned": 0,
                 "speakers": [],
-                "segments_by_speaker": {},
-                "cloned_by_speaker": {},
                 "completion_rate": 0,
                 "has_processing_summary": False,
                 "has_cloning_summary": False,
                 "has_reconstruction_summary": False,
-                "transcription_source": "AssemblyAI",
-                "error": str(e)
+                "transcription_source": "AssemblyAI"
             }
 
     def get_cache_stats(self) -> Dict[str, Any]:
