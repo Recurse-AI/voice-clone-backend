@@ -94,10 +94,10 @@ class AudioProcessor:
             return {"success": False, "error": f"Audio processing failed: {str(e)}"}
     
     def clone_voice_segments(self, segments_dir: str, audio_id: str, 
-                           temperature: float = 1.3, cfg_scale: float = 3.0, 
+                           temperature: float = 1.2, cfg_scale: float = 3.0, 
                            top_p: float = 0.95, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Clone voice segments speaker by speaker - simplified"""
-        logger.info(f"Starting clone_voice_segments for audio_id: {audio_id}")
+        """Simplified voice cloning with unified segment processing"""
+        logger.info(f"Starting unified voice cloning for audio_id: {audio_id}")
         
         if not self.voice_cloning_service.is_model_loaded():
             logger.error("Dia model not loaded")
@@ -109,14 +109,11 @@ class AudioProcessor:
             segments_path = Path(segments_dir)
             logger.info(f"Segments directory: {segments_path}")
             
-            total_successful_clones = 0
-            seeds_used = {}
-            speaker_results = {}
-            
             base_seed = seed or settings.DEFAULT_SEED
             logger.info(f"Base seed: {base_seed}")
             
-            # Process each speaker directory
+            # Collect all segments from all speakers into one unified list
+            all_segments = []
             speaker_dirs = list(segments_path.iterdir())
             logger.info(f"Found {len(speaker_dirs)} directories in segments_path")
             
@@ -126,23 +123,15 @@ class AudioProcessor:
                     continue
                 
                 speaker = speaker_dir.name.replace("speaker_", "")
-                logger.info(f"Processing speaker: {speaker}")
-                
                 segments_subdir = speaker_dir / "segments"
                 
                 if not segments_subdir.exists():
                     logger.warning(f"Segments subdirectory not found: {segments_subdir}")
                     continue
                 
-                # Calculate speaker seed
-                speaker_index = ord(speaker) - ord('A')
-                speaker_seed = base_seed + (speaker_index * settings.SPEAKER_SEED_OFFSET)
-                logger.info(f"Speaker {speaker} seed: {speaker_seed}")
-                
-                # Collect all segments for this speaker
-                speaker_segments = []
-                json_files = sorted(list(segments_subdir.glob("*_metadata.json")))  # Sort files for consistent ordering
-                logger.info(f"Found {len(json_files)} metadata files for speaker {speaker}")
+                # Collect segments for this speaker
+                json_files = sorted(list(segments_subdir.glob("*_metadata.json")))
+                logger.info(f"Found {len(json_files)} segments for speaker {speaker}")
                 
                 for json_file in json_files:
                     try:
@@ -156,99 +145,45 @@ class AudioProcessor:
                         
                         segment_data['segments_dir'] = str(segments_subdir)
                         segment_data['segment_file'] = str(json_file)
-                        speaker_segments.append(segment_data)
-                        logger.debug(f"Added segment from {json_file.name} to speaker {speaker}")
+                        segment_data['speaker'] = speaker  # Ensure speaker is set
+                        all_segments.append(segment_data)
+                        logger.debug(f"Added segment from {json_file.name} for speaker {speaker}")
                         
                     except Exception as e:
                         logger.error(f"Error loading metadata from {json_file}: {e}")
                         continue
-                
-                if not speaker_segments:
-                    logger.warning(f"No valid segments found for speaker {speaker}")
-                    continue
-                
-                logger.info(f"Collected {len(speaker_segments)} segments for speaker {speaker}")
-                
-                # Clone segments for this speaker
-                logger.info(f"Calling voice cloning service for speaker {speaker}")
-                cloning_result = self.voice_cloning_service.clone_voice_segments(
-                    speaker_segments, temperature, cfg_scale, top_p, speaker_seed, audio_id
-                )
-                
-                logger.info(f"Cloning result success: {cloning_result.get('success', False)}")
-                if not cloning_result.get('success', False):
-                    logger.error(f"Cloning failed for speaker {speaker}: {cloning_result.get('error', 'Unknown error')}")
-                    continue
-                
-                seeds_used[speaker] = speaker_seed
-                cloned_segments = cloning_result.get('cloned_segments', [])
-                logger.info(f"Received {len(cloned_segments)} cloned segments for speaker {speaker}")
-                
-                # Save cloned segments in segments folder
-                cloned_dir = segments_subdir
-                speaker_successful = 0
-                
-                for idx, cloned_segment in enumerate(cloned_segments):
-                    try:
-                        audio_data = cloned_segment.get('cloned_audio')
-                        original_data = cloned_segment.get('original_data', {})
-                        segment_index = original_data.get('segment_index', idx + 1)
-                        
-                        if audio_data is not None and len(audio_data) > 0:
-                            cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
-                            cloned_path = cloned_dir / cloned_filename
-                            sf.write(str(cloned_path), audio_data, self.voice_cloning_service.sample_rate)
-                            
-                            # Update metadata
-                            metadata_file = cloned_dir / f"segment_{segment_index:03d}_metadata.json"
-                            if metadata_file.exists():
-                                with open(metadata_file, 'r', encoding='utf-8') as f:
-                                    metadata = json.load(f)
-                                metadata['cloned_audio_path'] = str(cloned_path)
-                                with open(metadata_file, 'w', encoding='utf-8') as f:
-                                    json.dump(metadata, f, ensure_ascii=False, indent=2)
-                            
-                            speaker_successful += 1
-                            total_successful_clones += 1
-                        
-                    except Exception as e:
-                        logger.error(f"Error saving cloned segment {idx}: {e}")
-                        continue
-                
-                speaker_results[speaker] = speaker_successful
-                
-                logger.info(f"Speaker {speaker} completed: {speaker_successful}/{len(speaker_segments)} successful")
-                self.voice_cloning_service.clear_cache()
             
-            logger.info(f"Total successful clones: {total_successful_clones}")
+            if not all_segments:
+                logger.error("No valid segments found for processing")
+                return {"success": False, "error": "No valid segments found"}
             
-            # Save cloning summary
-            cloning_summary = {
-                'audio_id': audio_id,
-                'total_successful_clones': total_successful_clones,
-                'cloned_by_speaker': speaker_results,
-                'seeds_used': seeds_used,
-                'cloning_timestamp': str(datetime.now())
-            }
+            logger.info(f"Collected {len(all_segments)} total segments for unified processing")
             
-            summary_path = segments_path / "metadata" / "cloning_summary.json"
-            with open(summary_path, 'w', encoding='utf-8') as f:
-                json.dump(cloning_summary, f, ensure_ascii=False, indent=2)
+            # Process all segments together in one unified call
+            logger.info("Calling unified voice cloning service")
+            cloning_result = self.voice_cloning_service.clone_voice_segments(
+                all_segments, temperature, cfg_scale, top_p, base_seed, audio_id
+            )
+            
+            if not cloning_result.get('success', False):
+                logger.error(f"Unified cloning failed: {cloning_result.get('error', 'Unknown error')}")
+                return cloning_result
+            
+            logger.info(f"Unified cloning successful: {cloning_result.get('successful_clones', 0)} segments cloned")
             
             return {
                 "success": True,
-                "cloned_segments": total_successful_clones,
-                "cloned_segments_count": total_successful_clones,
-                "cloned_by_speaker": speaker_results,
-                "seeds_used": seeds_used,
-                "audio_id": audio_id
+                "total_segments": len(all_segments),
+                "successful_clones": cloning_result.get('successful_clones', 0),
+                "cloned_segments": cloning_result.get('cloned_segments', []),
+                "seed_used": base_seed,
+                "speaker_seeds": cloning_result.get('speaker_seeds', {}),
+                "cloning_duration": cloning_result.get('cloning_duration', 0)
             }
             
         except Exception as e:
-            logger.error(f"Exception in clone_voice_segments: {e}")
-            return {"success": False, "error": str(e)}
-        finally:
-            self.voice_cloning_service.clear_cache()
+            logger.error(f"Unified voice cloning failed: {str(e)}")
+            return {"success": False, "error": f"Unified voice cloning failed: {str(e)}"}
     
     def reconstruct_final_audio(self, segments_dir: str, audio_id: str, 
                                include_instruments: bool = False,
