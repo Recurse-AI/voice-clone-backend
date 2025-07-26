@@ -91,7 +91,7 @@ class FileHandler:
             return False, "", error_msg
     
     def _handle_url_download(self, video_url: str, audio_id: str, status_manager=None) -> Tuple[bool, str, Optional[str]]:
-        """Handle URL download with progress tracking"""
+        """Handle URL download with proper progress tracking"""
         try:
             # Parse URL and create filename
             parsed_url = urllib.parse.urlparse(video_url)
@@ -104,9 +104,9 @@ class FileHandler:
             local_filename = f"{audio_id}_video{file_extension}"
             local_file_path = os.path.join(self.temp_dir, local_filename)
             
-            # Download with progress
+            # Start download with initial progress
             if status_manager:
-                status_manager.set_progress(audio_id, 7)
+                status_manager.set_progress(audio_id, 5)
             
             response = requests.get(video_url, stream=True, timeout=300)
             response.raise_for_status()
@@ -118,6 +118,7 @@ class FileHandler:
             
             downloaded = 0
             chunk_size = 8192
+            last_progress = 5
             
             with open(local_file_path, "wb") as buffer:
                 for chunk in response.iter_content(chunk_size=chunk_size):
@@ -125,11 +126,16 @@ class FileHandler:
                         buffer.write(chunk)
                         downloaded += len(chunk)
                         
-                        # Update progress between 7% and 9%
+                        # Update progress between 5% and 20% (15% range for download)
                         if content_length and status_manager:
-                            download_progress = (downloaded / content_length) * 2  # 2% range for download
-                            current_progress = min(9, 7 + download_progress)
-                            status_manager.set_progress(audio_id, int(current_progress))
+                            download_progress = (downloaded / content_length) * 15  # 15% range for download
+                            current_progress = min(20, 5 + download_progress)
+                            
+                            # Update every 1% to make it more visible
+                            if int(current_progress) > last_progress:
+                                status_manager.set_progress(audio_id, int(current_progress))
+                                last_progress = int(current_progress)
+                                logger.info(f"Download progress: {int(current_progress)}%")
             
             # Verify downloaded file
             if not os.path.exists(local_file_path):
@@ -146,9 +152,10 @@ class FileHandler:
                 os.unlink(local_file_path)
                 return False, "", f"Unsupported video format: {file_extension}"
             
-            # Final progress update to 10%
+            # Final progress update to 20%
             if status_manager:
-                status_manager.set_progress(audio_id, 10)
+                status_manager.set_progress(audio_id, 20)
+                logger.info("Download completed - 20%")
             
             logger.info(f"URL download completed successfully for audio_id {audio_id}: {video_url} -> {local_file_path}")
             return True, local_file_path, None

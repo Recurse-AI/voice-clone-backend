@@ -96,7 +96,7 @@ class AudioProcessor:
     def clone_voice_segments(self, segments_dir: str, audio_id: str, 
                            temperature: float = 1.2, cfg_scale: float = 3.0, 
                            top_p: float = 0.95, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Simplified voice cloning with unified segment processing"""
+        """Simplified voice cloning with unified segment processing from single folder"""
         logger.info(f"Starting unified voice cloning for audio_id: {audio_id}")
         
         if not self.voice_cloning_service.is_model_loaded():
@@ -112,46 +112,40 @@ class AudioProcessor:
             base_seed = seed or settings.DEFAULT_SEED
             logger.info(f"Base seed: {base_seed}")
             
-            # Collect all segments from all speakers into one unified list
+            # Collect all segments from single segments folder
             all_segments = []
-            speaker_dirs = list(segments_path.iterdir())
-            logger.info(f"Found {len(speaker_dirs)} directories in segments_path")
+            segments_folder = segments_path / "segments"
             
-            for speaker_dir in speaker_dirs:
-                if not speaker_dir.is_dir() or not speaker_dir.name.startswith("speaker_"):
-                    logger.debug(f"Skipping non-speaker directory: {speaker_dir.name}")
-                    continue
-                
-                speaker = speaker_dir.name.replace("speaker_", "")
-                segments_subdir = speaker_dir / "segments"
-                
-                if not segments_subdir.exists():
-                    logger.warning(f"Segments subdirectory not found: {segments_subdir}")
-                    continue
-                
-                # Collect segments for this speaker
-                json_files = sorted(list(segments_subdir.glob("*_metadata.json")))
-                logger.info(f"Found {len(json_files)} segments for speaker {speaker}")
-                
-                for json_file in json_files:
-                    try:
-                        with open(json_file, 'r', encoding='utf-8') as f:
-                            import json
-                            segment_data = json.load(f)
-                        
-                        if not segment_data.get('english_text', '').strip():
-                            logger.warning(f"Skipping segment with no english_text: {json_file}")
-                            continue
-                        
-                        segment_data['segments_dir'] = str(segments_subdir)
-                        segment_data['segment_file'] = str(json_file)
-                        segment_data['speaker'] = speaker  # Ensure speaker is set
-                        all_segments.append(segment_data)
-                        logger.debug(f"Added segment from {json_file.name} for speaker {speaker}")
-                        
-                    except Exception as e:
-                        logger.error(f"Error loading metadata from {json_file}: {e}")
+            if not segments_folder.exists():
+                logger.error(f"Segments folder not found: {segments_folder}")
+                return {"success": False, "error": "Segments folder not found"}
+            
+            # Collect all segment metadata files
+            json_files = sorted(list(segments_folder.glob("*_metadata.json")))
+            logger.info(f"Found {len(json_files)} total segments")
+            
+            for json_file in json_files:
+                try:
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        import json
+                        segment_data = json.load(f)
+                    
+                    if not segment_data.get('english_text', '').strip():
+                        logger.warning(f"Skipping segment with no english_text: {json_file}")
                         continue
+                    
+                    segment_data['segments_dir'] = str(segments_folder)
+                    segment_data['segment_file'] = str(json_file)
+                    # Ensure speaker is properly set from metadata
+                    if 'speaker' not in segment_data or not segment_data['speaker']:
+                        segment_data['speaker'] = 'A'  # Default speaker
+                    
+                    all_segments.append(segment_data)
+                    logger.debug(f"Added segment from {json_file.name} for speaker {segment_data.get('speaker', 'A')}")
+                    
+                except Exception as e:
+                    logger.error(f"Error loading metadata from {json_file}: {e}")
+                    continue
             
             if not all_segments:
                 logger.error("No valid segments found for processing")
@@ -328,8 +322,96 @@ class AudioProcessor:
         return self.file_manager.validate_and_repair_metadata(segments_dir)
     
     def get_processing_stats(self, segments_dir: str) -> Dict[str, Any]:
-        """Get processing statistics"""
-        return self.file_manager.get_processing_stats(segments_dir)
+        """Get processing statistics from unified segments directory"""
+        try:
+            segments_path = Path(segments_dir)
+            
+            # Check unified structure
+            segments_folder = segments_path / "segments"
+            cloned_folder = segments_path / "cloned"
+            metadata_folder = segments_path / "metadata"
+            
+            stats = {
+                "total_segments": 0,
+                "total_cloned": 0,
+                "speakers": [],
+                "segments_by_speaker": {},
+                "cloned_by_speaker": {},
+                "completion_rate": 0,
+                "has_processing_summary": False,
+                "has_cloning_summary": False,
+                "has_reconstruction_summary": False,
+                "transcription_source": "AssemblyAI"
+            }
+            
+            if not segments_folder.exists():
+                logger.warning(f"Segments folder not found: {segments_folder}")
+                return stats
+            
+            # Collect segment statistics
+            metadata_files = list(segments_folder.glob("*_metadata.json"))
+            cloned_files = list(cloned_folder.glob("*.wav")) if cloned_folder.exists() else []
+            
+            stats["total_segments"] = len(metadata_files)
+            stats["total_cloned"] = len(cloned_files)
+            
+            # Analyze speakers from metadata
+            speaker_segments = {}
+            speaker_cloned = {}
+            
+            for metadata_file in metadata_files:
+                try:
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        import json
+                        metadata = json.load(f)
+                    
+                    speaker = metadata.get('speaker', 'A')
+                    if speaker not in speaker_segments:
+                        speaker_segments[speaker] = 0
+                        speaker_cloned[speaker] = 0
+                    
+                    speaker_segments[speaker] += 1
+                    
+                    # Check if cloned
+                    if metadata.get('cloning_completed', False):
+                        speaker_cloned[speaker] += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error reading metadata {metadata_file.name}: {e}")
+                    continue
+            
+            stats["speakers"] = sorted(list(speaker_segments.keys()))
+            stats["segments_by_speaker"] = speaker_segments
+            stats["cloned_by_speaker"] = speaker_cloned
+            
+            # Calculate completion rate
+            if stats["total_segments"] > 0:
+                stats["completion_rate"] = round((stats["total_cloned"] / stats["total_segments"]) * 100, 1)
+            
+            # Check for summary files
+            if metadata_folder.exists():
+                stats["has_processing_summary"] = (metadata_folder / "processing_metadata.json").exists()
+                stats["has_cloning_summary"] = (metadata_folder / "cloning_summary.json").exists()
+                stats["has_reconstruction_summary"] = (metadata_folder / "reconstruction_summary.json").exists()
+            
+            logger.info(f"Processing stats: {stats['total_segments']} segments, {stats['total_cloned']} cloned, {stats['completion_rate']}% complete")
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error getting processing stats: {e}")
+            return {
+                "total_segments": 0,
+                "total_cloned": 0,
+                "speakers": [],
+                "segments_by_speaker": {},
+                "cloned_by_speaker": {},
+                "completion_rate": 0,
+                "has_processing_summary": False,
+                "has_cloning_summary": False,
+                "has_reconstruction_summary": False,
+                "transcription_source": "AssemblyAI",
+                "error": str(e)
+            }
 
     def get_cache_stats(self) -> Dict[str, Any]:
         """Get cache statistics for monitoring"""

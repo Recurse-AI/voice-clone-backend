@@ -32,64 +32,63 @@ class VideoProcessor:
         subtitle_data = []
         segments_path = Path(segments_dir)
         
-        for speaker_dir in segments_path.glob("speaker_*"):
-            if not speaker_dir.is_dir():
-                continue
+        # Use unified segments folder
+        segments_folder = segments_path / "segments"
+        
+        if not segments_folder.exists():
+            return subtitle_data
+        
+        for json_file in segments_folder.glob("*_metadata.json"):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
                 
-            segments_subdir = speaker_dir / "segments"
-            if not segments_subdir.exists():
-                continue
-                
-            for json_file in segments_subdir.glob("*_metadata.json"):
-                try:
-                    with open(json_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    
-                    if not data.get('segment_index'):
-                        continue
-                    
-                    if not data.get('start') and data.get('start') != 0:
-                        continue
-                    
-                    if not data.get('end'):
-                        continue
-                    
-                    cloned_audio_exists = False
-                    segment_index = data.get('segment_index', 1)
-                    
-                    if data.get('cloned_audio_exists') and data.get('cloned_audio_path'):
-                        cloned_audio_exists = Path(data['cloned_audio_path']).exists()
-                    
-                    if not cloned_audio_exists:
-                        expected_cloned_file = segments_subdir / f"cloned_segment_{segment_index:03d}.wav"
-                        cloned_audio_exists = expected_cloned_file.exists()
-                    
-                    if not cloned_audio_exists:
-                        base_name = json_file.stem.replace('_metadata', '')
-                        old_cloned_file = segments_subdir / f"cloned_{base_name}.wav"
-                        cloned_audio_exists = old_cloned_file.exists()
-                    
-                    if not cloned_audio_exists:
-                        continue
-                    
-                    english_text = data.get('english_text', data.get('text', ''))
-                    if not english_text:
-                        continue
-                    
-                    import re
-                    display_text = re.sub(r'\[S\d+\]\s*', '', english_text).strip()
-                    display_text = re.sub(r'\n', ' ', display_text).strip()
-                    
-                    if display_text:
-                        word_chunks = self._create_word_chunks(
-                            display_text, 
-                            data['start'], 
-                            data['end']
-                        )
-                        subtitle_data.extend(word_chunks)
-                
-                except Exception:
+                if not data.get('segment_index'):
                     continue
+                
+                if not data.get('start') and data.get('start') != 0:
+                    continue
+                
+                if not data.get('end'):
+                    continue
+                
+                cloned_audio_exists = False
+                segment_index = data.get('segment_index', 1)
+                
+                # Check if cloned audio exists in unified cloned folder
+                cloned_folder = segments_path / "cloned"
+                cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
+                cloned_path = cloned_folder / cloned_filename
+                
+                if cloned_path.exists():
+                    cloned_audio_exists = True
+                
+                if not cloned_audio_exists:
+                    base_name = json_file.stem.replace('_metadata', '')
+                    old_cloned_file = segments_folder / f"cloned_{base_name}.wav"
+                    cloned_audio_exists = old_cloned_file.exists()
+                
+                if not cloned_audio_exists:
+                    continue
+                
+                english_text = data.get('english_text', data.get('text', ''))
+                if not english_text:
+                    continue
+                
+                import re
+                display_text = re.sub(r'\[S\d+\]\s*', '', english_text).strip()
+                display_text = re.sub(r'\n', ' ', display_text).strip()
+                
+                if display_text:
+                    word_chunks = self._create_word_chunks(
+                        display_text, 
+                        data['start'], 
+                        data['end']
+                    )
+                    subtitle_data.extend(word_chunks)
+                
+            except Exception:
+                continue
         
         subtitle_data.sort(key=lambda x: x['start'])
         return self._resolve_overlaps(subtitle_data)

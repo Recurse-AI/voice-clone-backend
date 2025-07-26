@@ -21,15 +21,13 @@ class FileManager:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
     
     def create_directory_structure(self, base_dir: Path, speakers: List[str]):
-        """Create directory structure for segments"""
+        """Create simplified directory structure - single segments folder for all speakers"""
         (base_dir / "metadata").mkdir(parents=True, exist_ok=True)
-        
-        for speaker in speakers:
-            speaker_dir = base_dir / f"speaker_{speaker}"
-            (speaker_dir / "segments").mkdir(parents=True, exist_ok=True)
+        (base_dir / "segments").mkdir(parents=True, exist_ok=True)
+        (base_dir / "cloned").mkdir(parents=True, exist_ok=True)
     
     def validate_and_repair_metadata(self, segments_dir: str) -> Dict[str, Any]:
-        """Validate and repair metadata files in segments directory"""
+        """Validate and repair metadata files in unified segments directory"""
         segments_path = Path(segments_dir)
         validation_results = {
             "total_files_checked": 0,
@@ -37,111 +35,95 @@ class FileManager:
             "files_with_errors": 0,
             "missing_english_text": 0,
             "missing_essential_fields": 0,
-            "speakers_processed": [],
+            "segments_processed": 0,
             "validation_timestamp": str(datetime.now())
         }
         
         try:
-            for speaker_dir in segments_path.glob("speaker_*"):
-                if not speaker_dir.is_dir():
-                    continue
+            # Check if segments folder exists
+            segments_folder = segments_path / "segments"
+            if not segments_folder.exists():
+                logger.error(f"Segments folder not found: {segments_folder}")
+                validation_results["error"] = "Segments folder not found"
+                return validation_results
+            
+            # Process all metadata files in segments folder
+            json_files = list(segments_folder.glob("*_metadata.json"))
+            logger.info(f"Found {len(json_files)} metadata files to validate")
+            
+            for json_file in json_files:
+                validation_results["total_files_checked"] += 1
                 
-                speaker = speaker_dir.name.replace("speaker_", "")
-                validation_results["speakers_processed"].append(speaker)
-                
-                segments_subdir = speaker_dir / "segments"
-                if not segments_subdir.exists():
-                    continue
-                
-                for json_file in segments_subdir.glob("*_metadata.json"):
-                    validation_results["total_files_checked"] += 1
+                try:
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
                     
-                    try:
-                        # Load existing metadata
-                        with open(json_file, 'r', encoding='utf-8') as f:
-                            metadata = json.load(f)
+                    # Track if file needs repair
+                    needs_repair = False
+                    
+                    # Check essential fields
+                    essential_fields = ['segment_index', 'audio_file', 'audio_path', 'english_text', 'speaker']
+                    missing_fields = [field for field in essential_fields if field not in metadata or not metadata[field]]
+                    
+                    if missing_fields:
+                        validation_results["missing_essential_fields"] += 1
+                        logger.warning(f"Missing essential fields in {json_file.name}: {missing_fields}")
+                        needs_repair = True
+                    
+                    # Check english_text specifically
+                    if not metadata.get('english_text', '').strip():
+                        validation_results["missing_english_text"] += 1
+                        logger.warning(f"Missing english_text in {json_file.name}")
+                        needs_repair = True
+                    
+                    # Auto-repair missing fields if possible
+                    if needs_repair:
+                        # Try to repair basic fields
+                        if 'segment_index' not in metadata:
+                            # Extract segment number from filename
+                            try:
+                                import re
+                                match = re.search(r'segment_(\d+)_metadata\.json', json_file.name)
+                                if match:
+                                    metadata['segment_index'] = int(match.group(1))
+                            except:
+                                metadata['segment_index'] = validation_results["total_files_checked"]
                         
-                        # Check if repair is needed
-                        needs_repair = False
+                        if 'speaker' not in metadata or not metadata['speaker']:
+                            metadata['speaker'] = 'A'  # Default speaker
                         
-                        # Validate essential fields
-                        if not metadata.get('segment_index'):
-                            segment_num = self._extract_segment_number(json_file.name)
-                            metadata['segment_index'] = segment_num
-                            needs_repair = True
-                            validation_results["missing_essential_fields"] += 1
+                        if 'audio_file' not in metadata:
+                            base_name = json_file.stem.replace('_metadata', '')
+                            metadata['audio_file'] = f"{base_name}.wav"
                         
-                        if not metadata.get('speaker'):
-                            metadata['speaker'] = speaker
-                            needs_repair = True
-                            validation_results["missing_essential_fields"] += 1
+                        if 'audio_path' not in metadata:
+                            metadata['audio_path'] = str(segments_folder / metadata['audio_file'])
                         
-                        if not metadata.get('speaker_index'):
-                            metadata['speaker_index'] = ord(speaker) - ord('A') + 1
-                            needs_repair = True
-                            validation_results["missing_essential_fields"] += 1
-                        
-                        # Check English text
-                        if not metadata.get('english_text', '').strip():
-                            # Try to create English text from original text
-                            original_text = metadata.get('original_text', metadata.get('text', ''))
-                            if original_text:
-                                speaker_num = metadata.get('speaker_index', ord(speaker) - ord('A') + 1)
-                                english_text = self._create_fallback_english_text(original_text, speaker_num)
-                                metadata['english_text'] = english_text
-                                needs_repair = True
-                                validation_results["missing_english_text"] += 1
-                        
-                        # Add missing paths
-                        if not metadata.get('audio_path'):
-                            audio_file = metadata.get('audio_file', f"segment_{metadata['segment_index']:03d}.wav")
-                            metadata['audio_path'] = str(segments_subdir / audio_file)
-                            needs_repair = True
-                        
-                        if not metadata.get('cloned_audio_file'):
-                            metadata['cloned_audio_file'] = f"cloned_segment_{metadata['segment_index']:03d}.wav"
-                            needs_repair = True
-                        
-                        if not metadata.get('cloned_audio_path'):
-                            metadata['cloned_audio_path'] = str(segments_subdir / metadata['cloned_audio_file'])
-                            needs_repair = True
-                        
-                        # Check if cloned audio actually exists
-                        cloned_path = Path(metadata['cloned_audio_path'])
-                        metadata['cloned_audio_exists'] = cloned_path.exists()
-                        
-                        # Add processing status
-                        if not metadata.get('processing_status'):
-                            if metadata.get('cloned_audio_exists'):
-                                metadata['processing_status'] = 'cloning_completed'
-                            else:
-                                metadata['processing_status'] = 'ready_for_cloning'
-                            needs_repair = True
-                        
-                        # Add metadata completeness flag
-                        metadata['metadata_complete'] = True
-                        metadata['last_validated'] = str(datetime.now())
+                        # Update cloned paths to new structure
+                        cloned_folder = segments_path / "cloned"
+                        if 'cloned_audio_file' in metadata:
+                            metadata['cloned_audio_path'] = str(cloned_folder / metadata['cloned_audio_file'])
                         
                         # Save repaired metadata
-                        if needs_repair:
-                            with open(json_file, 'w', encoding='utf-8') as f:
-                                json.dump(metadata, f, ensure_ascii=False, indent=2)
-                            validation_results["files_repaired"] += 1
+                        with open(json_file, 'w', encoding='utf-8') as f:
+                            json.dump(metadata, f, ensure_ascii=False, indent=2)
                         
-                    except Exception as e:
-                        validation_results["files_with_errors"] += 1
-                        logger.error(f"Error processing {json_file}: {str(e)}")
-                        continue
+                        validation_results["files_repaired"] += 1
+                        logger.info(f"Repaired metadata file: {json_file.name}")
+                    
+                    validation_results["segments_processed"] += 1
+                    
+                except Exception as e:
+                    validation_results["files_with_errors"] += 1
+                    logger.error(f"Error processing {json_file.name}: {e}")
+                    continue
             
-            # Save validation summary
-            summary_path = segments_path / "metadata" / "validation_summary.json"
-            with open(summary_path, 'w', encoding='utf-8') as f:
-                json.dump(validation_results, f, ensure_ascii=False, indent=2)
-            
+            logger.info(f"Validation completed: {validation_results['segments_processed']} segments processed")
             return validation_results
             
         except Exception as e:
-            validation_results["validation_error"] = str(e)
+            logger.error(f"Validation failed: {e}")
+            validation_results["error"] = str(e)
             return validation_results
     
     def _extract_segment_number(self, filename: str) -> int:
@@ -183,52 +165,3 @@ class FileManager:
                         item.unlink()
         except Exception:
             pass
-    
-    def get_processing_stats(self, segments_dir: str) -> Dict[str, Any]:
-        """Get comprehensive processing statistics"""
-        try:
-            segments_path = Path(segments_dir)
-            
-            # Count segments by speaker
-            segments_by_speaker = {}
-            cloned_by_speaker = {}
-            total_segments = 0
-            total_cloned = 0
-            speakers = []
-            
-            for speaker_dir in segments_path.glob("speaker_*"):
-                if speaker_dir.is_dir():
-                    speaker = speaker_dir.name.replace("speaker_", "")
-                    speakers.append(speaker)
-                    
-                    segments_subdir = speaker_dir / "segments"
-                    if segments_subdir.exists():
-                        segment_count = len(list(segments_subdir.glob("*_metadata.json")))
-                        cloned_count = len(list(segments_subdir.glob("cloned_segment_*.wav")))
-                        
-                        segments_by_speaker[speaker] = segment_count
-                        cloned_by_speaker[speaker] = cloned_count
-                        total_segments += segment_count
-                        total_cloned += cloned_count
-            
-            # Check for summary files
-            metadata_dir = segments_path / "metadata"
-            has_processing_summary = (metadata_dir / "processing_metadata.json").exists()
-            has_cloning_summary = (metadata_dir / "cloning_summary.json").exists()
-            has_reconstruction_summary = (metadata_dir / "reconstruction_summary.json").exists()
-            
-            return {
-                "total_segments": total_segments,
-                "total_cloned": total_cloned,
-                "speakers": speakers,
-                "segments_by_speaker": segments_by_speaker,
-                "cloned_by_speaker": cloned_by_speaker,
-                "completion_rate": (total_cloned / total_segments * 100) if total_segments > 0 else 0,
-                "has_processing_summary": has_processing_summary,
-                "has_cloning_summary": has_cloning_summary,
-                "has_reconstruction_summary": has_reconstruction_summary,
-                "transcription_source": "AssemblyAI"
-            }
-            
-        except Exception as e:
-            return {"error": str(e)}

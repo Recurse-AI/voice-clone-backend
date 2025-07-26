@@ -25,139 +25,101 @@ class AudioReconstructor:
     def reconstruct_final_audio(self, segments_dir: str, audio_id: str, 
                                include_instruments: bool = False,
                                instruments_path: Optional[str] = None) -> Dict[str, Any]:
-        """Reconstruct final audio from cloned segments with proper metadata handling"""
+        """Reconstruct final audio from unified segments folder"""
         try:
             segments_path = Path(segments_dir)
+            logger.info(f"Starting audio reconstruction for audio_id: {audio_id}")
             
-            # Collect all segments with validation
+            # Check unified structure
+            segments_folder = segments_path / "segments"
+            cloned_folder = segments_path / "cloned"
+            
+            if not segments_folder.exists():
+                return {"success": False, "error": "Segments folder not found"}
+            
+            if not cloned_folder.exists():
+                return {"success": False, "error": "Cloned folder not found"}
+            
+            # Collect all segments from unified folders
             all_segments = []
             
-            for speaker_dir in segments_path.glob("speaker_*"):
-                if not speaker_dir.is_dir():
-                    continue
+            # Get all metadata files and sort by segment index
+            metadata_files = sorted(list(segments_folder.glob("*_metadata.json")))
+            logger.info(f"Found {len(metadata_files)} segment metadata files")
+            
+            for metadata_file in metadata_files:
+                try:
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        import json
+                        metadata = json.load(f)
                     
-                segments_subdir = speaker_dir / "segments"
-                if not segments_subdir.exists():
-                    continue
+                    segment_index = metadata.get('segment_index', 0)
+                    cloned_audio_path = metadata.get('cloned_audio_path')
                     
-                for json_file in segments_subdir.glob("*_metadata.json"):
-                    try:
-                        with open(json_file, 'r', encoding='utf-8') as f:
-                            segment_data = json.load(f)
-                        
-                        # Validate essential fields
-                        if not segment_data.get('segment_index'):
-                            continue
-                        
-                        if not segment_data.get('start') and segment_data.get('start') != 0:
-                            continue
-                        
-                        if not segment_data.get('end'):
-                            continue
-                        
-                        # Find cloned audio file
-                        segment_index = segment_data.get('segment_index', 1)
-                        cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
-                        cloned_audio_path = segments_subdir / cloned_filename
-                        
-                        if cloned_audio_path.exists():
-                            segment_data['cloned_audio_path'] = str(cloned_audio_path)
-                            segment_data['cloned_audio_exists'] = True
-                            all_segments.append(segment_data)
-                        else:
-                            continue
-                            
-                    except Exception as e:
-                        print(f"Error processing metadata file {json_file}: {e}")
+                    if not cloned_audio_path or not os.path.exists(cloned_audio_path):
+                        logger.warning(f"Cloned audio not found for segment {segment_index}")
                         continue
+                    
+                    # Load cloned audio
+                    cloned_audio, sr = sf.read(cloned_audio_path)
+                    
+                    all_segments.append({
+                        'segment_index': segment_index,
+                        'start': metadata.get('start', 0),
+                        'end': metadata.get('end', 0),
+                        'duration': metadata.get('duration', 0),
+                        'audio': cloned_audio,
+                        'speaker': metadata.get('speaker', 'A'),
+                        'sample_rate': sr
+                    })
+                    
+                except Exception as e:
+                    logger.error(f"Error processing {metadata_file.name}: {e}")
+                    continue
             
             if not all_segments:
                 return {"success": False, "error": "No valid cloned segments found"}
             
-            print(f"Found {len(all_segments)} valid cloned segments")
-            
-            # Sort segments by start time
-            all_segments.sort(key=lambda x: x.get('start', 0))
+            # Sort segments by segment index to maintain order
+            all_segments.sort(key=lambda x: x['segment_index'])
+            logger.info(f"Processing {len(all_segments)} segments for reconstruction")
             
             # Reconstruct audio
             reconstructed_audio = self._reconstruct_from_segments(all_segments)
             
-            if reconstructed_audio is None:
+            if reconstructed_audio is None or len(reconstructed_audio) == 0:
                 return {"success": False, "error": "Audio reconstruction failed"}
+            
+            # Save final audio
+            final_audio_filename = f"final_output_{audio_id}.wav"
+            final_audio_path = segments_path / final_audio_filename
+            sf.write(str(final_audio_path), reconstructed_audio, all_segments[0]['sample_rate'])
             
             # Mix with instruments if requested
             if include_instruments and instruments_path and os.path.exists(instruments_path):
-                reconstructed_audio = self._mix_with_instruments(reconstructed_audio, instruments_path)
-            
-            # Save final audio
-            final_path = self.temp_dir / f"final_output_{audio_id}.wav"
-            sf.write(final_path, reconstructed_audio, self.sample_rate)
-            
-            # Create reconstruction summary
-            reconstruction_summary = {
-                'audio_id': audio_id,
-                'total_segments_used': len(all_segments),
-                'final_duration': len(reconstructed_audio) / self.sample_rate,
-                'sample_rate': self.sample_rate,
-                'instruments_included': include_instruments and instruments_path is not None,
-                'segments_by_speaker': {},
-                'segments': [],  # Added detailed segment information
-                'reconstruction_timestamp': str(datetime.now())
-            }
-            
-            # Import R2Storage for URL generation
-            from r2_storage import R2Storage
-            r2_storage = R2Storage()
-            
-            # Count segments by speaker and prepare detailed segment info
-            for segment in all_segments:
-                speaker = segment.get('speaker', 'Unknown')
-                if speaker not in reconstruction_summary['segments_by_speaker']:
-                    reconstruction_summary['segments_by_speaker'][speaker] = 0
-                reconstruction_summary['segments_by_speaker'][speaker] += 1
-                
-                # Generate R2 URL for cloned segment
-                segment_index = segment.get('segment_index', 1)
-                cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
-                
-                # Generate accurate R2 URL using R2Storage class
-                r2_segment_url = r2_storage.generate_cloned_segment_url(audio_id, speaker, segment_index)
-                
-                # Create detailed segment info
-                segment_info = {
-                    "segment_url": r2_segment_url,
-                    "start_time": segment.get('start', 0.0),
-                    "duration": segment.get('duration', segment.get('end', 0.0) - segment.get('start', 0.0)),
-                    "end_time": segment.get('end', 0.0),
-                    "speaker": speaker,
-                    "segment_index": segment_index,
-                    "original_text": segment.get('original_text', ''),
-                    "english_text": segment.get('english_text', ''),
-                    "confidence": segment.get('confidence', 0.0),
-                    "word_count": segment.get('word_count', 0),
-                    "cloned_filename": cloned_filename,
-                    "processing_status": segment.get('processing_status', 'completed')
-                }
-                
-                reconstruction_summary['segments'].append(segment_info)
+                mixed_audio = self._mix_with_instruments(reconstructed_audio, instruments_path, all_segments[0]['sample_rate'])
+                if mixed_audio is not None:
+                    # Overwrite with mixed version
+                    sf.write(str(final_audio_path), mixed_audio, all_segments[0]['sample_rate'])
+                    logger.info("Mixed with instruments successfully")
             
             # Save reconstruction summary
-            summary_path = segments_path / "metadata" / "reconstruction_summary.json"
-            with open(summary_path, 'w', encoding='utf-8') as f:
-                json.dump(reconstruction_summary, f, ensure_ascii=False, indent=2)
+            self._save_reconstruction_summary(segments_path, all_segments, audio_id)
+            
+            logger.info(f"Audio reconstruction completed: {final_audio_path}")
             
             return {
                 "success": True,
-                "final_audio_path": str(final_path),
-                "duration": len(reconstructed_audio) / self.sample_rate,
-                "sample_rate": self.sample_rate,
-                "audio_id": audio_id,
-                "segments_processed": len(all_segments),
-                "segments_by_speaker": reconstruction_summary['segments_by_speaker']
+                "final_audio_path": str(final_audio_path),
+                "total_segments": len(all_segments),
+                "total_duration": sum(s['duration'] for s in all_segments),
+                "sample_rate": all_segments[0]['sample_rate'],
+                "instruments_mixed": include_instruments and instruments_path is not None
             }
             
         except Exception as e:
-            return {"success": False, "error": str(e), "audio_id": audio_id}
+            logger.error(f"Audio reconstruction failed: {str(e)}")
+            return {"success": False, "error": f"Audio reconstruction failed: {str(e)}"}
     
     def _reconstruct_from_segments(self, segments: List[Dict]) -> Optional[np.ndarray]:
         """Reconstruct audio from segments"""
@@ -214,7 +176,7 @@ class AudioReconstructor:
             padding = np.zeros(target_samples - current_samples, dtype=np.float32)
             return np.concatenate([audio, padding])
     
-    def _mix_with_instruments(self, audio: np.ndarray, instruments_path: str) -> np.ndarray:
+    def _mix_with_instruments(self, audio: np.ndarray, instruments_path: str, sample_rate: int) -> Optional[np.ndarray]:
         """Mix audio with instruments at original volume levels"""
         try:
             instruments_audio, _ = sf.read(instruments_path)
@@ -234,7 +196,7 @@ class AudioReconstructor:
             return mixed_audio
             
         except Exception:
-            return audio
+            return None
     
     def cleanup_temp_files(self, audio_id: str):
         """Clean up temporary files"""
@@ -249,3 +211,59 @@ class AudioReconstructor:
                     
         except Exception:
             pass
+
+    def _save_reconstruction_summary(self, segments_path: Path, all_segments: List[Dict], audio_id: str):
+        """Saves a reconstruction summary to the segments_path/metadata directory."""
+        summary_path = segments_path / "metadata" / "reconstruction_summary.json"
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+
+        reconstruction_summary = {
+            'audio_id': audio_id,
+            'total_segments_used': len(all_segments),
+            'final_duration': sum(s['duration'] for s in all_segments),
+            'sample_rate': all_segments[0]['sample_rate'],
+            'instruments_included': False, # This will be updated based on instruments_path
+            'segments_by_speaker': {},
+            'segments': [],  # Added detailed segment information
+            'reconstruction_timestamp': str(datetime.now())
+        }
+
+        # Import R2Storage for URL generation
+        from r2_storage import R2Storage
+        r2_storage = R2Storage()
+
+        # Count segments by speaker and prepare detailed segment info
+        for segment in all_segments:
+            speaker = segment.get('speaker', 'Unknown')
+            if speaker not in reconstruction_summary['segments_by_speaker']:
+                reconstruction_summary['segments_by_speaker'][speaker] = 0
+            reconstruction_summary['segments_by_speaker'][speaker] += 1
+            
+            # Generate R2 URL for cloned segment
+            segment_index = segment.get('segment_index', 1)
+            cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
+            
+            # Generate accurate R2 URL using R2Storage class
+            r2_segment_url = r2_storage.generate_cloned_segment_url(audio_id, speaker, segment_index)
+            
+            # Create detailed segment info
+            segment_info = {
+                "segment_url": r2_segment_url,
+                "start_time": segment.get('start', 0.0),
+                "duration": segment.get('duration', segment.get('end', 0.0) - segment.get('start', 0.0)),
+                "end_time": segment.get('end', 0.0),
+                "speaker": speaker,
+                "segment_index": segment_index,
+                "original_text": segment.get('original_text', ''),
+                "english_text": segment.get('english_text', ''),
+                "confidence": segment.get('confidence', 0.0),
+                "word_count": segment.get('word_count', 0),
+                "cloned_filename": cloned_filename,
+                "processing_status": segment.get('processing_status', 'completed')
+            }
+            
+            reconstruction_summary['segments'].append(segment_info)
+        
+        # Save reconstruction summary
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            json.dump(reconstruction_summary, f, ensure_ascii=False, indent=2)

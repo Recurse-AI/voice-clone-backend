@@ -76,77 +76,85 @@ class R2Storage:
             }
     
     def upload_audio_segments(self, audio_id: str, segments_dir: str) -> Dict[str, Any]:
-        """Upload all audio segments and metadata to R2"""
+        """Upload all audio segments and metadata to R2 using unified folder structure"""
         upload_results = {
             "audio_id": audio_id,
             "segments": {},
             "metadata": {},
-            "cloned": {}
+            "cloned": {},
+            "success": False,
+            "files_uploaded": 0
         }
         
         segments_path = Path(segments_dir)
         
-        # Upload segments by speaker
-        for speaker_dir in segments_path.iterdir():
-            if speaker_dir.is_dir() and speaker_dir.name.startswith("speaker_"):
-                speaker_id = speaker_dir.name
-                upload_results["segments"][speaker_id] = {}
+        try:
+            # Upload segments from unified segments folder
+            segments_folder = segments_path / "segments"
+            if segments_folder.exists():
+                upload_results["segments"]["unified"] = {}
                 
-                # Upload speaker segments (excluding cloned files to avoid duplicates)
-                segments_subdir = speaker_dir / "segments"
-                if segments_subdir.exists():
-                    for file_path in segments_subdir.iterdir():
-                        if file_path.is_file() and not file_path.name.startswith("cloned_"):
-                            file_type = "audio" if file_path.suffix in [".wav", ".mp3"] else "metadata"
-                            r2_key = self.generate_file_path(audio_id, f"segments/{speaker_id}", file_path.name)
-                            
-                            result = self.upload_file(
-                                str(file_path),
-                                r2_key,
-                                "audio/wav" if file_path.suffix == ".wav" else "application/json"
-                            )
-                            
-                            if result["success"]:
-                                upload_results["segments"][speaker_id][file_path.name] = result
+                for file_path in segments_folder.iterdir():
+                    if file_path.is_file():
+                        file_type = "audio" if file_path.suffix in [".wav", ".mp3"] else "metadata"
+                        r2_key = self.generate_file_path(audio_id, "segments", file_path.name)
+                        
+                        result = self.upload_file(
+                            str(file_path),
+                            r2_key,
+                            "audio/wav" if file_path.suffix == ".wav" else "application/json"
+                        )
+                        
+                        if result["success"]:
+                            upload_results["segments"]["unified"][file_path.name] = result
+                            upload_results["files_uploaded"] += 1
+            
+            # Upload cloned segments from unified cloned folder
+            cloned_folder = segments_path / "cloned"
+            if cloned_folder.exists():
+                upload_results["cloned"]["unified"] = {}
                 
-                # Upload cloned segments from segments directory
-                if (speaker_dir / "segments").exists():
-                    for cloned_file in (speaker_dir / "segments").glob("cloned_*.wav"):
-                        if cloned_file.is_file():
-                            r2_key = self.generate_file_path(
-                                audio_id, 
-                                f"segments/{speaker_id}/cloned", 
-                                cloned_file.name
-                            )
-                            
-                            result = self.upload_file(
-                                str(cloned_file),
-                                r2_key,
-                                "audio/wav"
-                            )
-                            
-                            if result["success"]:
-                                if speaker_id not in upload_results["cloned"]:
-                                    upload_results["cloned"][speaker_id] = {}
-                                upload_results["cloned"][speaker_id][cloned_file.name] = result
-        
-        # Upload metadata
-        metadata_dir = segments_path / "metadata"
-        if metadata_dir.exists():
-            for file_path in metadata_dir.iterdir():
-                if file_path.is_file():
-                    r2_key = self.generate_file_path(audio_id, "metadata", file_path.name)
-                    
-                    result = self.upload_file(
-                        str(file_path),
-                        r2_key,
-                        "audio/wav" if file_path.suffix == ".wav" else "application/json"
-                    )
-                    
-                    if result["success"]:
-                        upload_results["metadata"][file_path.name] = result
-        
-                return upload_results
+                for cloned_file in cloned_folder.iterdir():
+                    if cloned_file.is_file() and cloned_file.suffix == ".wav":
+                        r2_key = self.generate_file_path(
+                            audio_id, 
+                            "segments/cloned", 
+                            cloned_file.name
+                        )
+                        
+                        result = self.upload_file(
+                            str(cloned_file),
+                            r2_key,
+                            "audio/wav"
+                        )
+                        
+                        if result["success"]:
+                            upload_results["cloned"]["unified"][cloned_file.name] = result
+                            upload_results["files_uploaded"] += 1
+            
+            # Upload metadata
+            metadata_dir = segments_path / "metadata"
+            if metadata_dir.exists():
+                for file_path in metadata_dir.iterdir():
+                    if file_path.is_file():
+                        r2_key = self.generate_file_path(audio_id, "metadata", file_path.name)
+                        
+                        result = self.upload_file(
+                            str(file_path),
+                            r2_key,
+                            "audio/wav" if file_path.suffix == ".wav" else "application/json"
+                        )
+                        
+                        if result["success"]:
+                            upload_results["metadata"][file_path.name] = result
+                            upload_results["files_uploaded"] += 1
+            
+            upload_results["success"] = True
+            return upload_results
+            
+        except Exception as e:
+            upload_results["error"] = str(e)
+            return upload_results
     
     def upload_final_audio(self, audio_id: str, final_audio_path: str) -> Dict[str, Any]:
         """Upload final processed audio"""
@@ -265,7 +273,7 @@ class R2Storage:
             pass 
 
     def get_segment_urls(self, audio_id: str, upload_results: Dict[str, Any]) -> Dict[str, Any]:
-        """Get all URLs for uploaded segments"""
+        """Get all URLs for uploaded segments using unified structure"""
         urls = {
             "metadata": {},
             "segments": {},
@@ -277,24 +285,41 @@ class R2Storage:
                 if result.get("success"):
                     urls["metadata"][filename] = result.get("url")
         
+        # Handle unified segments structure
         if "segments" in upload_results:
-            for speaker, files in upload_results["segments"].items():
-                urls["segments"][speaker] = {}
-                for filename, result in files.items():
+            if "unified" in upload_results["segments"]:
+                urls["segments"]["unified"] = {}
+                for filename, result in upload_results["segments"]["unified"].items():
                     if result.get("success"):
-                        urls["segments"][speaker][filename] = result.get("url")
+                        urls["segments"]["unified"][filename] = result.get("url")
+            else:
+                # Backward compatibility for old speaker-wise structure
+                for speaker, files in upload_results["segments"].items():
+                    urls["segments"][speaker] = {}
+                    for filename, result in files.items():
+                        if result.get("success"):
+                            urls["segments"][speaker][filename] = result.get("url")
         
+        # Handle unified cloned structure
         if "cloned" in upload_results:
-            for speaker, files in upload_results["cloned"].items():
-                urls["cloned"][speaker] = {}
-                for filename, result in files.items():
+            if "unified" in upload_results["cloned"]:
+                urls["cloned"]["unified"] = {}
+                for filename, result in upload_results["cloned"]["unified"].items():
                     if result.get("success"):
-                        urls["cloned"][speaker][filename] = result.get("url")
+                        urls["cloned"]["unified"][filename] = result.get("url")
+            else:
+                # Backward compatibility for old speaker-wise structure
+                for speaker, files in upload_results["cloned"].items():
+                    urls["cloned"][speaker] = {}
+                    for filename, result in files.items():
+                        if result.get("success"):
+                            urls["cloned"][speaker][filename] = result.get("url")
         
-                return urls 
+        return urls 
     
     def generate_cloned_segment_url(self, audio_id: str, speaker: str, segment_index: int) -> str:
-        """Generate R2 URL for a cloned segment"""
+        """Generate R2 URL for a cloned segment using unified structure"""
         cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
-        r2_key = self.generate_file_path(audio_id, f"segments/speaker_{speaker}/cloned", cloned_filename)
+        # Use unified cloned folder structure
+        r2_key = self.generate_file_path(audio_id, "segments/cloned", cloned_filename)
         return f"{settings.R2_PUBLIC_URL}/{r2_key}" 

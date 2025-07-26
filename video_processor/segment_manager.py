@@ -210,11 +210,8 @@ class SegmentManager:
             if not segment or not isinstance(segment, dict):
                 continue
                 
-            # Always use primary speaker (first speaker) for folder assignment
-            speaker = segment.get('speaker', 'A')
-            speaker_dir = output_dir / f"speaker_{speaker}"
-            segments_dir = speaker_dir / "segments"
-            
+            # Store all segments in single segments folder
+            segments_dir = output_dir / "segments"
             segments_dir.mkdir(parents=True, exist_ok=True)
             
             start_time = segment.get('start', 0)
@@ -249,11 +246,11 @@ class SegmentManager:
                 'audio_path': str(audio_path),
                 'original_text': original_text,
                 'english_text': english_text,
-                'speaker': speaker,  # Primary speaker for folder assignment
-                'speakers_in_segment': segment.get('speakers_in_segment', [speaker]),
+                'speaker': segment.get('speaker', 'A'),  # Primary speaker for folder assignment
+                'speakers_in_segment': segment.get('speakers_in_segment', [segment.get('speaker', 'A')]),
                 'is_multi_speaker': segment.get('is_multi_speaker', False),
                 'speaker_word_counts': segment.get('speaker_word_counts', {}),
-                'speaker_index': ord(speaker) - ord('A') + 1,
+                'speaker_index': ord(segment.get('speaker', 'A')) - ord('A') + 1,
                 'start': start_time,
                 'end': end_time,
                 'duration': segment.get('duration', 0),

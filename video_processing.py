@@ -5,9 +5,13 @@ Contains the main video processing function moved from main.py for better organi
 
 import os
 import urllib.parse
+import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 import soundfile as sf
+import requests
+
+logger = logging.getLogger(__name__)
 
 def process_video_background(
     video_source: str, audio_id: str, include_instruments: bool,
@@ -21,7 +25,6 @@ def process_video_background(
     from r2_storage import R2Storage
     from video_processor.base_processor import AudioProcessor
     from utils import cleanup_temp_files
-    import requests
     
     # Initialize required services
     r2_storage = R2Storage()
@@ -36,14 +39,14 @@ def process_video_background(
     
     try:
         # Handle video source
-        status_manager.update_status(audio_id, ProcessingStatus.DOWNLOADING, 10)
+        status_manager.update_status(audio_id, ProcessingStatus.DOWNLOADING, 5)
         
         if is_file_upload:
             # File upload: video_source is already a local file path
             video_temp_path = video_source
             filename = original_filename if original_filename else Path(video_source).name
         else:
-            # URL download: download the video
+            # URL download: download the video with progress tracking
             video_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_video.mp4")
             
             parsed_url = urllib.parse.urlparse(video_source)
@@ -55,9 +58,31 @@ def process_video_background(
                 response = requests.get(video_source, stream=True, timeout=300)
                 response.raise_for_status()
                 
+                # Get content length for progress tracking
+                content_length = response.headers.get('content-length')
+                if content_length:
+                    content_length = int(content_length)
+                
+                downloaded = 0
+                chunk_size = 8192
+                last_progress = 5
+                
                 with open(video_temp_path, "wb") as buffer:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        buffer.write(chunk)
+                    for chunk in response.iter_content(chunk_size=chunk_size):
+                        if chunk:
+                            buffer.write(chunk)
+                            downloaded += len(chunk)
+                            
+                            # Update progress between 5% and 20% (15% range for download)
+                            if content_length:
+                                download_progress = (downloaded / content_length) * 15  # 15% range
+                                current_progress = min(20, 5 + download_progress)
+                                
+                                # Update every 1% to make it more visible
+                                if int(current_progress) > last_progress:
+                                    status_manager.set_progress(audio_id, int(current_progress))
+                                    last_progress = int(current_progress)
+                                    logger.info(f"Download progress: {int(current_progress)}%")
                 
             except requests.exceptions.RequestException as e:
                 status_manager.fail_processing(audio_id, f"Download failed: {str(e)}")

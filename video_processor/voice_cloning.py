@@ -172,6 +172,10 @@ class VoiceCloningService:
             
             logger.info(f"Cloning completed in {cloning_duration:.2f} seconds")
             
+            # Save cloned segments in unified cloned folder
+            if cloned_segments:
+                self._save_cloned_segments_unified(cloned_segments, audio_id)
+            
             return {
                 "success": True,
                 "cloned_segments": cloned_segments,
@@ -261,6 +265,60 @@ class VoiceCloningService:
             adjusted_audio = adjusted_audio * (0.3 / max_val)
         
         return adjusted_audio.astype(np.float32)
+    
+    def _save_cloned_segments_unified(self, cloned_segments: List[Dict], audio_id: str):
+        """Save cloned segments in unified folder structure"""
+        try:
+            from pathlib import Path
+            from config import settings
+            import soundfile as sf
+            
+            # Get base segments directory
+            temp_dir = Path(settings.TEMP_DIR)
+            segments_base_dir = temp_dir / f"segments_{audio_id}"
+            cloned_dir = segments_base_dir / "cloned"
+            cloned_dir.mkdir(parents=True, exist_ok=True)
+            
+            segments_dir = segments_base_dir / "segments"
+            
+            for cloned_segment in cloned_segments:
+                try:
+                    original_data = cloned_segment.get('original_data', {})
+                    segment_index = original_data.get('segment_index', 1)
+                    audio_data = cloned_segment.get('cloned_audio')
+                    
+                    if audio_data is not None and len(audio_data) > 0:
+                        # Save cloned audio file
+                        cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
+                        cloned_path = cloned_dir / cloned_filename
+                        sf.write(str(cloned_path), audio_data, self.sample_rate)
+                        
+                        # Update metadata with cloned path
+                        metadata_file = segments_dir / f"segment_{segment_index:03d}_metadata.json"
+                        if metadata_file.exists():
+                            with open(metadata_file, 'r', encoding='utf-8') as f:
+                                import json
+                                metadata = json.load(f)
+                            
+                            metadata['cloned_audio_path'] = str(cloned_path)
+                            metadata['cloned_audio_file'] = cloned_filename
+                            metadata['cloning_completed'] = True
+                            
+                            with open(metadata_file, 'w', encoding='utf-8') as f:
+                                json.dump(metadata, f, ensure_ascii=False, indent=2)
+                            
+                            logger.debug(f"Saved cloned segment: {cloned_filename}")
+                        else:
+                            logger.warning(f"Metadata file not found: {metadata_file}")
+                    
+                except Exception as e:
+                    logger.error(f"Error saving cloned segment {segment_index}: {e}")
+                    continue
+            
+            logger.info(f"Saved {len(cloned_segments)} cloned segments in unified structure")
+            
+        except Exception as e:
+            logger.error(f"Failed to save cloned segments: {e}")
     
     def _cleanup_memory(self):
         """Clean up GPU memory"""
