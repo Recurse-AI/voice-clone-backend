@@ -276,8 +276,8 @@ class TranscriptionService:
 TEXT WITH SPEAKER MARKERS: {processed_text}
 
 RULES:
-- Convert <SPEAKER1> to [S1] tag only when Speaker 1 starts talking
-- Convert <SPEAKER2> to [S2] tag only when Speaker 2 starts talking  
+- Always start segment with [S1] tag regardless of which speaker starts
+- Use [S2], [S3] etc. for subsequent speakers within the same segment
 - NO tags for continuation lines of same speaker
 - 3-9 words per line optimal for best Dia performance
 - Natural conversational English
@@ -290,9 +290,9 @@ EXAMPLE OUTPUT:
 doing today
 [S2] I am fine thanks
 for asking
-[S1] That's good to hear
+[S3] That's good to hear
 
-OUTPUT (English with speaker tags only on speaker change):"""
+OUTPUT (English with speaker tags - always start with [S1]):"""
                 else:
                     # Single speaker format
                     prompt = f"""Translate to natural English with speaker tag.
