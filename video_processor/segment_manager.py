@@ -62,6 +62,36 @@ class SegmentManager:
         word_index = 0
         
         while current_start < total_duration and word_index < len(sorted_words):
+            # Check if remaining duration is too short for a new segment
+            remaining_duration = total_duration - current_start
+            if remaining_duration < self.min_duration and segments:
+                # Extend the last segment to include remaining words
+                remaining_words = sorted_words[word_index:]
+                if remaining_words:
+                    last_segment = segments[-1]
+                    # Extend last segment to include remaining words
+                    last_segment['end'] = total_duration
+                    last_segment['duration'] = total_duration - last_segment['start']
+                    # Add remaining words to the last segment
+                    last_segment['words'].extend(remaining_words)
+                    
+                    # Update text and speaker info
+                    for word in remaining_words:
+                        text = word.get('text', '').strip()
+                        if text:
+                            speaker = word.get('speaker', 'A')
+                            if speaker not in last_segment['speaker_word_counts']:
+                                last_segment['speaker_word_counts'][speaker] = 0
+                                last_segment['speakers_in_segment'].append(speaker)
+                            last_segment['speaker_word_counts'][speaker] += 1
+                    
+                    # Update text
+                    all_texts = [w.get('text', '').strip() for w in last_segment['words'] if w.get('text', '').strip()]
+                    last_segment['text'] = ' '.join(all_texts)
+                    last_segment['word_count'] = len(all_texts)
+                    last_segment['is_multi_speaker'] = len(last_segment['speakers_in_segment']) > 1
+                break
+            
             # Target segment end
             target_end = min(current_start + self.optimal_duration, total_duration)
             
@@ -133,7 +163,7 @@ class SegmentManager:
         
         # Calculate confidence
         confidences = [w.get('confidence', 0.5) for w in words if w.get('confidence') is not None]
-        confidence = np.mean(confidences) if confidences else 0.5
+        confidence = float(np.mean(confidences)) if confidences else 0.5
         
         # Primary speaker (most words)
         primary_speaker = max(speaker_word_counts.keys(), key=lambda k: speaker_word_counts[k]) if speaker_word_counts else 'A'
@@ -184,6 +214,7 @@ class SegmentManager:
         
         segment_texts = []
         segment_speakers_data = []
+        segment_words_data = []
         for segment in segments:
             original_text = segment.get('text', '').strip()
             if not original_text:
@@ -197,10 +228,13 @@ class SegmentManager:
                 'is_multi_speaker': segment.get('is_multi_speaker', False),
                 'primary_speaker': segment.get('speaker', 'A')
             })
+            
+            # Add words data for multi-speaker processing
+            segment_words_data.append(segment.get('words', []))
         
         # Process all translations in parallel with multi-speaker support
         english_texts = self.transcription_service.format_dialogue_batch(
-            segment_texts, segment_speakers_data
+            segment_texts, segment_speakers_data, segment_words_data
         )
         
         translation_time = time.time() - translation_start_time

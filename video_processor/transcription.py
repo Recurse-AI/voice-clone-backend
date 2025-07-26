@@ -194,7 +194,49 @@ class TranscriptionService:
         except:
             return ""
     
-    def format_dialogue_text(self, text: str, speaker_data, is_multi_speaker: bool = False) -> str:
+    def _preprocess_multispeaker_text(self, text: str, words_data: List[Dict]) -> str:
+        """Pre-process text to add speaker indicators for better OpenAI handling"""
+        if not words_data:
+            return text
+        
+        # Group words by speaker in chronological order
+        processed_parts = []
+        current_speaker = None
+        current_words = []
+        
+        for word_data in words_data:
+            word_text = word_data.get('text', '').strip()
+            word_speaker = word_data.get('speaker', 'A')
+            
+            if word_text:
+                if current_speaker != word_speaker:
+                    # Speaker change - save previous group
+                    if current_words:
+                        processed_parts.append({
+                            'speaker': current_speaker,
+                            'text': ' '.join(current_words)
+                        })
+                        current_words = []
+                    current_speaker = word_speaker
+                
+                current_words.append(word_text)
+        
+        # Add final group
+        if current_words:
+            processed_parts.append({
+                'speaker': current_speaker,
+                'text': ' '.join(current_words)
+            })
+        
+        # Create speaker-marked text
+        marked_text = ""
+        for part in processed_parts:
+            speaker_num = ord(part['speaker']) - ord('A') + 1
+            marked_text += f"<SPEAKER{speaker_num}> {part['text']} "
+        
+        return marked_text.strip()
+    
+    def format_dialogue_text(self, text: str, speaker_data, words_data: List[Dict] = None) -> str:
         """Simple translation to English with clean [S1]/[S2] speaker tags"""
         try:
             # Handle speaker data format
@@ -213,36 +255,42 @@ class TranscriptionService:
             if not clean_text.strip():
                 raise ValueError(f"No text available for speaker {speaker}")
             
+            # Pre-process multi-speaker text with speaker indicators
+            if is_multi_speaker and words_data:
+                processed_text = self._preprocess_multispeaker_text(clean_text, words_data)
+            else:
+                processed_text = clean_text
+            
             # Check cache
             with self.cache_lock:
-                cache_key = f"{clean_text.strip()}_{is_multi_speaker}"
+                cache_key = f"{processed_text.strip()}_{is_multi_speaker}"
                 if cache_key in self.translation_cache:
                     return self.translation_cache[cache_key]
             
             # Simple translation and formatting
             try:
                 if len(speakers_in_segment) > 1:
-                    # Multi-speaker format
+                    # Multi-speaker format with pre-processed speaker indicators
                     prompt = f"""Translate to natural English with proper speaker tags.
 
-TEXT: {clean_text}
+TEXT WITH SPEAKER MARKERS: {processed_text}
 
 RULES:
-- Use [S1] tag only when Speaker 1 starts talking
-- Use [S2] tag only when Speaker 2 starts talking and so on
+- Convert <SPEAKER1> to [S1] tag only when Speaker 1 starts talking
+- Convert <SPEAKER2> to [S2] tag only when Speaker 2 starts talking  
 - NO tags for continuation lines of same speaker
 - 3-9 words per line optimal for best Dia performance
 - Natural conversational English
 - No quotes in output
 - Each line should be clear and simple
 
-EXAMPLE OUTPUT:
-[S1] Hello this is example text
-how dia model working perfectly
-it is example for best
-[S2] Performance with clean structure
-yes I understand this completely
-great let's continue discussion
+EXAMPLE INPUT: <SPEAKER1> Hello how are you doing today <SPEAKER2> I am fine thanks for asking <SPEAKER1> That's good to hear
+EXAMPLE OUTPUT: 
+[S1] Hello how are you
+doing today
+[S2] I am fine thanks
+for asking
+[S1] That's good to hear
 
 OUTPUT (English with speaker tags only on speaker change):"""
                 else:
@@ -336,8 +384,8 @@ OUTPUT (English with [S1] tag only at start):"""
     
 
     
-    def format_dialogue_batch(self, text_list: List[str], speaker_data: List) -> List[str]:
-        """Process multiple dialogue texts in parallel - simple approach"""
+    def format_dialogue_batch(self, text_list: List[str], speaker_data: List, words_data_list: List[List[Dict]] = None) -> List[str]:
+        """Process multiple dialogue texts in parallel - enhanced for multi-speaker"""
         if not text_list:
             return []
         
@@ -357,12 +405,18 @@ OUTPUT (English with [S1] tag only at start):"""
         if len(text_list) != len(speaker_data_list):
             return []
         
+        # Ensure words_data_list has same length
+        if words_data_list is None:
+            words_data_list = [None] * len(text_list)
+        elif len(words_data_list) != len(text_list):
+            words_data_list = [None] * len(text_list)
+        
         # Use ThreadPoolExecutor for parallel processing
         with ThreadPoolExecutor(max_workers=min(4, len(text_list))) as executor:
-            # Submit all tasks
+            # Submit all tasks with words_data
             future_to_index = {}
-            for i, (text, speaker_data_item) in enumerate(zip(text_list, speaker_data_list)):
-                future = executor.submit(self.format_dialogue_text, text, speaker_data_item, False)
+            for i, (text, speaker_data_item, words_data) in enumerate(zip(text_list, speaker_data_list, words_data_list)):
+                future = executor.submit(self.format_dialogue_text, text, speaker_data_item, words_data)
                 future_to_index[future] = i
             
             # Collect results in order
