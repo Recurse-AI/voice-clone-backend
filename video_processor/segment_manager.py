@@ -238,10 +238,14 @@ class SegmentManager:
         )
         
         translation_time = time.time() - translation_start_time
-        print(f"Parallel translation completed in {translation_time:.2f} seconds")
+        logger.info(f"Parallel translation completed in {translation_time:.2f} seconds")
+        logger.info(f"Translation results: {len(english_texts)} texts generated from {len(segment_texts)} input texts")
         
+        segments_saved = 0
         for i, segment in enumerate(segments):
+            logger.info(f"Processing segment {i+1}/{len(segments)}")
             if not segment or not isinstance(segment, dict):
+                logger.warning(f"Skipping segment {i+1}: Invalid segment data")
                 continue
                 
             # Store all segments in single segments folder
@@ -254,7 +258,10 @@ class SegmentManager:
             start_sample = int(start_time * sr)
             end_sample = int(end_time * sr)
             
+            logger.info(f"Segment {i+1} timing: start={start_time:.2f}s, end={end_time:.2f}s, start_sample={start_sample}, end_sample={end_sample}, audio_length={len(audio)}")
+            
             if start_sample >= len(audio) or end_sample > len(audio) or start_sample >= end_sample:
+                logger.warning(f"Skipping segment {i+1}: Invalid audio range - start_sample={start_sample}, end_sample={end_sample}, audio_length={len(audio)}")
                 continue
                 
             segment_audio = audio[start_sample:end_sample]
@@ -267,12 +274,12 @@ class SegmentManager:
             english_text = english_texts[i] if i < len(english_texts) else ""
             
             if not original_text:
-                print(f"Warning: Segment {i+1} has no original text, skipping")
+                logger.error(f"Segment {i+1} has no original text, skipping")
                 continue
             
             if not english_text:
-                print(f"Warning: Segment {i+1} translation failed, using original text")
-                english_text = original_text
+                logger.error(f"Segment {i+1} translation failed, skipping")
+                continue
             
             metadata = {
                 'segment_index': i + 1,
@@ -300,6 +307,9 @@ class SegmentManager:
             with open(metadata_path, 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
             
+            logger.info(f"Saved segment {i+1}: audio={audio_filename}, metadata={metadata_path.name}")
+            segments_saved += 1
+            
             segment.update({
                 'segment_index': i + 1,
                 'audio_path': str(audio_path),
@@ -307,4 +317,8 @@ class SegmentManager:
                 'audio_file': audio_filename,
                 'english_text': english_text,
                 'metadata_complete': True
-            }) 
+            })
+        
+        logger.info(f"Successfully saved {segments_saved} segments to {output_dir}")
+        logger.info(f"Segments directory: {output_dir / 'segments'}")
+        logger.info(f"Metadata directory: {output_dir / 'metadata'}") 

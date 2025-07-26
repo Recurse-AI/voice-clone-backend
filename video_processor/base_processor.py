@@ -122,16 +122,29 @@ class AudioProcessor:
             
             # Collect all segment metadata files
             json_files = sorted(list(segments_folder.glob("*_metadata.json")))
-            logger.info(f"Found {len(json_files)} total segments")
+            logger.info(f"Found {len(json_files)} metadata files in {segments_folder}")
+            
+            # List all files in segments folder for debugging
+            all_files = list(segments_folder.glob("*"))
+            logger.info(f"All files in segments folder: {[f.name for f in all_files]}")
             
             for json_file in json_files:
                 try:
+                    logger.info(f"Processing metadata file: {json_file}")
                     with open(json_file, 'r', encoding='utf-8') as f:
                         import json
                         segment_data = json.load(f)
                     
+                    logger.info(f"Loaded metadata for segment {segment_data.get('segment_index', 'unknown')}: english_text='{segment_data.get('english_text', '')}', audio_path='{segment_data.get('audio_path', '')}'")
+                    
                     if not segment_data.get('english_text', '').strip():
                         logger.warning(f"Skipping segment with no english_text: {json_file}")
+                        continue
+                    
+                    # Check if audio file exists
+                    audio_path = segment_data.get('audio_path', '')
+                    if not audio_path or not os.path.exists(audio_path):
+                        logger.warning(f"Skipping segment with missing audio file: {audio_path}")
                         continue
                     
                     segment_data['segments_dir'] = str(segments_folder)
@@ -141,7 +154,7 @@ class AudioProcessor:
                         segment_data['speaker'] = 'A'  # Default speaker
                     
                     all_segments.append(segment_data)
-                    logger.debug(f"Added segment from {json_file.name} for speaker {segment_data.get('speaker', 'A')}")
+                    logger.info(f"Successfully added segment from {json_file.name} for speaker {segment_data.get('speaker', 'A')}")
                     
                 except Exception as e:
                     logger.error(f"Error loading metadata from {json_file}: {e}")

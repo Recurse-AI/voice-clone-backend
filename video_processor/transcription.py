@@ -10,6 +10,9 @@ from openai import OpenAI
 from config import settings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 class TranscriptionService:
     """Simplified transcription service with parallel processing"""
@@ -388,11 +391,16 @@ OUTPUT (English with [S1] tag only at start):"""
     def format_dialogue_batch(self, text_list: List[str], speaker_data: List, words_data_list: List[List[Dict]] = None) -> List[str]:
         """Process multiple dialogue texts in parallel - enhanced for multi-speaker"""
         if not text_list:
+            logger.warning("format_dialogue_batch: Empty text_list provided")
             return []
+        
+        logger.info(f"format_dialogue_batch: Processing {len(text_list)} texts")
+        logger.info(f"format_dialogue_batch: Speaker data type: {type(speaker_data)}, length: {len(speaker_data) if speaker_data else 0}")
         
         # Handle both old format (speaker_list) and new format (speaker_data_list)
         if speaker_data and isinstance(speaker_data[0], dict):
             speaker_data_list = speaker_data
+            logger.info("format_dialogue_batch: Using new format speaker data")
         else:
             # Old single speaker format - convert to new format
             speaker_data_list = []
@@ -402,8 +410,12 @@ OUTPUT (English with [S1] tag only at start):"""
                     'is_multi_speaker': False,
                     'primary_speaker': speaker
                 })
+            logger.info(f"format_dialogue_batch: Converted old format, created {len(speaker_data_list)} speaker data items")
         
         if len(text_list) != len(speaker_data_list):
+            logger.error(f"format_dialogue_batch: Length mismatch - text_list: {len(text_list)}, speaker_data_list: {len(speaker_data_list)}")
+            logger.error(f"format_dialogue_batch: Text list: {text_list}")
+            logger.error(f"format_dialogue_batch: Speaker data: {speaker_data}")
             return []
         
         # Ensure words_data_list has same length
@@ -427,9 +439,8 @@ OUTPUT (English with [S1] tag only at start):"""
                 try:
                     results[index] = future.result()
                 except Exception as e:
-                    print(f"Translation failed for text at index {index}: {str(e)}")
-                    # Simple fallback
-                    results[index] = f"[S1] {text_list[index]}"
+                    logger.error(f"Translation failed for text at index {index}: {str(e)}")
+                    results[index] = ""
         
         return results
     
