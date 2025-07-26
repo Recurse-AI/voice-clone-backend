@@ -153,13 +153,18 @@ class AudioReconstructor:
             if not segments:
                 return None
             
-            # Use original duration if available, otherwise fall back to segments
+            # Use original duration if available, otherwise calculate from segments
             if original_duration and original_duration > 0:
                 total_duration = original_duration
                 logger.info(f"Using original audio duration: {total_duration:.2f} seconds")
             else:
-                total_duration = segments[-1]['end']
-                logger.warning(f"Original duration not available, using last segment end: {total_duration:.2f} seconds")
+                # Calculate total duration from segments to ensure full coverage
+                segment_end = segments[-1]['end'] if segments else 0
+                segment_coverage = sum(s.get('duration', 0) for s in segments)
+                
+                # Use the larger of segment end time or total segment duration
+                total_duration = max(segment_end, segment_coverage)
+                logger.warning(f"Original duration not available, calculated duration: {total_duration:.2f}s (segment_end: {segment_end:.2f}s, coverage: {segment_coverage:.2f}s)")
             
             total_samples = int(total_duration * self.sample_rate)
             

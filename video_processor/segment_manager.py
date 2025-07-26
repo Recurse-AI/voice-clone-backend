@@ -196,7 +196,8 @@ class SegmentManager:
     
     def save_optimal_segments(self, segments: List[Dict], audio: np.ndarray, sr: int,
                             output_dir: Path, speakers: List[str], 
-                            target_language: str, detected_language: str):
+                            target_language: str, detected_language: str, 
+                            original_audio_details: Optional[Dict] = None):
         """Save segments for voice cloning with parallel translation - support multi-speaker"""
         if not segments or audio is None or sr <= 0:
             logger.error("Invalid input parameters for save_optimal_segments")
@@ -204,13 +205,25 @@ class SegmentManager:
             
         output_dir.mkdir(parents=True, exist_ok=True)
         
+        # Calculate original audio duration from the audio array
+        original_duration = len(audio) / sr
+        
         overall_metadata = {
             "total_segments": len(segments),
             "speakers": speakers,
             "target_language": target_language,
             "detected_language": detected_language,
-            "processing_timestamp": str(datetime.now())
+            "processing_timestamp": str(datetime.now()),
+            "original_audio": {
+                "duration": original_duration,
+                "sample_rate": sr,
+                "total_samples": len(audio)
+            }
         }
+        
+        # Add original audio details if provided
+        if original_audio_details:
+            overall_metadata["original_audio"].update(original_audio_details)
         
         metadata_dir = output_dir / "metadata"
         metadata_dir.mkdir(parents=True, exist_ok=True)

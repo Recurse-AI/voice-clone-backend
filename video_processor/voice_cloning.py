@@ -278,22 +278,24 @@ class VoiceCloningService:
         # Ensure we maintain the target duration exactly
         adjusted_audio = audio.copy()
         
-        # Strategy: Never trim audio content, only adjust silence/padding
+        # Strategy: Preserve all audio content, only pad with silence if needed
         if len(adjusted_audio) > target_samples:
-            # Audio is longer than target - try to remove only trailing silence first
-            audio_without_silence = self._remove_trailing_silence_conservative(adjusted_audio, target_samples)
+            # Audio is longer than target - check if difference is significant
+            duration_excess = (len(adjusted_audio) - target_samples) / self.sample_rate
             
-            if len(audio_without_silence) <= target_samples:
-                # Great! Silence removal worked
-                adjusted_audio = audio_without_silence
-                logger.info(f"Removed trailing silence: {len(audio_without_silence)} samples (no content loss)")
+            if duration_excess < 0.2:  # Less than 200ms excess
+                # Try conservative silence removal only for small excess
+                audio_without_silence = self._remove_trailing_silence_conservative(adjusted_audio, target_samples)
+                
+                if len(audio_without_silence) <= target_samples:
+                    adjusted_audio = audio_without_silence
+                    logger.info(f"Removed minimal trailing silence: {len(audio_without_silence)} samples")
+                else:
+                    # Keep full audio to preserve content
+                    logger.info(f"Audio longer than target by {duration_excess:.3f}s - preserving all content")
             else:
-                # Audio content is longer than target - preserve content and log warning
-                logger.warning(f"Generated audio ({current_duration:.3f}s) longer than target ({target_duration:.3f}s) - preserving content")
-                # Keep the generated audio as is, even if longer
-                target_samples = len(adjusted_audio)
-                target_duration = len(adjusted_audio) / self.sample_rate
-                logger.info(f"Updated target duration to preserve content: {target_duration:.3f}s")
+                # Significant excess - preserve content
+                logger.info(f"Generated audio ({current_duration:.3f}s) significantly longer than target ({target_duration:.3f}s) - preserving content")
         
         # Pad with silence if needed to reach exact target
         if len(adjusted_audio) < target_samples:

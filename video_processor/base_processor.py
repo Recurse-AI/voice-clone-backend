@@ -47,7 +47,8 @@ class AudioProcessor:
     def process_audio_segments(self, audio_path: str, audio_id: str, 
                              target_language: str = "English",
                              language_code: Optional[str] = None,
-                             speakers_expected: Optional[int] = 1) -> Dict[str, Any]:
+                             speakers_expected: Optional[int] = 1,
+                             original_audio_details: Optional[Dict] = None) -> Dict[str, Any]:
         """Process audio segments for voice cloning"""
         try:
             # Load audio
@@ -75,7 +76,8 @@ class AudioProcessor:
             detected_language = transcript_data.get('metadata', {}).get('language_code', 'en')
             self.segment_manager.save_optimal_segments(
                 segments, audio, sr, output_dir, 
-                transcript_data['speakers'], target_language, detected_language
+                transcript_data['speakers'], target_language, detected_language,
+                original_audio_details
             )
             
             return {
@@ -274,13 +276,24 @@ class AudioProcessor:
             if not vocal_download["success"] or not instrument_download["success"]:
                 return {"success": False, "error": "Failed to download separated audio"}
             
+            # Calculate original audio details
+            import soundfile as sf
+            vocal_audio, vocal_sr = sf.read(str(vocal_path))
+            original_audio_details = {
+                "duration": len(vocal_audio) / vocal_sr,
+                "sample_rate": vocal_sr,
+                "channels": len(vocal_audio.shape) if len(vocal_audio.shape) > 1 else 1,
+                "processing_type": "video_with_separation"
+            }
+            
             # Process vocal audio
             segment_result = self.process_audio_segments(
                 str(vocal_path), 
                 audio_id, 
                 target_language,
                 language_code=language_code,
-                speakers_expected=speakers_expected
+                speakers_expected=speakers_expected,
+                original_audio_details=original_audio_details
             )
             
             if not segment_result.get("success", True):
