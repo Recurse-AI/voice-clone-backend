@@ -268,10 +268,14 @@ class SegmentManager:
             start_sample = int(start_time * sr)
             end_sample = int(end_time * sr)
             
+            # Clamp to audio bounds instead of skipping
+            start_sample = max(0, min(start_sample, len(audio) - 1))
+            end_sample = max(start_sample + 1, min(end_sample, len(audio)))
+            
             logger.info(f"Segment {i+1} timing: start={start_time:.2f}s, end={end_time:.2f}s, start_sample={start_sample}, end_sample={end_sample}, audio_length={len(audio)}")
             
-            if start_sample >= len(audio) or end_sample > len(audio) or start_sample >= end_sample:
-                logger.warning(f"Skipping segment {i+1}: Invalid audio range - start_sample={start_sample}, end_sample={end_sample}, audio_length={len(audio)}")
+            if start_sample >= end_sample:
+                logger.warning(f"Skipping segment {i+1}: Invalid timing - start_sample={start_sample}, end_sample={end_sample}")
                 continue
                 
             segment_audio = audio[start_sample:end_sample]
