@@ -283,6 +283,7 @@ RULES:
 - Natural conversational English
 - No quotes in output
 - Each line should be clear and simple
+- This will used for Dia model voice cloning
 
 EXAMPLE INPUT: <SPEAKER1> Hello how are you doing today <SPEAKER2> I am fine thanks for asking <SPEAKER1> That's good to hear
 EXAMPLE OUTPUT: 

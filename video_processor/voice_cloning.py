@@ -248,6 +248,7 @@ class VoiceCloningService:
         logger.info(f"Adjusting audio: {current_duration:.2f}s -> {target_duration:.2f}s")
         
         stretch_ratio = target_duration / current_duration
+        stretch_ratio = max(0.9, min(1.1, stretch_ratio))
         
         adjusted_audio = librosa.effects.time_stretch(
             audio, 
@@ -256,10 +257,11 @@ class VoiceCloningService:
             hop_length=512
         )
         
-        if len(adjusted_audio) > target_samples:
-            adjusted_audio = adjusted_audio[:target_samples]
-        elif len(adjusted_audio) < target_samples:
-            padding = target_samples - len(adjusted_audio)
+        final_samples = int(target_duration * self.sample_rate)
+        if len(adjusted_audio) > final_samples:
+            adjusted_audio = adjusted_audio[:final_samples]
+        elif len(adjusted_audio) < final_samples:
+            padding = final_samples - len(adjusted_audio)
             adjusted_audio = np.pad(adjusted_audio, (0, padding), mode='constant', constant_values=0)
         
         return adjusted_audio.astype(np.float32)
