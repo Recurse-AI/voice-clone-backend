@@ -251,7 +251,7 @@ class VoiceCloningService:
         return audio[:end_index]
     
     def _adjust_audio_length_simple(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Simple audio length adjustment that preserves voice quality"""
+        """Simple audio length adjustment that preserves original voice"""
         if audio is None or len(audio) == 0:
             return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
         
@@ -265,25 +265,18 @@ class VoiceCloningService:
         
         logger.info(f"Adjusting audio: {current_duration:.2f}s -> {target_duration:.2f}s")
         
-        stretch_ratio = target_duration / current_duration
-        stretch_ratio = max(0.9, min(1.1, stretch_ratio))
-        
-        adjusted_audio = librosa.effects.time_stretch(
-            audio, 
-            rate=1.0/stretch_ratio,
-            n_fft=2048,
-            hop_length=512
-        )
+        # Keep original audio, no stretching
+        adjusted_audio = audio.copy()
         
         # Remove trailing silence if audio is longer than expected
         if len(adjusted_audio) > target_samples:
             adjusted_audio = self._remove_trailing_silence(adjusted_audio)
         
-        final_samples = int(target_duration * self.sample_rate)
-        if len(adjusted_audio) > final_samples:
-            adjusted_audio = adjusted_audio[:final_samples]
-        elif len(adjusted_audio) < final_samples:
-            padding = final_samples - len(adjusted_audio)
+        # Final padding or trimming to exact target duration
+        if len(adjusted_audio) > target_samples:
+            adjusted_audio = adjusted_audio[:target_samples]
+        elif len(adjusted_audio) < target_samples:
+            padding = target_samples - len(adjusted_audio)
             adjusted_audio = np.pad(adjusted_audio, (0, padding), mode='constant', constant_values=0)
         
         return adjusted_audio.astype(np.float32)
