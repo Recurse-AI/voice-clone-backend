@@ -232,6 +232,24 @@ class VoiceCloningService:
             logger.error(f"Audio generation failed: {str(e)}")
             return None
     
+    def _remove_trailing_silence(self, audio: np.ndarray, silence_threshold: float = 0.01) -> np.ndarray:
+        """Remove silent parts from the tail of audio"""
+        if len(audio) == 0:
+            return audio
+        
+        # Find the last non-silent sample
+        audio_abs = np.abs(audio)
+        non_silent_indices = np.where(audio_abs > silence_threshold)[0]
+        
+        if len(non_silent_indices) == 0:
+            return audio
+        
+        last_sound_index = non_silent_indices[-1]
+        fade_samples = min(int(0.05 * self.sample_rate), len(audio) - last_sound_index)
+        end_index = min(last_sound_index + fade_samples, len(audio))
+        
+        return audio[:end_index]
+    
     def _adjust_audio_length_simple(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
         """Simple audio length adjustment that preserves voice quality"""
         if audio is None or len(audio) == 0:
@@ -256,6 +274,10 @@ class VoiceCloningService:
             n_fft=2048,
             hop_length=512
         )
+        
+        # Remove trailing silence if audio is longer than expected
+        if len(adjusted_audio) > target_samples:
+            adjusted_audio = self._remove_trailing_silence(adjusted_audio)
         
         final_samples = int(target_duration * self.sample_rate)
         if len(adjusted_audio) > final_samples:
