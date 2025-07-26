@@ -239,12 +239,11 @@ class StatusManager:
                         if status_data.get("status") in ["downloading", "processing"] and status_data.get("progress", 0) < 100:
                             # Check how long it's been since last update
                             try:
-                                from datetime import datetime
                                 last_update = datetime.fromisoformat(status_data.get("updated_at", datetime.now().isoformat()))
                                 time_diff = (datetime.now() - last_update).total_seconds()
                                 
-                                # If no update for more than 5 minutes, consider it stale
-                                if time_diff > 300:  # 5 minutes
+                                # If no update for more than 15 minutes, consider it stale
+                                if time_diff > 900:  # 15 minutes
                                     logger.error(f"Stale process detected for {audio_id}, terminating")
                                     self._terminate_stale_process(audio_id)
                                     

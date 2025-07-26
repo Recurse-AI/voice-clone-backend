@@ -126,12 +126,12 @@ class FileHandler:
                         buffer.write(chunk)
                         downloaded += len(chunk)
                         
-                        # Simple progress update - only once at 50% completion
-                        if content_length and status_manager and not progress_updated:
-                            if downloaded >= content_length * 0.5:  # 50% downloaded
-                                status_manager.set_progress(audio_id, 15)
-                                logger.info("Download 50% completed")
-                                progress_updated = True
+                        # Progressive download progress (0% to 20%)
+                        if content_length and status_manager and audio_id:
+                            download_percent = (downloaded / content_length) * 100
+                            # Map download progress to 0-20% range
+                            progress = min(19, int(download_percent * 0.2))  # 0-20% range
+                            status_manager.set_progress(audio_id, progress)
             
             # Verify downloaded file
             if not os.path.exists(local_file_path):

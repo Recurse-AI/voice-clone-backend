@@ -112,7 +112,8 @@ class AudioReconstructor:
             
             # Calculate actual final duration
             final_duration = len(reconstructed_audio) / all_segments[0]['sample_rate']
-            logger.info(f"Final reconstructed audio duration: {final_duration:.2f} seconds (original: {original_duration:.2f} seconds)")
+            original_duration_str = f"{original_duration:.2f}" if original_duration is not None else "unknown"
+            logger.info(f"Final reconstructed audio duration: {final_duration:.2f} seconds (original: {original_duration_str} seconds)")
             
             # Save final audio
             final_audio_filename = f"final_output_{audio_id}.wav"
