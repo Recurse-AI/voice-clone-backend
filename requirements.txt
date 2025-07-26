@@ -43,6 +43,9 @@ requests
 tqdm
 aiofiles
 
+# Video downloading
+yt-dlp
+
 # Development
 pytest
 pytest-asyncio

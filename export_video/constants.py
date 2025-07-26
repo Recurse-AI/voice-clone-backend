@@ -53,4 +53,20 @@ SUPPORTED_IMAGE_FORMATS = [".jpg", ".jpeg", ".png", ".gif", ".bmp"]
 
 # Color Constants (for subtitles)
 COLOR_WHITE = "&H00ffffff"
-COLOR_BLACK = "&H00000000" 
+COLOR_BLACK = "&H00000000"
+
+# Video Download Constants
+DOWNLOAD_TIMEOUT = 300  # 5 minutes timeout for video downloads
+DOWNLOAD_TEMP_DIR = "./tmp/downloads"
+MAX_VIDEO_SIZE = 500 * 1024 * 1024  # 500MB max video size
+DEFAULT_VIDEO_QUALITY = "best[height<=720]"  # Default to 720p max
+
+# Supported Video Download Sites
+SUPPORTED_DOWNLOAD_SITES = [
+    "youtube.com", "youtu.be", "vimeo.com", "facebook.com", 
+    "twitter.com", "tiktok.com", "instagram.com", "reddit.com"
+]
+
+# Cleanup Constants
+CLEANUP_DELAY = 60  # Wait 60 seconds before cleanup
+TEMP_FILE_RETENTION = 3600  # Keep temp files for 1 hour max 

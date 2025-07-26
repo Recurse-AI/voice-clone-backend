@@ -115,4 +115,23 @@ class QueueStatsResponse(BaseModel):
     completed: int
     failed: int
     maxConcurrent: int
-    queueLength: int 
+    queueLength: int
+
+# Video Download Schemas
+class VideoDownloadRequest(BaseModel):
+    url: str = Field(..., min_length=1, description="Video URL from supported platforms")
+    quality: Optional[str] = Field(None, description="Video quality preference (e.g., 'best', 'worst', 'best[height<=720]')")
+    
+    @validator('url')
+    def validate_url(cls, v):
+        if not v.startswith(('http://', 'https://')):
+            raise ValueError("URL must start with http:// or https://")
+        return v
+
+class VideoDownloadResponse(BaseModel):
+    success: bool
+    message: str
+    download_id: Optional[str] = None
+    video_info: Optional[Dict[str, Any]] = None
+    cloudflare: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None 

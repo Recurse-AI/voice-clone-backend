@@ -190,54 +190,51 @@ class TranscriptionService:
             return language_code.strip()
         
         try:
-            return transcript.json_response.get("language_code", "en")
+            return transcript.json_response.get("language_code", "")
         except:
-            return "en"
+            return ""
     
     def format_dialogue_text(self, text: str, speaker_data, is_multi_speaker: bool = False) -> str:
-        """Translate text to English and format with proper speaker tags - supports both old and new format"""
+        """Translate text to English with optimized formatting for Dia model performance"""
         try:
-            # Handle both old format (speaker string) and new format (speaker_data dict)
+            # Handle speaker data format
             if isinstance(speaker_data, str):
-                # Old format - single speaker
                 speaker = speaker_data
                 is_multi_speaker = False
                 speakers_in_segment = [speaker]
                 primary_speaker = speaker
             else:
-                # New format - speaker_data dict
                 is_multi_speaker = speaker_data.get('is_multi_speaker', False)
                 speakers_in_segment = speaker_data.get('speakers', ['A'])
                 primary_speaker = speaker_data.get('primary_speaker', 'A')
-                speaker = primary_speaker  # For backward compatibility
+                speaker = primary_speaker
             
-            # First clean the text
             clean_text = self._clean_text(text)
-            
             if not clean_text.strip():
                 raise ValueError(f"No text available for speaker {speaker}")
             
-            # Check cache first for repeated translations
+            # Get optimal format based on text length
+            word_count = len(clean_text.split())
+            optimal_format = self._get_optimal_format_for_dia(word_count, is_multi_speaker)
+            
+            # Check cache
             with self.cache_lock:
-                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_{len(speakers_in_segment)}_v3_5-9words_7optimal"
+                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_{len(speakers_in_segment)}_dia_{optimal_format['strategy']}"
                 if cache_key in self.translation_cache:
                     return self.translation_cache[cache_key]
             
-            # Try OpenAI translation and formatting
+            # Create optimized prompt
             try:
                 if is_multi_speaker and len(speakers_in_segment) > 1:
-                    # Multi-speaker prompt with [S1], [S2] tags
                     speaker_tags = ", ".join([f"[S{i+1}]" for i in range(len(speakers_in_segment))])
-                    
-                    prompt = f"""Translate to natural English with proper speaker tags for voice cloning.
+                    prompt = f"""Translate to natural English with Dia-optimized formatting.
 
 TEXT: "{clean_text}"
 
-FORMAT RULES:
+RULES:
 - Use {speaker_tags} for {len(speakers_in_segment)} speakers
-- 5-9 words per line (7 words optimal)
-- Start each speaker turn with speaker tag
-- Keep sentences complete when possible
+- {optimal_format['words_per_line']} words per line
+- Target {optimal_format['target_lines']} total lines
 - Natural, conversational English
 
 EXAMPLE:
@@ -249,55 +246,168 @@ Life has been treating me well.
 
 OUTPUT (English with speaker tags):"""
                 else:
-                    # Single speaker prompt
-                    prompt = f"""Translate to natural English for voice cloning.
+                    prompt = f"""Translate to natural English with Dia-optimized formatting.
 
 TEXT: "{clean_text}"
 
-FORMAT RULES:
+RULES:
 - Start with [S1] tag once
-- 5-9 words per line (7 words optimal)
+- {optimal_format['words_per_line']} words per line
+- Target {optimal_format['target_lines']} total lines
 - Natural, conversational English
-- Keep sentences complete when possible
-
-EXAMPLE:
-[S1] Hello there my dear friend today.
-How are you doing right now?
-I'm glad to hear things work.
+- {optimal_format['explanation']}
 
 OUTPUT (English with [S1] tag):"""
                 
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "You are a professional translator. Follow the format rules exactly. Translate to natural English with proper speaker tags for voice cloning."},
+                        {"role": "system", "content": "Translate with optimal Dia voice model formatting. Follow formatting rules exactly."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=400, 
-                    temperature=0.1,  
+                    temperature=0.05,
                     timeout=30 
                 )
                 
                 if response and response.choices:
                     formatted_text = response.choices[0].message.content.strip()
-                    # Minimal cleanup - trust OpenAI output
-                    formatted_text = self._clean_formatted_text(formatted_text, is_multi_speaker)
+                    formatted_text = self._clean_formatted_text_for_dia(formatted_text)
                     
-                    # Cache the result
                     with self.cache_lock:
                         self.translation_cache[cache_key] = formatted_text
                     return formatted_text
                 
-                # If no valid response, use fallback
                 raise ValueError("No valid OpenAI response")
                 
-            except Exception as openai_error:
-                # Use simple fallback translation and formatting
-                return self._simple_translate_and_format(clean_text, is_multi_speaker)
+            except Exception:
+                return self._simple_translate_and_format_for_dia(clean_text, optimal_format)
                 
         except Exception as e:
-            # No ultimate fallback - raise error if everything fails
             raise ValueError(f"Text formatting failed for speaker {speaker}: {str(e)}")
+    
+    def _get_optimal_format_for_dia(self, word_count: int, is_multi_speaker: bool) -> Dict:
+        """Get optimal formatting parameters for Dia model"""
+        if word_count <= 10:
+            return {
+                'words_per_line': '8-12',
+                'target_lines': '1',
+                'strategy': 'single_line',
+                'explanation': 'Single line for short text'
+            }
+        elif word_count <= 25:
+            return {
+                'words_per_line': '7-10', 
+                'target_lines': '2-3',
+                'strategy': 'balanced',
+                'explanation': '2-3 lines with balanced words'
+            }
+        elif word_count <= 50:
+            return {
+                'words_per_line': '8-12',
+                'target_lines': '3-5', 
+                'strategy': 'controlled',
+                'explanation': 'Limit to 5 lines max'
+            }
+        else:
+            return {
+                'words_per_line': '10-15',
+                'target_lines': '4-6',
+                'strategy': 'condensed', 
+                'explanation': 'Condensed for consistency'
+            }
+    
+    def _clean_formatted_text_for_dia(self, text: str) -> str:
+        """Clean formatted text for Dia optimization"""
+        # Basic cleanup
+        text = re.sub(r'^["\s]*', '', text).strip()
+        text = re.sub(r'["\s]*$', '', text)
+        
+        if not text:
+            raise ValueError("Empty response from OpenAI")
+        
+        # Ensure speaker tag
+        if '[S' not in text:
+            text = f"[S1] {text}"
+        
+        # Simple line validation - merge very short lines (relaxed rule)
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        fixed_lines = []
+        
+        for line in lines:
+            if line.startswith('[S'):
+                # Count words after speaker tag
+                words_after_tag = line.split()[1:] if len(line.split()) > 1 else []
+                # Only merge if line has just 1 word (relaxed from 1-2)
+                if len(words_after_tag) == 1 and fixed_lines and not fixed_lines[-1].startswith('[S'):
+                    fixed_lines[-1] += f" {' '.join(words_after_tag)}"
+                    continue
+                fixed_lines.append(line)
+            else:
+                # Merge very short non-speaker lines
+                if len(line.split()) == 1 and fixed_lines:
+                    fixed_lines[-1] += f" {line}"
+                else:
+                    fixed_lines.append(line)
+        
+        return '\n'.join(fixed_lines)
+    
+    def _simple_translate_and_format_for_dia(self, text: str, optimal_format: Dict) -> str:
+        """Simple translation with Dia formatting"""
+        try:
+            translation_response = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Translate to natural English only."},
+                    {"role": "user", "content": f"Translate: {text}"}
+                ],
+                max_tokens=150,
+                temperature=0.1,
+                timeout=5
+            )
+            
+            if translation_response and translation_response.choices:
+                english_text = translation_response.choices[0].message.content.strip()
+                return self._format_text_for_dia(english_text, optimal_format)
+            else:
+                raise ValueError("Translation failed")
+        except Exception as e:
+            raise ValueError(f"Translation failed: {str(e)}")
+    
+    def _format_text_for_dia(self, text: str, optimal_format: Dict) -> str:
+        """Format text for Dia model"""
+        if not text.strip():
+            raise ValueError("No content to format")
+        
+        words = text.split()
+        
+        if optimal_format['strategy'] == 'single_line':
+            return f"[S1] {text}"
+        
+        # Multi-line formatting
+        target_words_per_line = 8  # Default
+        if '-' in optimal_format['words_per_line']:
+            min_words, max_words = map(int, optimal_format['words_per_line'].split('-'))
+            target_words_per_line = (min_words + max_words) // 2
+        
+        lines = []
+        i = 0
+        first_line = True
+        
+        while i < len(words):
+            if first_line:
+                line_words = ['[S1]']
+                first_line = False
+            else:
+                line_words = []
+            
+            words_to_add = min(target_words_per_line, len(words) - i)
+            line_words.extend(words[i:i + words_to_add])
+            i += words_to_add
+            
+            lines.append(' '.join(line_words))
+        
+        return '\n'.join(lines)
     
     def format_dialogue_batch(self, text_list: List[str], speaker_data: List) -> List[str]:
         """Process multiple dialogue texts in parallel - supports both old format and new multi-speaker format"""
@@ -340,8 +450,6 @@ OUTPUT (English with [S1] tag):"""
                     results[index] = f"[S1] {text_list[index]}"
         
         return results
-    
-
     
     def _simple_translate_and_format(self, text: str, is_multi_speaker: bool = False) -> str:
         """Simple translation and formatting - no fallback"""

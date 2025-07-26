@@ -95,9 +95,14 @@ class VoiceCloningService:
                     
                     # Get segment data
                     english_text = segment.get('english_text', segment.get('text', ''))
+                    
                     if not english_text.strip():
                         logger.warning(f"Skipping segment {i+1}: No english_text")
                         continue
+                    
+                    # Analyze text for Dia optimization
+                    text_analysis = self._analyze_text_for_dia(english_text)
+                    logger.info(f"Text analysis: {text_analysis['line_count']} lines, {text_analysis['avg_words_per_line']:.1f} avg words/line, strategy: {text_analysis['optimization_strategy']}")
                     
                     # Use segment's own audio as reference
                     audio_path = segment.get('audio_path')
@@ -115,6 +120,12 @@ class VoiceCloningService:
                     logger.info(f"Processing segment {i+1}/{len(segments)} (Speaker {speaker})...")
                     logger.info(f"Using segment audio as reference: {audio_path}")
                     logger.info(f"Text: {english_text}")
+                    
+                    # Adjust Dia parameters based on text characteristics
+                    optimized_params = self._get_optimized_dia_params(
+                        text_analysis, temperature, cfg_scale, top_p
+                    )
+                    logger.info(f"Optimized Dia params: temp={optimized_params['temperature']:.2f}, cfg={optimized_params['cfg_scale']:.1f}, top_p={optimized_params['top_p']:.2f}")
                     
                     # Update status with current segment progress
                     if audio_id:
@@ -135,32 +146,37 @@ class VoiceCloningService:
                     target_duration = segment.get('duration', 5.0)
                     
                     try:
-                        # Generate audio using segment itself as reference
+                        # Generate audio using optimized parameters
                         cloned_audio = self._generate_single_segment(
                             english_text, audio_path, english_text, 
-                            temperature, cfg_scale, top_p
+                            optimized_params['temperature'], 
+                            optimized_params['cfg_scale'], 
+                            optimized_params['top_p']
                         )
                         
                         if cloned_audio is None:
                             logger.warning(f"Skipping segment {i+1}: Failed to generate audio")
                             continue
                         
-                        # Apply time adjustment
+                        # Apply time adjustment with text-aware parameters
                         cloned_audio = self._adjust_audio_length(
                             cloned_audio, 
                             target_duration, 
                             use_speed_adjustment=settings.USE_SPEED_ADJUSTMENT,
-                            speed_factor=settings.AUDIO_SPEED_FACTOR
+                            speed_factor=settings.AUDIO_SPEED_FACTOR,
+                            text_analysis=text_analysis
                         )
                         
-                        logger.info(f"Successfully generated audio for segment {i+1}")
+                        success_msg = f"Successfully generated audio for segment {i+1}"
+                        logger.info(success_msg)
                         
                         cloned_segments.append({
                             "success": True,
                             "original_data": segment,
                             "cloned_audio": cloned_audio,
                             "duration": target_duration,
-                            "speaker": speaker
+                            "speaker": speaker,
+                            "text_analysis": text_analysis
                         })
                         
                     except Exception as generation_error:
@@ -235,18 +251,18 @@ class VoiceCloningService:
             return None
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float, 
-                          use_speed_adjustment: bool = False, speed_factor: float = 0.75) -> np.ndarray:
-        """Adjust audio length to match target duration with pitch preservation"""
+                            use_speed_adjustment: bool = False, speed_factor: float = 0.75,
+                            text_analysis: Optional[Dict] = None) -> np.ndarray:
+        """Adjust audio length with text-aware optimization"""
         if audio is None or len(audio) == 0:
             return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
         
-        # Ensure audio is float32 numpy array
+        # Ensure proper format
         if not isinstance(audio, np.ndarray):
             audio = np.array(audio, dtype=np.float32)
         elif audio.dtype != np.float32:
             audio = audio.astype(np.float32)
         
-        # Convert to mono if stereo
         if len(audio.shape) > 1:
             audio = np.mean(audio, axis=1)
         
@@ -256,58 +272,164 @@ class VoiceCloningService:
         
         logger.info(f"Adjusting audio: {current_duration:.2f}s -> {target_duration:.2f}s")
         
-        # Calculate the stretch ratio
         stretch_ratio = target_duration / current_duration if current_duration > 0 else 1.0
         
-        # Apply time stretching only if:
-        # 1. Speed adjustment is enabled
-        # 2. The difference is more than 5% (not 10% to catch more cases)
-        # 3. The stretch ratio is within our quality limits (0.9 to 1.1)
+        # Text-aware thresholds
+        if text_analysis:
+            quality = text_analysis.get('estimated_quality', 'fair')
+            strategy = text_analysis.get('optimization_strategy', 'acceptable')
+            
+            if quality == "excellent" or strategy == "optimal_balanced":
+                min_ratio, max_ratio, tolerance = 0.92, 1.08, 0.03
+            elif quality == "poor" or strategy == "very_short_lines":
+                min_ratio, max_ratio, tolerance = 0.88, 1.12, 0.08
+            else:
+                min_ratio, max_ratio, tolerance = 0.90, 1.10, 0.05
+        else:
+            min_ratio, max_ratio, tolerance = settings.MIN_STRETCH_RATIO, settings.MAX_STRETCH_RATIO, 0.05
+        
+        # Apply stretching
         needs_stretching = (
             use_speed_adjustment and 
-            abs(1.0 - stretch_ratio) > 0.05 and  # More than 5% difference
-            settings.MIN_STRETCH_RATIO <= stretch_ratio <= settings.MAX_STRETCH_RATIO
+            abs(1.0 - stretch_ratio) > tolerance and
+            min_ratio <= stretch_ratio <= max_ratio
         )
         
         if needs_stretching:
-            # Apply the stretch ratio as calculated (already within 0.9-1.1 limits)
             try:
-                logger.info(f"Applying time-stretch with ratio {stretch_ratio:.2f} (within quality limits)")
+                if text_analysis:
+                    logger.info(f"Text-aware stretching: ratio {stretch_ratio:.2f}, quality: {text_analysis.get('estimated_quality', 'unknown')}")
+                else:
+                    logger.info(f"Standard stretching: ratio {stretch_ratio:.2f}")
                 adjusted_audio = librosa.effects.time_stretch(audio, rate=1.0/stretch_ratio)
             except Exception as e:
-                logger.error(f"Time stretching failed: {e}, using original audio")
+                logger.error(f"Time stretching failed: {e}")
                 adjusted_audio = audio
         else:
-            if not use_speed_adjustment:
-                logger.info("Speed adjustment disabled - preserving original audio")
-            elif abs(1.0 - stretch_ratio) <= 0.05:
-                logger.info(f"Duration difference too small ({abs(1.0 - stretch_ratio)*100:.1f}%), no stretching needed")
-            else:
-                logger.info(f"Stretch ratio {stretch_ratio:.2f} outside quality limits (0.9-1.1), using original audio")
             adjusted_audio = audio
         
-        # Handle length differences with minimal modification
+        # Handle length differences
         if len(adjusted_audio) > target_samples:
-            # Truncate with longer fade-out for smoother transition
             adjusted_audio = adjusted_audio[:target_samples]
-            # Apply 100ms fade-out
-            fade_samples = min(int(0.1 * self.sample_rate), target_samples // 5)
+            
+            # Adaptive fade based on text quality
+            if text_analysis and text_analysis.get('estimated_quality') == 'excellent':
+                fade_samples = min(int(0.15 * self.sample_rate), target_samples // 4)
+            else:
+                fade_samples = min(int(0.1 * self.sample_rate), target_samples // 5)
+                
             if fade_samples > 0:
                 fade_curve = np.linspace(1.0, 0.0, fade_samples)
                 adjusted_audio[-fade_samples:] *= fade_curve
+                
         elif len(adjusted_audio) < target_samples:
-            # Pad with silence
             padding = target_samples - len(adjusted_audio)
             adjusted_audio = np.pad(adjusted_audio, (0, padding), mode='constant', constant_values=0)
         
-        # Gentle normalization to preserve voice quality
+        # Gentle normalization
         max_val = np.abs(adjusted_audio).max()
-        if max_val > 1.0:  # Only normalize if clipping would occur
+        if max_val > 1.0:
             adjusted_audio = adjusted_audio * (0.99 / max_val)
-        elif max_val < 0.1:  # Boost very quiet audio
+        elif max_val < 0.1:
             adjusted_audio = adjusted_audio * (0.3 / max_val)
         
         return adjusted_audio.astype(np.float32)
+    
+    def _analyze_text_for_dia(self, text: str) -> Dict:
+        """Analyze text characteristics for Dia optimization"""
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        
+        words_per_line = []
+        total_words = 0
+        
+        for line in lines:
+            # Remove speaker tags for word counting
+            clean_line = line
+            if line.startswith('[S') and ']' in line:
+                clean_line = line[line.find(']') + 1:].strip()
+            
+            words = len(clean_line.split()) if clean_line else 0
+            words_per_line.append(words)
+            total_words += words
+        
+        line_count = len(lines)
+        avg_words_per_line = total_words / line_count if line_count > 0 else 0
+        
+        # Determine strategy
+        if line_count == 1:
+            strategy = "single_line"
+        elif line_count <= 3 and avg_words_per_line >= 6:
+            strategy = "optimal_balanced"
+        elif line_count > 5:
+            strategy = "too_many_lines"
+        elif any(w <= 1 for w in words_per_line):  # Relaxed from <= 2 to <= 1
+            strategy = "very_short_lines"
+        else:
+            strategy = "acceptable"
+        
+        return {
+            'line_count': line_count,
+            'total_words': total_words,
+            'words_per_line': words_per_line,
+            'avg_words_per_line': avg_words_per_line,
+            'optimization_strategy': strategy,
+            'estimated_quality': self._estimate_dia_quality(line_count, avg_words_per_line, words_per_line)
+        }
+    
+    def _estimate_dia_quality(self, line_count: int, avg_words_per_line: float, words_per_line: List[int]) -> str:
+        """Estimate Dia performance quality"""
+        has_very_short_lines = any(w <= 1 for w in words_per_line)  # Relaxed
+        has_too_many_lines = line_count > 6
+        optimal_word_range = 6 <= avg_words_per_line <= 12
+        
+        if has_very_short_lines:
+            return "poor"
+        elif has_too_many_lines:
+            return "inconsistent"
+        elif optimal_word_range and line_count <= 4:
+            return "excellent"
+        elif optimal_word_range:
+            return "good"
+        else:
+            return "fair"
+    
+    def _get_optimized_dia_params(self, text_analysis: Dict, base_temp: float, 
+                                 base_cfg: float, base_top_p: float) -> Dict:
+        """Optimize Dia parameters based on text characteristics"""
+        strategy = text_analysis['optimization_strategy']
+        quality = text_analysis['estimated_quality']
+        
+        # Start with base parameters
+        temp = base_temp
+        cfg = base_cfg  
+        top_p = base_top_p
+        
+        # Adjust based on analysis
+        if strategy == "too_many_lines":
+            temp = max(base_temp * 0.8, 0.8)
+            cfg = min(base_cfg * 1.2, 4.5)
+            top_p = max(base_top_p * 0.9, 0.85)
+        elif strategy == "very_short_lines":
+            temp = min(base_temp * 1.15, 1.8)
+            cfg = max(base_cfg * 0.85, 2.5)
+            top_p = min(base_top_p * 1.05, 0.98)
+        elif strategy == "single_line":
+            temp = max(base_temp * 0.9, 0.9) 
+        elif quality == "poor":
+            temp = min(temp * 1.1, 1.6)
+            cfg = max(cfg * 0.9, 2.0)
+        
+        # Ensure bounds
+        temp = max(0.6, min(2.0, temp))
+        cfg = max(1.5, min(5.0, cfg))
+        top_p = max(0.8, min(0.99, top_p))
+        
+        return {
+            'temperature': temp,
+            'cfg_scale': cfg,
+            'top_p': top_p,
+            'reasoning': f"{strategy}, {quality}, {text_analysis['line_count']} lines"
+        }
     
     def _cleanup_memory(self):
         """Clean up GPU memory"""

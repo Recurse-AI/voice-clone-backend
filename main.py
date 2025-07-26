@@ -21,10 +21,11 @@ from video_processor.voice_cloning import set_seed
 
 from status_manager import status_manager, ProcessingStatus
 from utils import cleanup_temp_files
+from video_downloader import video_download_service
 
 from contextlib import asynccontextmanager
 
-from schemas import StatusResponse, StartProcessingResponse, RegenerateSegmentRequest, RegenerateSegmentResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse
+from schemas import StatusResponse, StartProcessingResponse, RegenerateSegmentRequest, RegenerateSegmentResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse, VideoDownloadRequest, VideoDownloadResponse
 
 # Configure logging with UTF-8 support
 os.makedirs(settings.LOGS_DIR, exist_ok=True)
@@ -278,6 +279,7 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
         import tempfile
         import time
         from datetime import datetime
+        import random
         
         # Validate inputs
         if not request.text.strip():
@@ -290,7 +292,7 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
             raise HTTPException(status_code=400, detail="Duration must be positive")
         
         # Set parameters with defaults
-        seed = request.seed or settings.DEFAULT_SEED
+        seed = request.seed or random.randint(1, 1000000)
         temperature = request.temperature or 1.3
         cfg_scale = request.cfg_scale or 3.0
         top_p = request.top_p or 0.95
@@ -593,6 +595,46 @@ async def get_status(audio_id: str):
         return status
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/download-video", response_model=VideoDownloadResponse)
+async def download_video(request: VideoDownloadRequest):
+    """Download video from URL and upload to Cloudflare R2"""
+    try:
+        logger.info(f"Video download request: {request.url}")
+        
+        # Clean up old temporary files before processing
+        video_download_service.cleanup_old_files()
+        
+        # Download and upload video
+        result = await video_download_service.download_video(
+            url=request.url,
+            quality=request.quality
+        )
+        
+        if result["success"]:
+            logger.info(f"Video download successful: {result['download_id']}")
+            return VideoDownloadResponse(
+                success=True,
+                message=result["message"],
+                download_id=result["download_id"],
+                video_info=result["video_info"],
+                cloudflare=result["cloudflare"]
+            )
+        else:
+            logger.error(f"Video download failed: {result['error']}")
+            return VideoDownloadResponse(
+                success=False,
+                message="Video download failed",
+                error=result["error"]
+            )
+            
+    except Exception as e:
+        logger.error(f"Video download endpoint error: {str(e)}")
+        return VideoDownloadResponse(
+            success=False,
+            message="Internal server error",
+            error=str(e)
+        )
 
 
 
