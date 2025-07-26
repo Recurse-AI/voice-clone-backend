@@ -326,7 +326,7 @@ OUTPUT (English with [S1] tag only at start):"""
                     ],
                     max_tokens=300,
                     temperature=0.1,
-                    timeout=30
+                    timeout=45  # Increased timeout
                 )
                 
                 if response and response.choices:
@@ -372,7 +372,7 @@ OUTPUT (English with [S1] tag only at start):"""
                 ],
                 max_tokens=150,
                 temperature=0.1,
-                timeout=15
+                timeout=30  # Increased timeout
             )
             
             if translation_response and translation_response.choices:
@@ -424,7 +424,7 @@ OUTPUT (English with [S1] tag only at start):"""
         elif len(words_data_list) != len(text_list):
             words_data_list = [None] * len(text_list)
         
-        # Use ThreadPoolExecutor for parallel processing
+        # Use ThreadPoolExecutor for parallel processing with timeout
         with ThreadPoolExecutor(max_workers=min(4, len(text_list))) as executor:
             # Submit all tasks with words_data
             future_to_index = {}
@@ -432,15 +432,22 @@ OUTPUT (English with [S1] tag only at start):"""
                 future = executor.submit(self.format_dialogue_text, text, speaker_data_item, words_data)
                 future_to_index[future] = i
             
-            # Collect results in order
+            # Collect results in order with timeout
             results = [''] * len(text_list)
-            for future in as_completed(future_to_index):
-                index = future_to_index[future]
-                try:
-                    results[index] = future.result()
-                except Exception as e:
-                    logger.error(f"Translation failed for text at index {index}: {str(e)}")
-                    results[index] = ""
+            try:
+                for future in as_completed(future_to_index, timeout=120):  # 2 minute timeout total
+                    index = future_to_index[future]
+                    try:
+                        results[index] = future.result(timeout=60)  # 1 minute per translation
+                    except Exception as e:
+                        logger.error(f"Translation failed for text at index {index}: {str(e)}")
+                        results[index] = ""
+            except Exception as e:
+                logger.error(f"Translation batch timeout or error: {str(e)}")
+                # Fill remaining empty results
+                for i in range(len(results)):
+                    if not results[i]:
+                        results[i] = ""
         
         return results
     

@@ -60,8 +60,11 @@ class SegmentManager:
         current_start = 0.0
         sorted_words = sorted(words, key=lambda w: w.get('start', 0))
         word_index = 0
+        loop_counter = 0
+        max_loops = len(sorted_words) * 2  # Safety limit
         
-        while current_start < total_duration and word_index < len(sorted_words):
+        while current_start < total_duration and word_index < len(sorted_words) and loop_counter < max_loops:
+            loop_counter += 1
             # Check if remaining duration is too short for a new segment
             remaining_duration = total_duration - current_start
             if remaining_duration < self.min_duration and segments:
@@ -125,9 +128,16 @@ class SegmentManager:
                 segment = self._create_simple_segment(segment_words, current_start, actual_end)
                 if segment:
                     segments.append(segment)
-                    current_start = actual_end
+                current_start = actual_end
             else:
+                # No words collected - force increment to avoid infinite loop
                 current_start += self.optimal_duration
+                # Also increment word_index if we're stuck on the same word
+                if word_index < len(sorted_words):
+                    word_index += 1
+        
+        if loop_counter >= max_loops:
+            logger.warning(f"Segment creation loop limit reached ({max_loops} iterations) - safety break")
         
         return segments
     
