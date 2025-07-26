@@ -70,7 +70,11 @@ class AudioReconstructor:
                         'duration': metadata.get('duration', 0),
                         'audio': cloned_audio,
                         'speaker': metadata.get('speaker', 'A'),
-                        'sample_rate': sr
+                        'sample_rate': sr,
+                        'original_text': metadata.get('original_text', ''),
+                        'english_text': metadata.get('english_text', ''),
+                        'confidence': metadata.get('confidence', 0.0),
+                        'word_count': metadata.get('word_count', 0)
                     })
                     
                 except Exception as e:

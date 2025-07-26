@@ -260,7 +260,7 @@ def process_video_background(
             "subtitles_url": r2_subtitle_result.get("url") if r2_subtitle_result else None,
             "processing_stats": {
                 "total_segments": processing_result.get("total_segments", 0),
-                "cloned_segments": cloning_result.get("cloned_segments_count", 0),
+                "cloned_segments": cloning_result.get("successful_clones", 0),
                 "speakers": processing_result.get("speakers", []),
                 "duration": processing_result.get("total_duration", 0)
             },
@@ -632,7 +632,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             "subtitles_url": r2_subtitle_result.get("url") if r2_subtitle_result else None,
             "processing_stats": {
                 "total_segments": processing_result.get("total_segments", 0),
-                "cloned_segments": cloning_result.get("cloned_segments_count", 0),
+                "cloned_segments": cloning_result.get("successful_clones", 0),
                 "speakers": processing_result.get("speakers", []),
                 "duration": processing_result.get("total_duration", 0)
             },

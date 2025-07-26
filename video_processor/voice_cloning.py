@@ -147,14 +147,24 @@ class VoiceCloningService:
                         # Simple length adjustment
                         cloned_audio = self._adjust_audio_length_simple(cloned_audio, target_duration)
                         
+                        # Save audio immediately to avoid JSON serialization issues
+                        self._save_single_cloned_segment(cloned_audio, i+1, audio_id)
+                        
                         logger.info(f"Successfully generated audio for segment {i+1}")
                         
                         cloned_segments.append({
                             "success": True,
-                            "original_data": segment,
-                            "cloned_audio": cloned_audio,
-                            "duration": target_duration,
-                            "speaker": speaker
+                            "original_data": {
+                                "segment_index": segment.get('segment_index', i+1),
+                                "speaker": speaker,
+                                "duration": target_duration,
+                                "original_text": segment.get('original_text', ''),
+                                "english_text": english_text
+                            },
+                            "duration": float(target_duration),
+                            "speaker": str(speaker),
+                            "segment_index": int(segment.get('segment_index', i+1))
+                            # Note: cloned_audio excluded to prevent JSON serialization issues
                         })
                         
                     except Exception as generation_error:
@@ -223,7 +233,7 @@ class VoiceCloningService:
             return None
     
     def _adjust_audio_length_simple(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Simple audio length adjustment"""
+        """Enhanced audio length adjustment that preserves voice quality"""
         if audio is None or len(audio) == 0:
             return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
         
@@ -242,33 +252,58 @@ class VoiceCloningService:
         
         logger.info(f"Adjusting audio: {current_duration:.2f}s -> {target_duration:.2f}s")
         
+        # Calculate stretch ratio
         stretch_ratio = target_duration / current_duration if current_duration > 0 else 1.0
         
-        # Simple stretch
-        adjusted_audio = librosa.effects.time_stretch(audio, rate=1.0/stretch_ratio)
+        # Only apply stretching if the difference is significant (>10%)
+        if abs(stretch_ratio - 1.0) > 0.1:
+            # Use high-quality time stretching with voice preservation
+            try:
+                adjusted_audio = librosa.effects.time_stretch(
+                    audio, 
+                    rate=1.0/stretch_ratio,
+                    n_fft=2048,  # Higher FFT for better quality
+                    hop_length=512  # Better temporal resolution
+                )
+            except Exception as e:
+                logger.warning(f"Time stretch failed: {e}, using simple resize")
+                # Fallback to simple resampling if stretch fails
+                adjusted_audio = librosa.resample(audio, orig_sr=self.sample_rate, target_sr=int(self.sample_rate/stretch_ratio))
+        else:
+            # If difference is small, just use the original
+            adjusted_audio = audio.copy()
         
-        # Handle length differences
+        # Handle length differences with proper padding/trimming
         if len(adjusted_audio) > target_samples:
-            adjusted_audio = adjusted_audio[:target_samples]
-            
-            # Adaptive fade based on text quality
-            # No text quality analysis, so no fade
-            
+            # Trim from the end with a gentle fade-out to avoid clicks
+            trim_samples = len(adjusted_audio) - target_samples
+            if trim_samples < self.sample_rate * 0.1:  # Less than 100ms
+                # Simple trim for small differences
+                adjusted_audio = adjusted_audio[:target_samples]
+            else:
+                # Apply fade-out for larger trims
+                fade_samples = min(int(self.sample_rate * 0.05), trim_samples // 2)  # 50ms fade max
+                adjusted_audio = adjusted_audio[:target_samples]
+                if fade_samples > 0:
+                    fade_curve = np.linspace(1.0, 0.0, fade_samples)
+                    adjusted_audio[-fade_samples:] *= fade_curve
+                    
         elif len(adjusted_audio) < target_samples:
+            # Pad with silence
             padding = target_samples - len(adjusted_audio)
             adjusted_audio = np.pad(adjusted_audio, (0, padding), mode='constant', constant_values=0)
         
-        # Gentle normalization
+        # Gentle normalization to preserve dynamic range
         max_val = np.abs(adjusted_audio).max()
-        if max_val > 1.0:
-            adjusted_audio = adjusted_audio * (0.99 / max_val)
-        elif max_val < 0.1:
+        if max_val > 0.95:  # Only normalize if clipping risk
+            adjusted_audio = adjusted_audio * (0.95 / max_val)
+        elif max_val < 0.05 and max_val > 0:  # Boost very quiet audio
             adjusted_audio = adjusted_audio * (0.3 / max_val)
         
         return adjusted_audio.astype(np.float32)
     
-    def _save_cloned_segments_unified(self, cloned_segments: List[Dict], audio_id: str):
-        """Save cloned segments in unified folder structure"""
+    def _save_single_cloned_segment(self, audio_data: np.ndarray, segment_index: int, audio_id: str):
+        """Save a single cloned segment audio file."""
         try:
             from pathlib import Path
             from config import settings
@@ -280,45 +315,69 @@ class VoiceCloningService:
             cloned_dir = segments_base_dir / "cloned"
             cloned_dir.mkdir(parents=True, exist_ok=True)
             
+            # Save cloned audio file
+            cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
+            cloned_path = cloned_dir / cloned_filename
+            sf.write(str(cloned_path), audio_data, self.sample_rate)
+            
+            # Update metadata with cloned path
             segments_dir = segments_base_dir / "segments"
+            metadata_file = segments_dir / f"segment_{segment_index:03d}_metadata.json"
             
-            for cloned_segment in cloned_segments:
-                try:
-                    original_data = cloned_segment.get('original_data', {})
-                    segment_index = original_data.get('segment_index', 1)
-                    audio_data = cloned_segment.get('cloned_audio')
-                    
-                    if audio_data is not None and len(audio_data) > 0:
-                        # Save cloned audio file
-                        cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
-                        cloned_path = cloned_dir / cloned_filename
-                        sf.write(str(cloned_path), audio_data, self.sample_rate)
-                        
-                        # Update metadata with cloned path
-                        metadata_file = segments_dir / f"segment_{segment_index:03d}_metadata.json"
-                        if metadata_file.exists():
-                            with open(metadata_file, 'r', encoding='utf-8') as f:
-                                metadata = json.load(f)
-                            
-                            metadata['cloned_audio_path'] = str(cloned_path)
-                            metadata['cloned_audio_file'] = cloned_filename
-                            metadata['cloning_completed'] = True
-                            
-                            with open(metadata_file, 'w', encoding='utf-8') as f:
-                                json.dump(metadata, f, ensure_ascii=False, indent=2)
-                            
-                            logger.debug(f"Saved cloned segment: {cloned_filename}")
-                        else:
-                            logger.warning(f"Metadata file not found: {metadata_file}")
-                    
-                except Exception as e:
-                    logger.error(f"Error saving cloned segment {segment_index}: {e}")
-                    continue
-            
+            if metadata_file.exists():
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                
+                metadata['cloned_audio_path'] = str(cloned_path)
+                metadata['cloned_audio_file'] = cloned_filename
+                metadata['cloning_completed'] = True
+                
+                with open(metadata_file, 'w', encoding='utf-8') as f:
+                    json.dump(metadata, f, ensure_ascii=False, indent=2)
+                
+                logger.debug(f"Saved cloned segment: {cloned_filename}")
+            else:
+                logger.warning(f"Metadata file not found: {metadata_file}")
+                
+        except Exception as e:
+            logger.error(f"Error saving single cloned segment {segment_index}: {e}")
+    
+    def _save_cloned_segments_unified(self, cloned_segments: List[Dict], audio_id: str):
+        """Log cloned segments completion - audio already saved individually"""
+        try:
             logger.info(f"Saved {len(cloned_segments)} cloned segments in unified structure")
             
+            # Optional: Create summary file for debugging
+            from pathlib import Path
+            from config import settings
+            
+            temp_dir = Path(settings.TEMP_DIR)
+            segments_base_dir = temp_dir / f"segments_{audio_id}"
+            metadata_dir = segments_base_dir / "metadata"
+            metadata_dir.mkdir(parents=True, exist_ok=True)
+            
+            summary = {
+                "cloning_summary": {
+                    "total_segments": len(cloned_segments),
+                    "successful_clones": len([s for s in cloned_segments if s.get('success', False)]),
+                    "segments": [
+                        {
+                            "segment_index": s.get('segment_index', 0),
+                            "speaker": s.get('speaker', 'A'),
+                            "duration": s.get('duration', 0.0),
+                            "success": s.get('success', False)
+                        }
+                        for s in cloned_segments
+                    ]
+                }
+            }
+            
+            summary_file = metadata_dir / "cloning_summary.json"
+            with open(summary_file, 'w', encoding='utf-8') as f:
+                json.dump(summary, f, ensure_ascii=False, indent=2)
+                
         except Exception as e:
-            logger.error(f"Failed to save cloned segments: {e}")
+            logger.error(f"Error creating cloning summary: {e}")
     
     def _cleanup_memory(self):
         """Clean up GPU memory"""
