@@ -33,12 +33,28 @@ class AudioReconstructor:
             # Check unified structure
             segments_folder = segments_path / "segments"
             cloned_folder = segments_path / "cloned"
+            metadata_folder = segments_path / "metadata"
             
             if not segments_folder.exists():
                 return {"success": False, "error": "Segments folder not found"}
             
             if not cloned_folder.exists():
                 return {"success": False, "error": "Cloned folder not found"}
+            
+            # Try to get original audio duration from processing metadata
+            original_duration = None
+            if metadata_folder.exists():
+                processing_metadata_file = metadata_folder / "processing_metadata.json"
+                if processing_metadata_file.exists():
+                    try:
+                        with open(processing_metadata_file, 'r', encoding='utf-8') as f:
+                            import json
+                            processing_metadata = json.load(f)
+                            original_duration = processing_metadata.get("original_audio", {}).get("duration")
+                            if original_duration:
+                                logger.info(f"Found original audio duration from metadata: {original_duration:.2f} seconds")
+                    except Exception as e:
+                        logger.warning(f"Could not read processing metadata: {e}")
             
             # Collect all segments from unified folders
             all_segments = []
@@ -88,11 +104,15 @@ class AudioReconstructor:
             all_segments.sort(key=lambda x: x['segment_index'])
             logger.info(f"Processing {len(all_segments)} segments for reconstruction")
             
-            # Reconstruct audio
-            reconstructed_audio = self._reconstruct_from_segments(all_segments)
+            # Reconstruct audio with original duration
+            reconstructed_audio = self._reconstruct_from_segments(all_segments, original_duration)
             
             if reconstructed_audio is None or len(reconstructed_audio) == 0:
                 return {"success": False, "error": "Audio reconstruction failed"}
+            
+            # Calculate actual final duration
+            final_duration = len(reconstructed_audio) / all_segments[0]['sample_rate']
+            logger.info(f"Final reconstructed audio duration: {final_duration:.2f} seconds (original: {original_duration:.2f} seconds)")
             
             # Save final audio
             final_audio_filename = f"final_output_{audio_id}.wav"
@@ -108,7 +128,7 @@ class AudioReconstructor:
                     logger.info("Mixed with instruments successfully")
             
             # Save reconstruction summary
-            self._save_reconstruction_summary(segments_path, all_segments, audio_id)
+            self._save_reconstruction_summary(segments_path, all_segments, audio_id, original_duration, final_duration)
             
             logger.info(f"Audio reconstruction completed: {final_audio_path}")
             
@@ -116,7 +136,8 @@ class AudioReconstructor:
                 "success": True,
                 "final_audio_path": str(final_audio_path),
                 "total_segments": len(all_segments),
-                "total_duration": sum(s['duration'] for s in all_segments),
+                "total_duration": final_duration,
+                "original_duration": original_duration,
                 "sample_rate": all_segments[0]['sample_rate'],
                 "instruments_mixed": include_instruments and instruments_path is not None
             }
@@ -125,27 +146,49 @@ class AudioReconstructor:
             logger.error(f"Audio reconstruction failed: {str(e)}")
             return {"success": False, "error": f"Audio reconstruction failed: {str(e)}"}
     
-    def _reconstruct_from_segments(self, segments: List[Dict]) -> Optional[np.ndarray]:
-        """Reconstruct audio from segments using pre-loaded audio data"""
+    def _reconstruct_from_segments(self, segments: List[Dict], original_duration: Optional[float] = None) -> Optional[np.ndarray]:
+        """Reconstruct audio from segments using pre-loaded audio data with original duration preservation"""
         try:
             if not segments:
                 return None
             
-            # Calculate total duration
-            total_duration = segments[-1]['end']
+            # Use original duration if available, otherwise fall back to segments
+            if original_duration and original_duration > 0:
+                total_duration = original_duration
+                logger.info(f"Using original audio duration: {total_duration:.2f} seconds")
+            else:
+                total_duration = segments[-1]['end']
+                logger.warning(f"Original duration not available, using last segment end: {total_duration:.2f} seconds")
+            
             total_samples = int(total_duration * self.sample_rate)
             
-            # Create final audio array
+            # Create final audio array filled with silence
             final_audio = np.zeros(total_samples, dtype=np.float32)
             
             # Process each segment
+            segments_placed = 0
+            total_segment_duration = 0
             for segment in segments:
                 try:
-                    # Use pre-loaded audio data (not reading from file again)
+                    # Use pre-loaded audio data
                     cloned_audio = segment.get('audio')
                     if cloned_audio is None or len(cloned_audio) == 0:
                         logger.warning(f"No audio data for segment {segment.get('segment_index', 'unknown')}")
                         continue
+                    
+                    segment_index = segment.get('segment_index', 'unknown')
+                    segment_start = segment['start']
+                    segment_end = segment['end']
+                    segment_duration = segment_end - segment_start
+                    audio_duration = len(cloned_audio) / self.sample_rate
+                    
+                    # Log segment duration details
+                    logger.debug(f"Segment {segment_index}: timeline={segment_start:.3f}s-{segment_end:.3f}s (duration={segment_duration:.3f}s), audio_length={audio_duration:.3f}s")
+                    
+                    # Check for significant duration mismatch
+                    duration_diff = abs(audio_duration - segment_duration)
+                    if duration_diff > 0.05:  # More than 50ms difference
+                        logger.warning(f"Segment {segment_index} duration mismatch: timeline={segment_duration:.3f}s vs audio={audio_duration:.3f}s (diff={duration_diff:.3f}s)")
                     
                     # Calculate position in final audio
                     start_sample = int(segment['start'] * self.sample_rate)
@@ -158,16 +201,34 @@ class AudioReconstructor:
                     # Adjust cloned audio length
                     expected_samples = end_sample - start_sample
                     if len(cloned_audio) != expected_samples:
+                        logger.debug(f"Segment {segment_index}: adjusting audio length from {len(cloned_audio)} to {expected_samples} samples")
                         cloned_audio = self._adjust_length(cloned_audio, expected_samples)
                     
-                    # Place cloned voice in final audio (NOT replacing, but ensuring it's there)
+                    # Place cloned voice in final audio
                     final_audio[start_sample:end_sample] = cloned_audio
+                    segments_placed += 1
+                    total_segment_duration += segment_duration
                     
-                    logger.debug(f"Placed segment {segment.get('segment_index')} audio: {start_sample}-{end_sample} samples")
+                    logger.debug(f"Placed segment {segment_index} audio: {start_sample}-{end_sample} samples")
                     
                 except Exception as e:
                     logger.error(f"Error processing segment {segment.get('segment_index', 'unknown')}: {e}")
                     continue
+            
+            logger.info(f"Successfully placed {segments_placed}/{len(segments)} segments in final audio")
+            logger.info(f"Final audio length: {len(final_audio)/self.sample_rate:.2f} seconds ({len(final_audio)} samples)")
+            logger.info(f"Total segment duration: {total_segment_duration:.3f}s, Final audio duration: {len(final_audio)/self.sample_rate:.3f}s")
+            
+            # Check for overall duration consistency
+            final_audio_duration = len(final_audio) / self.sample_rate
+            segment_coverage = (total_segment_duration / final_audio_duration) * 100 if final_audio_duration > 0 else 0
+            
+            logger.info(f"Segment coverage: {segment_coverage:.1f}% of final audio")
+            
+            if segment_coverage < 80:
+                logger.warning(f"Low segment coverage ({segment_coverage:.1f}%) - significant gaps may exist in final audio")
+            elif segment_coverage > 100:
+                logger.warning(f"Segment overlap detected ({segment_coverage:.1f}%) - segments may be overlapping")
             
             return final_audio
             
@@ -176,16 +237,26 @@ class AudioReconstructor:
             return None
     
     def _adjust_length(self, audio: np.ndarray, target_samples: int) -> np.ndarray:
-        """Adjust audio length to target samples"""
+        """Adjust audio length to target samples with detailed logging"""
         current_samples = len(audio)
+        current_duration = current_samples / self.sample_rate
+        target_duration = target_samples / self.sample_rate
         
         if current_samples == target_samples:
             return audio
-        elif current_samples > target_samples:
+        
+        logger.debug(f"Adjusting segment length: {current_duration:.3f}s ({current_samples} samples) -> {target_duration:.3f}s ({target_samples} samples)")
+        
+        if current_samples > target_samples:
+            # Audio is longer - trim from end
+            trimmed_samples = current_samples - target_samples
+            logger.debug(f"Trimming {trimmed_samples} samples from end")
             return audio[:target_samples]
         else:
-            padding = np.zeros(target_samples - current_samples, dtype=np.float32)
-            return np.concatenate([audio, padding])
+            # Audio is shorter - pad with silence
+            padding = target_samples - current_samples
+            logger.debug(f"Padding with {padding} samples of silence")
+            return np.concatenate([audio, np.zeros(padding, dtype=np.float32)])
     
     def _mix_with_instruments(self, audio: np.ndarray, instruments_path: str, sample_rate: int) -> Optional[np.ndarray]:
         """Mix audio with instruments at original volume levels"""
@@ -223,7 +294,7 @@ class AudioReconstructor:
         except Exception:
             pass
 
-    def _save_reconstruction_summary(self, segments_path: Path, all_segments: List[Dict], audio_id: str):
+    def _save_reconstruction_summary(self, segments_path: Path, all_segments: List[Dict], audio_id: str, original_duration: Optional[float], final_duration: float):
         """Clean reconstruction summary without unnecessary speaker statistics"""
         summary_path = segments_path / "metadata" / "reconstruction_summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
@@ -231,7 +302,8 @@ class AudioReconstructor:
         reconstruction_summary = {
             'audio_id': str(audio_id),
             'total_segments_used': int(len(all_segments)),
-            'final_duration': float(sum(s['duration'] for s in all_segments)),
+            'final_duration': float(final_duration),
+            'original_duration': float(original_duration) if original_duration is not None else float('nan'),
             'sample_rate': int(all_segments[0]['sample_rate']) if all_segments else 44100,
             'instruments_included': False,
             'segments': [],

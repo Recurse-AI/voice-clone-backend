@@ -233,7 +233,9 @@ class VoiceCloningService:
             return None
     
     def _remove_trailing_silence(self, audio: np.ndarray, silence_threshold: float = 0.01) -> np.ndarray:
-        """Remove silent parts from the tail of audio"""
+        """Remove silent parts from the tail of audio - DEPRECATED: Use _remove_trailing_silence_conservative instead"""
+        logger.warning("Using deprecated _remove_trailing_silence method - consider using conservative version")
+        
         if len(audio) == 0:
             return audio
         
@@ -242,17 +244,25 @@ class VoiceCloningService:
         non_silent_indices = np.where(audio_abs > silence_threshold)[0]
         
         if len(non_silent_indices) == 0:
+            logger.warning("No non-silent audio found, returning original")
             return audio
         
         last_sound_index = non_silent_indices[-1]
-        fade_samples = min(int(0.05 * self.sample_rate), len(audio) - last_sound_index)
+        
+        # Be more conservative - add longer fade to preserve content
+        fade_samples = min(int(0.1 * self.sample_rate), len(audio) - last_sound_index, 2000)  # Max 2000 samples fade
         end_index = min(last_sound_index + fade_samples, len(audio))
+        
+        original_duration = len(audio) / self.sample_rate
+        final_duration = end_index / self.sample_rate
+        logger.info(f"Trailing silence removal: {original_duration:.3f}s -> {final_duration:.3f}s (removed {len(audio) - end_index} samples)")
         
         return audio[:end_index]
     
     def _adjust_audio_length_simple(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Simple audio length adjustment that preserves original voice"""
+        """Simple audio length adjustment that preserves original voice and ensures exact target duration"""
         if audio is None or len(audio) == 0:
+            logger.warning(f"Empty audio provided, creating silence for {target_duration:.2f}s")
             return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
         
         audio = np.array(audio, dtype=np.float32)
@@ -263,23 +273,79 @@ class VoiceCloningService:
         current_samples = len(audio)
         current_duration = current_samples / self.sample_rate
         
-        logger.info(f"Adjusting audio: {current_duration:.2f}s -> {target_duration:.2f}s")
+        logger.info(f"Audio adjustment: {current_duration:.3f}s ({current_samples} samples) -> {target_duration:.3f}s ({target_samples} samples)")
         
-        # Keep original audio, no stretching
+        # Ensure we maintain the target duration exactly
         adjusted_audio = audio.copy()
         
-        # Remove trailing silence if audio is longer than expected
+        # Strategy: Never trim audio content, only adjust silence/padding
         if len(adjusted_audio) > target_samples:
-            adjusted_audio = self._remove_trailing_silence(adjusted_audio)
+            # Audio is longer than target - try to remove only trailing silence first
+            audio_without_silence = self._remove_trailing_silence_conservative(adjusted_audio, target_samples)
+            
+            if len(audio_without_silence) <= target_samples:
+                # Great! Silence removal worked
+                adjusted_audio = audio_without_silence
+                logger.info(f"Removed trailing silence: {len(audio_without_silence)} samples (no content loss)")
+            else:
+                # Audio content is longer than target - preserve content and log warning
+                logger.warning(f"Generated audio ({current_duration:.3f}s) longer than target ({target_duration:.3f}s) - preserving content")
+                # Keep the generated audio as is, even if longer
+                target_samples = len(adjusted_audio)
+                target_duration = len(adjusted_audio) / self.sample_rate
+                logger.info(f"Updated target duration to preserve content: {target_duration:.3f}s")
         
-        # Final padding or trimming to exact target duration
-        if len(adjusted_audio) > target_samples:
-            adjusted_audio = adjusted_audio[:target_samples]
-        elif len(adjusted_audio) < target_samples:
+        # Pad with silence if needed to reach exact target
+        if len(adjusted_audio) < target_samples:
             padding = target_samples - len(adjusted_audio)
             adjusted_audio = np.pad(adjusted_audio, (0, padding), mode='constant', constant_values=0)
+            logger.info(f"Added {padding} samples of silence padding")
+        
+        final_duration = len(adjusted_audio) / self.sample_rate
+        logger.info(f"Final audio duration: {final_duration:.3f}s ({len(adjusted_audio)} samples)")
+        
+        # Verify no significant duration loss
+        duration_diff = abs(final_duration - target_duration)
+        if duration_diff > 0.01:  # More than 10ms difference
+            logger.warning(f"Duration difference detected: {duration_diff:.3f}s (target: {target_duration:.3f}s, actual: {final_duration:.3f}s)")
         
         return adjusted_audio.astype(np.float32)
+    
+    def _remove_trailing_silence_conservative(self, audio: np.ndarray, max_target_samples: int, silence_threshold: float = 0.01) -> np.ndarray:
+        """Conservative trailing silence removal that respects target duration"""
+        if len(audio) == 0:
+            return audio
+        
+        # Don't remove silence if it would make audio shorter than target
+        if len(audio) <= max_target_samples:
+            logger.debug("Audio already within target range, skipping silence removal")
+            return audio
+        
+        # Find the last non-silent sample
+        audio_abs = np.abs(audio)
+        non_silent_indices = np.where(audio_abs > silence_threshold)[0]
+        
+        if len(non_silent_indices) == 0:
+            logger.debug("No non-silent audio found")
+            return audio
+        
+        last_sound_index = non_silent_indices[-1]
+        
+        # Add small fade-out but respect target duration
+        fade_samples = min(int(0.05 * self.sample_rate), 1000)  # Max 1000 samples fade
+        natural_end = min(last_sound_index + fade_samples, len(audio))
+        
+        # Only trim if the natural end is still longer than target
+        if natural_end > max_target_samples:
+            # Keep target duration exactly
+            end_index = max_target_samples
+            logger.debug(f"Trimmed to target duration: {end_index} samples")
+        else:
+            # Keep natural end
+            end_index = natural_end
+            logger.debug(f"Kept natural end: {end_index} samples")
+        
+        return audio[:end_index]
     
     def _save_single_cloned_segment(self, audio_data: np.ndarray, segment_index: int, audio_id: str):
         """Save a single cloned segment audio file."""
