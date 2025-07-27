@@ -187,12 +187,9 @@ class VoiceCloningService:
                             segment, temperature, cfg_scale, top_p, i, len(segments)
                         )
                         
-                        # Add breathing pause if continuing with same speaker
-                        enhanced_text = self._add_breathing_pauses(english_text, segment, i, segments)
-                        
                         # Generate audio with optimized parameters
                         cloned_audio = self._generate_single_segment(
-                            enhanced_text, audio_path, enhanced_text, 
+                            english_text, audio_path, english_text, 
                             dynamic_params["temperature"], 
                             dynamic_params["cfg_scale"], 
                             dynamic_params["top_p"]
@@ -222,10 +219,8 @@ class VoiceCloningService:
                             })
                             continue
                         
-                        # Use segment manager's advanced audio adjustment
-                        cloned_audio = self.segment_manager.adjust_generated_audio_length(
-                            cloned_audio, self.sample_rate, segment
-                        )
+                        # Ensure proper duration
+                        cloned_audio = self._ensure_proper_duration(cloned_audio, segment_duration)
                         
                         # Save audio immediately
                         self._save_single_cloned_segment(cloned_audio, i+1, audio_id)
@@ -239,7 +234,7 @@ class VoiceCloningService:
                                 "speaker": speaker,
                                 "duration": segment.get('duration', 10.0),
                                 "original_text": segment.get('original_text', ''),
-                                "english_text": enhanced_text
+                                "english_text": english_text
                             },
                             "duration": float(segment.get('duration', 10.0)),
                             "speaker": str(speaker),
@@ -332,15 +327,22 @@ class VoiceCloningService:
                                reference_text: str, temperature: float, 
                                cfg_scale: float, top_p: float) -> Optional[np.ndarray]:
         try:
-            # Since we're using segment as its own reference, text and reference_text are the same
-            # Dia format expects reference text + target text
-            combined_text = text + "\n" + text
+            # Clean text for voice generation
+            clean_text = text.strip()
+            if not clean_text:
+                logger.warning("Empty text provided for voice generation")
+                return None
+            
+            # Concatenate reference text and original text as per rule
+            # Since both texts are same, this provides better voice cloning context
+            concatenated_text = clean_text + "\n" + clean_text
             
             logger.info(f"Generating audio with Dia format...")
             
             with torch.inference_mode():
+                # Generate audio with Dia model
                 audio = self.dia_model.generate(
-                    text=combined_text,
+                    text=concatenated_text,
                     audio_prompt=reference_audio_path,
                     use_torch_compile=False,
                     cfg_scale=cfg_scale,
@@ -351,12 +353,47 @@ class VoiceCloningService:
                     verbose=False
                 )
             
-            logger.info(f"Audio generation completed")
+            if audio is None or len(audio) == 0:
+                logger.error("Dia model returned empty audio")
+                return None
+            
+            logger.info(f"Audio generation completed - generated {len(audio)/self.sample_rate:.3f}s of audio")
             return audio
             
         except Exception as e:
             logger.error(f"Audio generation failed: {str(e)}")
             return None
+    
+    def _ensure_proper_duration(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
+        """Ensure generated audio matches target duration using intelligent padding/trimming"""
+        if audio is None or len(audio) == 0:
+            # Create silence for the full duration
+            logger.warning(f"No audio provided, creating {target_duration:.2f}s of silence")
+            return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
+        
+        current_duration = len(audio) / self.sample_rate
+        logger.info(f"Audio duration adjustment: current={current_duration:.3f}s, target={target_duration:.3f}s")
+        
+        # If durations are very close (within 100ms), return as is
+        if abs(current_duration - target_duration) <= 0.1:
+            return audio
+        
+        target_samples = int(target_duration * self.sample_rate)
+        
+        if current_duration > target_duration:
+            # Audio is too long - trim it
+            logger.info(f"Trimming audio from {current_duration:.3f}s to {target_duration:.3f}s")
+            return audio[:target_samples]
+        else:
+            # Audio is too short - pad with silence
+            padding_needed = target_samples - len(audio)
+            logger.info(f"Padding audio with {padding_needed/self.sample_rate:.3f}s of silence")
+            
+            # Add silence to the end to match target duration
+            silence_padding = np.zeros(padding_needed, dtype=audio.dtype)
+            padded_audio = np.concatenate([audio, silence_padding])
+            
+            return padded_audio
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float, 
                            use_speed_adjustment: bool = True) -> np.ndarray:
@@ -436,41 +473,6 @@ class VoiceCloningService:
             "density_ratio": density_ratio,
             "speech_type": speech_type
         }
-    
-    def _add_breathing_pauses(self, text: str, segment: Dict[str, Any], 
-                              current_segment_index: int, segments: List[Dict]) -> str:
-        """
-        Add natural breathing pauses between segments when the same speaker continues.
-        This improves the naturalness and consistency of the voice cloning output.
-        """
-        enhanced_text = text.strip()
-        
-        # Add breathing pause logic for same speaker continuation
-        if current_segment_index < len(segments) - 1:
-            next_segment = segments[current_segment_index + 1]
-            current_speaker = segment.get('speaker', 'A')
-            next_speaker = next_segment.get('speaker', 'A')
-            
-            # If same speaker continues to next segment, add natural breathing pause
-            if next_speaker == current_speaker:
-                current_duration = segment.get('duration', 0)
-                next_duration = next_segment.get('duration', 0)
-                
-                # Add appropriate breathing pause based on content
-                if current_duration > 8 or next_duration > 8:
-                    # Longer segments - add a proper breathing pause
-                    enhanced_text += "."  # Natural sentence ending with breathing
-                    logger.debug(f"Added breathing pause after segment {current_segment_index + 1} (long segment)")
-                elif enhanced_text and not enhanced_text.endswith(('.', '!', '?', ',')):
-                    # Short segments without punctuation - add slight pause
-                    enhanced_text += ","  # Natural comma pause
-                    logger.debug(f"Added comma pause after segment {current_segment_index + 1}")
-        
-        # Ensure proper sentence structure for voice cloning
-        if enhanced_text and not enhanced_text.endswith(('.', '!', '?')):
-            enhanced_text += "."
-        
-        return enhanced_text
     
     def _save_single_cloned_segment(self, audio_data: np.ndarray, segment_index: int, audio_id: str):
         """Save a single cloned segment audio file."""

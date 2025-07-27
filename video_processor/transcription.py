@@ -396,34 +396,18 @@ OUTPUT (English with [S1] tag only at start):"""
 
     
     def format_dialogue_batch(self, text_list: List[str], speaker_data: List, words_data_list: List[List[Dict]] = None) -> List[str]:
-        """Process multiple dialogue texts in parallel - enhanced for multi-speaker"""
+        """Simplified batch dialogue processing"""
         if not text_list:
-            logger.warning("format_dialogue_batch: Empty text_list provided")
             return []
         
-        logger.info(f"format_dialogue_batch: Processing {len(text_list)} texts")
-        logger.info(f"format_dialogue_batch: Speaker data type: {type(speaker_data)}, length: {len(speaker_data) if speaker_data else 0}")
+        # Simplified speaker data handling
+        if not speaker_data:
+            speaker_data = ['A'] * len(text_list)
         
-        # Handle both old format (speaker_list) and new format (speaker_data_list)
-        if speaker_data and isinstance(speaker_data[0], dict):
-            speaker_data_list = speaker_data
-            logger.info("format_dialogue_batch: Using new format speaker data")
-        else:
-            # Old single speaker format - convert to new format
-            speaker_data_list = []
-            for speaker in speaker_data:
-                speaker_data_list.append({
-                    'speakers': [speaker],
-                    'is_multi_speaker': False,
-                    'primary_speaker': speaker
-                })
-            logger.info(f"format_dialogue_batch: Converted old format, created {len(speaker_data_list)} speaker data items")
-        
-        if len(text_list) != len(speaker_data_list):
-            logger.error(f"format_dialogue_batch: Length mismatch - text_list: {len(text_list)}, speaker_data_list: {len(speaker_data_list)}")
-            logger.error(f"format_dialogue_batch: Text list: {text_list}")
-            logger.error(f"format_dialogue_batch: Speaker data: {speaker_data}")
-            return []
+        # Ensure speaker_data matches text_list length
+        if len(speaker_data) != len(text_list):
+            logger.warning(f"Speaker data length mismatch, using default speakers")
+            speaker_data = ['A'] * len(text_list)
         
         # Ensure words_data_list has same length
         if words_data_list is None:
@@ -431,30 +415,23 @@ OUTPUT (English with [S1] tag only at start):"""
         elif len(words_data_list) != len(text_list):
             words_data_list = [None] * len(text_list)
         
-        # Use ThreadPoolExecutor for parallel processing with timeout
-        with ThreadPoolExecutor(max_workers=min(4, len(text_list))) as executor:
-            # Submit all tasks with words_data
-            future_to_index = {}
-            for i, (text, speaker_data_item, words_data) in enumerate(zip(text_list, speaker_data_list, words_data_list)):
-                future = executor.submit(self.format_dialogue_text, text, speaker_data_item, words_data)
-                future_to_index[future] = i
-            
-            # Collect results in order with timeout
-            results = [''] * len(text_list)
+        # Process each text with simplified logic
+        results = []
+        for i, (text, speaker, words_data) in enumerate(zip(text_list, speaker_data, words_data_list)):
             try:
-                for future in as_completed(future_to_index, timeout=120):  # 2 minute timeout total
-                    index = future_to_index[future]
-                    try:
-                        results[index] = future.result(timeout=60)  # 1 minute per translation
-                    except Exception as e:
-                        logger.error(f"Translation failed for text at index {index}: {str(e)}")
-                        results[index] = ""
+                # Create simple speaker data format
+                simple_speaker_data = {
+                    'speakers': [speaker] if isinstance(speaker, str) else speaker.get('speakers', [speaker]),
+                    'is_multi_speaker': False,
+                    'primary_speaker': speaker if isinstance(speaker, str) else speaker.get('primary_speaker', 'A')
+                }
+                
+                formatted_text = self.format_dialogue_text(text, simple_speaker_data, words_data)
+                results.append(formatted_text)
+                
             except Exception as e:
-                logger.error(f"Translation batch timeout or error: {str(e)}")
-                # Fill remaining empty results
-                for i in range(len(results)):
-                    if not results[i]:
-                        results[i] = ""
+                logger.error(f"Failed to format text {i+1}: {str(e)}")
+                results.append(text)  # Use original text as fallback
         
         return results
     
