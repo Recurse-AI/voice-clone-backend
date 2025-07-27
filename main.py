@@ -20,7 +20,7 @@ from r2_storage import R2Storage
 from video_processor.voice_cloning import set_seed
 
 from status_manager import status_manager, ProcessingStatus
-from utils import cleanup_temp_files
+from utils import cleanup_temp_files, local_storage
 from video_downloader import video_download_service
 
 from contextlib import asynccontextmanager
@@ -61,6 +61,18 @@ async def cleanup_uploaded_file(file_id: str):
         del uploaded_files_memory[file_id]
         logger.info(f"Cleaned up uploaded file: {file_id}")
 
+async def periodic_cleanup():
+    """Periodic cleanup of expired local storage files"""
+    import asyncio
+    while True:
+        try:
+            await asyncio.sleep(300)  # Run every 5 minutes
+            local_storage.cleanup_expired()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in periodic cleanup: {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler"""
@@ -81,8 +93,20 @@ async def lifespan(app: FastAPI):
     
     # Create temp directory
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
+    
+    # Start cleanup task
+    import asyncio
+    cleanup_task = asyncio.create_task(periodic_cleanup())
+    
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     yield
+    
+    # Cancel cleanup task on shutdown
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -555,8 +579,20 @@ def process_file_upload_background(file_id: str, video_file_content: bytes, file
             })
             return
         
-        # Save file to temp - 30%
-        upload_status_memory[file_id].update({"progress": 30, "message": "Processing file..."})
+        # Store locally first - 20%
+        upload_status_memory[file_id].update({"progress": 20, "message": "Storing locally..."})
+        local_result = local_storage.store_video(file_id, video_file_content, filename)
+        
+        if not local_result.get("success"):
+            upload_status_memory[file_id].update({
+                "status": "failed",
+                "progress": 0,
+                "message": f"Local storage failed: {local_result.get('error', 'Unknown error')}"
+            })
+            return
+        
+        # Save file to temp for R2 upload - 40%
+        upload_status_memory[file_id].update({"progress": 40, "message": "Preparing for cloud upload..."})
         temp_path = os.path.join(settings.TEMP_DIR, f"{file_id}_{filename}")
         with open(temp_path, "wb") as buffer:
             buffer.write(video_file_content)
@@ -585,7 +621,9 @@ def process_file_upload_background(file_id: str, video_file_content: bytes, file
             "status": "completed",
             "progress": 100,
             "message": "Upload completed successfully",
-            "file_url": uploaded_url
+            "file_url": uploaded_url,
+            "local_path": local_result["local_path"],
+            "expires_at": local_result["expires_at"]
         })
         
         # Store in memory
@@ -593,7 +631,9 @@ def process_file_upload_background(file_id: str, video_file_content: bytes, file
             "url": uploaded_url,
             "filename": filename,
             "size": len(video_file_content),
-            "upload_time": datetime.now().isoformat()
+            "upload_time": datetime.now().isoformat(),
+            "local_path": local_result["local_path"],
+            "expires_at": local_result["expires_at"]
         }
         
         # Clean up temp file

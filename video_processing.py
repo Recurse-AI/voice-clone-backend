@@ -24,7 +24,7 @@ def process_video_background(
     from status_manager import status_manager, ProcessingStatus
     from r2_storage import R2Storage
     from video_processor.base_processor import AudioProcessor
-    from utils import cleanup_temp_files
+    from utils import cleanup_temp_files, local_storage
     
     # Initialize required services
     r2_storage = R2Storage()
@@ -46,43 +46,80 @@ def process_video_background(
             video_temp_path = video_source
             filename = original_filename if original_filename else Path(video_source).name
         else:
-            # URL download: download the video with progress tracking
-            video_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_video.mp4")
+            # Check if video is available locally first
+            # Extract file_id from R2 URL if possible
+            file_id = None
+            if "/uploads/" in video_source:
+                # Extract file_id from R2 URL pattern: .../uploads/{file_id}/{filename}
+                try:
+                    url_parts = video_source.split("/uploads/")[1].split("/")
+                    if len(url_parts) >= 2:
+                        file_id = url_parts[0]
+                except:
+                    pass
             
-            parsed_url = urllib.parse.urlparse(video_source)
-            filename = os.path.basename(parsed_url.path)
-            if not filename or '.' not in filename:
-                filename = "video.mp4"
-            
-            try:
-                response = requests.get(video_source, stream=True, timeout=300)
-                response.raise_for_status()
+            # Try to get from local storage first
+            local_video_path = None
+            if file_id:
+                logger.info(f"Checking local storage for file_id: {file_id}")
+                local_video_path = local_storage.get_video_path(file_id)
                 
-                # Get content length for progress tracking
-                content_length = response.headers.get('content-length')
-                if content_length:
-                    content_length = int(content_length)
+            if local_video_path:
+                # Use local video - move to processing temp directory
+                logger.info(f"Using local video from: {local_video_path}")
+                video_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_video.mp4")
                 
-                downloaded = 0
-                chunk_size = 8192
-                progress_updated = False
+                # Move from local storage to processing temp
+                target_path = local_storage.move_to_processing(file_id, settings.TEMP_DIR)
+                if target_path:
+                    video_temp_path = target_path
+                    filename = Path(target_path).name
+                    status_manager.set_progress(audio_id, 15)
+                    logger.info("Video retrieved from local storage - skipping download")
+                else:
+                    # Fallback to download if move fails
+                    logger.warning("Failed to move from local storage, falling back to download")
+                    local_video_path = None
+                    
+            if not local_video_path:
+                # Download from URL as fallback
+                logger.info(f"Downloading video from URL: {video_source}")
+                video_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_video.mp4")
                 
-                with open(video_temp_path, "wb") as buffer:
-                    for chunk in response.iter_content(chunk_size=chunk_size):
-                        if chunk:
-                            buffer.write(chunk)
-                            downloaded += len(chunk)
-                            
-                            # Simple progress - only once at 50% completion
-                            if content_length and not progress_updated:
-                                if downloaded >= content_length * 0.5:
-                                    status_manager.set_progress(audio_id, 15)
-                                    logger.info("Download 50% completed")
-                                    progress_updated = True
+                parsed_url = urllib.parse.urlparse(video_source)
+                filename = os.path.basename(parsed_url.path)
+                if not filename or '.' not in filename:
+                    filename = "video.mp4"
                 
-            except requests.exceptions.RequestException as e:
-                status_manager.fail_processing(audio_id, f"Download failed: {str(e)}")
-                return
+                try:
+                    response = requests.get(video_source, stream=True, timeout=300)
+                    response.raise_for_status()
+                    
+                    # Get content length for progress tracking
+                    content_length = response.headers.get('content-length')
+                    if content_length:
+                        content_length = int(content_length)
+                    
+                    downloaded = 0
+                    chunk_size = 8192
+                    progress_updated = False
+                    
+                    with open(video_temp_path, "wb") as buffer:
+                        for chunk in response.iter_content(chunk_size=chunk_size):
+                            if chunk:
+                                buffer.write(chunk)
+                                downloaded += len(chunk)
+                                
+                                # Simple progress - only once at 50% completion
+                                if content_length and not progress_updated:
+                                    if downloaded >= content_length * 0.5:
+                                        status_manager.set_progress(audio_id, 15)
+                                        logger.info("Download 50% completed")
+                                        progress_updated = True
+                    
+                except requests.exceptions.RequestException as e:
+                    status_manager.fail_processing(audio_id, f"Download failed: {str(e)}")
+                    return
         
         status_manager.set_progress(audio_id, 20)
         

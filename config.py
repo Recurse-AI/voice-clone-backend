@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     TEMP_DIR: str = os.getenv("TEMP_DIR", "./tmp/voice_cloning")
     LOGS_DIR: str = os.getenv("LOGS_DIR", "./logs")
     
+    # Local Storage Settings
+    LOCAL_STORAGE_DIR: str = os.getenv('LOCAL_STORAGE_DIR', './tmp/local_storage')
+    LOCAL_STORAGE_RETENTION_HOURS: int = int(os.getenv('LOCAL_STORAGE_RETENTION_HOURS', '1'))
+    
     # Dia Model Configuration
     DIA_MODEL_REPO: str = "nari-labs/Dia-1.6B-0626"
     DIA_DEVICE: str = "cuda" if (os.getenv("CUDA_AVAILABLE") and torch.cuda.is_available()) else "cpu"

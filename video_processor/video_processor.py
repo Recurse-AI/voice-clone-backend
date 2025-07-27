@@ -178,12 +178,20 @@ class VideoProcessor:
             ]
             
             if subtitle_path and subtitle_path.exists():
+                # Use high-quality settings when adding subtitles (similar to export_video)
                 cmd.extend([
                     '-vf', f"subtitles='{subtitle_path}':force_style='Fontname=Arial-Bold,Fontsize={self.subtitle_font_size},Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV={self.subtitle_margin_bottom}'",
                     '-c:v', 'libx264',
+                    '-preset', 'medium',  # Better quality than default
+                    '-b:v', '5000k',     # High bitrate for good quality
                 ])
             else:
-                cmd.extend(['-c:v', 'copy'])
+                # When no subtitles, still re-encode with high quality to ensure consistency
+                cmd.extend([
+                    '-c:v', 'libx264',
+                    '-preset', 'medium',
+                    '-b:v', '5000k',     # Same high bitrate for consistency
+                ])
             
             cmd.extend([
                 '-c:a', 'aac',
