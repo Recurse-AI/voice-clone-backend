@@ -158,11 +158,14 @@ class VoiceCloningService:
                         })
                         continue
                     
-                    # Set consistent seed per speaker
+                    # Set consistent seed per speaker (important for Dia voice consistency)
                     speaker = segment.get('speaker', 'A')
                     if speaker not in speaker_seeds:
-                        speaker_seeds[speaker] = base_seed + (ord(speaker) - ord('A'))
+                        speaker_seeds[speaker] = base_seed + (ord(speaker) - ord('A')) * 1000
                     set_seed(speaker_seeds[speaker])
+                    
+                    # Log the seed being used for debugging
+                    logger.info(f"Using seed {speaker_seeds[speaker]} for speaker {speaker}")
                     
                     logger.info(f"Processing segment {i+1}/{len(segments)} (Speaker {speaker})")
                     
@@ -333,19 +336,24 @@ class VoiceCloningService:
                 logger.warning("Empty text provided for voice generation")
                 return None
             
-            logger.info(f"Generating audio with Dia - Text: '{clean_text[:50]}...', Max tokens: {settings.DIA_MAX_TOKENS}")
+           
+            # OFFICIAL DIA FORMAT: reference_transcript + generation_text
+            # This is the REQUIRED format for voice cloning according to Dia documentation
+            full_text = reference_text + " " + clean_text
+            
+            logger.info(f"Generating with Dia voice cloning format - Reference: '{reference_text[:30]}...', Generate: '{clean_text[:30]}...'")
             
             with torch.inference_mode():
-                # Generate audio with Dia model
+                # Generate audio with Dia model using OFFICIAL parameters
                 audio = self.dia_model.generate(
-                    text=clean_text,
+                    text=full_text,
                     audio_prompt=reference_audio_path,
                     use_torch_compile=False,
-                    cfg_scale=settings.DIA_CFG_SCALE,
-                    temperature=settings.DIA_TEMPERATURE,
-                    top_p=settings.DIA_TOP_P,
-                    cfg_filter_top_k=settings.DIA_CFG_FILTER_TOP_K,
-                    max_tokens=settings.DIA_MAX_TOKENS,
+                    cfg_scale=settings.DIA_CFG_SCALE,  # 4.0 (official)
+                    temperature=settings.DIA_TEMPERATURE,  # 1.8 (official)
+                    top_p=settings.DIA_TOP_P,  # 0.90 (official)
+                    cfg_filter_top_k=settings.DIA_CFG_FILTER_TOP_K,  # 50 (official)
+                    max_tokens=settings.DIA_MAX_TOKENS,  # 2048 (increased)
                     verbose=False
                 )
             

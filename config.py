@@ -31,12 +31,12 @@ class Settings(BaseSettings):
     DIA_USE_TORCH_COMPILE: bool = False
     DIA_VERBOSE: bool = False
     
-    # Dia Generation Parameters (optimized based on official examples)
-    DIA_MAX_TOKENS: int = 1024  # Reduced for better duration control
-    DIA_CFG_SCALE: float = 4.0  # Higher for better voice consistency 
-    DIA_TEMPERATURE: float = 0.9  # Lower for more stable voice cloning
-    DIA_TOP_P: float = 0.95  # Optimized from official examples (was 0.95)
-    DIA_CFG_FILTER_TOP_K: int = 35  # Optimized from official
+    # Dia Generation Parameters (official examples from Dia documentation)
+    DIA_MAX_TOKENS: int = 2048  # Official examples use 2000+ for better quality
+    DIA_CFG_SCALE: float = 4.0  # Official voice cloning example uses 4.0
+    DIA_TEMPERATURE: float = 1.8  # Official voice cloning example uses 1.8
+    DIA_TOP_P: float = 0.90  # Official voice cloning example uses 0.90
+    DIA_CFG_FILTER_TOP_K: int = 50  # Official voice cloning example uses 50
     
     # Processing Configuration
     DEFAULT_SEED: Optional[int] = 42  # Fixed seed for consistency

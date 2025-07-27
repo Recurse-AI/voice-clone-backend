@@ -21,9 +21,9 @@ class SegmentManager:
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.optimal_duration = 10.0
-        self.min_duration = 2.5 # Only process segments >= 2.5 seconds 
-        self.max_duration = 11.0
+        self.optimal_duration = 8.0  # Dia works best with 5-10s segments
+        self.min_duration = 5.0  # Dia recommendation: at least 5s for natural sound
+        self.max_duration = 10.0  # Dia recommendation: max 10s for best quality
         self.silence_threshold = -40  # dB
         self.min_gap_duration = 2.5  # Only consider gaps >= 2.5s as actual breaks
     
@@ -49,15 +49,19 @@ class SegmentManager:
         
         logger.info(f"Audio duration info: original={audio_duration:.2f}s, transcribed_end={last_word_end:.2f}s, using_total={total_duration:.2f}s")
         
-        # Only create segments if total duration meets minimum requirement
-        if total_duration < self.min_duration:
-            logger.warning(f"Audio duration ({total_duration:.2f}s) is less than minimum requirement ({self.min_duration}s) - skipping segmentation")
+        # Handle short audio clips (Dia works better with 5-10s but can handle shorter)
+        if total_duration < 3.0:
+            logger.warning(f"Audio duration ({total_duration:.2f}s) is too short for quality voice cloning - skipping segmentation")
             return []
+        elif total_duration < self.min_duration:
+            logger.info(f"Audio duration ({total_duration:.2f}s) is shorter than optimal ({self.min_duration}s) but proceeding - quality may be reduced")
+            # Continue processing with a warning
         
         segments = self._create_simplified_segments(valid_words, total_duration, first_word_start)
         
-        # Filter out segments shorter than minimum duration
-        valid_segments = [s for s in segments if s.get('duration', 0) >= self.min_duration]
+        # Filter out segments shorter than minimum duration (with some flexibility)
+        min_filter_duration = max(3.0, self.min_duration * 0.8)  # Allow 80% of min_duration but not below 3s
+        valid_segments = [s for s in segments if s.get('duration', 0) >= min_filter_duration]
         
         if len(valid_segments) != len(segments):
             logger.info(f"Filtered {len(segments) - len(valid_segments)} segments shorter than {self.min_duration}s")

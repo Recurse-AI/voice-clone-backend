@@ -264,8 +264,8 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
             if not voice_service.is_model_loaded():
                 raise HTTPException(status_code=500, detail="Dia model not available")
             
-            # Generate audio using Dia format (text + "\n" + text)
-            combined_text = request.text + "\n" + request.text
+            # For voice cloning, use reference transcript + generation text
+            combined_text = request.text + " " + request.text
             
             import torch
             with torch.inference_mode():
