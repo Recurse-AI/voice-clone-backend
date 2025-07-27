@@ -54,9 +54,13 @@ class AudioProcessor:
             # Load audio
             audio, sr = sf.read(audio_path)
             
+            # Calculate original audio duration
+            original_duration = len(audio) / sr
+            logger.info(f"Original audio duration: {original_duration:.2f} seconds")
+            
             # Transcribe audio
             transcript_data = self.transcription_service.transcribe_audio(
-                audio_path, language_code, speakers_expected, audio_id
+                audio_path, language_code, speakers_expected, audio_id, original_duration
             )
             
             # Create segments

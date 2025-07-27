@@ -47,6 +47,11 @@ class SegmentManager:
         # Use full audio duration to avoid losing any portion
         total_duration = max(audio_duration, last_word_end)
         
+        logger.info(f"Audio duration info: original={audio_duration:.2f}s, transcribed_end={last_word_end:.2f}s, using_total={total_duration:.2f}s")
+        
+        if audio_duration > last_word_end + 0.5:  # More than 500ms difference
+            logger.info(f"Original audio ({audio_duration:.2f}s) is {audio_duration - last_word_end:.2f}s longer than transcribed content ({last_word_end:.2f}s) - will add silence segment")
+        
         segments = self._create_complete_segments(valid_words, total_duration, first_word_start)
         
         return segments
@@ -141,7 +146,7 @@ class SegmentManager:
         last_segment_end = segments[-1]['end'] if segments else 0.0
         if last_segment_end < total_duration - 0.1:  # More than 100ms missing
             missing_duration = total_duration - last_segment_end
-            logger.warning(f"Missing {missing_duration:.2f}s at end - adding silence segment")
+            logger.warning(f"Missing {missing_duration:.2f}s at end - adding silence segment from {last_segment_end:.2f}s to {total_duration:.2f}s")
             
             # Add final silence segment to cover missing duration
             silence_segment = {
@@ -155,6 +160,7 @@ class SegmentManager:
                 'duration': missing_duration
             }
             segments.append(silence_segment)
+            logger.info(f"Added silence segment {len(segments)}: {last_segment_end:.2f}s to {total_duration:.2f}s (duration: {missing_duration:.2f}s)")
         
         logger.info(f"Created {len(segments)} segments covering 0.0s to {total_duration:.2f}s")
         return segments

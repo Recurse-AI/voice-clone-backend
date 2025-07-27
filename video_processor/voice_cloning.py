@@ -103,6 +103,7 @@ class VoiceCloningService:
                     if not english_text.strip():
                         # Handle silent segment - create silence audio
                         segment_duration = segment.get('duration', 10.0)
+                        segment_speaker = segment.get('speaker', 'A')
                         silence_audio = np.zeros(int(segment_duration * self.sample_rate), dtype=np.float32)
                         
                         logger.info(f"Creating {segment_duration:.2f}s silence for segment {i+1} (no text to clone)")
@@ -114,13 +115,13 @@ class VoiceCloningService:
                             "success": True,
                             "original_data": {
                                 "segment_index": segment.get('segment_index', i+1),
-                                "speaker": speaker,
+                                "speaker": segment_speaker,
                                 "duration": segment_duration,
                                 "original_text": segment.get('original_text', ''),
                                 "english_text": ""
                             },
                             "duration": float(segment_duration),
-                            "speaker": str(speaker),
+                            "speaker": str(segment_speaker),
                             "segment_index": int(segment.get('segment_index', i+1)),
                             "voice_params": {"type": "silence"}
                         })

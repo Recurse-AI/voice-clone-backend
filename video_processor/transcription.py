@@ -24,7 +24,8 @@ class TranscriptionService:
         self.cache_lock = threading.Lock()  # Thread-safe cache access
     
     def transcribe_audio(self, audio_path: str, language_code: Optional[str] = None, 
-                        speakers_expected: Optional[int] = None, audio_id: Optional[str] = None) -> Dict[str, Any]:
+                        speakers_expected: Optional[int] = None, audio_id: Optional[str] = None,
+                        original_duration: Optional[float] = None) -> Dict[str, Any]:
         """Transcribe audio using AssemblyAI"""
         try:
             print(f"Starting transcription for audio: {audio_path}")
@@ -64,17 +65,23 @@ class TranscriptionService:
             speakers = self._extract_speakers(words)
             final_language_code = self._get_language_code(transcript, language_code)
             
+            # Calculate transcribed duration
+            transcribed_duration = words[-1]['end'] / 1000 if words else 0
+            
             return {
                 "text": transcript.text,
                 "words": words,
                 "speakers": speakers,
-                "duration": words[-1]['end'] / 1000 if words else 0,
+                "duration": transcribed_duration,  # Duration of transcribed content only
+                "audio_duration": original_duration or transcribed_duration,  # Full original audio duration
                 "metadata": {
                     "language_code": final_language_code,
                     "speakers_expected": speakers_expected,
                     "detected_speakers": len(speakers),
                     "transcript_id": transcript.id,
-                    "transcription_time": transcription_time
+                    "transcription_time": transcription_time,
+                    "transcribed_duration": transcribed_duration,
+                    "original_duration": original_duration
                 }
             }
             
