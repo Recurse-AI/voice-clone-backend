@@ -22,7 +22,7 @@ class SegmentManager:
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
         self.optimal_duration = 10.0
-        self.min_duration = 9.0 # min duration 9s okay 
+        self.min_duration = 2.5 # Only process segments >= 2.5 seconds 
         self.max_duration = 11.0
         self.silence_threshold = -40  # dB
         self.min_gap_duration = 2.5  # Only consider gaps >= 2.5s as actual breaks
