@@ -28,17 +28,24 @@ class LocalStorageManager:
     def store_video(self, file_id: str, video_content: bytes, filename: str) -> Dict[str, Any]:
         """Store video locally and return path info"""
         try:
+            # Sanitize filename - remove quotes and unsafe characters
+            import re
+            safe_filename = re.sub(r'[\'"`<>:|*?\\]', '', filename)
+            safe_filename = safe_filename.strip()
+            if not safe_filename:
+                safe_filename = "video.mp4"
+            
             video_dir = self.storage_dir / file_id
             video_dir.mkdir(exist_ok=True)
             
-            video_path = video_dir / filename
+            video_path = video_dir / safe_filename
             with open(video_path, 'wb') as f:
                 f.write(video_content)
             
             # Store metadata
             metadata = {
                 "file_id": file_id,
-                "filename": filename,
+                "filename": safe_filename,
                 "path": str(video_path),
                 "stored_at": datetime.now().isoformat(),
                 "size": len(video_content),

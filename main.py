@@ -563,8 +563,8 @@ async def get_status(audio_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-def process_file_upload_background(file_id: str, video_file_content: bytes, filename: str):
-    """Background task for file upload processing"""
+def process_file_upload_background_from_file(file_id: str, temp_file_path: str, filename: str):
+    """Background task for file upload processing from temp file"""
     try:
         # Validate file format - 10%
         upload_status_memory[file_id].update({"progress": 10, "message": "Validating file format..."})
@@ -577,10 +577,18 @@ def process_file_upload_background(file_id: str, video_file_content: bytes, file
                 "progress": 0, 
                 "message": f"Unsupported video format. Allowed: {', '.join(allowed_extensions)}"
             })
+            # Clean up temp file
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
             return
         
-        # Store locally first - 20%
-        upload_status_memory[file_id].update({"progress": 20, "message": "Storing locally..."})
+        # Read file content for processing - 15%
+        upload_status_memory[file_id].update({"progress": 15, "message": "Reading file content..."})
+        with open(temp_file_path, 'rb') as f:
+            video_file_content = f.read()
+        
+        # Store locally - 25%
+        upload_status_memory[file_id].update({"progress": 25, "message": "Storing locally..."})
         local_result = local_storage.store_video(file_id, video_file_content, filename)
         
         if not local_result.get("success"):
@@ -589,18 +597,15 @@ def process_file_upload_background(file_id: str, video_file_content: bytes, file
                 "progress": 0,
                 "message": f"Local storage failed: {local_result.get('error', 'Unknown error')}"
             })
+            # Clean up temp file
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
             return
         
-        # Save file to temp for R2 upload - 40%
-        upload_status_memory[file_id].update({"progress": 40, "message": "Preparing for cloud upload..."})
-        temp_path = os.path.join(settings.TEMP_DIR, f"{file_id}_{filename}")
-        with open(temp_path, "wb") as buffer:
-            buffer.write(video_file_content)
-        
-        # Upload to Cloudflare - 70%
+        # Upload to Cloudflare directly from temp file - 70%
         upload_status_memory[file_id].update({"progress": 70, "message": "Uploading to cloud storage..."})
         file_key = f"uploads/{file_id}/{filename}"
-        upload_result = r2_storage.upload_file(temp_path, file_key)
+        upload_result = r2_storage.upload_file(temp_file_path, file_key)
         
         # Check if upload was successful
         if not upload_result.get("success"):
@@ -610,8 +615,8 @@ def process_file_upload_background(file_id: str, video_file_content: bytes, file
                 "message": f"Upload failed: {upload_result.get('error', 'Unknown error')}"
             })
             # Clean up temp file
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
             return
         
         uploaded_url = upload_result["url"]
@@ -637,7 +642,8 @@ def process_file_upload_background(file_id: str, video_file_content: bytes, file
         }
         
         # Clean up temp file
-        os.remove(temp_path)
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
         
     except Exception as e:
         # Update status to failed
@@ -648,9 +654,8 @@ def process_file_upload_background(file_id: str, video_file_content: bytes, file
         })
         
         # Clean up temp file if exists
-        temp_path = os.path.join(settings.TEMP_DIR, f"{file_id}_{filename}")
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
 
 @app.post("/upload-file")
 async def upload_file(video_file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
@@ -658,8 +663,16 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
     file_id = r2_storage.generate_audio_id()
     
     try:
-        # Read file content immediately
-        content = await video_file.read()
+        # Save file to temp immediately (faster than reading to memory)
+        temp_file_path = os.path.join(settings.TEMP_DIR, f"upload_{file_id}_{video_file.filename}")
+        os.makedirs(settings.TEMP_DIR, exist_ok=True)
+        
+        # Quick file save (streaming)
+        with open(temp_file_path, "wb") as buffer:
+            while chunk := await video_file.read(8192):  # Read in small chunks
+                buffer.write(chunk)
+        
+        file_size = os.path.getsize(temp_file_path)
         
         # Initialize upload status
         upload_status_memory[file_id] = {
@@ -670,8 +683,8 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
             "started_at": datetime.now().isoformat()
         }
         
-        # Start background processing
-        background_tasks.add_task(process_file_upload_background, file_id, content, video_file.filename)
+        # Start background processing with temp file path
+        background_tasks.add_task(process_file_upload_background_from_file, file_id, temp_file_path, video_file.filename)
         
         # Return immediate response
         return {
@@ -680,7 +693,7 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
             "file_id": file_id,
             "status_check_url": f"/upload-status/{file_id}",
             "original_filename": video_file.filename,
-            "file_size": len(content)
+            "file_size": file_size
         }
         
     except Exception as e:
