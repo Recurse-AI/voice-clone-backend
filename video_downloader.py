@@ -12,6 +12,7 @@ from export_video.constants import (
     DEFAULT_VIDEO_QUALITY, SUPPORTED_DOWNLOAD_SITES
 )
 from r2_storage import R2Storage
+from utils import local_storage
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -115,12 +116,24 @@ class VideoDownloadService:
                     "error": f"Download failed: {str(e)}"
                 }
             
-            # Upload to Cloudflare R2
+            # Store in local storage and upload to Cloudflare R2 simultaneously
             try:
+                # Read file content for local storage
+                with open(downloaded_file, 'rb') as f:
+                    file_content = f.read()
+                
+                # Store in local storage
+                local_storage_result = local_storage.store_video(
+                    download_id, 
+                    file_content, 
+                    downloaded_file.name
+                )
+                
+                # Upload to Cloudflare R2
                 upload_result = await self.upload_to_cloudflare(download_id, downloaded_file, info)
                 
                 if upload_result["success"]:
-                    # Clean up local file
+                    # Clean up temp file (but keep in local storage)
                     self.cleanup_local_file(downloaded_file)
                     
                     return {
@@ -134,7 +147,12 @@ class VideoDownloadService:
                             "original_url": url
                         },
                         "cloudflare": upload_result["cloudflare"],
-                        "message": "Video downloaded and uploaded successfully"
+                        "local_storage": {
+                            "stored": local_storage_result.get("success", False),
+                            "expires_at": local_storage_result.get("expires_at") if local_storage_result.get("success") else None,
+                            "local_path": local_storage_result.get("local_path") if local_storage_result.get("success") else None
+                        },
+                        "message": "Video downloaded, stored locally, and uploaded successfully"
                     }
                 else:
                     self.cleanup_local_file(downloaded_file)
@@ -157,13 +175,14 @@ class VideoDownloadService:
     async def upload_to_cloudflare(self, download_id: str, file_path: Path, video_info: Dict) -> Dict[str, Any]:
         """Upload video file to Cloudflare R2"""
         try:
-            # Generate R2 key with organized structure
-            date_prefix = datetime.now().strftime("%Y/%m/%d")
+            # Generate R2 key with organized structure (using same pattern as uploads for consistency)
             file_extension = file_path.suffix
             clean_title = "".join(c for c in video_info.get('title', 'video') if c.isalnum() or c in (' ', '-', '_')).strip()
             clean_title = clean_title.replace(' ', '_')[:50]  # Limit length
             
-            r2_key = f"downloaded_videos/{date_prefix}/{download_id}_{clean_title}{file_extension}"
+            # Use same pattern as uploads so file_id extraction works
+            filename = f"{clean_title}{file_extension}"
+            r2_key = f"uploads/{download_id}/{filename}"
             
             # Determine content type
             content_type = "video/mp4"

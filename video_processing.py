@@ -55,6 +55,23 @@ def process_video_background(
                     url_parts = video_source.split("/uploads/")[1].split("/")
                     if len(url_parts) >= 2:
                         file_id = url_parts[0]
+                        logger.info(f"Extracted file_id from upload URL: {file_id}")
+                except:
+                    pass
+            elif "/downloaded_videos/" in video_source:
+                # Extract file_id from old download pattern: .../downloaded_videos/{date}/{download_id}_{title}.ext
+                try:
+                    # Extract download_id which starts with "video_"
+                    url_parts = video_source.split("/")
+                    for part in url_parts:
+                        if part.startswith("video_"):
+                            # Remove title part if exists (download_id_title format)
+                            if "_" in part[6:]:  # Skip "video_" prefix
+                                file_id = part.split("_")[0] + "_" + part.split("_")[1] + "_" + part.split("_")[2]  # video_date_uuid
+                            else:
+                                file_id = part
+                            logger.info(f"Extracted file_id from download URL: {file_id}")
+                            break
                 except:
                     pass
             

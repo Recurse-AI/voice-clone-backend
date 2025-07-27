@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 import logging
 
+from utils import local_storage
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,6 +95,40 @@ class FileHandler:
     def _handle_url_download(self, video_url: str, audio_id: str, status_manager=None) -> Tuple[bool, str, Optional[str]]:
         """Handle URL download with proper progress tracking"""
         try:
+            # Check if video is available locally first (like in video_processing.py)
+            file_id = None
+            if "/uploads/" in video_url:
+                # Extract file_id from R2 URL pattern: .../uploads/{file_id}/{filename}
+                try:
+                    url_parts = video_url.split("/uploads/")[1].split("/")
+                    if len(url_parts) >= 2:
+                        file_id = url_parts[0]
+                        logger.info(f"File handler - Extracted file_id from upload URL: {file_id}")
+                except:
+                    pass
+            
+            # Try to get from local storage first
+            if file_id:
+                logger.info(f"File handler - Checking local storage for file_id: {file_id}")
+                local_video_path = local_storage.get_video_path(file_id)
+                
+                if local_video_path:
+                    # Use local video - move to processing temp directory
+                    logger.info(f"File handler - Using local video from: {local_video_path}")
+                    
+                    # Move from local storage to processing temp
+                    target_path = local_storage.move_to_processing(file_id, self.temp_dir)
+                    if target_path:
+                        if status_manager:
+                            status_manager.set_progress(audio_id, 20)
+                        logger.info("File handler - Video retrieved from local storage - skipping download")
+                        return True, target_path, None
+                    else:
+                        logger.warning("File handler - Failed to move from local storage, falling back to download")
+            
+            # Download from URL as fallback
+            logger.info(f"File handler - Downloading video from URL: {video_url}")
+            
             # Parse URL and create filename
             parsed_url = urllib.parse.urlparse(video_url)
             filename = os.path.basename(parsed_url.path)
