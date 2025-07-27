@@ -17,6 +17,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+
+
 class VideoQueueStatus(Enum):
     """Video processing queue status"""
     PENDING = "pending"
@@ -247,6 +249,8 @@ class VideoQueueManager:
             # Check if still should process (not cancelled/timed out)
             if request.status != VideoQueueStatus.PROCESSING:
                 return
+            
+
             
             # Process the video
             result = process_video_with_queue(request)

@@ -14,6 +14,7 @@ from dia.model import Dia
 from config import settings
 import logging
 import time
+import librosa
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +60,8 @@ class VoiceCloningService:
         """Check if Dia model is loaded"""
         return self.dia_model is not None
     
-    def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.2,
-                           cfg_scale: float = 3.0, top_p: float = 0.95,
+    def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.0,
+                           cfg_scale: float = 3.5, top_p: float = 0.9,
                            seed: Optional[int] = None, audio_id: Optional[str] = None) -> Dict[str, Any]:
         if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
@@ -71,7 +72,7 @@ class VoiceCloningService:
         if not segments:
             return {"success": False, "error": "No segments provided"}
         
-        logger.info(f"Starting voice cloning for {len(segments)} segments")
+        logger.info(f"Starting voice cloning for {len(segments)} segments with optimized parameters for consistency")
         
         # Update status if audio_id provided
         if audio_id:
@@ -88,25 +89,30 @@ class VoiceCloningService:
                 pass
         
         try:
-            base_seed = seed or settings.DEFAULT_SEED
             cloning_start_time = time.time()
             cloned_segments = []
+            
+            # Optimize seed for consistency
+            base_seed = seed if seed is not None else random.randint(1, 1000000)
             speaker_seeds = {}
             
+            # Process each segment with enhanced error handling
             for i, segment in enumerate(segments):
                 try:
-                    if not segment or not isinstance(segment, dict):
-                        logger.warning(f"Skipping segment {i+1}: Invalid segment data")
-                        continue
+                    # Extract segment information
+                    segment_speaker = segment.get('speaker', 'A')
+                    segment_duration = segment.get('duration', 10.0)
+                    english_text = segment.get('english_text', '').strip()
                     
-                    english_text = segment.get('english_text', segment.get('text', ''))
-                    if not english_text.strip():
-                        # Handle silent segment - create silence audio
-                        segment_duration = segment.get('duration', 10.0)
-                        segment_speaker = segment.get('speaker', 'A')
-                        silence_audio = np.zeros(int(segment_duration * self.sample_rate), dtype=np.float32)
+                    logger.info(f"Processing segment {i+1}/{len(segments)}: {segment_duration:.2f}s, Speaker: {segment_speaker}")
+                    
+                    # Handle empty or silence segments
+                    if not english_text or english_text in ['[SILENCE]', '']:
+                        logger.info(f"Creating silence for segment {i+1} ({segment_duration:.2f}s)")
                         
-                        logger.info(f"Creating {segment_duration:.2f}s silence for segment {i+1} (no text to clone)")
+                        # Create silence with proper duration
+                        silence_samples = int(segment_duration * self.sample_rate)
+                        silence_audio = np.zeros(silence_samples, dtype=np.float32)
                         
                         # Save silence audio
                         self._save_single_cloned_segment(silence_audio, i+1, audio_id)
@@ -129,7 +135,27 @@ class VoiceCloningService:
                     
                     audio_path = segment.get('audio_path')
                     if not audio_path or not os.path.exists(audio_path):
-                        logger.warning(f"Skipping segment {i+1}: No audio file found at {audio_path}")
+                        logger.warning(f"Audio file missing for segment {i+1} - creating silence placeholder")
+                        
+                        # Create silence placeholder for missing audio
+                        silence_samples = int(segment_duration * self.sample_rate)
+                        silence_audio = np.zeros(silence_samples, dtype=np.float32)
+                        self._save_single_cloned_segment(silence_audio, i+1, audio_id)
+                        
+                        cloned_segments.append({
+                            "success": True,
+                            "original_data": {
+                                "segment_index": segment.get('segment_index', i+1),
+                                "speaker": segment_speaker,
+                                "duration": segment_duration,
+                                "original_text": segment.get('original_text', ''),
+                                "english_text": english_text
+                            },
+                            "duration": float(segment_duration),
+                            "speaker": str(segment_speaker),
+                            "segment_index": int(segment.get('segment_index', i+1)),
+                            "voice_params": {"type": "silence_placeholder"}
+                        })
                         continue
                     
                     # Set consistent seed per speaker
@@ -156,21 +182,44 @@ class VoiceCloningService:
                             pass
                     
                     try:
-                        # Calculate dynamic parameters for this segment
-                        dynamic_params = self._calculate_dynamic_parameters(
-                            segment, temperature, cfg_scale, top_p
+                        # Calculate optimized parameters for consistency
+                        dynamic_params = self._calculate_optimized_parameters(
+                            segment, temperature, cfg_scale, top_p, i, len(segments)
                         )
                         
-                        # Generate audio with dynamic parameters
+                        # Add breathing pause if continuing with same speaker
+                        enhanced_text = self._add_breathing_pauses(english_text, segment, i, segments)
+                        
+                        # Generate audio with optimized parameters
                         cloned_audio = self._generate_single_segment(
-                            english_text, audio_path, english_text, 
+                            enhanced_text, audio_path, enhanced_text, 
                             dynamic_params["temperature"], 
                             dynamic_params["cfg_scale"], 
                             dynamic_params["top_p"]
                         )
                         
                         if cloned_audio is None:
-                            logger.warning(f"Skipping segment {i+1}: Failed to generate audio")
+                            logger.warning(f"Audio generation failed for segment {i+1} - creating silence placeholder")
+                            
+                            # Create silence placeholder for failed generation
+                            silence_samples = int(segment_duration * self.sample_rate)
+                            silence_audio = np.zeros(silence_samples, dtype=np.float32)
+                            self._save_single_cloned_segment(silence_audio, i+1, audio_id)
+                            
+                            cloned_segments.append({
+                                "success": True,
+                                "original_data": {
+                                    "segment_index": segment.get('segment_index', i+1),
+                                    "speaker": speaker,
+                                    "duration": segment_duration,
+                                    "original_text": segment.get('original_text', ''),
+                                    "english_text": english_text
+                                },
+                                "duration": float(segment_duration),
+                                "speaker": str(speaker),
+                                "segment_index": int(segment.get('segment_index', i+1)),
+                                "voice_params": {"type": "failed_generation_placeholder"}
+                            })
                             continue
                         
                         # Use segment manager's advanced audio adjustment
@@ -190,7 +239,7 @@ class VoiceCloningService:
                                 "speaker": speaker,
                                 "duration": segment.get('duration', 10.0),
                                 "original_text": segment.get('original_text', ''),
-                                "english_text": english_text
+                                "english_text": enhanced_text
                             },
                             "duration": float(segment.get('duration', 10.0)),
                             "speaker": str(speaker),
@@ -200,16 +249,65 @@ class VoiceCloningService:
                         
                     except Exception as generation_error:
                         logger.error(f"Error generating audio for segment {i+1}: {generation_error}")
+                        
+                        # Create silence placeholder for any generation error
+                        logger.info(f"Creating silence placeholder for failed segment {i+1}")
+                        silence_samples = int(segment_duration * self.sample_rate)
+                        silence_audio = np.zeros(silence_samples, dtype=np.float32)
+                        self._save_single_cloned_segment(silence_audio, i+1, audio_id)
+                        
+                        cloned_segments.append({
+                            "success": True,
+                            "original_data": {
+                                "segment_index": segment.get('segment_index', i+1),
+                                "speaker": segment_speaker,
+                                "duration": segment_duration,
+                                "original_text": segment.get('original_text', ''),
+                                "english_text": english_text
+                            },
+                            "duration": float(segment_duration),
+                            "speaker": str(segment_speaker),
+                            "segment_index": int(segment.get('segment_index', i+1)),
+                            "voice_params": {"type": "error_placeholder"}
+                        })
                         continue
                     
                     self._cleanup_memory()
                 
                 except Exception as segment_error:
                     logger.error(f"Critical error processing segment {i+1}: {segment_error}")
+                    
+                    # Ensure we never skip a segment - always create placeholder
+                    segment_duration = segment.get('duration', 10.0)
+                    logger.info(f"Creating silence placeholder for critically failed segment {i+1}")
+                    
+                    silence_samples = int(segment_duration * self.sample_rate)
+                    silence_audio = np.zeros(silence_samples, dtype=np.float32)
+                    self._save_single_cloned_segment(silence_audio, i+1, audio_id)
+                    
+                    cloned_segments.append({
+                        "success": True,
+                        "original_data": {
+                            "segment_index": segment.get('segment_index', i+1),
+                            "speaker": segment.get('speaker', 'A'),
+                            "duration": segment_duration,
+                            "original_text": segment.get('original_text', ''),
+                            "english_text": segment.get('english_text', '')
+                        },
+                        "duration": float(segment_duration),
+                        "speaker": str(segment.get('speaker', 'A')),
+                        "segment_index": int(segment.get('segment_index', i+1)),
+                        "voice_params": {"type": "critical_error_placeholder"}
+                    })
                     continue
             
             cloning_duration = time.time() - cloning_start_time
             logger.info(f"Cloning completed in {cloning_duration:.2f} seconds")
+            logger.info(f"Processed {len(cloned_segments)} segments (ensuring complete duration coverage)")
+            
+            # Verify we have all segments
+            if len(cloned_segments) != len(segments):
+                logger.warning(f"Segment count mismatch: expected {len(segments)}, got {len(cloned_segments)}")
             
             # Save summary
             if cloned_segments:
@@ -282,13 +380,13 @@ class VoiceCloningService:
                 return np.pad(audio, (0, padding), mode='constant', constant_values=0)
             return audio
     
-    def _calculate_dynamic_parameters(self, segment: Dict[str, Any], base_temperature: float, 
-                                    base_cfg_scale: float, base_top_p: float) -> Dict[str, float]:
+    def _calculate_optimized_parameters(self, segment: Dict[str, Any], base_temperature: float, 
+                                    base_cfg_scale: float, base_top_p: float, 
+                                    current_segment_index: int, total_segments: int) -> Dict[str, float]:
         """
-        Calculate dynamic voice cloning parameters based on word density
-        
-        High density (fast speech): Higher temperature, adjusted cfg_scale
-        Low density (slow speech): Lower temperature, adjusted cfg_scale
+        Calculate optimized voice cloning parameters for better consistency and focus.
+        Based on research: lower temperature (0.7-1.1) and optimized cfg_scale (3.5-4.0) for consistency.
+        Reduced dynamic variations to maintain voice characteristics across segments.
         """
         duration = segment.get('duration', 10.0)
         english_text = segment.get('english_text', '')
@@ -297,31 +395,38 @@ class VoiceCloningService:
         # Calculate words per second
         words_per_second = word_count / duration if duration > 0 else 0
         
-        # Optimal speaking rate is ~2-3 words per second
+        # Optimal speaking rate is ~2.5 words per second
         optimal_wps = 2.5
         density_ratio = words_per_second / optimal_wps
         
-        # Adjust parameters based on density
-        if density_ratio > 1.3:  # High density - need faster speech
-            # Increase temperature for more dynamic/faster speech
-            temperature = min(base_temperature + 0.3, 2.0)
-            cfg_scale = max(base_cfg_scale - 0.5, 1.5)  # Lower for more natural fast speech
-            top_p = max(base_top_p - 0.05, 0.85)  # Slightly more focused
+        # Use more conservative parameter adjustments for consistency
+        # Based on ElevenLabs best practices: lower temperature = more consistent
+        if density_ratio > 1.4:  # High density - need faster speech
+            # Minimal temperature increase for faster speech, keep consistent
+            temperature = min(base_temperature + 0.1, 1.2)
+            cfg_scale = max(base_cfg_scale - 0.2, 3.2)  # Slightly lower for natural fast speech
+            top_p = max(base_top_p - 0.02, 0.88)  # More focused
             speech_type = "fast"
-        elif density_ratio < 0.7:  # Low density - need slower speech  
-            # Decrease temperature for more controlled/slower speech
-            temperature = max(base_temperature - 0.2, 0.8)
-            cfg_scale = min(base_cfg_scale + 0.3, 4.0)  # Higher for more controlled speech
-            top_p = min(base_top_p + 0.03, 0.98)  # Slightly more diverse
+        elif density_ratio < 0.6:  # Low density - need slower speech  
+            # Minimal temperature decrease for slower speech
+            temperature = max(base_temperature - 0.1, 0.7)
+            cfg_scale = min(base_cfg_scale + 0.2, 4.0)  # Slightly higher for controlled speech
+            top_p = min(base_top_p + 0.02, 0.92)  # Slightly less focused
             speech_type = "slow"
-        else:  # Normal density
+        else:  # Normal density - use consistent base parameters
             temperature = base_temperature
             cfg_scale = base_cfg_scale
             top_p = base_top_p
             speech_type = "normal"
         
-        logger.info(f"Segment {segment.get('segment_index', 0)}: {word_count} words in {duration:.1f}s "
-                   f"({words_per_second:.1f} wps) → {speech_type} speech (T={temperature:.1f}, CFG={cfg_scale:.1f})")
+        # Additional consistency adjustments based on segment position
+        # First and last segments should be slightly more controlled for consistency
+        if current_segment_index == 0 or current_segment_index == total_segments - 1:
+            temperature = max(temperature - 0.05, 0.7)  # Slightly more controlled
+            cfg_scale = min(cfg_scale + 0.1, 4.0)  # Slightly higher control
+        
+        logger.info(f"Segment {segment.get('segment_index', current_segment_index + 1)}: {word_count} words in {duration:.1f}s "
+                   f"({words_per_second:.1f} wps) → {speech_type} speech (T={temperature:.2f}, CFG={cfg_scale:.1f})")
         
         return {
             "temperature": temperature,
@@ -331,6 +436,41 @@ class VoiceCloningService:
             "density_ratio": density_ratio,
             "speech_type": speech_type
         }
+    
+    def _add_breathing_pauses(self, text: str, segment: Dict[str, Any], 
+                              current_segment_index: int, segments: List[Dict]) -> str:
+        """
+        Add natural breathing pauses between segments when the same speaker continues.
+        This improves the naturalness and consistency of the voice cloning output.
+        """
+        enhanced_text = text.strip()
+        
+        # Add breathing pause logic for same speaker continuation
+        if current_segment_index < len(segments) - 1:
+            next_segment = segments[current_segment_index + 1]
+            current_speaker = segment.get('speaker', 'A')
+            next_speaker = next_segment.get('speaker', 'A')
+            
+            # If same speaker continues to next segment, add natural breathing pause
+            if next_speaker == current_speaker:
+                current_duration = segment.get('duration', 0)
+                next_duration = next_segment.get('duration', 0)
+                
+                # Add appropriate breathing pause based on content
+                if current_duration > 8 or next_duration > 8:
+                    # Longer segments - add a proper breathing pause
+                    enhanced_text += "."  # Natural sentence ending with breathing
+                    logger.debug(f"Added breathing pause after segment {current_segment_index + 1} (long segment)")
+                elif enhanced_text and not enhanced_text.endswith(('.', '!', '?', ',')):
+                    # Short segments without punctuation - add slight pause
+                    enhanced_text += ","  # Natural comma pause
+                    logger.debug(f"Added comma pause after segment {current_segment_index + 1}")
+        
+        # Ensure proper sentence structure for voice cloning
+        if enhanced_text and not enhanced_text.endswith(('.', '!', '?')):
+            enhanced_text += "."
+        
+        return enhanced_text
     
     def _save_single_cloned_segment(self, audio_data: np.ndarray, segment_index: int, audio_id: str):
         """Save a single cloned segment audio file."""

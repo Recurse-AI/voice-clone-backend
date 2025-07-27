@@ -25,7 +25,7 @@ from video_downloader import video_download_service
 
 from contextlib import asynccontextmanager
 
-from schemas import StatusResponse, StartProcessingResponse, RegenerateSegmentRequest, RegenerateSegmentResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse, VideoDownloadRequest, VideoDownloadResponse
+from schemas import StatusResponse, StartProcessingResponse, RegenerateSegmentRequest, RegenerateSegmentResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse, VideoDownloadRequest, VideoDownloadResponse, FileUploadResponse, UploadStatusResponse
 
 # Configure logging with UTF-8 support
 os.makedirs(settings.LOGS_DIR, exist_ok=True)
@@ -50,16 +50,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Custom dependency to handle video_file parameter properly
-async def get_video_file(video_file: Union[UploadFile, str, None] = File(None)) -> Optional[UploadFile]:
-    """Handle video_file parameter - convert empty strings to None"""
-    if isinstance(video_file, str):
-        # If it's an empty string, return None
-        if not video_file.strip():
-            return None
-        # If it's a non-empty string, this shouldn't happen but handle gracefully
-        return None
-    return video_file
+# Local memory storage for uploaded files
+uploaded_files_memory = {}  # {file_id: {url, filename, size, upload_time}}
+upload_status_memory = {}   # {file_id: {status, progress, message, started_at}}
+
+# File upload utilities
+async def cleanup_uploaded_file(file_id: str):
+    """Remove uploaded file from local memory after processing completion"""
+    if file_id in uploaded_files_memory:
+        del uploaded_files_memory[file_id]
+        logger.info(f"Cleaned up uploaded file: {file_id}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -113,44 +113,26 @@ async def root():
     """Root endpoint - API status"""
     return StatusResponse(
         status="active",
-        message=f"Voice Cloning API {settings.API_VERSION} is running",
-        details={
-            "version": settings.API_VERSION,
-            "title": settings.API_TITLE,
-            "description": settings.API_DESCRIPTION,
-            "endpoints": {
-                "process": "/process-video",
-                "status": "/status/{audio_id}",
-                "regenerate": "/regenerate-segment",
-                "export": "/api/export-video",
-                "export_status": "/api/export-status/{job_id}",
-                "export_cancel": "/api/export-cancel/{job_id}",
-                "audio_separation": "/api/audio-separation",
-                "separation_status": "/api/audio-separation-status/{request_id}",
-                "separation_cancel": "/api/audio-separation-cancel/{request_id}",
-                "queue_stats": "/api/audio-separation-queue-stats"
-            }
-        }
+        message=f"Voice Cloning API {settings.API_VERSION} is running"
     )
 
 
 @app.post("/process-video", response_model=StartProcessingResponse)
 async def process_video(
-    video_url: Optional[str] = Form(None, description="Video URL (HTTP/HTTPS) for processing with automatic separation"),
-    video_file: Optional[UploadFile] = Depends(get_video_file),
+    video_url: str = Form(..., description="Video URL (already uploaded to Cloudflare) for processing"),
     include_instruments: bool = Form(True, description="Whether to include instruments in final audio"),
     generate_subtitles: bool = Form(True, description="Whether to generate subtitles"),
-    temperature: float = Form(settings.DIA_TEMPERATURE, description="Voice cloning temperature"),
-    cfg_scale: float = Form(settings.DIA_CFG_SCALE, description="CFG scale for voice cloning"),
-    top_p: float = Form(settings.DIA_TOP_P, description="Top-p for voice cloning"),
+    temperature: float = Form(1.0, description="Voice cloning temperature"),
+    cfg_scale: float = Form(3.5, description="CFG scale for voice cloning"),
+    top_p: float = Form(0.9, description="Top-p for voice cloning"),
     target_language: str = Form("English", description="Target language for translation"),
     language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
     speakers_expected: Optional[str] = Form(None, description="Expected number of speakers (1-10)")
 ):
-    """Start video processing with immediate response - accepts either URL or file upload"""
+    """Start video processing with Cloudflare URL"""
     
     # Clean up inputs
-    video_url = video_url.strip() if video_url else None
+    video_url = video_url.strip()
     language_code = language_code.strip() if language_code else None
     
     # Handle speakers_expected: convert empty string to default value 1
@@ -164,26 +146,9 @@ async def process_video(
     
     speakers_expected = speakers_expected_int
     
-    # Validate input: either video_url or video_file, not both, not both empty
-    has_url = bool(video_url)
-    has_file = bool(video_file and hasattr(video_file, 'filename') and video_file.filename)
-    
-    if not has_url and not has_file:
-        raise HTTPException(status_code=400, detail="Either video_url or video_file must be provided")
-    
-    if has_url and has_file:
-        raise HTTPException(status_code=400, detail="Provide either video_url or video_file, not both")
-    
-    # Validate URL format if provided
-    if has_url and not video_url.startswith(('http://', 'https://')):
+    # Validate URL format
+    if not video_url.startswith(('http://', 'https://')):
         raise HTTPException(status_code=400, detail="Invalid video URL format")
-    
-    # Validate file if provided
-    if has_file:
-        allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
-        file_ext = Path(video_file.filename).suffix.lower()
-        if file_ext not in allowed_extensions:
-            raise HTTPException(status_code=400, detail=f"Unsupported video format. Allowed: {', '.join(allowed_extensions)}")
     
     if speakers_expected is not None and (speakers_expected < 1 or speakers_expected > 10):
         raise HTTPException(status_code=400, detail="speakers_expected must be between 1 and 10")
@@ -191,30 +156,9 @@ async def process_video(
     # Generate unique audio ID
     audio_id = r2_storage.generate_audio_id()
     
-    # Prepare video source for queue processing
-    video_source = None
-    original_filename = None
-    original_source_url = None
-    
-    if has_file:
-        try:
-            # Save uploaded file temporarily for queue processing
-            upload_temp_path = os.path.join(settings.TEMP_DIR, f"{audio_id}_uploaded_video{Path(video_file.filename).suffix}")
-            
-            with open(upload_temp_path, "wb") as buffer:
-                content = await video_file.read()
-                buffer.write(content)
-            
-            # Store original filename and track source
-            original_filename = video_file.filename
-            video_source = upload_temp_path
-            
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
-    else:
-        # FileHandler will download this URL in queue processing  
-        video_source = video_url
-        original_source_url = video_url
+    # Use Cloudflare URL directly (no download/upload needed)
+    video_source = video_url
+    original_source_url = video_url
     
     # Initialize status tracking
     status_manager.initialize_status(audio_id)
@@ -232,7 +176,6 @@ async def process_video(
         "target_language": target_language,
         "language_code": language_code,
         "speakers_expected": speakers_expected,
-        "original_filename": original_filename,
         "original_source_url": original_source_url
     }
     
@@ -240,7 +183,7 @@ async def process_video(
     request_id = video_queue_manager.submit_request(
         video_source=video_source,
         audio_id=audio_id,
-        is_file_upload=has_file,
+        is_file_upload=False,
         parameters=queue_parameters
     )
     
@@ -293,8 +236,8 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
         
         # Set parameters with defaults
         seed = request.seed or random.randint(1, 1000000)
-        temperature = request.temperature or 1.3
-        cfg_scale = request.cfg_scale or 3.0
+        temperature = request.temperature or 1.0
+        cfg_scale = request.cfg_scale or 3.5
         top_p = request.top_p or 0.95
         
         generation_start = time.time()
@@ -593,6 +536,122 @@ async def get_status(audio_id: str):
     try:
         status = status_manager.get_status(audio_id)
         return status
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/upload-file", response_model=FileUploadResponse)
+async def upload_file(video_file: UploadFile = File(...)):
+    """Upload video file to Cloudflare with progress tracking"""
+    file_id = r2_storage.generate_audio_id()
+    
+    try:
+        # Initialize upload status
+        upload_status_memory[file_id] = {
+            "status": "uploading",
+            "progress": 0,
+            "message": "Starting upload...",
+            "original_filename": video_file.filename,
+            "started_at": datetime.now().isoformat()
+        }
+        
+        # Validate file format - 10%
+        upload_status_memory[file_id].update({"progress": 10, "message": "Validating file format..."})
+        allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
+        file_ext = Path(video_file.filename).suffix.lower()
+        
+        if file_ext not in allowed_extensions:
+            upload_status_memory[file_id].update({
+                "status": "failed", 
+                "progress": 0, 
+                "message": f"Unsupported video format. Allowed: {', '.join(allowed_extensions)}"
+            })
+            raise HTTPException(status_code=400, detail=f"Unsupported video format. Allowed: {', '.join(allowed_extensions)}")
+        
+        # Read and save file - 30%
+        upload_status_memory[file_id].update({"progress": 30, "message": "Processing file..."})
+        temp_path = os.path.join(settings.TEMP_DIR, f"{file_id}_{video_file.filename}")
+        with open(temp_path, "wb") as buffer:
+            content = await video_file.read()
+            buffer.write(content)
+        
+        # Upload to Cloudflare - 70%
+        upload_status_memory[file_id].update({"progress": 70, "message": "Uploading to cloud storage..."})
+        file_key = f"uploads/{file_id}/{video_file.filename}"
+        uploaded_url = r2_storage.upload_file(temp_path, file_key)
+        
+        # Complete - 100%
+        upload_status_memory[file_id].update({
+            "status": "completed",
+            "progress": 100,
+            "message": "Upload completed successfully",
+            "file_url": uploaded_url
+        })
+        
+        # Store in memory
+        uploaded_files_memory[file_id] = {
+            "url": uploaded_url,
+            "filename": video_file.filename,
+            "size": len(content),
+            "upload_time": datetime.now().isoformat()
+        }
+        
+        # Clean up temp file
+        os.remove(temp_path)
+        
+        return FileUploadResponse(
+            success=True,
+            message="File uploaded successfully",
+            file_id=file_id,
+            file_url=uploaded_url,
+            original_filename=video_file.filename,
+            file_size=len(content)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Update status to failed
+        if file_id in upload_status_memory:
+            upload_status_memory[file_id].update({
+                "status": "failed",
+                "progress": 0,
+                "message": f"Upload failed: {str(e)}"
+            })
+        
+        # Clean up temp file if exists
+        if 'temp_path' in locals() and os.path.exists(temp_path):
+            os.remove(temp_path)
+        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+
+@app.get("/upload-status/{file_id}", response_model=UploadStatusResponse)
+async def get_upload_status(file_id: str):
+    """Get upload progress status"""
+    try:
+        if file_id not in upload_status_memory:
+            raise HTTPException(status_code=404, detail="Upload ID not found")
+        
+        data = upload_status_memory[file_id]
+        
+        # Clean up completed/failed uploads after 5 minutes
+        if data["status"] in ["completed", "failed"]:
+            import asyncio
+            async def delayed_cleanup():
+                await asyncio.sleep(300)  # 5 minutes
+                if file_id in upload_status_memory:
+                    del upload_status_memory[file_id]
+            asyncio.create_task(delayed_cleanup())
+        
+        return UploadStatusResponse(
+            file_id=file_id,
+            status=data["status"],
+            progress=data["progress"],
+            message=data["message"],
+            original_filename=data.get("original_filename"),
+            file_url=data.get("file_url")
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

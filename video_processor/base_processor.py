@@ -100,7 +100,7 @@ class AudioProcessor:
             return {"success": False, "error": f"Audio processing failed: {str(e)}"}
     
     def clone_voice_segments(self, segments_dir: str, audio_id: str, 
-                           temperature: float = 1.2, cfg_scale: float = 3.0, 
+                           temperature: float = 1.0, cfg_scale: float = 3.5, 
                            top_p: float = 0.95, seed: Optional[int] = None) -> Dict[str, Any]:
         """Simplified voice cloning with unified segment processing from single folder"""
         logger.info(f"Starting unified voice cloning for audio_id: {audio_id}")

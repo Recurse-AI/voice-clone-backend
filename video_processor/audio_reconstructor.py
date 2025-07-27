@@ -147,8 +147,9 @@ class AudioReconstructor:
             logger.error(f"Audio reconstruction failed: {str(e)}")
             return {"success": False, "error": f"Audio reconstruction failed: {str(e)}"}
     
-    def _reconstruct_from_segments(self, segments: List[Dict], original_duration: Optional[float] = None) -> Optional[np.ndarray]:
-        """Reconstruct audio from segments ensuring COMPLETE original duration coverage"""
+    def _reconstruct_from_segments(self, segments: List[Dict], original_duration: Optional[float]) -> Optional[np.ndarray]:
+        """Reconstruct audio from segments with enhanced duration preservation"""
+        
         try:
             if not segments:
                 return None
@@ -156,7 +157,7 @@ class AudioReconstructor:
             # Use original duration if available, otherwise calculate from segments
             if original_duration and original_duration > 0:
                 total_duration = original_duration
-                logger.info(f"Using original audio duration: {total_duration:.2f} seconds")
+                logger.info(f"Using original audio duration: {total_duration:.2f} seconds for complete preservation")
             else:
                 # Calculate total duration from segments to ensure full coverage
                 segment_end = segments[-1]['end'] if segments else 0
@@ -171,22 +172,25 @@ class AudioReconstructor:
             # Create final audio array filled with silence
             final_audio = np.zeros(total_samples, dtype=np.float32)
             
-            # Process each segment
+            # Process each segment with enhanced error handling
             segments_placed = 0
             total_segment_duration = 0
             covered_timeline = []
+            
+            logger.info(f"Processing {len(segments)} segments to reconstruct {total_duration:.2f}s of audio")
             
             for segment in segments:
                 try:
                     # Use pre-loaded audio data
                     cloned_audio = segment.get('audio')
+                    segment_index = segment.get('segment_index', 'unknown')
+                    segment_start = segment['start']
+                    segment_end = segment['end']
+                    segment_duration = segment_end - segment_start
+                    
                     if cloned_audio is None or len(cloned_audio) == 0:
-                        # Handle silent segments (missing transcription areas)
-                        segment_start = segment['start']
-                        segment_end = segment['end']
-                        segment_duration = segment_end - segment_start
-                        
-                        logger.info(f"Segment {segment.get('segment_index', 'unknown')}: Adding {segment_duration:.2f}s of silence from {segment_start:.2f}s to {segment_end:.2f}s")
+                        # Handle silent segments (missing transcription areas or failed cloning)
+                        logger.info(f"Segment {segment_index}: Adding {segment_duration:.2f}s of silence from {segment_start:.2f}s to {segment_end:.2f}s")
                         
                         # Calculate position in final audio for silence
                         start_sample = int(segment_start * self.sample_rate)
@@ -202,10 +206,6 @@ class AudioReconstructor:
                         total_segment_duration += segment_duration
                         continue
                     
-                    segment_index = segment.get('segment_index', 'unknown')
-                    segment_start = segment['start']
-                    segment_end = segment['end']
-                    segment_duration = segment_end - segment_start
                     audio_duration = len(cloned_audio) / self.sample_rate
                     
                     # Log segment duration details
@@ -240,26 +240,48 @@ class AudioReconstructor:
                     
                 except Exception as e:
                     logger.error(f"Error processing segment {segment.get('segment_index', 'unknown')}: {e}")
+                    # Even if error, we should account for the timeline
+                    segment_start = segment.get('start', 0)
+                    segment_end = segment.get('end', 0)
+                    segment_duration = segment_end - segment_start
+                    covered_timeline.append((segment_start, segment_end, 'error_silence'))
+                    segments_placed += 1
+                    total_segment_duration += segment_duration
                     continue
             
-            # Check for timeline gaps and log them
+            # Enhanced gap detection and filling
             covered_timeline.sort(key=lambda x: x[0])
+            total_gap_duration = 0
+            
+            # Check for gaps at the beginning
+            if covered_timeline and covered_timeline[0][0] > 0.1:
+                gap_duration = covered_timeline[0][0]
+                logger.warning(f"Gap at beginning: {gap_duration:.2f}s (0.0s to {covered_timeline[0][0]:.2f}s) - filled with silence")
+                total_gap_duration += gap_duration
+            
+            # Check for gaps between segments
             for i in range(len(covered_timeline) - 1):
                 current_end = covered_timeline[i][1]
                 next_start = covered_timeline[i + 1][0]
                 if next_start > current_end + 0.1:  # Gap larger than 100ms
                     gap_duration = next_start - current_end
-                    logger.info(f"Timeline gap: {gap_duration:.2f}s between {current_end:.2f}s and {next_start:.2f}s (filled with silence)")
+                    logger.warning(f"Timeline gap: {gap_duration:.2f}s between {current_end:.2f}s and {next_start:.2f}s - filled with silence")
+                    total_gap_duration += gap_duration
             
-            # Check if we're missing audio at the end
+            # Check if we're missing audio at the end - CRITICAL for duration preservation
             last_covered_time = covered_timeline[-1][1] if covered_timeline else 0.0
             if last_covered_time < total_duration - 0.1:
                 missing_at_end = total_duration - last_covered_time
-                logger.info(f"Missing {missing_at_end:.2f}s at end - filled with silence from {last_covered_time:.2f}s to {total_duration:.2f}s")
+                logger.warning(f"Missing {missing_at_end:.2f}s at end - filled with silence from {last_covered_time:.2f}s to {total_duration:.2f}s")
+                total_gap_duration += missing_at_end
+                
+                # This is often where AssemblyAI misses content - we preserve the space with silence
+                logger.info(f"Preserved original duration by filling end gap with silence")
             
             logger.info(f"Successfully placed {segments_placed}/{len(segments)} segments in final audio")
             logger.info(f"Final audio length: {len(final_audio)/self.sample_rate:.2f} seconds ({len(final_audio)} samples)")
-            logger.info(f"Total segment duration: {total_segment_duration:.3f}s, Final audio duration: {len(final_audio)/self.sample_rate:.3f}s")
+            logger.info(f"Total segment duration: {total_segment_duration:.3f}s, Total gap duration: {total_gap_duration:.3f}s")
+            logger.info(f"Duration preservation: Original={total_duration:.2f}s, Final={len(final_audio)/self.sample_rate:.2f}s")
             
             # Check for overall duration consistency
             final_audio_duration = len(final_audio) / self.sample_rate

@@ -20,8 +20,8 @@ class RegenerateSegmentRequest(BaseModel):
     reference_audio_url: str
     duration: float
     seed: Optional[int] = None
-    temperature: Optional[float] = 1.3
-    cfg_scale: Optional[float] = 3.0
+    temperature: Optional[float] = 1.0
+    cfg_scale: Optional[float] = 3.5
     top_p: Optional[float] = 0.95
 
 class RegenerateSegmentResponse(BaseModel):
@@ -134,4 +134,22 @@ class VideoDownloadResponse(BaseModel):
     download_id: Optional[str] = None
     video_info: Optional[Dict[str, Any]] = None
     cloudflare: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None 
+    error: Optional[str] = None
+
+# File Upload Schemas (for separate upload endpoint)
+class FileUploadResponse(BaseModel):
+    success: bool
+    message: str
+    file_id: str
+    file_url: str
+    original_filename: str
+    file_size: int
+
+# Upload Status Schema
+class UploadStatusResponse(BaseModel):
+    file_id: str
+    status: str  # uploading, completed, failed
+    progress: int  # 0-100
+    message: str
+    original_filename: Optional[str] = None
+    file_url: Optional[str] = None 
