@@ -341,9 +341,9 @@ class VoiceCloningService:
                     text=clean_text,
                     audio_prompt=reference_audio_path,
                     use_torch_compile=False,
-                    cfg_scale=cfg_scale,
-                    temperature=temperature,
-                    top_p=top_p,
+                    cfg_scale=settings.DIA_CFG_SCALE,
+                    temperature=settings.DIA_TEMPERATURE,
+                    top_p=settings.DIA_TOP_P,
                     cfg_filter_top_k=settings.DIA_CFG_FILTER_TOP_K,
                     max_tokens=settings.DIA_MAX_TOKENS,
                     verbose=False

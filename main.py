@@ -122,7 +122,7 @@ async def process_video(
     video_url: str = Form(..., description="Video URL (already uploaded to Cloudflare) for processing"),
     include_instruments: bool = Form(True, description="Whether to include instruments in final audio"),
     generate_subtitles: bool = Form(True, description="Whether to generate subtitles"),
-    temperature: float = Form(1.0, description="Voice cloning temperature"),
+    temperature: float = Form(0.9, description="Voice cloning temperature"),
     cfg_scale: float = Form(3.5, description="CFG scale for voice cloning"),
     top_p: float = Form(0.9, description="Top-p for voice cloning"),
     target_language: str = Form("English", description="Target language for translation"),
