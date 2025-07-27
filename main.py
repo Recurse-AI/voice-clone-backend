@@ -539,7 +539,7 @@ async def get_status(audio_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-async def process_file_upload_background(file_id: str, video_file_content: bytes, filename: str):
+def process_file_upload_background(file_id: str, video_file_content: bytes, filename: str):
     """Background task for file upload processing"""
     try:
         # Validate file format - 10%
