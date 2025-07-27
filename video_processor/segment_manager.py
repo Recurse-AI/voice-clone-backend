@@ -53,54 +53,110 @@ class SegmentManager:
     
     def _create_complete_segments(self, words: List[Dict], total_duration: float, 
                                  first_word_start: float) -> List[Dict]:
-        """Create segments with complete audio coverage"""
-        if not words or total_duration <= 0:
-            return []
-        
+        """Create segments ensuring COMPLETE audio coverage with no missing portions"""
         segments = []
-        sorted_words = sorted(words, key=lambda w: w.get('start', 0))
+        current_segment = {
+            'words': [],
+            'speakers_in_segment': set(),
+            'is_multi_speaker': False,
+            'start': 0.0,  # Always start from 0 to ensure complete coverage
+            'end': 0.0,
+            'text': '',
+            'speaker': 'A',
+            'duration': 0.0
+        }
         
-        # Start from beginning of audio, not first word
-        current_start = 0.0
-        word_index = 0
+        # Pre-pad silence if first word doesn't start immediately
+        if first_word_start > 0.1:  # More than 100ms gap
+            logger.info(f"Adding {first_word_start:.2f}s silence padding at start")
         
-        while current_start < total_duration:
-            # Calculate segment end
-            target_end = min(current_start + self.optimal_duration, total_duration)
+        current_time = 0.0
+        
+        for word in words:
+            word_start = word.get('start', 0) / 1000.0
+            word_end = word.get('end', 0) / 1000.0
+            word_text = word.get('text', '').strip()
+            word_speaker = word.get('speaker', 'A')
             
-            # Collect words for this segment
-            segment_words = []
-            segment_end = target_end
+            if not word_text:
+                continue
             
-            # Find words within this time range
-            while word_index < len(sorted_words):
-                word = sorted_words[word_index]
-                word_start = word.get('start', 0) / 1000.0
-                word_end = word.get('end', 0) / 1000.0
+            # Check for gaps in timeline and fill with silence if needed
+            if word_start > current_time + 0.2:  # Gap larger than 200ms
+                gap_duration = word_start - current_time
+                logger.info(f"Detected {gap_duration:.2f}s gap at {current_time:.2f}s - will fill with silence")
+            
+            # Check if we need to finish current segment
+            should_split = False
+            
+            # Duration-based splitting
+            potential_end = word_end
+            potential_duration = potential_end - current_segment['start']
+            
+            if potential_duration > self.max_duration:
+                should_split = True
+            elif (len(current_segment['words']) > 0 and 
+                  potential_duration > self.min_duration and
+                  word_speaker != current_segment['speaker']):
+                should_split = True
+            
+            if should_split and current_segment['words']:
+                # Finalize current segment
+                current_segment['end'] = current_segment['words'][-1].get('end', 0) / 1000.0
+                current_segment['duration'] = current_segment['end'] - current_segment['start']
+                current_segment['text'] = ' '.join([w.get('text', '') for w in current_segment['words']])
+                current_segment['is_multi_speaker'] = len(current_segment['speakers_in_segment']) > 1
                 
-                # Include word if it overlaps with segment
-                if word_start < target_end and word_end > current_start:
-                    segment_words.append(word)
-                    segment_end = max(segment_end, word_end)
-                    word_index += 1
-                elif word_start >= target_end:
-                    break
-                else:
-                    word_index += 1
+                segments.append(current_segment.copy())
+                
+                # Start new segment
+                current_segment = {
+                    'words': [],
+                    'speakers_in_segment': set(),
+                    'is_multi_speaker': False,
+                    'start': current_segment['end'],  # Continue from where last ended
+                    'end': 0.0,
+                    'text': '',
+                    'speaker': word_speaker,
+                    'duration': 0.0
+                }
             
-            # Adjust segment end to maintain optimal length
-            if segment_end - current_start > self.max_duration:
-                segment_end = current_start + self.max_duration
-            elif segment_end - current_start < self.min_duration and current_start + self.min_duration <= total_duration:
-                segment_end = min(current_start + self.min_duration, total_duration)
+            # Add word to current segment
+            current_segment['words'].append(word)
+            current_segment['speakers_in_segment'].add(word_speaker)
+            if not current_segment['speaker'] or current_segment['speaker'] == 'A':
+                current_segment['speaker'] = word_speaker
             
-            # Create segment
-            segment = self._create_segment(segment_words, current_start, segment_end)
-            if segment:
-                segments.append(segment)
-            
-            current_start = segment_end
+            current_time = word_end
         
+        # Finalize last segment
+        if current_segment['words']:
+            current_segment['end'] = current_segment['words'][-1].get('end', 0) / 1000.0
+            current_segment['duration'] = current_segment['end'] - current_segment['start']
+            current_segment['text'] = ' '.join([w.get('text', '') for w in current_segment['words']])
+            current_segment['is_multi_speaker'] = len(current_segment['speakers_in_segment']) > 1
+            segments.append(current_segment)
+        
+        # CRITICAL: Ensure complete coverage to original duration
+        last_segment_end = segments[-1]['end'] if segments else 0.0
+        if last_segment_end < total_duration - 0.1:  # More than 100ms missing
+            missing_duration = total_duration - last_segment_end
+            logger.warning(f"Missing {missing_duration:.2f}s at end - adding silence segment")
+            
+            # Add final silence segment to cover missing duration
+            silence_segment = {
+                'words': [],
+                'speakers_in_segment': {'A'},
+                'is_multi_speaker': False,
+                'start': last_segment_end,
+                'end': total_duration,
+                'text': '',  # Silent segment
+                'speaker': segments[-1]['speaker'] if segments else 'A',
+                'duration': missing_duration
+            }
+            segments.append(silence_segment)
+        
+        logger.info(f"Created {len(segments)} segments covering 0.0s to {total_duration:.2f}s")
         return segments
     
     def _create_segment(self, words: List[Dict], start: float, end: float) -> Optional[Dict]:
@@ -218,51 +274,33 @@ class SegmentManager:
                             output_dir: Path, speakers: List[str], 
                             target_language: str, detected_language: str, 
                             original_audio_details: Optional[Dict] = None):
-        """Save segments with complete audio coverage"""
-        if not segments or audio is None or sr <= 0:
-            return
-            
-        output_dir.mkdir(parents=True, exist_ok=True)
+        """Save segments with complete audio coverage and handle silent segments"""
         
-        # Calculate original audio duration
-        original_duration = len(audio) / sr
+        # Prepare segment texts for translation (exclude silent segments)
+        segment_texts = []
+        segment_speakers_data = []
+        segment_words_data = []
         
-        # Ensure all segments cover the full audio
-        total_segment_duration = sum(s['duration'] for s in segments)
-        coverage_percentage = (total_segment_duration / original_duration) * 100
+        for segment in segments:
+            text = segment.get('text', '').strip()
+            if text:  # Only translate non-silent segments
+                segment_texts.append(text)
+                segment_speakers_data.append({
+                    'speakers': segment.get('speakers_in_segment', [segment.get('speaker', 'A')]),
+                    'is_multi_speaker': segment.get('is_multi_speaker', False),
+                    'primary_speaker': segment.get('speaker', 'A')
+                })
+                segment_words_data.append(segment.get('words', []))
+            else:
+                segment_texts.append("")
+                segment_speakers_data.append({
+                    'speakers': [segment.get('speaker', 'A')],
+                    'is_multi_speaker': False,
+                    'primary_speaker': segment.get('speaker', 'A')
+                })
+                segment_words_data.append([])
         
-        overall_metadata = {
-            "total_segments": len(segments),
-            "speakers": speakers,
-            "target_language": target_language,
-            "detected_language": detected_language,
-            "processing_timestamp": str(datetime.now()),
-            "original_audio": {
-                "duration": original_duration,
-                "sample_rate": sr,
-                "total_samples": len(audio),
-                "coverage_percentage": coverage_percentage
-            }
-        }
-        
-        if original_audio_details:
-            overall_metadata["original_audio"].update(original_audio_details)
-        
-        metadata_dir = output_dir / "metadata"
-        metadata_dir.mkdir(parents=True, exist_ok=True)
-        
-        with open(metadata_dir / "processing_metadata.json", 'w', encoding='utf-8') as f:
-            json.dump(overall_metadata, f, ensure_ascii=False, indent=2)
-        
-        # Parallel translation
-        segment_texts = [s.get('text', '').strip() for s in segments]
-        segment_speakers_data = [{
-            'speakers': s.get('speakers_in_segment', [s.get('speaker', 'A')]),
-            'is_multi_speaker': s.get('is_multi_speaker', False),
-            'primary_speaker': s.get('speaker', 'A')
-        } for s in segments]
-        segment_words_data = [s.get('words', []) for s in segments]
-        
+        # Translate only non-empty texts
         english_texts = self.transcription_service.format_dialogue_batch(
             segment_texts, segment_speakers_data, segment_words_data
         )
@@ -293,40 +331,72 @@ class SegmentManager:
             original_text = segment_texts[i] if i < len(segment_texts) else ""
             english_text = english_texts[i] if i < len(english_texts) else ""
             
+            # Calculate confidence for silent segments
+            if segment.get('words'):
+                confidence = sum(w.get('confidence', 0) for w in segment['words']) / len(segment['words'])
+            else:
+                confidence = 1.0  # Silent segments have perfect "confidence"
+            
             metadata = {
                 'segment_index': i + 1,
                 'audio_file': audio_filename,
                 'audio_path': str(audio_path),
                 'original_text': original_text,
                 'english_text': english_text,
-                'speaker': segment.get('speaker', 'A'),
-                'speakers_in_segment': segment.get('speakers_in_segment', []),
-                'is_multi_speaker': segment.get('is_multi_speaker', False),
-                'speaker_word_counts': segment.get('speaker_word_counts', {}),
                 'start': start_time,
                 'end': end_time,
-                'duration': segment.get('duration', 0),
-                'word_count': segment.get('word_count', 0),
-                'confidence': segment.get('confidence', 0.5),
-                'cloned_audio_file': f"cloned_segment_{i+1:03d}.wav",
-                'processing_status': 'ready_for_cloning'
+                'duration': end_time - start_time,
+                'speaker': segment.get('speaker', 'A'),
+                'confidence': confidence,
+                'word_count': len(segment.get('words', [])),
+                'is_silent_segment': not bool(original_text.strip()),
+                'segment_type': 'silent' if not original_text.strip() else 'speech'
             }
             
             # Save metadata
-            metadata_path = segments_dir / f"segment_{i+1:03d}_metadata.json"
+            metadata_filename = f"segment_{i+1:03d}_metadata.json"
+            metadata_path = segments_dir / metadata_filename
             with open(metadata_path, 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
-            
-            # Update segment info
-            segment.update({
-                'segment_index': i + 1,
-                'audio_path': str(audio_path),
-                'metadata_path': str(metadata_path),
-                'audio_file': audio_filename,
-                'english_text': english_text,
-                'metadata_complete': True
-            }) 
-
+        
+        # Save processing summary
+        self._save_processing_summary(output_dir, segments, speakers, target_language, 
+                                    detected_language, original_audio_details)
+        
+        logger.info(f"Saved {len(segments)} segments with complete coverage")
+    
+    def _save_processing_summary(self, output_dir: Path, segments: List[Dict], 
+                               speakers: List[str], target_language: str, 
+                               detected_language: str, original_audio_details: Optional[Dict]):
+        """Save clean processing summary"""
+        metadata_dir = output_dir / "metadata"
+        metadata_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Count speech vs silent segments
+        speech_segments = sum(1 for s in segments if s.get('text', '').strip())
+        silent_segments = len(segments) - speech_segments
+        total_duration = segments[-1]['end'] if segments else 0.0
+        
+        summary = {
+            'processing_metadata': {
+                'total_segments': len(segments),
+                'speech_segments': speech_segments,
+                'silent_segments': silent_segments,
+                'total_duration': total_duration,
+                'speakers': speakers,
+                'target_language': target_language,
+                'detected_language': detected_language,
+                'processing_timestamp': str(datetime.now())
+            }
+        }
+        
+        if original_audio_details:
+            summary['original_audio'] = original_audio_details
+        
+        summary_file = metadata_dir / "processing_metadata.json"
+        with open(summary_file, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+    
     def adjust_generated_audio_length(self, generated_audio: np.ndarray, sr: int, 
                                      reference_segment: Dict[str, Any]) -> np.ndarray:
         """

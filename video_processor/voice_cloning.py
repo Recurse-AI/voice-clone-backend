@@ -101,7 +101,29 @@ class VoiceCloningService:
                     
                     english_text = segment.get('english_text', segment.get('text', ''))
                     if not english_text.strip():
-                        logger.warning(f"Skipping segment {i+1}: No english_text")
+                        # Handle silent segment - create silence audio
+                        segment_duration = segment.get('duration', 10.0)
+                        silence_audio = np.zeros(int(segment_duration * self.sample_rate), dtype=np.float32)
+                        
+                        logger.info(f"Creating {segment_duration:.2f}s silence for segment {i+1} (no text to clone)")
+                        
+                        # Save silence audio
+                        self._save_single_cloned_segment(silence_audio, i+1, audio_id)
+                        
+                        cloned_segments.append({
+                            "success": True,
+                            "original_data": {
+                                "segment_index": segment.get('segment_index', i+1),
+                                "speaker": speaker,
+                                "duration": segment_duration,
+                                "original_text": segment.get('original_text', ''),
+                                "english_text": ""
+                            },
+                            "duration": float(segment_duration),
+                            "speaker": str(speaker),
+                            "segment_index": int(segment.get('segment_index', i+1)),
+                            "voice_params": {"type": "silence"}
+                        })
                         continue
                     
                     audio_path = segment.get('audio_path')
@@ -133,10 +155,17 @@ class VoiceCloningService:
                             pass
                     
                     try:
-                        # Generate audio
+                        # Calculate dynamic parameters for this segment
+                        dynamic_params = self._calculate_dynamic_parameters(
+                            segment, temperature, cfg_scale, top_p
+                        )
+                        
+                        # Generate audio with dynamic parameters
                         cloned_audio = self._generate_single_segment(
                             english_text, audio_path, english_text, 
-                            temperature, cfg_scale, top_p
+                            dynamic_params["temperature"], 
+                            dynamic_params["cfg_scale"], 
+                            dynamic_params["top_p"]
                         )
                         
                         if cloned_audio is None:
@@ -151,7 +180,7 @@ class VoiceCloningService:
                         # Save audio immediately
                         self._save_single_cloned_segment(cloned_audio, i+1, audio_id)
                         
-                        logger.info(f"Successfully generated audio for segment {i+1}")
+                        logger.info(f"Successfully generated {dynamic_params['speech_type']} speech for segment {i+1}")
                         
                         cloned_segments.append({
                             "success": True,
@@ -164,7 +193,8 @@ class VoiceCloningService:
                             },
                             "duration": float(segment.get('duration', 10.0)),
                             "speaker": str(speaker),
-                            "segment_index": int(segment.get('segment_index', i+1))
+                            "segment_index": int(segment.get('segment_index', i+1)),
+                            "voice_params": dynamic_params  # Store the parameters used
                         })
                         
                     except Exception as generation_error:
@@ -250,6 +280,56 @@ class VoiceCloningService:
                 padding = target_samples - len(audio)
                 return np.pad(audio, (0, padding), mode='constant', constant_values=0)
             return audio
+    
+    def _calculate_dynamic_parameters(self, segment: Dict[str, Any], base_temperature: float, 
+                                    base_cfg_scale: float, base_top_p: float) -> Dict[str, float]:
+        """
+        Calculate dynamic voice cloning parameters based on word density
+        
+        High density (fast speech): Higher temperature, adjusted cfg_scale
+        Low density (slow speech): Lower temperature, adjusted cfg_scale
+        """
+        duration = segment.get('duration', 10.0)
+        english_text = segment.get('english_text', '')
+        word_count = len(english_text.split()) if english_text else 0
+        
+        # Calculate words per second
+        words_per_second = word_count / duration if duration > 0 else 0
+        
+        # Optimal speaking rate is ~2-3 words per second
+        optimal_wps = 2.5
+        density_ratio = words_per_second / optimal_wps
+        
+        # Adjust parameters based on density
+        if density_ratio > 1.3:  # High density - need faster speech
+            # Increase temperature for more dynamic/faster speech
+            temperature = min(base_temperature + 0.3, 2.0)
+            cfg_scale = max(base_cfg_scale - 0.5, 1.5)  # Lower for more natural fast speech
+            top_p = max(base_top_p - 0.05, 0.85)  # Slightly more focused
+            speech_type = "fast"
+        elif density_ratio < 0.7:  # Low density - need slower speech  
+            # Decrease temperature for more controlled/slower speech
+            temperature = max(base_temperature - 0.2, 0.8)
+            cfg_scale = min(base_cfg_scale + 0.3, 4.0)  # Higher for more controlled speech
+            top_p = min(base_top_p + 0.03, 0.98)  # Slightly more diverse
+            speech_type = "slow"
+        else:  # Normal density
+            temperature = base_temperature
+            cfg_scale = base_cfg_scale
+            top_p = base_top_p
+            speech_type = "normal"
+        
+        logger.info(f"Segment {segment.get('segment_index', 0)}: {word_count} words in {duration:.1f}s "
+                   f"({words_per_second:.1f} wps) → {speech_type} speech (T={temperature:.1f}, CFG={cfg_scale:.1f})")
+        
+        return {
+            "temperature": temperature,
+            "cfg_scale": cfg_scale,
+            "top_p": top_p,
+            "words_per_second": words_per_second,
+            "density_ratio": density_ratio,
+            "speech_type": speech_type
+        }
     
     def _save_single_cloned_segment(self, audio_data: np.ndarray, segment_index: int, audio_id: str):
         """Save a single cloned segment audio file."""
