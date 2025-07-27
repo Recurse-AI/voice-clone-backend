@@ -539,25 +539,13 @@ async def get_status(audio_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/upload-file", response_model=FileUploadResponse)
-async def upload_file(video_file: UploadFile = File(...)):
-    """Upload video file to Cloudflare with progress tracking"""
-    file_id = r2_storage.generate_audio_id()
-    
+async def process_file_upload_background(file_id: str, video_file_content: bytes, filename: str):
+    """Background task for file upload processing"""
     try:
-        # Initialize upload status
-        upload_status_memory[file_id] = {
-            "status": "uploading",
-            "progress": 0,
-            "message": "Starting upload...",
-            "original_filename": video_file.filename,
-            "started_at": datetime.now().isoformat()
-        }
-        
         # Validate file format - 10%
         upload_status_memory[file_id].update({"progress": 10, "message": "Validating file format..."})
         allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
-        file_ext = Path(video_file.filename).suffix.lower()
+        file_ext = Path(filename).suffix.lower()
         
         if file_ext not in allowed_extensions:
             upload_status_memory[file_id].update({
@@ -565,18 +553,17 @@ async def upload_file(video_file: UploadFile = File(...)):
                 "progress": 0, 
                 "message": f"Unsupported video format. Allowed: {', '.join(allowed_extensions)}"
             })
-            raise HTTPException(status_code=400, detail=f"Unsupported video format. Allowed: {', '.join(allowed_extensions)}")
+            return
         
-        # Read and save file - 30%
+        # Save file to temp - 30%
         upload_status_memory[file_id].update({"progress": 30, "message": "Processing file..."})
-        temp_path = os.path.join(settings.TEMP_DIR, f"{file_id}_{video_file.filename}")
+        temp_path = os.path.join(settings.TEMP_DIR, f"{file_id}_{filename}")
         with open(temp_path, "wb") as buffer:
-            content = await video_file.read()
-            buffer.write(content)
+            buffer.write(video_file_content)
         
         # Upload to Cloudflare - 70%
         upload_status_memory[file_id].update({"progress": 70, "message": "Uploading to cloud storage..."})
-        file_key = f"uploads/{file_id}/{video_file.filename}"
+        file_key = f"uploads/{file_id}/{filename}"
         upload_result = r2_storage.upload_file(temp_path, file_key)
         
         # Check if upload was successful
@@ -586,7 +573,10 @@ async def upload_file(video_file: UploadFile = File(...)):
                 "progress": 0,
                 "message": f"Upload failed: {upload_result.get('error', 'Unknown error')}"
             })
-            raise HTTPException(status_code=500, detail=f"Upload failed: {upload_result.get('error', 'Unknown error')}")
+            # Clean up temp file
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+            return
         
         uploaded_url = upload_result["url"]
         
@@ -601,38 +591,60 @@ async def upload_file(video_file: UploadFile = File(...)):
         # Store in memory
         uploaded_files_memory[file_id] = {
             "url": uploaded_url,
-            "filename": video_file.filename,
-            "size": len(content),
+            "filename": filename,
+            "size": len(video_file_content),
             "upload_time": datetime.now().isoformat()
         }
         
         # Clean up temp file
         os.remove(temp_path)
         
-        return FileUploadResponse(
-            success=True,
-            message="File uploaded successfully",
-            file_id=file_id,
-            file_url=uploaded_url,
-            original_filename=video_file.filename,
-            file_size=len(content)
-        )
-        
-    except HTTPException:
-        raise
     except Exception as e:
         # Update status to failed
-        if file_id in upload_status_memory:
-            upload_status_memory[file_id].update({
-                "status": "failed",
-                "progress": 0,
-                "message": f"Upload failed: {str(e)}"
-            })
+        upload_status_memory[file_id].update({
+            "status": "failed",
+            "progress": 0,
+            "message": f"Upload failed: {str(e)}"
+        })
         
         # Clean up temp file if exists
-        if 'temp_path' in locals() and os.path.exists(temp_path):
+        temp_path = os.path.join(settings.TEMP_DIR, f"{file_id}_{filename}")
+        if os.path.exists(temp_path):
             os.remove(temp_path)
-        raise HTTPException(status_code=500, detail=f"File upload failed: {str(e)}")
+
+@app.post("/upload-file")
+async def upload_file(video_file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
+    """Upload video file to Cloudflare with background processing"""
+    file_id = r2_storage.generate_audio_id()
+    
+    try:
+        # Read file content immediately
+        content = await video_file.read()
+        
+        # Initialize upload status
+        upload_status_memory[file_id] = {
+            "status": "uploading",
+            "progress": 0,
+            "message": "Starting upload...",
+            "original_filename": video_file.filename,
+            "started_at": datetime.now().isoformat()
+        }
+        
+        # Start background processing
+        background_tasks.add_task(process_file_upload_background, file_id, content, video_file.filename)
+        
+        # Return immediate response
+        return {
+            "success": True,
+            "message": "File upload started",
+            "file_id": file_id,
+            "status_check_url": f"/upload-status/{file_id}",
+            "original_filename": video_file.filename,
+            "file_size": len(content)
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to start upload: {str(e)}")
 
 @app.get("/upload-status/{file_id}", response_model=UploadStatusResponse)
 async def get_upload_status(file_id: str):
