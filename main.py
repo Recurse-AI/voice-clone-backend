@@ -577,7 +577,18 @@ async def upload_file(video_file: UploadFile = File(...)):
         # Upload to Cloudflare - 70%
         upload_status_memory[file_id].update({"progress": 70, "message": "Uploading to cloud storage..."})
         file_key = f"uploads/{file_id}/{video_file.filename}"
-        uploaded_url = r2_storage.upload_file(temp_path, file_key)
+        upload_result = r2_storage.upload_file(temp_path, file_key)
+        
+        # Check if upload was successful
+        if not upload_result.get("success"):
+            upload_status_memory[file_id].update({
+                "status": "failed",
+                "progress": 0,
+                "message": f"Upload failed: {upload_result.get('error', 'Unknown error')}"
+            })
+            raise HTTPException(status_code=500, detail=f"Upload failed: {upload_result.get('error', 'Unknown error')}")
+        
+        uploaded_url = upload_result["url"]
         
         # Complete - 100%
         upload_status_memory[file_id].update({
