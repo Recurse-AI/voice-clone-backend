@@ -35,7 +35,7 @@ class AudioProcessor:
         self.segment_manager = SegmentManager(self.transcription_service)
         self.audio_utils = AudioUtils()
         self.file_manager = FileManager()
-        self.voice_cloning_service = VoiceCloningService()
+        self.voice_cloning_service = VoiceCloningService(self.segment_manager)
         self.audio_reconstructor = AudioReconstructor(str(self.temp_dir))
         self.video_processor = VideoProcessor(str(self.temp_dir))
         self.runpod_service = RunPodService()

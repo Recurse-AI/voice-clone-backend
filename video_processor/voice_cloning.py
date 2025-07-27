@@ -14,7 +14,6 @@ from dia.model import Dia
 from config import settings
 import logging
 import time
-import librosa
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +32,14 @@ def set_seed(seed: int):
 class VoiceCloningService:
     """Simplified voice cloning service"""
     
-    def __init__(self):
+    def __init__(self, segment_manager=None):
         self.dia_model = None
         self.device = settings.DIA_DEVICE
         self.sample_rate = 44100
+        self.segment_manager = segment_manager
+        
+        if not segment_manager:
+            logger.warning("VoiceCloningService initialized without segment_manager - some features may not work properly")
     
     def load_dia_model(self, repo_id: str = None) -> bool:
         """Load Dia model"""
@@ -62,12 +65,15 @@ class VoiceCloningService:
         if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
+        if not self.segment_manager:
+            return {"success": False, "error": "Segment manager not available"}
+        
         if not segments:
             return {"success": False, "error": "No segments provided"}
         
         logger.info(f"Starting voice cloning for {len(segments)} segments")
         
-        # Update status to voice cloning if audio_id provided
+        # Update status if audio_id provided
         if audio_id:
             try:
                 from status_manager import status_manager
@@ -84,7 +90,6 @@ class VoiceCloningService:
         try:
             base_seed = seed or settings.DEFAULT_SEED
             cloning_start_time = time.time()
-            
             cloned_segments = []
             speaker_seeds = {}
             
@@ -95,7 +100,6 @@ class VoiceCloningService:
                         continue
                     
                     english_text = segment.get('english_text', segment.get('text', ''))
-                    
                     if not english_text.strip():
                         logger.warning(f"Skipping segment {i+1}: No english_text")
                         continue
@@ -105,17 +109,15 @@ class VoiceCloningService:
                         logger.warning(f"Skipping segment {i+1}: No audio file found at {audio_path}")
                         continue
                     
-                    # Get speaker and set consistent seed per speaker
+                    # Set consistent seed per speaker
                     speaker = segment.get('speaker', 'A')
                     if speaker not in speaker_seeds:
                         speaker_seeds[speaker] = base_seed + (ord(speaker) - ord('A'))
-                    
                     set_seed(speaker_seeds[speaker])
                     
                     logger.info(f"Processing segment {i+1}/{len(segments)} (Speaker {speaker})")
-                    logger.info(f"Text: {english_text}")
                     
-                    # Update status with current segment progress
+                    # Update progress
                     if audio_id:
                         try:
                             from status_manager import status_manager
@@ -130,9 +132,6 @@ class VoiceCloningService:
                         except:
                             pass
                     
-                    # Get target duration (9-11 seconds optimal)
-                    target_duration = segment.get('duration', 10.0)
-                    
                     try:
                         # Generate audio
                         cloned_audio = self._generate_single_segment(
@@ -144,10 +143,12 @@ class VoiceCloningService:
                             logger.warning(f"Skipping segment {i+1}: Failed to generate audio")
                             continue
                         
-                        # Simple length adjustment
-                        cloned_audio = self._adjust_audio_length_simple(cloned_audio, target_duration)
+                        # Use segment manager's advanced audio adjustment
+                        cloned_audio = self.segment_manager.adjust_generated_audio_length(
+                            cloned_audio, self.sample_rate, segment
+                        )
                         
-                        # Save audio immediately to avoid JSON serialization issues
+                        # Save audio immediately
                         self._save_single_cloned_segment(cloned_audio, i+1, audio_id)
                         
                         logger.info(f"Successfully generated audio for segment {i+1}")
@@ -157,33 +158,29 @@ class VoiceCloningService:
                             "original_data": {
                                 "segment_index": segment.get('segment_index', i+1),
                                 "speaker": speaker,
-                                "duration": target_duration,
+                                "duration": segment.get('duration', 10.0),
                                 "original_text": segment.get('original_text', ''),
                                 "english_text": english_text
                             },
-                            "duration": float(target_duration),
+                            "duration": float(segment.get('duration', 10.0)),
                             "speaker": str(speaker),
                             "segment_index": int(segment.get('segment_index', i+1))
-                            # Note: cloned_audio excluded to prevent JSON serialization issues
                         })
                         
                     except Exception as generation_error:
                         logger.error(f"Error generating audio for segment {i+1}: {generation_error}")
                         continue
                     
-                    # Simple memory cleanup
                     self._cleanup_memory()
                 
                 except Exception as segment_error:
                     logger.error(f"Critical error processing segment {i+1}: {segment_error}")
                     continue
             
-            cloning_end_time = time.time()
-            cloning_duration = cloning_end_time - cloning_start_time
-            
+            cloning_duration = time.time() - cloning_start_time
             logger.info(f"Cloning completed in {cloning_duration:.2f} seconds")
             
-            # Save cloned segments in unified cloned folder
+            # Save summary
             if cloned_segments:
                 self._save_cloned_segments_unified(cloned_segments, audio_id)
             
@@ -232,122 +229,27 @@ class VoiceCloningService:
             logger.error(f"Audio generation failed: {str(e)}")
             return None
     
-    def _remove_trailing_silence(self, audio: np.ndarray, silence_threshold: float = 0.01) -> np.ndarray:
-        """Remove silent parts from the tail of audio - DEPRECATED: Use _remove_trailing_silence_conservative instead"""
-        logger.warning("Using deprecated _remove_trailing_silence method - consider using conservative version")
-        
-        if len(audio) == 0:
-            return audio
-        
-        # Find the last non-silent sample
-        audio_abs = np.abs(audio)
-        non_silent_indices = np.where(audio_abs > silence_threshold)[0]
-        
-        if len(non_silent_indices) == 0:
-            logger.warning("No non-silent audio found, returning original")
-            return audio
-        
-        last_sound_index = non_silent_indices[-1]
-        
-        # Be more conservative - add longer fade to preserve content
-        fade_samples = min(int(0.1 * self.sample_rate), len(audio) - last_sound_index, 2000)  # Max 2000 samples fade
-        end_index = min(last_sound_index + fade_samples, len(audio))
-        
-        original_duration = len(audio) / self.sample_rate
-        final_duration = end_index / self.sample_rate
-        logger.info(f"Trailing silence removal: {original_duration:.3f}s -> {final_duration:.3f}s (removed {len(audio) - end_index} samples)")
-        
-        return audio[:end_index]
-    
-    def _adjust_audio_length_simple(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Simple audio length adjustment that preserves original voice and ensures exact target duration"""
-        if audio is None or len(audio) == 0:
-            logger.warning(f"Empty audio provided, creating silence for {target_duration:.2f}s")
-            return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
-        
-        audio = np.array(audio, dtype=np.float32)
-        if len(audio.shape) > 1:
-            audio = np.mean(audio, axis=1)
-        
-        target_samples = int(target_duration * self.sample_rate)
-        current_samples = len(audio)
-        current_duration = current_samples / self.sample_rate
-        
-        logger.info(f"Audio adjustment: {current_duration:.3f}s ({current_samples} samples) -> {target_duration:.3f}s ({target_samples} samples)")
-        
-        # Ensure we maintain the target duration exactly
-        adjusted_audio = audio.copy()
-        
-        # Strategy: Preserve all audio content, only pad with silence if needed
-        if len(adjusted_audio) > target_samples:
-            # Audio is longer than target - check if difference is significant
-            duration_excess = (len(adjusted_audio) - target_samples) / self.sample_rate
-            
-            if duration_excess < 0.2:  # Less than 200ms excess
-                # Try conservative silence removal only for small excess
-                audio_without_silence = self._remove_trailing_silence_conservative(adjusted_audio, target_samples)
-                
-                if len(audio_without_silence) <= target_samples:
-                    adjusted_audio = audio_without_silence
-                    logger.info(f"Removed minimal trailing silence: {len(audio_without_silence)} samples")
-                else:
-                    # Keep full audio to preserve content
-                    logger.info(f"Audio longer than target by {duration_excess:.3f}s - preserving all content")
-            else:
-                # Significant excess - preserve content
-                logger.info(f"Generated audio ({current_duration:.3f}s) significantly longer than target ({target_duration:.3f}s) - preserving content")
-        
-        # Pad with silence if needed to reach exact target
-        if len(adjusted_audio) < target_samples:
-            padding = target_samples - len(adjusted_audio)
-            adjusted_audio = np.pad(adjusted_audio, (0, padding), mode='constant', constant_values=0)
-            logger.info(f"Added {padding} samples of silence padding")
-        
-        final_duration = len(adjusted_audio) / self.sample_rate
-        logger.info(f"Final audio duration: {final_duration:.3f}s ({len(adjusted_audio)} samples)")
-        
-        # Verify no significant duration loss
-        duration_diff = abs(final_duration - target_duration)
-        if duration_diff > 0.01:  # More than 10ms difference
-            logger.warning(f"Duration difference detected: {duration_diff:.3f}s (target: {target_duration:.3f}s, actual: {final_duration:.3f}s)")
-        
-        return adjusted_audio.astype(np.float32)
-    
-    def _remove_trailing_silence_conservative(self, audio: np.ndarray, max_target_samples: int, silence_threshold: float = 0.01) -> np.ndarray:
-        """Conservative trailing silence removal that respects target duration"""
-        if len(audio) == 0:
-            return audio
-        
-        # Don't remove silence if it would make audio shorter than target
-        if len(audio) <= max_target_samples:
-            logger.debug("Audio already within target range, skipping silence removal")
-            return audio
-        
-        # Find the last non-silent sample
-        audio_abs = np.abs(audio)
-        non_silent_indices = np.where(audio_abs > silence_threshold)[0]
-        
-        if len(non_silent_indices) == 0:
-            logger.debug("No non-silent audio found")
-            return audio
-        
-        last_sound_index = non_silent_indices[-1]
-        
-        # Add small fade-out but respect target duration
-        fade_samples = min(int(0.05 * self.sample_rate), 1000)  # Max 1000 samples fade
-        natural_end = min(last_sound_index + fade_samples, len(audio))
-        
-        # Only trim if the natural end is still longer than target
-        if natural_end > max_target_samples:
-            # Keep target duration exactly
-            end_index = max_target_samples
-            logger.debug(f"Trimmed to target duration: {end_index} samples")
+    def _adjust_audio_length(self, audio: np.ndarray, target_duration: float, 
+                           use_speed_adjustment: bool = True) -> np.ndarray:
+        """
+        Legacy method for backward compatibility with main.py
+        Uses segment_manager's advanced adjustment if available
+        """
+        if hasattr(self, 'segment_manager') and self.segment_manager:
+            # Create a simple segment dict for the legacy call
+            segment = {'duration': target_duration}
+            return self.segment_manager.adjust_generated_audio_length(
+                audio, self.sample_rate, segment
+            )
         else:
-            # Keep natural end
-            end_index = natural_end
-            logger.debug(f"Kept natural end: {end_index} samples")
-        
-        return audio[:end_index]
+            # Simple fallback if segment_manager not available
+            target_samples = int(target_duration * self.sample_rate)
+            if len(audio) > target_samples:
+                return audio[:target_samples]
+            elif len(audio) < target_samples:
+                padding = target_samples - len(audio)
+                return np.pad(audio, (0, padding), mode='constant', constant_values=0)
+            return audio
     
     def _save_single_cloned_segment(self, audio_data: np.ndarray, segment_index: int, audio_id: str):
         """Save a single cloned segment audio file."""
@@ -390,11 +292,10 @@ class VoiceCloningService:
             logger.error(f"Error saving single cloned segment {segment_index}: {e}")
     
     def _save_cloned_segments_unified(self, cloned_segments: List[Dict], audio_id: str):
-        """Log cloned segments completion - audio already saved individually"""
+        """Save cloning summary"""
         try:
-            logger.info(f"Saved {len(cloned_segments)} cloned segments in unified structure")
+            logger.info(f"Saved {len(cloned_segments)} cloned segments")
             
-            # Optional: Create summary file for debugging
             from pathlib import Path
             from config import settings
             
