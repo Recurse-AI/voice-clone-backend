@@ -333,16 +333,12 @@ class VoiceCloningService:
                 logger.warning("Empty text provided for voice generation")
                 return None
             
-            # Concatenate reference text and original text as per rule
-            # Since both texts are same, this provides better voice cloning context
-            concatenated_text = clean_text + "\n" + clean_text
-            
-            logger.info(f"Generating audio with Dia format...")
+            logger.info(f"Generating audio with Dia - Text: '{clean_text[:50]}...', Max tokens: {settings.DIA_MAX_TOKENS}")
             
             with torch.inference_mode():
                 # Generate audio with Dia model
                 audio = self.dia_model.generate(
-                    text=concatenated_text,
+                    text=clean_text,
                     audio_prompt=reference_audio_path,
                     use_torch_compile=False,
                     cfg_scale=cfg_scale,

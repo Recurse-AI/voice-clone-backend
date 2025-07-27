@@ -32,9 +32,9 @@ class Settings(BaseSettings):
     DIA_VERBOSE: bool = False
     
     # Dia Generation Parameters (optimized based on official examples)
-    DIA_MAX_TOKENS: int = 3072
-    DIA_CFG_SCALE: float = 3.5  # Optimized for consistency (was 3.0) - higher values = more consistent output
-    DIA_TEMPERATURE: float = 1.0  # Optimized for consistency (was 1.3) - lower values = more consistent output
+    DIA_MAX_TOKENS: int = 1024  # Reduced for better duration control
+    DIA_CFG_SCALE: float = 4.0  # Higher for better voice consistency 
+    DIA_TEMPERATURE: float = 0.9  # Lower for more stable voice cloning
     DIA_TOP_P: float = 0.95  # Optimized from official examples (was 0.95)
     DIA_CFG_FILTER_TOP_K: int = 35  # Optimized from official
     
