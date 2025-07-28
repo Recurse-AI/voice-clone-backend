@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     DIA_ENHANCED_TEMPERATURE: float = 1.8  # Optimal randomness (Reference code optimal)
     DIA_ENHANCED_TOP_P: float = 0.95  # Nucleus sampling (Colab optimal)
     DIA_ENHANCED_CFG_FILTER_TOP_K: int = 45  # CFG filtering (Colab optimal)
-    DIA_ENHANCED_SPEED_FACTOR: float = 0.85  # Audio speed adjustment (Slower, more natural speech)
+    DIA_ENHANCED_SPEED_FACTOR: float = 0.9  # Audio speed adjustment (Slower, more natural speech)
     DIA_ENHANCED_USE_TORCH_COMPILE: bool = False  # Keep False for stability like reference
     
 
