@@ -348,7 +348,46 @@ OUTPUT (English with [S1] tag, proper line breaks):"""
                 
         except Exception as e:
             raise ValueError(f"Enhanced text formatting failed for speaker {speaker}: {str(e)}")
-           
-
- 
     
+    def format_dialogue_batch(self, text_list: List[str], speaker_data: List, words_data_list: List[List[Dict]] = None) -> List[str]:
+        """Simplified batch dialogue processing"""
+        if not text_list:
+            return []
+        
+        # Simplified speaker data handling
+        if not speaker_data:
+            speaker_data = ['A'] * len(text_list)
+        
+        # Ensure speaker_data matches text_list length
+        if len(speaker_data) != len(text_list):
+            logger.warning(f"Speaker data length mismatch, using default speakers")
+            speaker_data = ['A'] * len(text_list)
+        
+        # Ensure words_data_list has same length
+        if words_data_list is None:
+            words_data_list = [None] * len(text_list)
+        elif len(words_data_list) != len(text_list):
+            words_data_list = [None] * len(text_list)
+        
+        # Process each text with simplified logic
+        results = []
+        for i, (text, speaker, words_data) in enumerate(zip(text_list, speaker_data, words_data_list)):
+            try:
+                # Create simple speaker data format
+                simple_speaker_data = {
+                    'speakers': [speaker] if isinstance(speaker, str) else speaker.get('speakers', [speaker]),
+                    'is_multi_speaker': False,
+                    'primary_speaker': speaker if isinstance(speaker, str) else speaker.get('primary_speaker', 'A')
+                }
+                
+                formatted_text = self.format_dialogue_text(text, simple_speaker_data, words_data)
+                results.append(formatted_text)
+                
+            except Exception as e:
+                logger.error(f"Failed to format text {i+1}: {str(e)}")
+                results.append(text)  # Use original text as fallback
+        
+        return results
+    
+    def _clean_text(self, text: str) -> str:
+        return text
