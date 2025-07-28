@@ -283,19 +283,19 @@ TEXT: {processed_text}
 RULES:
 - Always start with [S1] tag at the beginning
 - Use [S2], [S3] etc. for different speakers
-- NO tags for continuation lines of same speaker  
+- Put EACH speaker on a NEW LINE - very important
 - Keep lines natural and clear for voice synthesis
-- NO single quotes (') in output - remove them
 - Natural conversational English
 - Lines should follow natural speech patterns
 - Maintain speaker consistency throughout
+- Try to keep the text as close to the original as possible
+- Don't make any line too long i.e more than 7 words
 
 EXAMPLE OUTPUT:
-[S1] Hello how are you doing today
-[S2] I am fine thanks for asking
-[S1] That is good to hear
+[S1] I will take care of all the cookies in a minute
+[S2] Just gather all the information you want about the cookies
 
-OUTPUT (English with clean speaker tags):"""
+OUTPUT (English with clean speaker tags, each speaker on new line):"""
                 else:
                     # Single speaker format following reference patterns
                     prompt = f"""Translate to natural English for voice cloning synthesis.
@@ -311,18 +311,19 @@ RULES:
 - Maintain consistency for voice cloning
 - Keep the original meaning and emotion
 - Try to keep the text as close to the original as possible
-- Don't make any line too long i.e more than 7 words
+- Don't make any line too long i.e more than 7 words and use . at the end of the line when needed
+- Break into multiple lines if text is long
 
 EXAMPLE OUTPUT:
 [S1] Hello this is an example of natural speech
 that flows well for voice synthesis
 
-OUTPUT (English with [S1] tag):"""
+OUTPUT (English with [S1] tag, proper line breaks):"""
                 
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "Translate with clean formatting optimized for voice cloning. Remove all single quotes. Keep natural speech patterns."},
+                        {"role": "system", "content": "Translate with clean formatting optimized for voice cloning. Use proper line breaks. Each speaker should be on a new line. Don't put everything on one single line."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=300,
@@ -371,7 +372,7 @@ OUTPUT (English with [S1] tag):"""
         return formatted_text
     
     def _apply_reference_line_breaking(self, text: str) -> str:
-        """Apply line breaking following reference code natural speech patterns"""
+        """Apply line breaking following reference code natural speech patterns with proper speaker separation"""
         lines = text.split('\n')
         formatted_lines = []
         
@@ -387,12 +388,12 @@ OUTPUT (English with [S1] tag):"""
                 content = speaker_match.group(2)
                 
                 if content:
-                    # Format content following natural speech patterns
+                    # Each speaker should be on its own line with content
                     formatted_lines.append(f"{speaker_tag} {content}")
                 else:
                     formatted_lines.append(speaker_tag)
             else:
-                # Continuation line without speaker tag
+                # Continuation line without speaker tag - keep on separate line
                 formatted_lines.append(line)
         
         return '\n'.join(formatted_lines)
@@ -404,7 +405,7 @@ OUTPUT (English with [S1] tag):"""
             translation_response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Translate to natural English only. Keep it simple and natural for voice synthesis. Remove single quotes."},
+                    {"role": "system", "content": "Translate to natural English only. Keep it simple and natural for voice synthesis. Use proper line breaks."},
                     {"role": "user", "content": f"Translate this to natural English: {text}"}
                 ],
                 max_tokens=150,
@@ -414,11 +415,6 @@ OUTPUT (English with [S1] tag):"""
             
             if translation_response and translation_response.choices:
                 english_text = translation_response.choices[0].message.content.strip()
-                
-                # Remove single quotes
-                english_text = english_text.replace("'", "")
-                english_text = english_text.replace("'", "")
-                english_text = english_text.replace("'", "")
                 
                 # Apply simple formatting
                 if not re.search(r'\[S\d+\]', english_text):
@@ -435,11 +431,6 @@ OUTPUT (English with [S1] tag):"""
             # Ultimate fallback with reference formatting
             logger.error(f"Enhanced fallback failed: {e}")
             cleaned = self._clean_text(text)
-            
-            # Remove single quotes from fallback too
-            cleaned = cleaned.replace("'", "")
-            cleaned = cleaned.replace("'", "")
-            cleaned = cleaned.replace("'", "")
             
             if not cleaned.startswith('[S'):
                 cleaned = f"[S1] {cleaned}"

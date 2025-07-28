@@ -303,12 +303,7 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
 
             print(f"Combined text: {combined_text}")
             print(f"Reference audio URL: {request.reference_audio_url}")
-            print(f"Seed: {seed}")
-            print(f"Temperature: {temperature}")
-            print(f"CFG scale: {cfg_scale}")
-            print(f"Top P: {top_p}")
-            print(f"CFG filter top K: {settings.DIA_ENHANCED_CFG_FILTER_TOP_K}")
-            print(f"Max tokens: {settings.DIA_ENHANCED_MAX_TOKENS}")
+         
             
             
             import torch
@@ -317,9 +312,9 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
                     text=combined_text,
                     audio_prompt=temp_ref_path,
                     use_torch_compile=False,
-                    cfg_scale=cfg_scale,
-                    temperature=temperature,
-                    top_p=top_p,
+                    cfg_scale=settings.DIA_ENHANCED_CFG_SCALE,
+                    temperature=settings.DIA_ENHANCED_TEMPERATURE,
+                    top_p=settings.DIA_ENHANCED_TOP_P,
                     cfg_filter_top_k=settings.DIA_ENHANCED_CFG_FILTER_TOP_K,
                     max_tokens=settings.DIA_ENHANCED_MAX_TOKENS,
                     verbose=False
