@@ -570,8 +570,7 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
     """
     Upload video file to Cloudflare with immediate response and background processing.
     
-    This endpoint returns immediately after receiving the POST request, then processes
-    the file upload in the background. Use the returned file_id to check upload status.
+    This endpoint saves the file first, then processes in background.
     
     Returns:
         - file_id: Unique identifier for tracking upload progress
@@ -580,106 +579,87 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
     
     Example usage:
         1. POST /upload-file with video file
-        2. Get immediate response with file_id
+        2. Get immediate response with file_id  
         3. Periodically GET /upload-status/{file_id} to check progress
         4. When status="completed", use file_url for video processing
     """
     file_id = r2_storage.generate_audio_id()
+    original_filename = video_file.filename
     
     try:
         # Generate temp file path
-        temp_file_path = os.path.join(settings.TEMP_DIR, f"upload_{file_id}_{video_file.filename}")
+        temp_file_path = os.path.join(settings.TEMP_DIR, f"upload_{file_id}_{original_filename}")
         os.makedirs(settings.TEMP_DIR, exist_ok=True)
         
-        # Initialize upload status immediately 
+        # Initialize upload status
         upload_status_memory[file_id] = {
             "status": "uploading",
-            "progress": 0,
-            "message": "Upload started...",
-            "original_filename": video_file.filename,
+            "progress": 5,
+            "message": "Saving uploaded file...",
+            "original_filename": original_filename,
             "started_at": datetime.now().isoformat()
         }
         
-        # Extract filename before background task (UploadFile might not be accessible in background)
-        original_filename = video_file.filename
+        # Save file immediately to temp location (this ensures file is accessible)
+        total_size = 0
+        with open(temp_file_path, "wb") as buffer:
+            while chunk := await video_file.read(8192):
+                buffer.write(chunk)
+                total_size += len(chunk)
         
-        # Start background file saving and processing
-        background_tasks.add_task(process_file_upload_async_safe, file_id, video_file, temp_file_path, original_filename)
+        # Update progress after file save
+        file_size = os.path.getsize(temp_file_path)
+        upload_status_memory[file_id].update({
+            "progress": 15,
+            "message": f"File saved ({file_size // (1024*1024)} MB), starting background processing..."
+        })
         
-        # Return immediate response without waiting for file save
+        # Start background processing with saved file (no UploadFile object needed)
+        background_tasks.add_task(process_file_background_only, file_id, temp_file_path, original_filename, file_size)
+        
+        # Return immediate response
         return {
             "success": True,
             "message": "File upload started successfully",
             "file_id": file_id,
             "status_check_url": f"/upload-status/{file_id}",
-            "original_filename": video_file.filename,
+            "original_filename": original_filename,
+            "file_size_mb": file_size // (1024*1024),
             "estimated_time": "2-10 minutes"
         }
         
     except Exception as e:
-        # If there's an error in setup, update status
+        # Clean up temp file if it was created
+        temp_file_path = os.path.join(settings.TEMP_DIR, f"upload_{file_id}_{original_filename}")
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+            
+        # Update status if exists
         if file_id in upload_status_memory:
             upload_status_memory[file_id].update({
                 "status": "failed",
                 "progress": 0,
-                "message": f"Setup failed: {str(e)}"
+                "message": f"File save failed: {str(e)}"
             })
         raise HTTPException(status_code=500, detail=f"Failed to start upload: {str(e)}")
 
-async def process_file_upload_async_safe(file_id: str, video_file: UploadFile, temp_file_path: str, filename: str):
-    """Safe asynchronous file upload processing with pre-extracted filename"""
+async def process_file_background_only(file_id: str, temp_file_path: str, filename: str, file_size: int):
+    """Background processing for already saved file (no UploadFile dependency)"""
     try:
-        # Update progress: Starting file save
-        upload_status_memory[file_id].update({
-            "progress": 5, 
-            "message": "Saving file to temporary storage..."
-        })
-        
-        # Save file to temp location asynchronously
-        total_size = 0
-        with open(temp_file_path, "wb") as buffer:
-            while chunk := await video_file.read(8192):  # Read in chunks
-                buffer.write(chunk)
-                total_size += len(chunk)
-                
-                # Update progress based on chunk reading (estimated)
-                if total_size > 0:
-                    # Rough progress estimation (5% to 15% during file save)
-                    progress = min(15, 5 + (total_size // (1024 * 1024)))  # 1MB = 1% progress
-                    upload_status_memory[file_id].update({
-                        "progress": progress,
-                        "message": f"Saving file... ({total_size // (1024 * 1024)} MB)"
-                    })
-        
-        # File is now saved to temp location, get actual size
-        file_size = os.path.getsize(temp_file_path)
-        
-        # Update progress: File saved, starting validation
+        # Validate file exists and is readable - 20%
         upload_status_memory[file_id].update({
             "progress": 20, 
-            "message": "File saved successfully, starting validation..."
+            "message": "Validating uploaded file..."
         })
         
-        # Continue with background processing using only temp file (not original UploadFile)
-        await process_file_upload_background_async(file_id, temp_file_path, filename, file_size)
+        if not os.path.exists(temp_file_path):
+            raise Exception("Temporary file not found")
+            
+        if file_size == 0:
+            raise Exception("Uploaded file is empty")
         
-    except Exception as e:
-        # Update status to failed
-        upload_status_memory[file_id].update({
-            "status": "failed",
-            "progress": 0,
-            "message": f"Upload failed: {str(e)}"
-        })
-        
-        # Clean up temp file if exists
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-
-async def process_file_upload_background_async(file_id: str, temp_file_path: str, filename: str, file_size: int):
-    """Async version of background file processing"""
-    try:
-        # Validate file format - 25%
-        upload_status_memory[file_id].update({"progress": 25, "message": "Validating file format..."})
+        # Validate file format - 30%
+        upload_status_memory[file_id].update({"progress": 30, "message": "Checking file format..."})
         allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
         file_ext = Path(filename).suffix.lower()
         
@@ -693,21 +673,17 @@ async def process_file_upload_background_async(file_id: str, temp_file_path: str
                 os.remove(temp_file_path)
             return
         
-        # Read file content from temp file for processing - 35%
-        upload_status_memory[file_id].update({"progress": 35, "message": "Reading file content for processing..."})
+        # Read file content for local storage - 40%
+        upload_status_memory[file_id].update({"progress": 40, "message": "Reading file content..."})
         
-        # Verify temp file exists and is readable
-        if not os.path.exists(temp_file_path):
-            raise Exception("Temporary file not found")
-            
         with open(temp_file_path, 'rb') as f:
             video_file_content = f.read()
         
         if len(video_file_content) == 0:
-            raise Exception("Temporary file is empty")
+            raise Exception("File content is empty after reading")
         
-        # Store locally - 50%
-        upload_status_memory[file_id].update({"progress": 50, "message": "Storing locally..."})
+        # Store locally - 60%
+        upload_status_memory[file_id].update({"progress": 60, "message": "Storing locally..."})
         local_result = local_storage.store_video(file_id, video_file_content, filename)
         
         if not local_result.get("success"):
@@ -720,8 +696,8 @@ async def process_file_upload_background_async(file_id: str, temp_file_path: str
                 os.remove(temp_file_path)
             return
         
-        # Upload to Cloudflare - 80%
-        upload_status_memory[file_id].update({"progress": 80, "message": "Uploading to cloud storage..."})
+        # Upload to Cloudflare - 85%
+        upload_status_memory[file_id].update({"progress": 85, "message": "Uploading to cloud storage..."})
         file_key = f"uploads/{file_id}/{filename}"
         upload_result = r2_storage.upload_file(temp_file_path, file_key)
         
@@ -772,6 +748,8 @@ async def process_file_upload_background_async(file_id: str, temp_file_path: str
         # Clean up temp file if exists
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
+
+
 
 @app.get("/upload-status/{file_id}", response_model=UploadStatusResponse)
 async def get_upload_status(file_id: str):
