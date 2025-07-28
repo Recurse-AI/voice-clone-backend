@@ -246,7 +246,7 @@ class TranscriptionService:
         return marked_text.strip()
     
     def format_dialogue_text(self, text: str, speaker_data, words_data: List[Dict] = None) -> str:
-        """Enhanced translation to English with clean [S1]/[S2] speaker tags and proper line breaking"""
+        """Enhanced translation to English with clean formatting (max 7 words, optimal 3-5)"""
         try:
             # Handle speaker data format
             if isinstance(speaker_data, str):
@@ -266,17 +266,17 @@ class TranscriptionService:
             
             # Check cache first
             with self.cache_lock:
-                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_colab_v2"
+                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_v3_max7"
                 if cache_key in self.translation_cache:
                     return self.translation_cache[cache_key]
             
-            # Enhanced translation and formatting with strict line breaking
+            # Enhanced translation and formatting with optimal line breaking
             try:
                 if len(speakers_in_segment) > 1:
-                    # Multi-speaker format with strict line breaking
+                    # Multi-speaker format with optimal line breaking
                     processed_text = self._preprocess_multispeaker_text(clean_text, words_data) if words_data else clean_text
                     
-                    prompt = f"""Translate to natural English with clean speaker tags and strict line breaking.
+                    prompt = f"""Translate to natural English with clean speaker tags and optimal line breaking.
 
 TEXT: {processed_text}
 
@@ -284,46 +284,53 @@ RULES:
 - Always start with [S1] tag at the beginning
 - Use [S2], [S3] etc. for different speakers
 - NO tags for continuation lines of same speaker  
-- MAXIMUM 9 words per line - VERY IMPORTANT
-- If line has more than 9 words, break to new line
+- MAXIMUM 7 words per line - VERY IMPORTANT
+- OPTIMAL 3-5 words per line for best results
+- NO single quotes (') in output - remove them
 - Natural conversational English
 - No quotes in output
-- Keep simple and clear
+- Keep simple, clean and neat
 
 EXAMPLE OUTPUT:
-[S1] Hello how are you doing
-today my friend
-[S2] I am fine thanks for
-asking about my health
-[S1] That's good to hear from you
+[S1] Hello how are you
+doing today friend
+[S2] I am fine thanks
+for asking about it
+[S1] That is good news
 
-OUTPUT (English with clean speaker tags and max 9 words per line):"""
+OUTPUT (English with clean speaker tags, max 7 words, optimal 3-5):"""
                 else:
-                    # Single speaker format with strict line breaking
-                    prompt = f"""Translate to natural English with strict line breaking.
+                    # Single speaker format with optimal line breaking
+                    prompt = f"""Translate to natural English with optimal line breaking.
 
 TEXT: {clean_text}
 
 RULES:
 - Start with [S1] tag only at beginning
 - NO additional speaker tags needed
-- MAXIMUM 9 words per line - VERY IMPORTANT
-- If line has more than 9 words, break to new line
+- MAXIMUM 7 words per line - VERY IMPORTANT
+- OPTIMAL 3-5 words per line for best results
+- NO single quotes (') in output - remove them
 - Natural conversational English
 - No quotes in output
-- Keep simple and clear
+- Keep simple, clean and neat
+- Try to keep the text as close to the original as possible 
+- If the text is too long, break it into multiple lines
+- Try to generate words that are close to the original text
+
 
 EXAMPLE OUTPUT:
-[S1] Hello this is example text that
-demonstrates proper line breaking with
-maximum nine words per line always
+[S1] Hello this is example
+text that demonstrates proper
+line breaking with optimal
+word count per line
 
-OUTPUT (English with [S1] tag and max 9 words per line):"""
+OUTPUT (English with [S1] tag, max 7 words, optimal 3-5):"""
                 
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "Translate with clean speaker formatting and strict line breaking (max 9 words per line) optimized for Dia voice cloning."},
+                        {"role": "system", "content": "Translate with clean speaker formatting and optimal line breaking (max 7 words, optimal 3-5) optimized for Dia voice cloning. Remove all single quotes."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=300,
@@ -333,7 +340,7 @@ OUTPUT (English with [S1] tag and max 9 words per line):"""
                 
                 if response and response.choices:
                     formatted_text = response.choices[0].message.content.strip()
-                    formatted_text = self._clean_and_format_with_line_breaking(formatted_text)
+                    formatted_text = self._clean_and_format_optimal(formatted_text)
                     
                     with self.cache_lock:
                         self.translation_cache[cache_key] = formatted_text
@@ -343,17 +350,22 @@ OUTPUT (English with [S1] tag and max 9 words per line):"""
                 
             except Exception as openai_error:
                 logger.warning(f"OpenAI formatting failed: {openai_error}")
-                # Enhanced fallback with proper line breaking
-                return self._enhanced_fallback_with_line_breaking(clean_text, is_multi_speaker)
+                # Enhanced fallback with optimal line breaking
+                return self._enhanced_fallback_optimal(clean_text, is_multi_speaker)
                 
         except Exception as e:
             raise ValueError(f"Enhanced text formatting failed for speaker {speaker}: {str(e)}")
     
-    def _clean_and_format_with_line_breaking(self, text: str) -> str:
-        """Clean formatted text and ensure proper line breaking (max 9 words per line)"""
+    def _clean_and_format_optimal(self, text: str) -> str:
+        """Clean formatted text and ensure optimal formatting (max 7 words, no quotes)"""
         # Remove quotes and extra whitespace
         text = re.sub(r'^["\s]*', '', text).strip()
         text = re.sub(r'["\s]*$', '', text)
+        
+        # Remove single quotes completely
+        text = text.replace("'", "")
+        text = text.replace("'", "")
+        text = text.replace("'", "")
         
         if not text:
             raise ValueError("Empty response from OpenAI")
@@ -365,13 +377,13 @@ OUTPUT (English with [S1] tag and max 9 words per line):"""
         # Clean up multiple spaces
         text = re.sub(r'\s+', ' ', text)
         
-        # Apply strict line breaking (max 9 words per line)
-        formatted_text = self._apply_strict_line_breaking(text)
+        # Apply optimal line breaking (max 7 words, prefer 3-5)
+        formatted_text = self._apply_optimal_line_breaking(text)
         
         return formatted_text
     
-    def _apply_strict_line_breaking(self, text: str) -> str:
-        """Apply strict line breaking with maximum 9 words per line"""
+    def _apply_optimal_line_breaking(self, text: str) -> str:
+        """Apply optimal line breaking with maximum 7 words per line (prefer 3-5)"""
         lines = text.split('\n')
         formatted_lines = []
         
@@ -381,11 +393,14 @@ OUTPUT (English with [S1] tag and max 9 words per line):"""
                 continue
                 
             words = line.split()
-            if len(words) <= 9:
-                # Line is fine as is
+            if len(words) <= 5:
+                # Line is optimal as is (3-5 words)
+                formatted_lines.append(line)
+            elif len(words) <= 7:
+                # Line is acceptable as is (6-7 words)
                 formatted_lines.append(line)
             else:
-                # Break line into chunks of max 9 words
+                # Break line into optimal chunks (3-5 words, max 7)
                 current_line = []
                 speaker_tag = None
                 
@@ -401,8 +416,8 @@ OUTPUT (English with [S1] tag and max 9 words per line):"""
                     else:
                         current_line.append(word)
                         
-                        # If we hit 9 words, start a new line
-                        if len(current_line) >= 9:
+                        # Prefer 5 words per line for optimal results
+                        if len(current_line) >= 5:
                             formatted_lines.append(' '.join(current_line))
                             current_line = []
                 
@@ -412,14 +427,14 @@ OUTPUT (English with [S1] tag and max 9 words per line):"""
         
         return '\n'.join(formatted_lines)
     
-    def _enhanced_fallback_with_line_breaking(self, text: str, is_multi_speaker: bool = False) -> str:
-        """Enhanced fallback formatting with strict line breaking"""
+    def _enhanced_fallback_optimal(self, text: str, is_multi_speaker: bool = False) -> str:
+        """Enhanced fallback formatting with optimal line breaking"""
         try:
             # Simple translation first
             translation_response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Translate to natural English only. Keep it simple."},
+                    {"role": "system", "content": "Translate to natural English only. Keep it simple. Remove single quotes."},
                     {"role": "user", "content": f"Translate this to natural English: {text}"}
                 ],
                 max_tokens=150,
@@ -430,26 +445,37 @@ OUTPUT (English with [S1] tag and max 9 words per line):"""
             if translation_response and translation_response.choices:
                 english_text = translation_response.choices[0].message.content.strip()
                 
+                # Remove single quotes
+                english_text = english_text.replace("'", "")
+                english_text = english_text.replace("'", "")
+                english_text = english_text.replace("'", "")
+                
                 # Apply simple formatting
                 if not re.search(r'\[S\d+\]', english_text):
                     english_text = f"[S1] {english_text}"
                 
-                # Apply strict line breaking
-                formatted_text = self._apply_strict_line_breaking(english_text)
+                # Apply optimal line breaking
+                formatted_text = self._apply_optimal_line_breaking(english_text)
                 
                 return formatted_text
             else:
                 raise ValueError("Translation failed")
                 
         except Exception as e:
-            # Ultimate fallback with line breaking
+            # Ultimate fallback with optimal formatting
             logger.error(f"Enhanced fallback failed: {e}")
             cleaned = self._clean_text(text)
+            
+            # Remove single quotes from fallback too
+            cleaned = cleaned.replace("'", "")
+            cleaned = cleaned.replace("'", "")
+            cleaned = cleaned.replace("'", "")
+            
             if not cleaned.startswith('[S'):
                 cleaned = f"[S1] {cleaned}"
             
-            # Apply line breaking to fallback too
-            return self._apply_strict_line_breaking(cleaned)
+            # Apply optimal line breaking to fallback too
+            return self._apply_optimal_line_breaking(cleaned)
     
     def format_dialogue_batch(self, text_list: List[str], speaker_data: List, words_data_list: List[List[Dict]] = None) -> List[str]:
         """Simplified batch dialogue processing"""
@@ -492,11 +518,16 @@ OUTPUT (English with [S1] tag and max 9 words per line):"""
         return results
     
     def _clean_text(self, text: str) -> str:
-        """Clean text for processing"""
+        """Clean text for processing - remove quotes, normalize spacing"""
         # Remove excessive punctuation
         text = re.sub(r'[.]{2,}', '.', text)
         text = re.sub(r'[!]{2,}', '!', text)
         text = re.sub(r'[?]{2,}', '?', text)
+        
+        # Remove single quotes completely for clean formatting
+        text = text.replace("'", "")
+        text = text.replace("'", "")
+        text = text.replace("'", "")
         
         # Normalize spacing
         text = re.sub(r'\s+', ' ', text)
