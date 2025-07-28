@@ -246,7 +246,7 @@ class TranscriptionService:
         return marked_text.strip()
     
     def format_dialogue_text(self, text: str, speaker_data, words_data: List[Dict] = None) -> str:
-        """Enhanced translation to English with clean [S1]/[S2] speaker tags (Colab format)"""
+        """Enhanced translation to English with clean [S1]/[S2] speaker tags and proper line breaking"""
         try:
             # Handle speaker data format
             if isinstance(speaker_data, str):
@@ -266,17 +266,17 @@ class TranscriptionService:
             
             # Check cache first
             with self.cache_lock:
-                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_colab"
+                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_colab_v2"
                 if cache_key in self.translation_cache:
                     return self.translation_cache[cache_key]
             
-            # Enhanced translation and formatting (Colab style)
+            # Enhanced translation and formatting with strict line breaking
             try:
                 if len(speakers_in_segment) > 1:
-                    # Multi-speaker format - cleaner approach from Colab
+                    # Multi-speaker format with strict line breaking
                     processed_text = self._preprocess_multispeaker_text(clean_text, words_data) if words_data else clean_text
                     
-                    prompt = f"""Translate to natural English with clean speaker tags.
+                    prompt = f"""Translate to natural English with clean speaker tags and strict line breaking.
 
 TEXT: {processed_text}
 
@@ -284,44 +284,46 @@ RULES:
 - Always start with [S1] tag at the beginning
 - Use [S2], [S3] etc. for different speakers
 - NO tags for continuation lines of same speaker  
-- 3-9 words per line for optimal Dia performance
+- MAXIMUM 9 words per line - VERY IMPORTANT
+- If line has more than 9 words, break to new line
 - Natural conversational English
 - No quotes in output
 - Keep simple and clear
 
 EXAMPLE OUTPUT:
-[S1] Hello how are you
-doing today
-[S2] I am fine thanks
-for asking
-[S1] That's good to hear
+[S1] Hello how are you doing
+today my friend
+[S2] I am fine thanks for
+asking about my health
+[S1] That's good to hear from you
 
-OUTPUT (English with clean speaker tags):"""
+OUTPUT (English with clean speaker tags and max 9 words per line):"""
                 else:
-                    # Single speaker format - simplified from Colab
-                    prompt = f"""Translate to natural English.
+                    # Single speaker format with strict line breaking
+                    prompt = f"""Translate to natural English with strict line breaking.
 
 TEXT: {clean_text}
 
 RULES:
 - Start with [S1] tag only at beginning
 - NO additional speaker tags needed
-- 3-9 words per line for optimal Dia performance
+- MAXIMUM 9 words per line - VERY IMPORTANT
+- If line has more than 9 words, break to new line
 - Natural conversational English
 - No quotes in output
 - Keep simple and clear
 
 EXAMPLE OUTPUT:
-[S1] Hello this is example text
-yes I understand perfectly
-great let's continue
+[S1] Hello this is example text that
+demonstrates proper line breaking with
+maximum nine words per line always
 
-OUTPUT (English with [S1] tag at start only):"""
+OUTPUT (English with [S1] tag and max 9 words per line):"""
                 
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "Translate with clean speaker formatting optimized for Dia voice cloning. Keep it simple and natural."},
+                        {"role": "system", "content": "Translate with clean speaker formatting and strict line breaking (max 9 words per line) optimized for Dia voice cloning."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=300,
@@ -331,7 +333,7 @@ OUTPUT (English with [S1] tag at start only):"""
                 
                 if response and response.choices:
                     formatted_text = response.choices[0].message.content.strip()
-                    formatted_text = self._clean_formatted_text_colab_style(formatted_text)
+                    formatted_text = self._clean_and_format_with_line_breaking(formatted_text)
                     
                     with self.cache_lock:
                         self.translation_cache[cache_key] = formatted_text
@@ -341,14 +343,14 @@ OUTPUT (English with [S1] tag at start only):"""
                 
             except Exception as openai_error:
                 logger.warning(f"OpenAI formatting failed: {openai_error}")
-                # Enhanced fallback translation
-                return self._enhanced_fallback_format(clean_text, is_multi_speaker)
+                # Enhanced fallback with proper line breaking
+                return self._enhanced_fallback_with_line_breaking(clean_text, is_multi_speaker)
                 
         except Exception as e:
             raise ValueError(f"Enhanced text formatting failed for speaker {speaker}: {str(e)}")
     
-    def _clean_formatted_text_colab_style(self, text: str) -> str:
-        """Clean formatted text using Colab approach"""
+    def _clean_and_format_with_line_breaking(self, text: str) -> str:
+        """Clean formatted text and ensure proper line breaking (max 9 words per line)"""
         # Remove quotes and extra whitespace
         text = re.sub(r'^["\s]*', '', text).strip()
         text = re.sub(r'["\s]*$', '', text)
@@ -360,14 +362,58 @@ OUTPUT (English with [S1] tag at start only):"""
         if not re.search(r'\[S\d+\]', text):
             text = f"[S1] {text}"
         
-        # Clean up multiple spaces and normalize line breaks
+        # Clean up multiple spaces
         text = re.sub(r'\s+', ' ', text)
-        text = re.sub(r'\s*\n\s*', '\n', text)
         
-        return text
+        # Apply strict line breaking (max 9 words per line)
+        formatted_text = self._apply_strict_line_breaking(text)
+        
+        return formatted_text
     
-    def _enhanced_fallback_format(self, text: str, is_multi_speaker: bool = False) -> str:
-        """Enhanced fallback formatting with proper structure"""
+    def _apply_strict_line_breaking(self, text: str) -> str:
+        """Apply strict line breaking with maximum 9 words per line"""
+        lines = text.split('\n')
+        formatted_lines = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            words = line.split()
+            if len(words) <= 9:
+                # Line is fine as is
+                formatted_lines.append(line)
+            else:
+                # Break line into chunks of max 9 words
+                current_line = []
+                speaker_tag = None
+                
+                for word in words:
+                    # Check if word is a speaker tag
+                    if word.startswith('[S') and ']' in word:
+                        # If we have accumulated words, save them first
+                        if current_line:
+                            formatted_lines.append(' '.join(current_line))
+                            current_line = []
+                        speaker_tag = word
+                        current_line.append(word)
+                    else:
+                        current_line.append(word)
+                        
+                        # If we hit 9 words, start a new line
+                        if len(current_line) >= 9:
+                            formatted_lines.append(' '.join(current_line))
+                            current_line = []
+                
+                # Add remaining words
+                if current_line:
+                    formatted_lines.append(' '.join(current_line))
+        
+        return '\n'.join(formatted_lines)
+    
+    def _enhanced_fallback_with_line_breaking(self, text: str, is_multi_speaker: bool = False) -> str:
+        """Enhanced fallback formatting with strict line breaking"""
         try:
             # Simple translation first
             translation_response = self.openai_client.chat.completions.create(
@@ -388,47 +434,22 @@ OUTPUT (English with [S1] tag at start only):"""
                 if not re.search(r'\[S\d+\]', english_text):
                     english_text = f"[S1] {english_text}"
                 
-                # Format for optimal Dia performance (3-9 words per line)
-                words = english_text.split()
-                if len(words) > 9:
-                    # Break into chunks of 3-9 words
-                    formatted_lines = []
-                    current_line = []
-                    speaker_tag_used = False
-                    
-                    for word in words:
-                        if word.startswith('[S') and ']' in word:
-                            # Handle speaker tags
-                            if current_line:
-                                formatted_lines.append(' '.join(current_line))
-                                current_line = []
-                            current_line.append(word)
-                            speaker_tag_used = True
-                        else:
-                            current_line.append(word)
-                            
-                            # Break line when we have 6-9 words (optimal for Dia)
-                            if len(current_line) >= 7:
-                                formatted_lines.append(' '.join(current_line))
-                                current_line = []
-                    
-                    # Add remaining words
-                    if current_line:
-                        formatted_lines.append(' '.join(current_line))
-                    
-                    english_text = '\n'.join(formatted_lines)
+                # Apply strict line breaking
+                formatted_text = self._apply_strict_line_breaking(english_text)
                 
-                return english_text
+                return formatted_text
             else:
                 raise ValueError("Translation failed")
                 
         except Exception as e:
-            # Ultimate fallback
+            # Ultimate fallback with line breaking
             logger.error(f"Enhanced fallback failed: {e}")
             cleaned = self._clean_text(text)
-            return f"[S1] {cleaned}" if not cleaned.startswith('[S') else cleaned
-    
-
+            if not cleaned.startswith('[S'):
+                cleaned = f"[S1] {cleaned}"
+            
+            # Apply line breaking to fallback too
+            return self._apply_strict_line_breaking(cleaned)
     
     def format_dialogue_batch(self, text_list: List[str], speaker_data: List, words_data_list: List[List[Dict]] = None) -> List[str]:
         """Simplified batch dialogue processing"""

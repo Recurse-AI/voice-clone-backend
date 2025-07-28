@@ -229,7 +229,7 @@ class VoiceCloningService:
                         cloned_audio = self._generate_single_segment_enhanced(
                             english_text, 
                             audio_path, 
-                            segment.get('original_text', english_text),
+                            english_text, # Pass English text for both reference and generation
                             params
                         )
                         
@@ -369,7 +369,7 @@ class VoiceCloningService:
     
     def _generate_single_segment_enhanced(self, text: str, reference_audio_path: str, 
                                         reference_text: str, params: Dict) -> Optional[np.ndarray]:
-        """Enhanced single segment generation with advanced parameter controls"""
+        """Enhanced single segment generation with English text for both reference and generation"""
         try:
             # Clean text for voice generation
             clean_text = text.strip()
@@ -377,11 +377,16 @@ class VoiceCloningService:
                 logger.warning("Empty text provided for voice generation")
                 return None
             
-            # OFFICIAL DIA FORMAT: reference_transcript + generation_text
-            # This is the REQUIRED format for voice cloning according to Dia documentation
-            full_text = reference_text + " " + clean_text
+            # Use English text for both reference and generation (as requested)
+            # This ensures consistency and better voice cloning results
+            english_reference = clean_text  # Use the English text as reference
+            english_generation = clean_text  # Use the same English text for generation
             
-            logger.info(f"Generating with enhanced Dia voice cloning - Reference: '{reference_text[:30]}...', Generate: '{clean_text[:30]}...'")
+            # ENHANCED DIA FORMAT: English_reference + English_generation
+            # Both parts are now in English for better consistency
+            full_text = english_reference + " " + english_generation
+            
+            logger.info(f"Generating with enhanced Dia voice cloning - English Reference: '{english_reference[:30]}...', English Generation: '{english_generation[:30]}...'")
             
             with torch.inference_mode():
                 # Generate audio with enhanced parameters from Colab
