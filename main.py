@@ -310,8 +310,8 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
                     cfg_scale=cfg_scale,
                     temperature=temperature,
                     top_p=top_p,
-                    cfg_filter_top_k=settings.DIA_CFG_FILTER_TOP_K,
-                    max_tokens=settings.DIA_MAX_TOKENS,
+                    cfg_filter_top_k=settings.DIA_ENHANCED_CFG_FILTER_TOP_K,
+                    max_tokens=settings.DIA_ENHANCED_MAX_TOKENS,
                     verbose=False
                 )
             
