@@ -39,11 +39,11 @@ class Settings(BaseSettings):
     # These provide better control and consistency for voice cloning
     DIA_ENHANCED_MAX_TOKENS: int = 3072  # ~36 seconds (Colab optimal)
     DIA_ENHANCED_CFG_SCALE: float = 3.0  # Better adherence balance (Colab optimal)
-    DIA_ENHANCED_TEMPERATURE: float = 1.2  # Optimal randomness (Colab optimal)
+    DIA_ENHANCED_TEMPERATURE: float = 1.8  # Optimal randomness (Reference code optimal)
     DIA_ENHANCED_TOP_P: float = 0.95  # Nucleus sampling (Colab optimal)
     DIA_ENHANCED_CFG_FILTER_TOP_K: int = 45  # CFG filtering (Colab optimal)
-    DIA_ENHANCED_SPEED_FACTOR: float = 0.92  # Audio speed adjustment (Colab optimal)
-    DIA_ENHANCED_USE_TORCH_COMPILE: bool = True  # Performance optimization
+    DIA_ENHANCED_SPEED_FACTOR: float = 1.0  # Audio speed adjustment (Reference optimal)
+    DIA_ENHANCED_USE_TORCH_COMPILE: bool = False  # Keep False for stability like reference
     
 
     

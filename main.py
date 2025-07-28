@@ -149,11 +149,11 @@ async def process_video(
     # Enhanced Dia Parameters (Colab optimized defaults)
     max_tokens: int = Form(3072, description="Maximum tokens for generation (~36 seconds audio)"),
     cfg_scale: float = Form(3.0, description="CFG scale for voice cloning (1.0-15.0)"),
-    temperature: float = Form(1.2, description="Voice cloning temperature (0.5-2.0)"),
+    temperature: float = Form(1.8, description="Voice cloning temperature (0.5-2.0) - Reference optimized"),
     top_p: float = Form(0.95, description="Top-p for voice cloning (0.5-1.0)"),
     cfg_filter_top_k: int = Form(45, description="CFG filter top K (15-100)"),
-    speed_factor: float = Form(0.92, description="Audio speed factor (0.5-1.5)"),
-    use_torch_compile: bool = Form(True, description="Use torch.compile for optimization"),
+    speed_factor: float = Form(1.0, description="Audio speed factor (0.5-1.5) - Reference optimal"),
+    use_torch_compile: bool = Form(False, description="Use torch.compile for optimization - Reference stable"),
     target_language: str = Form("English", description="Target language for translation"),
     language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
     speakers_expected: Optional[str] = Form(None, description="Expected number of speakers (1-10)")

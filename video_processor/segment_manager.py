@@ -19,9 +19,9 @@ class SegmentManager:
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.optimal_duration = 8.0  # Dia works best with 5-10s segments
-        self.min_duration = 5.0  # Dia recommendation: at least 5s for natural sound
-        self.max_duration = 10.0  # Dia recommendation: max 10s for best quality
+        self.optimal_duration = 9.0  # Changed to 9s as requested
+        self.min_duration = 5.0  # Keep minimum 5s as requested
+        self.max_duration = 10.0  # Keep max 10s for quality
         self.silence_threshold = -40  # dB
         self.min_gap_duration = 2.5  # Only consider gaps >= 2.5s as actual breaks
     
@@ -57,18 +57,17 @@ class SegmentManager:
         
         segments = self._create_simplified_segments(valid_words, total_duration, first_word_start)
         
-        # Filter out segments shorter than minimum duration (with some flexibility)
-        min_filter_duration = max(3.0, self.min_duration * 0.8)  # Allow 80% of min_duration but not below 3s
-        valid_segments = [s for s in segments if s.get('duration', 0) >= min_filter_duration]
+        # Filter out segments shorter than minimum duration with improved logic
+        final_segments = self._validate_and_fix_segments(segments, total_duration)
         
-        if len(valid_segments) != len(segments):
-            logger.info(f"Filtered {len(segments) - len(valid_segments)} segments shorter than {self.min_duration}s")
+        if len(final_segments) != len(segments):
+            logger.info(f"Processed {len(segments)} initial segments into {len(final_segments)} final segments")
         
-        return valid_segments
+        return final_segments
     
     def _create_simplified_segments(self, words: List[Dict], total_duration: float, 
                                    first_word_start: float) -> List[Dict]:
-        """Create segments with simplified logic - only break on significant gaps (>=2.5s)"""
+        """Create 9-second segments with proper concatenation for short segments"""
         segments = []
         current_segment = {
             'words': [],
@@ -92,23 +91,24 @@ class SegmentManager:
             if not word_text:
                 continue
             
-            # Only consider significant gaps (>= min_gap_duration) as breaks
-            significant_gap = word_start > current_time + self.min_gap_duration
-            
-            # Check if we need to finish current segment
-            should_split = False
-            
-            # Duration-based splitting
+            # Check if we need to finish current segment based on 9-second target
             potential_end = word_end
             potential_duration = potential_end - current_segment['start']
             
-            if potential_duration > self.max_duration:
+            # Split when reaching optimal duration (9s) or on significant gaps
+            significant_gap = word_start > current_time + self.min_gap_duration
+            should_split = False
+            
+            if potential_duration >= self.optimal_duration:  # 9 seconds
                 should_split = True
+                logger.info(f"Segment reached optimal duration: {potential_duration:.2f}s")
             elif significant_gap and len(current_segment['words']) > 0:
-                # Only split on significant gaps
-                gap_duration = word_start - current_time
-                logger.info(f"Significant gap detected: {gap_duration:.2f}s at {current_time:.2f}s - creating new segment")
-                should_split = True
+                # Only split on significant gaps if we have some content
+                current_duration = current_time - current_segment['start']
+                if current_duration >= 3.0:  # At least 3s before considering gap split
+                    gap_duration = word_start - current_time
+                    logger.info(f"Significant gap detected: {gap_duration:.2f}s at {current_time:.2f}s")
+                    should_split = True
             
             if should_split and current_segment['words']:
                 # Finalize current segment
@@ -117,11 +117,8 @@ class SegmentManager:
                 current_segment['text'] = ' '.join([w.get('text', '') for w in current_segment['words']])
                 current_segment['is_multi_speaker'] = len(current_segment['speakers_in_segment']) > 1
                 
-                # Only add segment if it meets minimum duration
-                if current_segment['duration'] >= self.min_duration:
-                    segments.append(current_segment.copy())
-                else:
-                    logger.info(f"Skipping short segment: {current_segment['duration']:.2f}s < {self.min_duration}s")
+                segments.append(current_segment.copy())
+                logger.info(f"Created segment {len(segments)}: {current_segment['duration']:.2f}s ({current_segment['start']:.2f}s - {current_segment['end']:.2f}s)")
                 
                 # Start new segment
                 current_segment = {
@@ -143,29 +140,97 @@ class SegmentManager:
             
             current_time = word_end
         
-        # Finalize last segment
+        # Handle final segment
         if current_segment['words']:
             current_segment['end'] = total_duration  # Ensure coverage to end
             current_segment['duration'] = current_segment['end'] - current_segment['start']
             current_segment['text'] = ' '.join([w.get('text', '') for w in current_segment['words']])
             current_segment['is_multi_speaker'] = len(current_segment['speakers_in_segment']) > 1
             
-            # Only add segment if it meets minimum duration
-            if current_segment['duration'] >= self.min_duration:
-                segments.append(current_segment)
+            # Check if final segment is too short and needs concatenation
+            if current_segment['duration'] < self.min_duration and segments:
+                logger.info(f"Final segment too short ({current_segment['duration']:.2f}s), concatenating with previous")
+                # Concatenate with the last segment
+                last_segment = segments[-1]
+                last_segment['end'] = total_duration
+                last_segment['duration'] = last_segment['end'] - last_segment['start']
+                last_segment['text'] += ' ' + current_segment['text']
+                last_segment['words'].extend(current_segment['words'])
+                last_segment['speakers_in_segment'].update(current_segment['speakers_in_segment'])
+                last_segment['is_multi_speaker'] = len(last_segment['speakers_in_segment']) > 1
+                logger.info(f"Extended last segment to {last_segment['duration']:.2f}s")
             else:
-                logger.info(f"Skipping final short segment: {current_segment['duration']:.2f}s < {self.min_duration}s")
-                
-                # If we have previous segments, extend the last one to cover the remaining duration
-                if segments:
-                    segments[-1]['end'] = total_duration
-                    segments[-1]['duration'] = segments[-1]['end'] - segments[-1]['start']
-                    segments[-1]['text'] += ' ' + current_segment['text']
-                    segments[-1]['words'].extend(current_segment['words'])
-                    logger.info(f"Extended last segment to cover remaining duration")
+                segments.append(current_segment)
+                logger.info(f"Added final segment: {current_segment['duration']:.2f}s")
         
-        logger.info(f"Created {len(segments)} segments covering 0.0s to {total_duration:.2f}s with minimum {self.min_duration}s duration")
-        return segments
+        # Post-process: Check for any remaining short segments and concatenate them
+        final_segments = []
+        for i, segment in enumerate(segments):
+            if segment['duration'] < self.min_duration and final_segments:
+                # Concatenate with previous segment
+                logger.info(f"Concatenating short segment {i+1} ({segment['duration']:.2f}s) with previous")
+                prev_segment = final_segments[-1]
+                prev_segment['end'] = segment['end']
+                prev_segment['duration'] = prev_segment['end'] - prev_segment['start']
+                prev_segment['text'] += ' ' + segment['text']
+                prev_segment['words'].extend(segment['words'])
+                prev_segment['speakers_in_segment'].update(segment['speakers_in_segment'])
+                prev_segment['is_multi_speaker'] = len(prev_segment['speakers_in_segment']) > 1
+            else:
+                final_segments.append(segment)
+        
+        logger.info(f"Created {len(final_segments)} final segments covering 0.0s to {total_duration:.2f}s with 9s target duration")
+        return final_segments
+    
+    def _validate_and_fix_segments(self, segments: List[Dict], total_duration: float) -> List[Dict]:
+        """Validate segments and fix any that are too short by concatenating"""
+        if not segments:
+            return segments
+        
+        validated_segments = []
+        
+        for i, segment in enumerate(segments):
+            current_duration = segment.get('duration', 0)
+            
+            # If segment is too short and we have previous segments, try to concatenate
+            if current_duration < self.min_duration and validated_segments:
+                logger.info(f"Segment {i+1} is too short ({current_duration:.2f}s), concatenating with previous")
+                
+                # Merge with the last validated segment
+                last_segment = validated_segments[-1]
+                last_segment['end'] = segment['end']
+                last_segment['duration'] = last_segment['end'] - last_segment['start']
+                last_segment['text'] += ' ' + segment['text']
+                last_segment['words'].extend(segment['words'])
+                last_segment['speakers_in_segment'].update(segment['speakers_in_segment'])
+                last_segment['is_multi_speaker'] = len(last_segment['speakers_in_segment']) > 1
+                
+                logger.info(f"Merged segment, new duration: {last_segment['duration']:.2f}s")
+                
+            elif current_duration >= self.min_duration:
+                # Segment is valid, add it
+                validated_segments.append(segment)
+                logger.info(f"Added valid segment {i+1}: {current_duration:.2f}s")
+                
+            else:
+                # First segment is too short, extend it to minimum duration if possible
+                if i == 0 and current_duration < self.min_duration:
+                    # Extend to minimum duration or to next natural break
+                    target_end = min(segment['start'] + self.min_duration, total_duration)
+                    segment['end'] = target_end
+                    segment['duration'] = target_end - segment['start']
+                    validated_segments.append(segment)
+                    logger.info(f"Extended first short segment to {segment['duration']:.2f}s")
+                else:
+                    logger.warning(f"Dropping very short segment {i+1}: {current_duration:.2f}s")
+        
+        # Final validation - ensure last segment covers to the end
+        if validated_segments and validated_segments[-1]['end'] < total_duration:
+            validated_segments[-1]['end'] = total_duration
+            validated_segments[-1]['duration'] = validated_segments[-1]['end'] - validated_segments[-1]['start']
+            logger.info(f"Extended final segment to cover full duration: {validated_segments[-1]['duration']:.2f}s")
+        
+        return validated_segments
     
     def _create_segment(self, words: List[Dict], start: float, end: float) -> Optional[Dict]:
         """Create segment with speaker information"""

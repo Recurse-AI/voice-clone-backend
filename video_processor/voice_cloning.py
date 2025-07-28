@@ -369,48 +369,62 @@ class VoiceCloningService:
     
     def _generate_single_segment_enhanced(self, text: str, reference_audio_path: str, 
                                         reference_text: str, params: Dict) -> Optional[np.ndarray]:
-        """Enhanced single segment generation with English text for both reference and generation"""
+        """Generate single segment with enhanced parameters following reference code patterns"""
+        if not self.dia_model:
+            logger.error("Dia model not loaded")
+            return None
+        
         try:
-            # Clean text for voice generation
-            clean_text = text.strip()
-            if not clean_text:
-                logger.warning("Empty text provided for voice generation")
-                return None
+            # Use reference text as the audio prompt text (same as original for consistency)
+            # This matches the reference code pattern where both texts should be the same
+            if reference_text and reference_text.strip():
+                # Combine reference text with current text following reference pattern
+                combined_text = reference_text.strip() + "\n" + text.strip()
+                generation_text = combined_text.strip()
+            else:
+                generation_text = text.strip()
             
-            # Use English text for both reference and generation (as requested)
-            # This ensures consistency and better voice cloning results
-            english_reference = clean_text  # Use the English text as reference
-            english_generation = clean_text  # Use the same English text for generation
+            logger.info(f"Generating with reference audio and combined text")
+            logger.info(f"Generation text: {generation_text[:100]}...")
             
-            # ENHANCED DIA FORMAT: English_reference + English_generation
-            # Both parts are now in English for better consistency
-            full_text = english_reference + " " + english_generation
+            # Use enhanced parameters matching reference code defaults
+            max_tokens = params.get('max_tokens', 3072)  # Reference default
+            cfg_scale = params.get('cfg_scale', 3.0)     # Reference default
+            temperature = params.get('temperature', 1.8) # Reference default (higher than our old 1.2)
+            top_p = params.get('top_p', 0.95)            # Reference default
+            cfg_filter_top_k = params.get('cfg_filter_top_k', 45)  # Reference default
+            use_torch_compile = params.get('use_torch_compile', False)  # Reference keeps False for stability
             
-            logger.info(f"Generating with enhanced Dia voice cloning - English Reference: '{english_reference[:30]}...', English Generation: '{english_generation[:30]}...'")
+            logger.info(f"Using parameters: max_tokens={max_tokens}, cfg_scale={cfg_scale}, temp={temperature}, top_p={top_p}, cfg_filter_top_k={cfg_filter_top_k}")
             
+            # Generate with torch.inference_mode() like reference code
             with torch.inference_mode():
-                # Generate audio with enhanced parameters from Colab
-                audio = self.dia_model.generate(
-                    text=full_text,
-                    audio_prompt=reference_audio_path,
-                    max_tokens=params['max_tokens'],
-                    cfg_scale=params['cfg_scale'],
-                    temperature=params['temperature'],
-                    top_p=params['top_p'],
-                    cfg_filter_top_k=params['cfg_filter_top_k'],
-                    use_torch_compile=params['use_torch_compile'],
-                    verbose=params.get('verbose', False)
+                generated_audio = self.dia_model.generate(
+                    text=generation_text,
+                    audio_prompt=reference_audio_path,  # Use reference audio like in reference code
+                    max_tokens=settings.DIA_ENHANCED_MAX_TOKENS,
+                    cfg_scale=settings.DIA_ENHANCED_CFG_SCALE,
+                    temperature=settings.DIA_ENHANCED_TEMPERATURE,
+                    top_p=settings.DIA_ENHANCED_TOP_P,
+                    cfg_filter_top_k=settings.DIA_ENHANCED_CFG_FILTER_TOP_K,
+                    use_torch_compile=settings.DIA_ENHANCED_USE_TORCH_COMPILE,
+                    verbose=False  # Keep quiet for production
                 )
             
-            if audio is None or len(audio) == 0:
-                logger.error("Dia model returned empty audio")
+            if generated_audio is not None and len(generated_audio) > 0:
+                # Apply speed factor if specified (following reference code pattern)
+                speed_factor = params.get('speed_factor', 1.0)
+                if speed_factor != 1.0:
+                    generated_audio = self._apply_speed_factor(generated_audio, speed_factor)
+                
+                logger.info(f"Successfully generated audio: {generated_audio.shape} samples")
+                return generated_audio
+            else:
+                logger.warning("Generated audio is empty or None")
                 return None
-            
-            logger.info(f"Enhanced audio generation completed - generated {len(audio)/self.sample_rate:.3f}s of audio")
-            return audio
-            
+                
         except Exception as e:
-            logger.error(f"Enhanced audio generation failed: {str(e)}")
+            logger.error(f"Error in enhanced generation: {str(e)}")
             return None
     
     def _apply_speed_factor(self, audio: np.ndarray, speed_factor: float) -> np.ndarray:

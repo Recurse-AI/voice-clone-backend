@@ -246,7 +246,7 @@ class TranscriptionService:
         return marked_text.strip()
     
     def format_dialogue_text(self, text: str, speaker_data, words_data: List[Dict] = None) -> str:
-        """Enhanced translation to English with clean formatting (max 7 words, optimal 3-5)"""
+        """Enhanced translation to English with clean formatting and consistent reference text"""
         try:
             # Handle speaker data format
             if isinstance(speaker_data, str):
@@ -266,17 +266,17 @@ class TranscriptionService:
             
             # Check cache first
             with self.cache_lock:
-                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_v3_max7"
+                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_v4_reference_match"
                 if cache_key in self.translation_cache:
                     return self.translation_cache[cache_key]
             
-            # Enhanced translation and formatting with optimal line breaking
+            # Enhanced translation with reference code style formatting
             try:
                 if len(speakers_in_segment) > 1:
-                    # Multi-speaker format with optimal line breaking
+                    # Multi-speaker format following reference patterns
                     processed_text = self._preprocess_multispeaker_text(clean_text, words_data) if words_data else clean_text
                     
-                    prompt = f"""Translate to natural English with clean speaker tags and optimal line breaking.
+                    prompt = f"""Translate to natural English with clean speaker tags for voice cloning.
 
 TEXT: {processed_text}
 
@@ -284,54 +284,45 @@ RULES:
 - Always start with [S1] tag at the beginning
 - Use [S2], [S3] etc. for different speakers
 - NO tags for continuation lines of same speaker  
-- MAXIMUM 7 words per line - VERY IMPORTANT
-- OPTIMAL 3-5 words per line for best results
+- Keep lines natural and clear for voice synthesis
 - NO single quotes (') in output - remove them
 - Natural conversational English
-- No quotes in output
-- Keep simple, clean and neat
+- Lines should follow natural speech patterns
+- Maintain speaker consistency throughout
 
 EXAMPLE OUTPUT:
-[S1] Hello how are you
-doing today friend
-[S2] I am fine thanks
-for asking about it
-[S1] That is good news
+[S1] Hello how are you doing today
+[S2] I am fine thanks for asking
+[S1] That is good to hear
 
-OUTPUT (English with clean speaker tags, max 7 words, optimal 3-5):"""
+OUTPUT (English with clean speaker tags):"""
                 else:
-                    # Single speaker format with optimal line breaking
-                    prompt = f"""Translate to natural English with optimal line breaking.
+                    # Single speaker format following reference patterns
+                    prompt = f"""Translate to natural English for voice cloning synthesis.
 
 TEXT: {clean_text}
 
 RULES:
 - Start with [S1] tag only at beginning
 - NO additional speaker tags needed
-- MAXIMUM 7 words per line - VERY IMPORTANT
-- OPTIMAL 3-5 words per line for best results
-- NO single quotes (') in output - remove them
+- Keep lines natural for voice synthesis
 - Natural conversational English
-- No quotes in output
-- Keep simple, clean and neat
-- Try to keep the text as close to the original as possible 
-- If the text is too long, break it into multiple lines
-- Try to generate words that are close to the original text
-- try to keep everything in max 5 lines
-
+- Lines should follow natural speech patterns
+- Maintain consistency for voice cloning
+- Keep the original meaning and emotion
+- Try to keep the text as close to the original as possible
+- Don't make any line too long i.e more than 7 words
 
 EXAMPLE OUTPUT:
-[S1] Hello this is example
-text that demonstrates proper
-line breaking with optimal
-word count per line
+[S1] Hello this is an example of natural speech
+that flows well for voice synthesis
 
-OUTPUT (English with [S1] tag, max 7 words, optimal 3-5):"""
+OUTPUT (English with [S1] tag):"""
                 
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "Translate with clean speaker formatting and optimal line breaking (max 7 words, optimal 3-5) optimized for Dia voice cloning. Remove all single quotes."},
+                        {"role": "system", "content": "Translate with clean formatting optimized for voice cloning. Remove all single quotes. Keep natural speech patterns."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=300,
@@ -341,7 +332,7 @@ OUTPUT (English with [S1] tag, max 7 words, optimal 3-5):"""
                 
                 if response and response.choices:
                     formatted_text = response.choices[0].message.content.strip()
-                    formatted_text = self._clean_and_format_optimal(formatted_text)
+                    formatted_text = self._clean_and_format_reference_style(formatted_text)
                     
                     with self.cache_lock:
                         self.translation_cache[cache_key] = formatted_text
@@ -351,22 +342,18 @@ OUTPUT (English with [S1] tag, max 7 words, optimal 3-5):"""
                 
             except Exception as openai_error:
                 logger.warning(f"OpenAI formatting failed: {openai_error}")
-                # Enhanced fallback with optimal line breaking
-                return self._enhanced_fallback_optimal(clean_text, is_multi_speaker)
+                # Enhanced fallback with reference style
+                return self._enhanced_fallback_reference_style(clean_text, is_multi_speaker)
                 
         except Exception as e:
             raise ValueError(f"Enhanced text formatting failed for speaker {speaker}: {str(e)}")
     
-    def _clean_and_format_optimal(self, text: str) -> str:
-        """Clean formatted text and ensure optimal formatting (max 7 words, no quotes)"""
+    def _clean_and_format_reference_style(self, text: str) -> str:
+        """Clean formatted text following reference code patterns"""
         # Remove quotes and extra whitespace
         text = re.sub(r'^["\s]*', '', text).strip()
         text = re.sub(r'["\s]*$', '', text)
         
-        # Remove single quotes completely
-        text = text.replace("'", "")
-        text = text.replace("'", "")
-        text = text.replace("'", "")
         
         if not text:
             raise ValueError("Empty response from OpenAI")
@@ -375,16 +362,16 @@ OUTPUT (English with [S1] tag, max 7 words, optimal 3-5):"""
         if not re.search(r'\[S\d+\]', text):
             text = f"[S1] {text}"
         
-        # Clean up multiple spaces
+        # Clean up multiple spaces and normalize formatting
         text = re.sub(r'\s+', ' ', text)
         
-        # Apply optimal line breaking (max 7 words, prefer 3-5)
-        formatted_text = self._apply_optimal_line_breaking(text)
+        # Apply reference-style line breaking (natural speech patterns)
+        formatted_text = self._apply_reference_line_breaking(text)
         
         return formatted_text
     
-    def _apply_optimal_line_breaking(self, text: str) -> str:
-        """Apply optimal line breaking with maximum 7 words per line (prefer 3-5)"""
+    def _apply_reference_line_breaking(self, text: str) -> str:
+        """Apply line breaking following reference code natural speech patterns"""
         lines = text.split('\n')
         formatted_lines = []
         
@@ -392,50 +379,32 @@ OUTPUT (English with [S1] tag, max 7 words, optimal 3-5):"""
             line = line.strip()
             if not line:
                 continue
+            
+            # Check if line has speaker tag
+            speaker_match = re.match(r'(\[S\d+\])\s*(.*)', line)
+            if speaker_match:
+                speaker_tag = speaker_match.group(1)
+                content = speaker_match.group(2)
                 
-            words = line.split()
-            if len(words) <= 5:
-                # Line is optimal as is (3-5 words)
-                formatted_lines.append(line)
-            elif len(words) <= 7:
-                # Line is acceptable as is (6-7 words)
-                formatted_lines.append(line)
+                if content:
+                    # Format content following natural speech patterns
+                    formatted_lines.append(f"{speaker_tag} {content}")
+                else:
+                    formatted_lines.append(speaker_tag)
             else:
-                # Break line into optimal chunks (3-5 words, max 7)
-                current_line = []
-                speaker_tag = None
-                
-                for word in words:
-                    # Check if word is a speaker tag
-                    if word.startswith('[S') and ']' in word:
-                        # If we have accumulated words, save them first
-                        if current_line:
-                            formatted_lines.append(' '.join(current_line))
-                            current_line = []
-                        speaker_tag = word
-                        current_line.append(word)
-                    else:
-                        current_line.append(word)
-                        
-                        # Prefer 5 words per line for optimal results
-                        if len(current_line) >= 5:
-                            formatted_lines.append(' '.join(current_line))
-                            current_line = []
-                
-                # Add remaining words
-                if current_line:
-                    formatted_lines.append(' '.join(current_line))
+                # Continuation line without speaker tag
+                formatted_lines.append(line)
         
         return '\n'.join(formatted_lines)
     
-    def _enhanced_fallback_optimal(self, text: str, is_multi_speaker: bool = False) -> str:
-        """Enhanced fallback formatting with optimal line breaking"""
+    def _enhanced_fallback_reference_style(self, text: str, is_multi_speaker: bool = False) -> str:
+        """Enhanced fallback formatting following reference patterns"""
         try:
             # Simple translation first
             translation_response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Translate to natural English only. Keep it simple. Remove single quotes."},
+                    {"role": "system", "content": "Translate to natural English only. Keep it simple and natural for voice synthesis. Remove single quotes."},
                     {"role": "user", "content": f"Translate this to natural English: {text}"}
                 ],
                 max_tokens=150,
@@ -455,15 +424,15 @@ OUTPUT (English with [S1] tag, max 7 words, optimal 3-5):"""
                 if not re.search(r'\[S\d+\]', english_text):
                     english_text = f"[S1] {english_text}"
                 
-                # Apply optimal line breaking
-                formatted_text = self._apply_optimal_line_breaking(english_text)
+                # Apply reference-style formatting
+                formatted_text = self._apply_reference_line_breaking(english_text)
                 
                 return formatted_text
             else:
                 raise ValueError("Translation failed")
                 
         except Exception as e:
-            # Ultimate fallback with optimal formatting
+            # Ultimate fallback with reference formatting
             logger.error(f"Enhanced fallback failed: {e}")
             cleaned = self._clean_text(text)
             
@@ -475,8 +444,8 @@ OUTPUT (English with [S1] tag, max 7 words, optimal 3-5):"""
             if not cleaned.startswith('[S'):
                 cleaned = f"[S1] {cleaned}"
             
-            # Apply optimal line breaking to fallback too
-            return self._apply_optimal_line_breaking(cleaned)
+            # Apply reference formatting to fallback too
+            return self._apply_reference_line_breaking(cleaned)
     
     def format_dialogue_batch(self, text_list: List[str], speaker_data: List, words_data_list: List[List[Dict]] = None) -> List[str]:
         """Simplified batch dialogue processing"""
