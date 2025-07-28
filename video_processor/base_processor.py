@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime
 import logging
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -100,10 +101,18 @@ class AudioProcessor:
             return {"success": False, "error": f"Audio processing failed: {str(e)}"}
     
     def clone_voice_segments(self, segments_dir: str, audio_id: str, 
-                           temperature: float = 1.0, cfg_scale: float = 3.5, 
-                           top_p: float = 0.95, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Simplified voice cloning with unified segment processing from single folder"""
-        logger.info(f"Starting unified voice cloning for audio_id: {audio_id}")
+                           # Enhanced parameter controls from Colab
+                           max_tokens: int = None,
+                           cfg_scale: float = None, 
+                           temperature: float = None,
+                           top_p: float = None,
+                           cfg_filter_top_k: int = None,
+                           speed_factor: float = None,
+                           seed: Optional[int] = None, 
+                           use_torch_compile: bool = None) -> Dict[str, Any]:
+        """Enhanced voice cloning with advanced parameter controls and unified segment processing"""
+        logger.info(f"Starting enhanced unified voice cloning for audio_id: {audio_id}")
+        logger.info(f"Parameters: max_tokens={max_tokens}, cfg_scale={cfg_scale}, temp={temperature}, top_p={top_p}, speed={speed_factor}")
         
         if not self.voice_cloning_service.is_model_loaded():
             logger.error("Dia model not loaded")
@@ -113,50 +122,57 @@ class AudioProcessor:
         
         try:
             segments_path = Path(segments_dir)
-            logger.info(f"Segments directory: {segments_path}")
+            if not segments_path.exists():
+                logger.error(f"Segments directory not found: {segments_dir}")
+                return {"success": False, "error": "Segments directory not found"}
             
-            base_seed = seed or settings.DEFAULT_SEED
-            logger.info(f"Base seed: {base_seed}")
+            # Get all JSON metadata files from segments subdirectory
+            segments_subdir = segments_path / "segments"
+            if not segments_subdir.exists():
+                logger.error(f"Segments subdirectory not found: {segments_subdir}")
+                return {"success": False, "error": "Segments subdirectory not found"}
             
-            # Collect all segments from single segments folder
+            metadata_files = sorted(list(segments_subdir.glob("*_metadata.json")))
+            logger.info(f"Found {len(metadata_files)} metadata files in {segments_subdir}")
+            
+            if not metadata_files:
+                logger.error("No segment metadata files found")
+                return {"success": False, "error": "No segment metadata files found"}
+            
+            # Collect all segments
             all_segments = []
-            segments_folder = segments_path / "segments"
+            base_seed = seed if seed is not None else random.randint(1, 1000000)
             
-            if not segments_folder.exists():
-                logger.error(f"Segments folder not found: {segments_folder}")
-                return {"success": False, "error": "Segments folder not found"}
-            
-            # Collect all segment metadata files
-            json_files = sorted(list(segments_folder.glob("*_metadata.json")))
-            logger.info(f"Found {len(json_files)} metadata files in {segments_folder}")
-            
-            # List all files in segments folder for debugging
-            all_files = list(segments_folder.glob("*"))
-            logger.info(f"All files in segments folder: {[f.name for f in all_files]}")
-            
-            for json_file in json_files:
+            for json_file in metadata_files:
                 try:
-                    logger.info(f"Processing metadata file: {json_file}")
+                    logger.info(f"Loading metadata from: {json_file}")
+                    
                     with open(json_file, 'r', encoding='utf-8') as f:
                         import json
-                        segment_data = json.load(f)
+                        metadata = json.load(f)
                     
-                    logger.info(f"Loaded metadata for segment {segment_data.get('segment_index', 'unknown')}: english_text='{segment_data.get('english_text', '')}', audio_path='{segment_data.get('audio_path', '')}'")
+                    # Create segment data for unified processing
+                    segment_data = {
+                        'segment_index': metadata.get('segment_index', 1),
+                        'audio_path': metadata.get('audio_path'),
+                        'original_text': metadata.get('original_text', ''),
+                        'english_text': metadata.get('english_text', ''),
+                        'start': metadata.get('start', 0.0),
+                        'end': metadata.get('end', 0.0),
+                        'duration': metadata.get('duration', 0.0),
+                        'speaker': metadata.get('speaker', 'A'),
+                        'confidence': metadata.get('confidence', 0.0),
+                        'word_count': metadata.get('word_count', 0)
+                    }
                     
-                    if not segment_data.get('english_text', '').strip():
-                        logger.warning(f"Skipping segment with no english_text: {json_file}")
-                        continue
+                    # Validate required data
+                    if not segment_data.get('audio_path') or not os.path.exists(segment_data['audio_path']):
+                        logger.warning(f"Audio file missing for segment: {json_file}")
+                        # Still add the segment but mark it for silence generation
+                        segment_data['audio_path'] = None
                     
-                    # Check if audio file exists
-                    audio_path = segment_data.get('audio_path', '')
-                    if not audio_path or not os.path.exists(audio_path):
-                        logger.warning(f"Skipping segment with missing audio file: {audio_path}")
-                        continue
-                    
-                    segment_data['segments_dir'] = str(segments_folder)
-                    segment_data['segment_file'] = str(json_file)
-                    # Ensure speaker is properly set from metadata
-                    if 'speaker' not in segment_data or not segment_data['speaker']:
+                    # Ensure speaker is set
+                    if not segment_data.get('speaker'):
                         segment_data['speaker'] = 'A'  # Default speaker
                     
                     all_segments.append(segment_data)
@@ -170,12 +186,21 @@ class AudioProcessor:
                 logger.error("No valid segments found for processing")
                 return {"success": False, "error": "No valid segments found"}
             
-            logger.info(f"Collected {len(all_segments)} total segments for unified processing")
+            logger.info(f"Collected {len(all_segments)} total segments for enhanced unified processing")
             
-            # Process all segments together in one unified call
-            logger.info("Calling unified voice cloning service")
+            # Process all segments together with enhanced parameters
+            logger.info("Calling enhanced unified voice cloning service")
             cloning_result = self.voice_cloning_service.clone_voice_segments(
-                all_segments, temperature, cfg_scale, top_p, base_seed, audio_id
+                segments=all_segments, 
+                max_tokens=max_tokens,
+                cfg_scale=cfg_scale, 
+                temperature=temperature,
+                top_p=top_p,
+                cfg_filter_top_k=cfg_filter_top_k,
+                speed_factor=speed_factor,
+                seed=base_seed, 
+                use_torch_compile=use_torch_compile,
+                audio_id=audio_id
             )
             
             if not cloning_result.get('success', False):

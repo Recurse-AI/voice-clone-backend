@@ -146,9 +146,14 @@ async def process_video(
     video_url: str = Form(..., description="Video URL (already uploaded to Cloudflare) for processing"),
     include_instruments: bool = Form(True, description="Whether to include instruments in final audio"),
     generate_subtitles: bool = Form(True, description="Whether to generate subtitles"),
-    temperature: float = Form(0.9, description="Voice cloning temperature"),
-    cfg_scale: float = Form(3.5, description="CFG scale for voice cloning"),
-    top_p: float = Form(0.9, description="Top-p for voice cloning"),
+    # Enhanced Dia Parameters (Colab optimized defaults)
+    max_tokens: int = Form(3072, description="Maximum tokens for generation (~36 seconds audio)"),
+    cfg_scale: float = Form(3.0, description="CFG scale for voice cloning (1.0-15.0)"),
+    temperature: float = Form(1.2, description="Voice cloning temperature (0.5-2.0)"),
+    top_p: float = Form(0.95, description="Top-p for voice cloning (0.5-1.0)"),
+    cfg_filter_top_k: int = Form(45, description="CFG filter top K (15-100)"),
+    speed_factor: float = Form(0.92, description="Audio speed factor (0.5-1.5)"),
+    use_torch_compile: bool = Form(True, description="Use torch.compile for optimization"),
     target_language: str = Form("English", description="Target language for translation"),
     language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
     speakers_expected: Optional[str] = Form(None, description="Expected number of speakers (1-10)")
@@ -190,13 +195,18 @@ async def process_video(
     # Submit to video processing queue
     from video_processor.video_queue_manager import video_queue_manager
     
-    # Prepare parameters for queue processing
+    # Prepare enhanced parameters for queue processing
     queue_parameters = {
         "include_instruments": include_instruments,
         "generate_subtitles": generate_subtitles,
-        "temperature": temperature,
+        # Enhanced Dia Parameters
+        "max_tokens": max_tokens,
         "cfg_scale": cfg_scale,
+        "temperature": temperature,
         "top_p": top_p,
+        "cfg_filter_top_k": cfg_filter_top_k,
+        "speed_factor": speed_factor,
+        "use_torch_compile": use_torch_compile,
         "target_language": target_language,
         "language_code": language_code,
         "speakers_expected": speakers_expected,

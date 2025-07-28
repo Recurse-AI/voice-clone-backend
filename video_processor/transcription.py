@@ -8,7 +8,6 @@ from typing import Dict, Any, List, Optional
 import assemblyai as aai
 from openai import OpenAI
 from config import settings
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import logging
 
@@ -28,7 +27,7 @@ class TranscriptionService:
                         original_duration: Optional[float] = None) -> Dict[str, Any]:
         """Transcribe audio using AssemblyAI"""
         try:
-            print(f"Starting transcription for audio: {audio_path}")
+            logger.info(f"Starting transcription for audio: {audio_path}")
             start_time = time.time()
             
             config_params = {
@@ -55,7 +54,7 @@ class TranscriptionService:
                 raise Exception(f"Transcription failed: {transcript.error}")
             
             transcription_time = time.time() - start_time
-            print(f"Transcription completed in {transcription_time:.2f} seconds")
+            logger.info(f"Transcription completed in {transcription_time:.2f} seconds")
             
             # Store complete AssemblyAI response as JSON metadata
             if audio_id:
@@ -247,7 +246,7 @@ class TranscriptionService:
         return marked_text.strip()
     
     def format_dialogue_text(self, text: str, speaker_data, words_data: List[Dict] = None) -> str:
-        """Simple translation to English with clean [S1]/[S2] speaker tags"""
+        """Enhanced translation to English with clean [S1]/[S2] speaker tags (Colab format)"""
         try:
             # Handle speaker data format
             if isinstance(speaker_data, str):
@@ -265,80 +264,74 @@ class TranscriptionService:
             if not clean_text.strip():
                 raise ValueError(f"No text available for speaker {speaker}")
             
-            # Pre-process multi-speaker text with speaker indicators
-            if is_multi_speaker and words_data:
-                processed_text = self._preprocess_multispeaker_text(clean_text, words_data)
-            else:
-                processed_text = clean_text
-            
-            # Check cache
+            # Check cache first
             with self.cache_lock:
-                cache_key = f"{processed_text.strip()}_{is_multi_speaker}"
+                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_colab"
                 if cache_key in self.translation_cache:
                     return self.translation_cache[cache_key]
             
-            # Simple translation and formatting
+            # Enhanced translation and formatting (Colab style)
             try:
                 if len(speakers_in_segment) > 1:
-                    # Multi-speaker format with pre-processed speaker indicators
-                    prompt = f"""Translate to natural English with proper speaker tags.
+                    # Multi-speaker format - cleaner approach from Colab
+                    processed_text = self._preprocess_multispeaker_text(clean_text, words_data) if words_data else clean_text
+                    
+                    prompt = f"""Translate to natural English with clean speaker tags.
 
-TEXT WITH SPEAKER MARKERS: {processed_text}
+TEXT: {processed_text}
 
 RULES:
-- Always start segment with [S1] tag regardless of which speaker starts
-- Use [S2], [S3] etc. for subsequent speakers within the same segment
-- NO tags for continuation lines of same speaker
-- 3-9 words per line optimal for best Dia performance
+- Always start with [S1] tag at the beginning
+- Use [S2], [S3] etc. for different speakers
+- NO tags for continuation lines of same speaker  
+- 3-9 words per line for optimal Dia performance
 - Natural conversational English
 - No quotes in output
-- Each line should be clear and simple
-- This will used for Dia model voice cloning
+- Keep simple and clear
 
-EXAMPLE INPUT: <SPEAKER1> Hello how are you doing today <SPEAKER2> I am fine thanks for asking <SPEAKER1> That's good to hear
-EXAMPLE OUTPUT: 
+EXAMPLE OUTPUT:
 [S1] Hello how are you
 doing today
 [S2] I am fine thanks
 for asking
-[S3] That's good to hear
+[S1] That's good to hear
 
-OUTPUT (English with speaker tags - always start with [S1]):"""
+OUTPUT (English with clean speaker tags):"""
                 else:
-                    # Single speaker format
-                    prompt = f"""Translate to natural English with speaker tag.
+                    # Single speaker format - simplified from Colab
+                    prompt = f"""Translate to natural English.
 
 TEXT: {clean_text}
 
 RULES:
 - Start with [S1] tag only at beginning
-- NO tags for continuation lines
-- 3-9 words per line optimal for best Dia performance
+- NO additional speaker tags needed
+- 3-9 words per line for optimal Dia performance
 - Natural conversational English
 - No quotes in output
-- Keep it simple and clear
+- Keep simple and clear
 
 EXAMPLE OUTPUT:
 [S1] Hello this is example text
-yes I understand perfectly now
-great let's continue the discussion
+yes I understand perfectly
+great let's continue
 
-OUTPUT (English with [S1] tag only at start):"""
+OUTPUT (English with [S1] tag at start only):"""
                 
                 response = self.openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "Translate with clean speaker formatting. Keep it simple."},
+                        {"role": "system", "content": "Translate with clean speaker formatting optimized for Dia voice cloning. Keep it simple and natural."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=300,
                     temperature=0.1,
-                    timeout=45  # Increased timeout
+                    timeout=45
                 )
                 
                 if response and response.choices:
                     formatted_text = response.choices[0].message.content.strip()
-                    formatted_text = self._clean_formatted_text_simple(formatted_text)
+                    formatted_text = self._clean_formatted_text_colab_style(formatted_text)
                     
                     with self.cache_lock:
                         self.translation_cache[cache_key] = formatted_text
@@ -346,52 +339,94 @@ OUTPUT (English with [S1] tag only at start):"""
                 
                 raise ValueError("No valid OpenAI response")
                 
-            except Exception:
-                # Simple fallback translation
-                return self._simple_translate_and_format(clean_text, is_multi_speaker)
+            except Exception as openai_error:
+                logger.warning(f"OpenAI formatting failed: {openai_error}")
+                # Enhanced fallback translation
+                return self._enhanced_fallback_format(clean_text, is_multi_speaker)
                 
         except Exception as e:
-            raise ValueError(f"Text formatting failed for speaker {speaker}: {str(e)}")
+            raise ValueError(f"Enhanced text formatting failed for speaker {speaker}: {str(e)}")
     
-    def _clean_formatted_text_simple(self, text: str) -> str:
-        """Simple cleanup of formatted text"""
-        # Remove quotes
+    def _clean_formatted_text_colab_style(self, text: str) -> str:
+        """Clean formatted text using Colab approach"""
+        # Remove quotes and extra whitespace
         text = re.sub(r'^["\s]*', '', text).strip()
         text = re.sub(r'["\s]*$', '', text)
         
         if not text:
             raise ValueError("Empty response from OpenAI")
         
-        # Ensure speaker tag
-        if '[S' not in text:
+        # Ensure proper speaker tag format
+        if not re.search(r'\[S\d+\]', text):
             text = f"[S1] {text}"
+        
+        # Clean up multiple spaces and normalize line breaks
+        text = re.sub(r'\s+', ' ', text)
+        text = re.sub(r'\s*\n\s*', '\n', text)
         
         return text
     
-    def _simple_translate_and_format(self, text: str, is_multi_speaker: bool = False) -> str:
-        """Simple translation with basic formatting"""
+    def _enhanced_fallback_format(self, text: str, is_multi_speaker: bool = False) -> str:
+        """Enhanced fallback formatting with proper structure"""
         try:
+            # Simple translation first
             translation_response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
-                    {"role": "system", "content": "Translate to natural English only."},
-                    {"role": "user", "content": f"Translate: {text}"}
+                    {"role": "system", "content": "Translate to natural English only. Keep it simple."},
+                    {"role": "user", "content": f"Translate this to natural English: {text}"}
                 ],
                 max_tokens=150,
                 temperature=0.1,
-                timeout=30  # Increased timeout
+                timeout=30
             )
             
             if translation_response and translation_response.choices:
                 english_text = translation_response.choices[0].message.content.strip()
-                # Simple format - just add [S1] tag
-                if '[S' not in english_text:
+                
+                # Apply simple formatting
+                if not re.search(r'\[S\d+\]', english_text):
                     english_text = f"[S1] {english_text}"
+                
+                # Format for optimal Dia performance (3-9 words per line)
+                words = english_text.split()
+                if len(words) > 9:
+                    # Break into chunks of 3-9 words
+                    formatted_lines = []
+                    current_line = []
+                    speaker_tag_used = False
+                    
+                    for word in words:
+                        if word.startswith('[S') and ']' in word:
+                            # Handle speaker tags
+                            if current_line:
+                                formatted_lines.append(' '.join(current_line))
+                                current_line = []
+                            current_line.append(word)
+                            speaker_tag_used = True
+                        else:
+                            current_line.append(word)
+                            
+                            # Break line when we have 6-9 words (optimal for Dia)
+                            if len(current_line) >= 7:
+                                formatted_lines.append(' '.join(current_line))
+                                current_line = []
+                    
+                    # Add remaining words
+                    if current_line:
+                        formatted_lines.append(' '.join(current_line))
+                    
+                    english_text = '\n'.join(formatted_lines)
+                
                 return english_text
             else:
                 raise ValueError("Translation failed")
+                
         except Exception as e:
-            raise ValueError(f"Translation failed: {str(e)}")
+            # Ultimate fallback
+            logger.error(f"Enhanced fallback failed: {e}")
+            cleaned = self._clean_text(text)
+            return f"[S1] {cleaned}" if not cleaned.startswith('[S') else cleaned
     
 
     

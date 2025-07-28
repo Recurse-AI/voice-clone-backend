@@ -10,8 +10,6 @@ from typing import Dict, Any, List, Optional
 import logging
 from datetime import datetime
 import time
-import librosa
-from scipy.signal import find_peaks
 
 logger = logging.getLogger(__name__)
 

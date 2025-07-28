@@ -1,5 +1,5 @@
 """
-Voice Cloning Module - Simplified for Dia
+Voice Cloning Module - Enhanced with Advanced Parameter Controls
 """
 
 import torch
@@ -10,28 +10,29 @@ import gc
 import json
 import soundfile as sf
 from typing import Optional, Dict, Any, List
+from pathlib import Path
 from dia.model import Dia
 from config import settings
 import logging
 import time
-import librosa
 
 logger = logging.getLogger(__name__)
 
 def set_seed(seed: int):
-    """Set random seed for reproducibility"""
+    """Set random seed for reproducibility - Enhanced version from Colab"""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+    # Ensure deterministic behavior for cuDNN
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
 
 class VoiceCloningService:
-    """Simplified voice cloning service"""
+    """Enhanced voice cloning service with advanced parameter controls"""
     
     def __init__(self, segment_manager=None):
         self.dia_model = None
@@ -39,14 +40,26 @@ class VoiceCloningService:
         self.sample_rate = 44100
         self.segment_manager = segment_manager
         
+        # Enhanced default parameters (can be overridden)
+        self.default_params = {
+            'max_tokens': 3072,  # ~36 seconds
+            'cfg_scale': 3.0,    # Adherence to text prompt
+            'temperature': 1.2,   # Randomness
+            'top_p': 0.95,       # Nucleus sampling
+            'cfg_filter_top_k': 45,  # CFG filtering
+            'speed_factor': 0.92,    # Audio speed adjustment
+            'use_torch_compile': True,
+            'verbose': False
+        }
+        
         if not segment_manager:
             logger.warning("VoiceCloningService initialized without segment_manager - some features may not work properly")
     
-    def load_dia_model(self, repo_id: str = None) -> bool:
-        """Load Dia model"""
+    def load_dia_model(self, repo_id: str = None, compute_dtype: str = None) -> bool:
+        """Load Dia model with enhanced configuration"""
         try:
             repo_id = repo_id or settings.DIA_MODEL_REPO
-            compute_dtype = settings.DIA_COMPUTE_DTYPE if self.device == "cuda" else "float32"
+            compute_dtype = compute_dtype or (settings.DIA_COMPUTE_DTYPE if self.device == "cuda" else "float32")
             logger.info(f"Loading Dia model from repo: {repo_id}, Device: {self.device}, Compute dtype: {compute_dtype}")
             
             self.dia_model = Dia.from_pretrained(repo_id, compute_dtype=compute_dtype)
@@ -60,9 +73,18 @@ class VoiceCloningService:
         """Check if Dia model is loaded"""
         return self.dia_model is not None
     
-    def clone_voice_segments(self, segments: List[Dict], temperature: float = 1.0,
-                           cfg_scale: float = 3.5, top_p: float = 0.9,
-                           seed: Optional[int] = None, audio_id: Optional[str] = None) -> Dict[str, Any]:
+    def clone_voice_segments(self, segments: List[Dict], 
+                           # Enhanced parameter controls from Colab
+                           max_tokens: int = None,
+                           cfg_scale: float = None, 
+                           temperature: float = None,
+                           top_p: float = None,
+                           cfg_filter_top_k: int = None,
+                           speed_factor: float = None,
+                           seed: Optional[int] = None, 
+                           use_torch_compile: bool = None,
+                           audio_id: Optional[str] = None) -> Dict[str, Any]:
+        """Enhanced voice cloning with advanced parameter controls"""
         if not self.is_model_loaded():
             return {"success": False, "error": "Dia model not loaded"}
         
@@ -72,7 +94,19 @@ class VoiceCloningService:
         if not segments:
             return {"success": False, "error": "No segments provided"}
         
-        logger.info(f"Starting voice cloning for {len(segments)} segments with optimized parameters for consistency")
+        # Use provided parameters or fall back to defaults
+        params = {
+            'max_tokens': max_tokens or self.default_params['max_tokens'],
+            'cfg_scale': cfg_scale or self.default_params['cfg_scale'],
+            'temperature': temperature or self.default_params['temperature'],
+            'top_p': top_p or self.default_params['top_p'],
+            'cfg_filter_top_k': cfg_filter_top_k or self.default_params['cfg_filter_top_k'],
+            'speed_factor': speed_factor or self.default_params['speed_factor'],
+            'use_torch_compile': use_torch_compile if use_torch_compile is not None else self.default_params['use_torch_compile']
+        }
+        
+        logger.info(f"Starting enhanced voice cloning for {len(segments)} segments")
+        logger.info(f"Parameters: CFG={params['cfg_scale']}, Temp={params['temperature']}, TopP={params['top_p']}, Speed={params['speed_factor']}")
         
         # Update status if audio_id provided
         if audio_id:
@@ -92,9 +126,14 @@ class VoiceCloningService:
             cloning_start_time = time.time()
             cloned_segments = []
             
-            # Optimize seed for consistency
+            # Enhanced seed handling for consistency
             base_seed = seed if seed is not None else random.randint(1, 1000000)
             speaker_seeds = {}
+            
+            # Set global seed at start for overall consistency
+            if seed is not None:
+                set_seed(seed)
+                logger.info(f"Using global seed: {seed} for voice consistency")
             
             # Process each segment with enhanced error handling
             for i, segment in enumerate(segments):
@@ -162,10 +201,11 @@ class VoiceCloningService:
                     speaker = segment.get('speaker', 'A')
                     if speaker not in speaker_seeds:
                         speaker_seeds[speaker] = base_seed + (ord(speaker) - ord('A')) * 1000
-                    set_seed(speaker_seeds[speaker])
                     
-                    # Log the seed being used for debugging
-                    logger.info(f"Using seed {speaker_seeds[speaker]} for speaker {speaker}")
+                    # Apply speaker-specific seed if no global seed was set
+                    if seed is None:
+                        set_seed(speaker_seeds[speaker])
+                        logger.info(f"Using speaker-specific seed {speaker_seeds[speaker]} for speaker {speaker}")
                     
                     logger.info(f"Processing segment {i+1}/{len(segments)} (Speaker {speaker})")
                     
@@ -185,17 +225,12 @@ class VoiceCloningService:
                             pass
                     
                     try:
-                        # Calculate optimized parameters for consistency
-                        dynamic_params = self._calculate_optimized_parameters(
-                            segment, temperature, cfg_scale, top_p, i, len(segments)
-                        )
-                        
-                        # Generate audio with optimized parameters
-                        cloned_audio = self._generate_single_segment(
-                            english_text, audio_path, english_text, 
-                            dynamic_params["temperature"], 
-                            dynamic_params["cfg_scale"], 
-                            dynamic_params["top_p"]
+                        # Generate audio with enhanced parameters
+                        cloned_audio = self._generate_single_segment_enhanced(
+                            english_text, 
+                            audio_path, 
+                            segment.get('original_text', english_text),
+                            params
                         )
                         
                         if cloned_audio is None:
@@ -222,13 +257,17 @@ class VoiceCloningService:
                             })
                             continue
                         
+                        # Apply speed factor adjustment (enhanced from Colab)
+                        if params['speed_factor'] != 1.0:
+                            cloned_audio = self._apply_speed_factor(cloned_audio, params['speed_factor'])
+                        
                         # Ensure proper duration
                         cloned_audio = self._ensure_proper_duration(cloned_audio, segment_duration)
                         
                         # Save audio immediately
                         self._save_single_cloned_segment(cloned_audio, i+1, audio_id)
                         
-                        logger.info(f"Successfully generated {dynamic_params['speech_type']} speech for segment {i+1}")
+                        logger.info(f"Successfully generated enhanced speech for segment {i+1}")
                         
                         cloned_segments.append({
                             "success": True,
@@ -242,7 +281,7 @@ class VoiceCloningService:
                             "duration": float(segment.get('duration', 10.0)),
                             "speaker": str(speaker),
                             "segment_index": int(segment.get('segment_index', i+1)),
-                            "voice_params": dynamic_params  # Store the parameters used
+                            "voice_params": params.copy()  # Store the parameters used
                         })
                         
                     except Exception as generation_error:
@@ -300,8 +339,9 @@ class VoiceCloningService:
                     continue
             
             cloning_duration = time.time() - cloning_start_time
-            logger.info(f"Cloning completed in {cloning_duration:.2f} seconds")
-            logger.info(f"Processed {len(cloned_segments)} segments (ensuring complete duration coverage)")
+            logger.info(f"Enhanced cloning completed in {cloning_duration:.2f} seconds")
+            logger.info(f"Used parameters: {params}")
+            logger.info(f"Processed {len(cloned_segments)} segments")
             
             # Verify we have all segments
             if len(cloned_segments) != len(segments):
@@ -309,7 +349,7 @@ class VoiceCloningService:
             
             # Save summary
             if cloned_segments:
-                self._save_cloned_segments_unified(cloned_segments, audio_id)
+                self._save_cloned_segments_unified(cloned_segments, audio_id, params)
             
             return {
                 "success": True,
@@ -318,7 +358,8 @@ class VoiceCloningService:
                 "successful_clones": len(cloned_segments),
                 "seed_used": base_seed,
                 "speaker_seeds": speaker_seeds,
-                "cloning_duration": cloning_duration
+                "cloning_duration": cloning_duration,
+                "parameters_used": params
             }
             
         except Exception as e:
@@ -326,9 +367,9 @@ class VoiceCloningService:
         finally:
             self._cleanup_memory()
     
-    def _generate_single_segment(self, text: str, reference_audio_path: str, 
-                               reference_text: str, temperature: float, 
-                               cfg_scale: float, top_p: float) -> Optional[np.ndarray]:
+    def _generate_single_segment_enhanced(self, text: str, reference_audio_path: str, 
+                                        reference_text: str, params: Dict) -> Optional[np.ndarray]:
+        """Enhanced single segment generation with advanced parameter controls"""
         try:
             # Clean text for voice generation
             clean_text = text.strip()
@@ -336,37 +377,56 @@ class VoiceCloningService:
                 logger.warning("Empty text provided for voice generation")
                 return None
             
-           
             # OFFICIAL DIA FORMAT: reference_transcript + generation_text
             # This is the REQUIRED format for voice cloning according to Dia documentation
             full_text = reference_text + " " + clean_text
             
-            logger.info(f"Generating with Dia voice cloning format - Reference: '{reference_text[:30]}...', Generate: '{clean_text[:30]}...'")
+            logger.info(f"Generating with enhanced Dia voice cloning - Reference: '{reference_text[:30]}...', Generate: '{clean_text[:30]}...'")
             
             with torch.inference_mode():
-                # Generate audio with Dia model using OFFICIAL parameters
+                # Generate audio with enhanced parameters from Colab
                 audio = self.dia_model.generate(
                     text=full_text,
                     audio_prompt=reference_audio_path,
-                    use_torch_compile=False,
-                    cfg_scale=settings.DIA_CFG_SCALE,  # 4.0 (official)
-                    temperature=settings.DIA_TEMPERATURE,  # 1.8 (official)
-                    top_p=settings.DIA_TOP_P,  # 0.90 (official)
-                    cfg_filter_top_k=settings.DIA_CFG_FILTER_TOP_K,  # 50 (official)
-                    max_tokens=settings.DIA_MAX_TOKENS,  # 2048 (increased)
-                    verbose=False
+                    max_tokens=params['max_tokens'],
+                    cfg_scale=params['cfg_scale'],
+                    temperature=params['temperature'],
+                    top_p=params['top_p'],
+                    cfg_filter_top_k=params['cfg_filter_top_k'],
+                    use_torch_compile=params['use_torch_compile'],
+                    verbose=params.get('verbose', False)
                 )
             
             if audio is None or len(audio) == 0:
                 logger.error("Dia model returned empty audio")
                 return None
             
-            logger.info(f"Audio generation completed - generated {len(audio)/self.sample_rate:.3f}s of audio")
+            logger.info(f"Enhanced audio generation completed - generated {len(audio)/self.sample_rate:.3f}s of audio")
             return audio
             
         except Exception as e:
-            logger.error(f"Audio generation failed: {str(e)}")
+            logger.error(f"Enhanced audio generation failed: {str(e)}")
             return None
+    
+    def _apply_speed_factor(self, audio: np.ndarray, speed_factor: float) -> np.ndarray:
+        """Apply speed factor adjustment (from Colab implementation)"""
+        try:
+            if speed_factor == 1.0:
+                return audio
+            
+            # Calculate new length based on speed factor
+            new_length = int(len(audio) / speed_factor)
+            
+            # Use linear interpolation to adjust speed
+            indices = np.linspace(0, len(audio) - 1, new_length)
+            adjusted_audio = np.interp(indices, np.arange(len(audio)), audio)
+            
+            logger.debug(f"Applied speed factor {speed_factor}: {len(audio)} → {len(adjusted_audio)} samples")
+            return adjusted_audio.astype(audio.dtype)
+            
+        except Exception as e:
+            logger.error(f"Speed factor adjustment failed: {e}")
+            return audio
     
     def _ensure_proper_duration(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
         """Ensure generated audio matches target duration using intelligent padding/trimming"""
@@ -401,90 +461,12 @@ class VoiceCloningService:
     
     def _adjust_audio_length(self, audio: np.ndarray, target_duration: float, 
                            use_speed_adjustment: bool = True) -> np.ndarray:
-        """
-        Legacy method for backward compatibility with main.py
-        Uses segment_manager's advanced adjustment if available
-        """
-        if hasattr(self, 'segment_manager') and self.segment_manager:
-            # Create a simple segment dict for the legacy call
-            segment = {'duration': target_duration}
-            return self.segment_manager.adjust_generated_audio_length(
-                audio, self.sample_rate, segment
-            )
-        else:
-            # Simple fallback if segment_manager not available
-            target_samples = int(target_duration * self.sample_rate)
-            if len(audio) > target_samples:
-                return audio[:target_samples]
-            elif len(audio) < target_samples:
-                padding = target_samples - len(audio)
-                return np.pad(audio, (0, padding), mode='constant', constant_values=0)
-            return audio
-    
-    def _calculate_optimized_parameters(self, segment: Dict[str, Any], base_temperature: float, 
-                                    base_cfg_scale: float, base_top_p: float, 
-                                    current_segment_index: int, total_segments: int) -> Dict[str, float]:
-        """
-        Calculate optimized voice cloning parameters for better consistency and focus.
-        Based on research: lower temperature (0.7-1.1) and optimized cfg_scale (3.5-4.0) for consistency.
-        Reduced dynamic variations to maintain voice characteristics across segments.
-        """
-        duration = segment.get('duration', 10.0)
-        english_text = segment.get('english_text', '')
-        word_count = len(english_text.split()) if english_text else 0
-        
-        # Calculate words per second
-        words_per_second = word_count / duration if duration > 0 else 0
-        
-        # Optimal speaking rate is ~2.5 words per second
-        optimal_wps = 2.5
-        density_ratio = words_per_second / optimal_wps
-        
-        # Use more conservative parameter adjustments for consistency
-        # Based on ElevenLabs best practices: lower temperature = more consistent
-        if density_ratio > 1.4:  # High density - need faster speech
-            # Minimal temperature increase for faster speech, keep consistent
-            temperature = min(base_temperature + 0.1, 1.2)
-            cfg_scale = max(base_cfg_scale - 0.2, 3.2)  # Slightly lower for natural fast speech
-            top_p = max(base_top_p - 0.02, 0.88)  # More focused
-            speech_type = "fast"
-        elif density_ratio < 0.6:  # Low density - need slower speech  
-            # Minimal temperature decrease for slower speech
-            temperature = max(base_temperature - 0.1, 0.7)
-            cfg_scale = min(base_cfg_scale + 0.2, 4.0)  # Slightly higher for controlled speech
-            top_p = min(base_top_p + 0.02, 0.92)  # Slightly less focused
-            speech_type = "slow"
-        else:  # Normal density - use consistent base parameters
-            temperature = base_temperature
-            cfg_scale = base_cfg_scale
-            top_p = base_top_p
-            speech_type = "normal"
-        
-        # Additional consistency adjustments based on segment position
-        # First and last segments should be slightly more controlled for consistency
-        if current_segment_index == 0 or current_segment_index == total_segments - 1:
-            temperature = max(temperature - 0.05, 0.7)  # Slightly more controlled
-            cfg_scale = min(cfg_scale + 0.1, 4.0)  # Slightly higher control
-        
-        logger.info(f"Segment {segment.get('segment_index', current_segment_index + 1)}: {word_count} words in {duration:.1f}s "
-                   f"({words_per_second:.1f} wps) → {speech_type} speech (T={temperature:.2f}, CFG={cfg_scale:.1f})")
-        
-        return {
-            "temperature": temperature,
-            "cfg_scale": cfg_scale,
-            "top_p": top_p,
-            "words_per_second": words_per_second,
-            "density_ratio": density_ratio,
-            "speech_type": speech_type
-        }
+        """Legacy method for backward compatibility with main.py"""
+        return self._ensure_proper_duration(audio, target_duration)
     
     def _save_single_cloned_segment(self, audio_data: np.ndarray, segment_index: int, audio_id: str):
         """Save a single cloned segment audio file."""
         try:
-            from pathlib import Path
-            from config import settings
-            import soundfile as sf
-            
             # Get base segments directory
             temp_dir = Path(settings.TEMP_DIR)
             segments_base_dir = temp_dir / f"segments_{audio_id}"
@@ -518,13 +500,10 @@ class VoiceCloningService:
         except Exception as e:
             logger.error(f"Error saving single cloned segment {segment_index}: {e}")
     
-    def _save_cloned_segments_unified(self, cloned_segments: List[Dict], audio_id: str):
-        """Save cloning summary"""
+    def _save_cloned_segments_unified(self, cloned_segments: List[Dict], audio_id: str, params: Dict):
+        """Save enhanced cloning summary with parameters"""
         try:
-            logger.info(f"Saved {len(cloned_segments)} cloned segments")
-            
-            from pathlib import Path
-            from config import settings
+            logger.info(f"Saved {len(cloned_segments)} cloned segments with enhanced parameters")
             
             temp_dir = Path(settings.TEMP_DIR)
             segments_base_dir = temp_dir / f"segments_{audio_id}"
@@ -535,6 +514,7 @@ class VoiceCloningService:
                 "cloning_summary": {
                     "total_segments": len(cloned_segments),
                     "successful_clones": len([s for s in cloned_segments if s.get('success', False)]),
+                    "parameters_used": params,  # Store the enhanced parameters
                     "segments": [
                         {
                             "segment_index": s.get('segment_index', 0),
@@ -552,7 +532,7 @@ class VoiceCloningService:
                 json.dump(summary, f, ensure_ascii=False, indent=2)
                 
         except Exception as e:
-            logger.error(f"Error creating cloning summary: {e}")
+            logger.error(f"Error creating enhanced cloning summary: {e}")
     
     def _cleanup_memory(self):
         """Clean up GPU memory"""
@@ -563,4 +543,39 @@ class VoiceCloningService:
     
     def clear_cache(self):
         """Clear any cached data"""
-        self._cleanup_memory() 
+        self._cleanup_memory()
+    
+    # Enhanced parameter validation (from Colab)
+    def validate_parameters(self, **kwargs) -> Dict[str, Any]:
+        """Validate and sanitize parameters based on Colab ranges"""
+        validated = {}
+        
+        # Validate max_tokens (860-12000)
+        max_tokens = kwargs.get('max_tokens', self.default_params['max_tokens'])
+        validated['max_tokens'] = max(860, min(12000, int(max_tokens)))
+        
+        # Validate cfg_scale (1.0-15.0)
+        cfg_scale = kwargs.get('cfg_scale', self.default_params['cfg_scale'])
+        validated['cfg_scale'] = max(1.0, min(15.0, float(cfg_scale)))
+        
+        # Validate temperature (0.5-2.0)
+        temperature = kwargs.get('temperature', self.default_params['temperature'])
+        validated['temperature'] = max(0.5, min(2.0, float(temperature)))
+        
+        # Validate top_p (0.5-1.0)
+        top_p = kwargs.get('top_p', self.default_params['top_p'])
+        validated['top_p'] = max(0.5, min(1.0, float(top_p)))
+        
+        # Validate cfg_filter_top_k (15-100)
+        cfg_filter_top_k = kwargs.get('cfg_filter_top_k', self.default_params['cfg_filter_top_k'])
+        validated['cfg_filter_top_k'] = max(15, min(100, int(cfg_filter_top_k)))
+        
+        # Validate speed_factor (0.5-1.5)
+        speed_factor = kwargs.get('speed_factor', self.default_params['speed_factor'])
+        validated['speed_factor'] = max(0.5, min(1.5, float(speed_factor)))
+        
+        # Boolean parameters
+        validated['use_torch_compile'] = kwargs.get('use_torch_compile', self.default_params['use_torch_compile'])
+        validated['verbose'] = kwargs.get('verbose', self.default_params['verbose'])
+        
+        return validated 

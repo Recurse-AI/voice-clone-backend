@@ -15,7 +15,10 @@ logger = logging.getLogger(__name__)
 
 def process_video_background(
     video_source: str, audio_id: str, include_instruments: bool,
-    generate_subtitles: bool, temperature: float, cfg_scale: float, top_p: float,
+    generate_subtitles: bool, 
+    # Enhanced Dia Parameters
+    max_tokens: int, cfg_scale: float, temperature: float, top_p: float,
+    cfg_filter_top_k: int, speed_factor: float, use_torch_compile: bool,
     target_language: str, language_code: Optional[str], speakers_expected: Optional[int], is_file_upload: bool,
     audio_processor=None, original_filename: Optional[str] = None, original_source_url: Optional[str] = None
 ):
@@ -185,22 +188,26 @@ def process_video_background(
             "detected_speakers": processing_result.get("detected_speakers", len(processing_result.get("speakers", [])))
         }
         
-        # Clone voices at natural speed
+        # Clone voices with enhanced parameters
         from status_manager import ProcessingStatus
         status_manager.update_status(
             audio_id, 
             ProcessingStatus.PROCESSING, 
             progress=60, 
-            details={"message": "Starting voice cloning process..."}
+            details={"message": "Starting enhanced voice cloning process..."}
         )
         
         cloning_result = audio_processor.clone_voice_segments(
-            processing_result["segments_dir"],
-            audio_id,
-            temperature=temperature,
+            segments_dir=processing_result["segments_dir"],
+            audio_id=audio_id,
+            max_tokens=max_tokens,
             cfg_scale=cfg_scale,
+            temperature=temperature,
             top_p=top_p,
-            seed=settings.DEFAULT_SEED
+            cfg_filter_top_k=cfg_filter_top_k,
+            speed_factor=speed_factor,
+            seed=settings.DEFAULT_SEED,
+            use_torch_compile=use_torch_compile
         )
         
         if not cloning_result["success"]:
@@ -450,12 +457,17 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     is_file_upload = queue_request.is_file_upload
     parameters = queue_request.parameters
     
-    # Extract parameters
+    # Extract enhanced parameters
     include_instruments = parameters.get("include_instruments", True)
     generate_subtitles = parameters.get("generate_subtitles", True)
-    temperature = parameters.get("temperature", settings.DIA_TEMPERATURE)
-    cfg_scale = parameters.get("cfg_scale", settings.DIA_CFG_SCALE)
-    top_p = parameters.get("top_p", settings.DIA_TOP_P)
+    # Enhanced Dia Parameters with Colab defaults
+    max_tokens = parameters.get("max_tokens", settings.DIA_ENHANCED_MAX_TOKENS)
+    cfg_scale = parameters.get("cfg_scale", settings.DIA_ENHANCED_CFG_SCALE)
+    temperature = parameters.get("temperature", settings.DIA_ENHANCED_TEMPERATURE)
+    top_p = parameters.get("top_p", settings.DIA_ENHANCED_TOP_P)
+    cfg_filter_top_k = parameters.get("cfg_filter_top_k", settings.DIA_ENHANCED_CFG_FILTER_TOP_K)
+    speed_factor = parameters.get("speed_factor", settings.DIA_ENHANCED_SPEED_FACTOR)
+    use_torch_compile = parameters.get("use_torch_compile", settings.DIA_ENHANCED_USE_TORCH_COMPILE)
     target_language = parameters.get("target_language", "English")
     language_code = parameters.get("language_code")
     speakers_expected = parameters.get("speakers_expected", 1)
@@ -544,22 +556,26 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         if queue_request.status != VideoQueueStatus.PROCESSING:
             return {"success": False, "error": "Request was cancelled or timed out"}
         
-        # Clone voices at natural speed
+        # Clone voices with enhanced parameters
         from status_manager import ProcessingStatus
         status_manager.update_status(
             audio_id, 
             ProcessingStatus.PROCESSING, 
             progress=60, 
-            details={"message": "Starting voice cloning process..."}
+            details={"message": "Starting enhanced voice cloning process..."}
         )
         
         cloning_result = audio_processor.clone_voice_segments(
-            processing_result["segments_dir"],
-            audio_id,
-            temperature=temperature,
+            segments_dir=processing_result["segments_dir"],
+            audio_id=audio_id,
+            max_tokens=max_tokens,
             cfg_scale=cfg_scale,
+            temperature=temperature,
             top_p=top_p,
-            seed=settings.DEFAULT_SEED
+            cfg_filter_top_k=cfg_filter_top_k,
+            speed_factor=speed_factor,
+            seed=settings.DEFAULT_SEED,
+            use_torch_compile=use_torch_compile
         )
         
         if not cloning_result["success"]:

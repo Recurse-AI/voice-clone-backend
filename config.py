@@ -35,36 +35,15 @@ class Settings(BaseSettings):
     DIA_USE_TORCH_COMPILE: bool = False
     DIA_VERBOSE: bool = False
     
-    # Dia Generation Parameters (official examples from Dia documentation)
-    DIA_MAX_TOKENS: int = 2048  # Official examples use 2000+ for better quality
-    DIA_CFG_SCALE: float = 4.0  # Official voice cloning example uses 4.0
-    DIA_TEMPERATURE: float = 1.8  # Official voice cloning example uses 1.8
-    DIA_TOP_P: float = 0.90  # Official voice cloning example uses 0.90
-    DIA_CFG_FILTER_TOP_K: int = 50  # Official voice cloning example uses 50
-    
-    # Processing Configuration
-    DEFAULT_SEED: Optional[int] = 42  # Fixed seed for consistency
-    BASE_SEED: int = 42  # Base seed for speaker-specific seeds
-    SPEAKER_SEED_OFFSET: int = 1000  # Offset for speaker-specific seeds
-    
-    # Performance Optimization Settings
-    BATCH_SIZE: int = 4  # Process segments in batches
-    MAX_SEGMENT_DURATION: float = 15.0  # Maximum segment duration for optimal processing
-    ENABLE_FAST_MODE: bool = True  # Enable fast processing mode
-
-    # Audio Length Adjustment Settings
-    USE_SPEED_ADJUSTMENT: bool = True  # Enable time stretching when needed
-    AUDIO_SPEED_FACTOR: float = 1.0  # Not used when time stretching is automatic
-    ENABLE_AUDIO_PADDING: bool = True  # Enable padding for any remaining gaps
-    PARALLEL_PROCESSING: bool = False  # Disable parallel processing to avoid GPU memory issues
-    
-    # Audio Adjustment Method
-    PRESERVE_PITCH: bool = True  # Preserve pitch when time-stretching
-    HIGH_QUALITY_STRETCH: bool = True  # Use high-quality time stretching algorithms
-    
-    # Stretch Ratio Limits (to preserve audio quality)
-    MAX_STRETCH_RATIO: float = 1.1  # Maximum 10% slower (reduced from 20%)
-    MIN_STRETCH_RATIO: float = 0.9  # Maximum 10% faster (reduced from 20%)
+    # Enhanced Dia Generation Parameters (Colab optimized)
+    # These provide better control and consistency for voice cloning
+    DIA_ENHANCED_MAX_TOKENS: int = 3072  # ~36 seconds (Colab optimal)
+    DIA_ENHANCED_CFG_SCALE: float = 3.0  # Better adherence balance (Colab optimal)
+    DIA_ENHANCED_TEMPERATURE: float = 1.2  # Optimal randomness (Colab optimal)
+    DIA_ENHANCED_TOP_P: float = 0.95  # Nucleus sampling (Colab optimal)
+    DIA_ENHANCED_CFG_FILTER_TOP_K: int = 45  # CFG filtering (Colab optimal)
+    DIA_ENHANCED_SPEED_FACTOR: float = 0.92  # Audio speed adjustment (Colab optimal)
+    DIA_ENHANCED_USE_TORCH_COMPILE: bool = True  # Performance optimization
     
 
     
@@ -92,6 +71,12 @@ class Settings(BaseSettings):
     API_ACCESS_TOKEN: str = os.getenv("API_ACCESS_TOKEN", "")
     RUNPOD_ENDPOINT_ID: str = os.getenv("RUNPOD_ENDPOINT_ID", "")
     RUNPOD_TIMEOUT: int = int(os.getenv("RUNPOD_TIMEOUT", "1800000"))
+    
+    # Processing Configuration
+    DEFAULT_SEED: Optional[int] = 42  # Fixed seed for consistency
+    BASE_SEED: int = 42  # Base seed for speaker-specific seeds
+    SPEAKER_SEED_OFFSET: int = 1000  # Offset for speaker-specific seeds
+    USE_SPEED_ADJUSTMENT: bool = True  # Enable time stretching when needed
     
     # Processing Options
     ENABLE_SUBTITLES: bool = True
