@@ -152,7 +152,7 @@ async def process_video(
     temperature: float = Form(1.8, description="Voice cloning temperature (0.5-2.0) - Reference optimized"),
     top_p: float = Form(0.95, description="Top-p for voice cloning (0.5-1.0)"),
     cfg_filter_top_k: int = Form(45, description="CFG filter top K (15-100)"),
-    speed_factor: float = Form(0.9, description="Audio speed factor (0.5-1.5) - Reference optimal"),
+    speed_factor: float = Form(1.0, description="Audio speed factor (0.5-1.5) - Reference optimal"),
     use_torch_compile: bool = Form(False, description="Use torch.compile for optimization - Reference stable"),
     target_language: str = Form("English", description="Target language for translation"),
     language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
