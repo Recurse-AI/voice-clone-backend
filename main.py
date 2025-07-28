@@ -563,11 +563,120 @@ async def get_status(audio_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-def process_file_upload_background_from_file(file_id: str, temp_file_path: str, filename: str):
-    """Background task for file upload processing from temp file"""
+
+
+@app.post("/upload-file")
+async def upload_file(video_file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
+    """
+    Upload video file to Cloudflare with immediate response and background processing.
+    
+    This endpoint returns immediately after receiving the POST request, then processes
+    the file upload in the background. Use the returned file_id to check upload status.
+    
+    Returns:
+        - file_id: Unique identifier for tracking upload progress
+        - status_check_url: URL to check upload status (/upload-status/{file_id})
+        - estimated_time: Expected time for upload completion
+    
+    Example usage:
+        1. POST /upload-file with video file
+        2. Get immediate response with file_id
+        3. Periodically GET /upload-status/{file_id} to check progress
+        4. When status="completed", use file_url for video processing
+    """
+    file_id = r2_storage.generate_audio_id()
+    
     try:
-        # Validate file format - 10%
-        upload_status_memory[file_id].update({"progress": 10, "message": "Validating file format..."})
+        # Generate temp file path
+        temp_file_path = os.path.join(settings.TEMP_DIR, f"upload_{file_id}_{video_file.filename}")
+        os.makedirs(settings.TEMP_DIR, exist_ok=True)
+        
+        # Initialize upload status immediately 
+        upload_status_memory[file_id] = {
+            "status": "uploading",
+            "progress": 0,
+            "message": "Upload started...",
+            "original_filename": video_file.filename,
+            "started_at": datetime.now().isoformat()
+        }
+        
+        # Start background file saving and processing
+        background_tasks.add_task(process_file_upload_async, file_id, video_file, temp_file_path)
+        
+        # Return immediate response without waiting for file save
+        return {
+            "success": True,
+            "message": "File upload started successfully",
+            "file_id": file_id,
+            "status_check_url": f"/upload-status/{file_id}",
+            "original_filename": video_file.filename,
+            "estimated_time": "2-10 minutes"
+        }
+        
+    except Exception as e:
+        # If there's an error in setup, update status
+        if file_id in upload_status_memory:
+            upload_status_memory[file_id].update({
+                "status": "failed",
+                "progress": 0,
+                "message": f"Setup failed: {str(e)}"
+            })
+        raise HTTPException(status_code=500, detail=f"Failed to start upload: {str(e)}")
+
+async def process_file_upload_async(file_id: str, video_file: UploadFile, temp_file_path: str):
+    """Asynchronous file upload processing"""
+    try:
+        # Update progress: Starting file save
+        upload_status_memory[file_id].update({
+            "progress": 5, 
+            "message": "Saving file to temporary storage..."
+        })
+        
+        # Save file to temp location asynchronously
+        total_size = 0
+        with open(temp_file_path, "wb") as buffer:
+            while chunk := await video_file.read(8192):  # Read in chunks
+                buffer.write(chunk)
+                total_size += len(chunk)
+                
+                # Update progress based on chunk reading (estimated)
+                if total_size > 0:
+                    # Rough progress estimation (5% to 15% during file save)
+                    progress = min(15, 5 + (total_size // (1024 * 1024)))  # 1MB = 1% progress
+                    upload_status_memory[file_id].update({
+                        "progress": progress,
+                        "message": f"Saving file... ({total_size // (1024 * 1024)} MB)"
+                    })
+        
+        file_size = os.path.getsize(temp_file_path)
+        filename = video_file.filename
+        
+        # Update progress: File saved, starting validation
+        upload_status_memory[file_id].update({
+            "progress": 20, 
+            "message": "File saved successfully, starting validation..."
+        })
+        
+        # Continue with existing background processing logic
+        await process_file_upload_background_async(file_id, temp_file_path, filename, file_size)
+        
+    except Exception as e:
+        # Update status to failed
+        upload_status_memory[file_id].update({
+            "status": "failed",
+            "progress": 0,
+            "message": f"Upload failed: {str(e)}"
+        })
+        
+        # Clean up temp file if exists
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+async def process_file_upload_background_async(file_id: str, temp_file_path: str, filename: str, file_size: int):
+    """Async version of background file processing"""
+    try:
+        # Validate file format - 25%
+        upload_status_memory[file_id].update({"progress": 25, "message": "Validating file format..."})
         allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
         file_ext = Path(filename).suffix.lower()
         
@@ -577,18 +686,17 @@ def process_file_upload_background_from_file(file_id: str, temp_file_path: str, 
                 "progress": 0, 
                 "message": f"Unsupported video format. Allowed: {', '.join(allowed_extensions)}"
             })
-            # Clean up temp file
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
             return
         
-        # Read file content for processing - 15%
-        upload_status_memory[file_id].update({"progress": 15, "message": "Reading file content..."})
+        # Read file content for processing - 35%
+        upload_status_memory[file_id].update({"progress": 35, "message": "Processing file content..."})
         with open(temp_file_path, 'rb') as f:
             video_file_content = f.read()
         
-        # Store locally - 25%
-        upload_status_memory[file_id].update({"progress": 25, "message": "Storing locally..."})
+        # Store locally - 50%
+        upload_status_memory[file_id].update({"progress": 50, "message": "Storing locally..."})
         local_result = local_storage.store_video(file_id, video_file_content, filename)
         
         if not local_result.get("success"):
@@ -597,24 +705,21 @@ def process_file_upload_background_from_file(file_id: str, temp_file_path: str, 
                 "progress": 0,
                 "message": f"Local storage failed: {local_result.get('error', 'Unknown error')}"
             })
-            # Clean up temp file
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
             return
         
-        # Upload to Cloudflare directly from temp file - 70%
-        upload_status_memory[file_id].update({"progress": 70, "message": "Uploading to cloud storage..."})
+        # Upload to Cloudflare - 80%
+        upload_status_memory[file_id].update({"progress": 80, "message": "Uploading to cloud storage..."})
         file_key = f"uploads/{file_id}/{filename}"
         upload_result = r2_storage.upload_file(temp_file_path, file_key)
         
-        # Check if upload was successful
         if not upload_result.get("success"):
             upload_status_memory[file_id].update({
                 "status": "failed",
                 "progress": 0,
-                "message": f"Upload failed: {upload_result.get('error', 'Unknown error')}"
+                "message": f"Cloud upload failed: {upload_result.get('error', 'Unknown error')}"
             })
-            # Clean up temp file
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
             return
@@ -635,7 +740,7 @@ def process_file_upload_background_from_file(file_id: str, temp_file_path: str, 
         uploaded_files_memory[file_id] = {
             "url": uploaded_url,
             "filename": filename,
-            "size": len(video_file_content),
+            "size": file_size,
             "upload_time": datetime.now().isoformat(),
             "local_path": local_result["local_path"],
             "expires_at": local_result["expires_at"]
@@ -650,63 +755,47 @@ def process_file_upload_background_from_file(file_id: str, temp_file_path: str, 
         upload_status_memory[file_id].update({
             "status": "failed",
             "progress": 0,
-            "message": f"Upload failed: {str(e)}"
+            "message": f"Upload processing failed: {str(e)}"
         })
         
         # Clean up temp file if exists
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
 
-@app.post("/upload-file")
-async def upload_file(video_file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
-    """Upload video file to Cloudflare with background processing"""
-    file_id = r2_storage.generate_audio_id()
-    
-    try:
-        # Save file to temp immediately (faster than reading to memory)
-        temp_file_path = os.path.join(settings.TEMP_DIR, f"upload_{file_id}_{video_file.filename}")
-        os.makedirs(settings.TEMP_DIR, exist_ok=True)
-        
-        # Quick file save (streaming)
-        with open(temp_file_path, "wb") as buffer:
-            while chunk := await video_file.read(8192):  # Read in small chunks
-                buffer.write(chunk)
-        
-        file_size = os.path.getsize(temp_file_path)
-        
-        # Initialize upload status
-        upload_status_memory[file_id] = {
-            "status": "uploading",
-            "progress": 0,
-            "message": "Starting upload...",
-            "original_filename": video_file.filename,
-            "started_at": datetime.now().isoformat()
-        }
-        
-        # Start background processing with temp file path
-        background_tasks.add_task(process_file_upload_background_from_file, file_id, temp_file_path, video_file.filename)
-        
-        # Return immediate response
-        return {
-            "success": True,
-            "message": "File upload started",
-            "file_id": file_id,
-            "status_check_url": f"/upload-status/{file_id}",
-            "original_filename": video_file.filename,
-            "file_size": file_size
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start upload: {str(e)}")
-
 @app.get("/upload-status/{file_id}", response_model=UploadStatusResponse)
 async def get_upload_status(file_id: str):
-    """Get upload progress status"""
+    """Get upload progress status with detailed information"""
     try:
         if file_id not in upload_status_memory:
             raise HTTPException(status_code=404, detail="Upload ID not found")
         
         data = upload_status_memory[file_id]
+        
+        # Calculate elapsed time and estimated remaining time
+        started_at = data.get("started_at")
+        elapsed_time = None
+        estimated_remaining = None
+        
+        if started_at:
+            from datetime import datetime
+            start_time = datetime.fromisoformat(started_at)
+            elapsed_seconds = (datetime.now() - start_time).total_seconds()
+            elapsed_time = f"{int(elapsed_seconds // 60)}m {int(elapsed_seconds % 60)}s"
+            
+            # Estimate remaining time based on progress
+            progress = data.get("progress", 0)
+            if progress > 0 and progress < 100 and data["status"] == "uploading":
+                total_estimated = elapsed_seconds * (100 / progress)
+                remaining_seconds = total_estimated - elapsed_seconds
+                estimated_remaining = f"{int(remaining_seconds // 60)}m {int(remaining_seconds % 60)}s"
+        
+        # Enhanced message with timing info
+        enhanced_message = data["message"]
+        if elapsed_time and data["status"] == "uploading":
+            enhanced_message += f" (elapsed: {elapsed_time}"
+            if estimated_remaining:
+                enhanced_message += f", remaining: ~{estimated_remaining}"
+            enhanced_message += ")"
         
         # Clean up completed/failed uploads after 5 minutes
         if data["status"] in ["completed", "failed"]:
@@ -721,7 +810,7 @@ async def get_upload_status(file_id: str):
             file_id=file_id,
             status=data["status"],
             progress=data["progress"],
-            message=data["message"],
+            message=enhanced_message,
             original_filename=data.get("original_filename"),
             file_url=data.get("file_url")
         )
