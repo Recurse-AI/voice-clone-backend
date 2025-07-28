@@ -206,14 +206,14 @@ class AudioProcessor:
             logger.info("Calling enhanced unified voice cloning service")
             cloning_result = self.voice_cloning_service.clone_voice_segments(
                 segments=all_segments, 
-                max_tokens=max_tokens,
-                cfg_scale=cfg_scale, 
-                temperature=temperature,
-                top_p=top_p,
-                cfg_filter_top_k=cfg_filter_top_k,
-                speed_factor=speed_factor,
+                max_tokens=max_tokens or settings.DIA_ENHANCED_MAX_TOKENS,
+                cfg_scale=cfg_scale or settings.DIA_ENHANCED_CFG_SCALE,
+                temperature=temperature or settings.DIA_ENHANCED_TEMPERATURE,
+                top_p=top_p or settings.DIA_ENHANCED_TOP_P,
+                cfg_filter_top_k=cfg_filter_top_k or settings.DIA_ENHANCED_CFG_FILTER_TOP_K,
+                speed_factor=speed_factor or settings.DIA_ENHANCED_SPEED_FACTOR,
                 seed=base_seed, 
-                use_torch_compile=use_torch_compile,
+                use_torch_compile=use_torch_compile if use_torch_compile is not None else settings.DIA_ENHANCED_USE_TORCH_COMPILE,
                 audio_id=audio_id
             )
             

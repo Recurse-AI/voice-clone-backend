@@ -311,7 +311,7 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
                 cloned_audio = voice_service.dia_model.generate(
                     text=combined_text,
                     audio_prompt=temp_ref_path,
-                    use_torch_compile=False,
+                    use_torch_compile=settings.DIA_ENHANCED_USE_TORCH_COMPILE,
                     cfg_scale=settings.DIA_ENHANCED_CFG_SCALE,
                     temperature=settings.DIA_ENHANCED_TEMPERATURE,
                     top_p=settings.DIA_ENHANCED_TOP_P,

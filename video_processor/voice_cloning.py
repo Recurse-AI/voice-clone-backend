@@ -42,13 +42,13 @@ class VoiceCloningService:
         
         # Enhanced default parameters (can be overridden)
         self.default_params = {
-            'max_tokens': 3072,  # ~36 seconds
-            'cfg_scale': 3.0,    # Adherence to text prompt
-            'temperature': 1.2,   # Randomness
-            'top_p': 0.95,       # Nucleus sampling
-            'cfg_filter_top_k': 45,  # CFG filtering
-            'speed_factor': 0.92,    # Audio speed adjustment
-            'use_torch_compile': True,
+            'max_tokens': settings.DIA_ENHANCED_MAX_TOKENS,     # Use config values
+            'cfg_scale': settings.DIA_ENHANCED_CFG_SCALE,       # Use config values
+            'temperature': settings.DIA_ENHANCED_TEMPERATURE,   # Use config values  
+            'top_p': settings.DIA_ENHANCED_TOP_P,               # Use config values
+            'cfg_filter_top_k': settings.DIA_ENHANCED_CFG_FILTER_TOP_K,  # Use config values
+            'speed_factor': settings.DIA_ENHANCED_SPEED_FACTOR,     # Use config values
+            'use_torch_compile': settings.DIA_ENHANCED_USE_TORCH_COMPILE,  # Use config values
             'verbose': False
         }
         
@@ -388,12 +388,12 @@ class VoiceCloningService:
             logger.info(f"Generation text: {generation_text[:100]}...")
             
             # Use enhanced parameters matching reference code defaults
-            max_tokens = params.get('max_tokens', 3072)  # Reference default
-            cfg_scale = params.get('cfg_scale', 3.0)     # Reference default
-            temperature = params.get('temperature', 1.8) # Reference default (higher than our old 1.2)
-            top_p = params.get('top_p', 0.95)            # Reference default
-            cfg_filter_top_k = params.get('cfg_filter_top_k', 45)  # Reference default
-            use_torch_compile = params.get('use_torch_compile', False)  # Reference keeps False for stability
+            max_tokens = params.get('max_tokens', settings.DIA_ENHANCED_MAX_TOKENS)
+            cfg_scale = params.get('cfg_scale', settings.DIA_ENHANCED_CFG_SCALE)
+            temperature = params.get('temperature', settings.DIA_ENHANCED_TEMPERATURE)
+            top_p = params.get('top_p', settings.DIA_ENHANCED_TOP_P)
+            cfg_filter_top_k = params.get('cfg_filter_top_k', settings.DIA_ENHANCED_CFG_FILTER_TOP_K)
+            use_torch_compile = params.get('use_torch_compile', settings.DIA_ENHANCED_USE_TORCH_COMPILE)
             
             logger.info(f"Using parameters: max_tokens={max_tokens}, cfg_scale={cfg_scale}, temp={temperature}, top_p={top_p}, cfg_filter_top_k={cfg_filter_top_k}")
             
@@ -402,12 +402,12 @@ class VoiceCloningService:
                 generated_audio = self.dia_model.generate(
                     text=generation_text,
                     audio_prompt=reference_audio_path,  # Use reference audio like in reference code
-                    max_tokens=settings.DIA_ENHANCED_MAX_TOKENS,
-                    cfg_scale=settings.DIA_ENHANCED_CFG_SCALE,
-                    temperature=settings.DIA_ENHANCED_TEMPERATURE,
-                    top_p=settings.DIA_ENHANCED_TOP_P,
-                    cfg_filter_top_k=settings.DIA_ENHANCED_CFG_FILTER_TOP_K,
-                    use_torch_compile=settings.DIA_ENHANCED_USE_TORCH_COMPILE,
+                    max_tokens=max_tokens,
+                    cfg_scale=cfg_scale,
+                    temperature=temperature,
+                    top_p=top_p,
+                    cfg_filter_top_k=cfg_filter_top_k,
+                    use_torch_compile=use_torch_compile,
                     verbose=False  # Keep quiet for production
                 )
             

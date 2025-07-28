@@ -311,7 +311,7 @@ RULES:
 - Maintain consistency for voice cloning
 - Keep the original meaning and emotion
 - Try to keep the text as close to the original as possible
-- Don't make any line too long i.e more than 7 words and use . at the end of the line when needed
+- Don't make any line too long i.e more than 7 words
 - Break into multiple lines if text is long
 
 EXAMPLE OUTPUT:
@@ -396,7 +396,30 @@ OUTPUT (English with [S1] tag, proper line breaks):"""
                 # Continuation line without speaker tag - keep on separate line
                 formatted_lines.append(line)
         
-        return '\n'.join(formatted_lines)
+        # Ensure we don't have everything on one line
+        result = '\n'.join(formatted_lines)
+        
+        # Additional check: if result has multiple [S tags but no newlines, force line breaks
+        if result.count('[S') > 1 and '\n' not in result:
+            # Split on speaker tags and rejoin with newlines
+            parts = re.split(r'(\[S\d+\])', result)
+            new_lines = []
+            current_line = ""
+            
+            for part in parts:
+                if re.match(r'\[S\d+\]', part):
+                    if current_line.strip():
+                        new_lines.append(current_line.strip())
+                    current_line = part
+                else:
+                    current_line += part
+            
+            if current_line.strip():
+                new_lines.append(current_line.strip())
+            
+            result = '\n'.join(new_lines)
+        
+        return result
     
     def _enhanced_fallback_reference_style(self, text: str, is_multi_speaker: bool = False) -> str:
         """Enhanced fallback formatting following reference patterns"""
@@ -416,6 +439,11 @@ OUTPUT (English with [S1] tag, proper line breaks):"""
             if translation_response and translation_response.choices:
                 english_text = translation_response.choices[0].message.content.strip()
                 
+                # Remove single quotes
+                english_text = english_text.replace("'", "")
+                english_text = english_text.replace("'", "")
+                english_text = english_text.replace("'", "")
+                
                 # Apply simple formatting
                 if not re.search(r'\[S\d+\]', english_text):
                     english_text = f"[S1] {english_text}"
@@ -431,6 +459,11 @@ OUTPUT (English with [S1] tag, proper line breaks):"""
             # Ultimate fallback with reference formatting
             logger.error(f"Enhanced fallback failed: {e}")
             cleaned = self._clean_text(text)
+            
+            # Remove single quotes from fallback too
+            cleaned = cleaned.replace("'", "")
+            cleaned = cleaned.replace("'", "")
+            cleaned = cleaned.replace("'", "")
             
             if not cleaned.startswith('[S'):
                 cleaned = f"[S1] {cleaned}"
