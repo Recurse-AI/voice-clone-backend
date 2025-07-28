@@ -600,8 +600,11 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
             "started_at": datetime.now().isoformat()
         }
         
+        # Extract filename before background task (UploadFile might not be accessible in background)
+        original_filename = video_file.filename
+        
         # Start background file saving and processing
-        background_tasks.add_task(process_file_upload_async, file_id, video_file, temp_file_path)
+        background_tasks.add_task(process_file_upload_async_safe, file_id, video_file, temp_file_path, original_filename)
         
         # Return immediate response without waiting for file save
         return {
@@ -623,8 +626,8 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
             })
         raise HTTPException(status_code=500, detail=f"Failed to start upload: {str(e)}")
 
-async def process_file_upload_async(file_id: str, video_file: UploadFile, temp_file_path: str):
-    """Asynchronous file upload processing"""
+async def process_file_upload_async_safe(file_id: str, video_file: UploadFile, temp_file_path: str, filename: str):
+    """Safe asynchronous file upload processing with pre-extracted filename"""
     try:
         # Update progress: Starting file save
         upload_status_memory[file_id].update({
@@ -648,8 +651,8 @@ async def process_file_upload_async(file_id: str, video_file: UploadFile, temp_f
                         "message": f"Saving file... ({total_size // (1024 * 1024)} MB)"
                     })
         
+        # File is now saved to temp location, get actual size
         file_size = os.path.getsize(temp_file_path)
-        filename = video_file.filename
         
         # Update progress: File saved, starting validation
         upload_status_memory[file_id].update({
@@ -657,7 +660,7 @@ async def process_file_upload_async(file_id: str, video_file: UploadFile, temp_f
             "message": "File saved successfully, starting validation..."
         })
         
-        # Continue with existing background processing logic
+        # Continue with background processing using only temp file (not original UploadFile)
         await process_file_upload_background_async(file_id, temp_file_path, filename, file_size)
         
     except Exception as e:
@@ -690,10 +693,18 @@ async def process_file_upload_background_async(file_id: str, temp_file_path: str
                 os.remove(temp_file_path)
             return
         
-        # Read file content for processing - 35%
-        upload_status_memory[file_id].update({"progress": 35, "message": "Processing file content..."})
+        # Read file content from temp file for processing - 35%
+        upload_status_memory[file_id].update({"progress": 35, "message": "Reading file content for processing..."})
+        
+        # Verify temp file exists and is readable
+        if not os.path.exists(temp_file_path):
+            raise Exception("Temporary file not found")
+            
         with open(temp_file_path, 'rb') as f:
             video_file_content = f.read()
+        
+        if len(video_file_content) == 0:
+            raise Exception("Temporary file is empty")
         
         # Store locally - 50%
         upload_status_memory[file_id].update({"progress": 50, "message": "Storing locally..."})
