@@ -260,10 +260,7 @@ class TranscriptionService:
                 primary_speaker = speaker_data.get('primary_speaker', 'A')
                 speaker = primary_speaker
             
-            clean_text = self._clean_text(text)
-            if not clean_text.strip():
-                raise ValueError(f"No text available for speaker {speaker}")
-            
+            clean_text = text
             # Check cache first
             with self.cache_lock:
                 cache_key = f"{clean_text.strip()}_{is_multi_speaker}_v4_reference_match"
@@ -289,12 +286,15 @@ RULES:
 - Lines should follow natural speech patterns
 - Maintain speaker consistency throughout
 - Try to keep the text as close to the original as possible
-- Don't make any line too long - break into multiple lines if text is long
+- Don't make any line too long - break into multiple lines if text is long use new line '\n'
 - Try to keep single line around 9 words or less
 
 EXAMPLE OUTPUT:
 [S1] I will take care of all the cookies in a minute
-[S2] Just gather all the information you want about the cookies
+and I will get back to you with the information you need
+[S2] Just gather all the information you want about the cookies.
+also I will get back to you with the information you need
+as soon as possible
 
 OUTPUT (English with clean speaker tags, each speaker on new line):"""
                 else:
@@ -312,7 +312,7 @@ RULES:
 - Maintain consistency for voice cloning
 - Keep the original meaning and emotion
 - Try to keep the text as close to the original as possible
-- Don't make any line too long - break into multiple lines if text is long
+- Don't make any line too long - break into multiple lines if text is long use new line '\n'
 - Try to keep the text as close to the original as possible and don't make it too long
 - Try to keep single line around 9 words or less
 
@@ -335,7 +335,6 @@ OUTPUT (English with [S1] tag, proper line breaks):"""
                 
                 if response and response.choices:
                     formatted_text = response.choices[0].message.content.strip()
-                    formatted_text = self._clean_and_format_reference_style(formatted_text)
                     
                     with self.cache_lock:
                         self.translation_cache[cache_key] = formatted_text
@@ -345,192 +344,11 @@ OUTPUT (English with [S1] tag, proper line breaks):"""
                 
             except Exception as openai_error:
                 logger.warning(f"OpenAI formatting failed: {openai_error}")
-                # Enhanced fallback with reference style
-                return self._enhanced_fallback_reference_style(clean_text, is_multi_speaker)
+                raise ValueError(f"OpenAI formatting failed: {openai_error}")
                 
         except Exception as e:
             raise ValueError(f"Enhanced text formatting failed for speaker {speaker}: {str(e)}")
+           
+
+ 
     
-    def _clean_and_format_reference_style(self, text: str) -> str:
-        """Clean formatted text following reference code patterns"""
-        # Remove quotes and extra whitespace
-        text = re.sub(r'^["\s]*', '', text).strip()
-        text = re.sub(r'["\s]*$', '', text)
-        
-        
-        if not text:
-            raise ValueError("Empty response from OpenAI")
-        
-        # Ensure proper speaker tag format
-        if not re.search(r'\[S\d+\]', text):
-            text = f"[S1] {text}"
-        
-        # Clean up multiple spaces and normalize formatting
-        text = re.sub(r'\s+', ' ', text)
-        
-        # Apply reference-style line breaking (natural speech patterns)
-        formatted_text = self._apply_reference_line_breaking(text)
-        
-        return formatted_text
-    
-    def _apply_reference_line_breaking(self, text: str) -> str:
-        """Apply line breaking following reference code natural speech patterns with proper speaker separation"""
-        lines = text.split('\n')
-        formatted_lines = []
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Check if line has speaker tag
-            speaker_match = re.match(r'(\[S\d+\])\s*(.*)', line)
-            if speaker_match:
-                speaker_tag = speaker_match.group(1)
-                content = speaker_match.group(2)
-                
-                if content:
-                    # Each speaker should be on its own line with content
-                    formatted_lines.append(f"{speaker_tag} {content}")
-                else:
-                    formatted_lines.append(speaker_tag)
-            else:
-                # Continuation line without speaker tag - keep on separate line
-                formatted_lines.append(line)
-        
-        # Ensure we don't have everything on one line
-        result = '\n'.join(formatted_lines)
-        
-        # Additional check: if result has multiple [S tags but no newlines, force line breaks
-        if result.count('[S') > 1 and '\n' not in result:
-            # Split on speaker tags and rejoin with newlines
-            parts = re.split(r'(\[S\d+\])', result)
-            new_lines = []
-            current_line = ""
-            
-            for part in parts:
-                if re.match(r'\[S\d+\]', part):
-                    if current_line.strip():
-                        new_lines.append(current_line.strip())
-                    current_line = part
-                else:
-                    current_line += part
-            
-            if current_line.strip():
-                new_lines.append(current_line.strip())
-            
-            result = '\n'.join(new_lines)
-        
-        return result
-    
-    def _enhanced_fallback_reference_style(self, text: str, is_multi_speaker: bool = False) -> str:
-        """Enhanced fallback formatting following reference patterns"""
-        try:
-            # Simple translation first
-            translation_response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "Translate to natural English only. Keep it simple and natural for voice synthesis. Use proper line breaks."},
-                    {"role": "user", "content": f"Translate this to natural English: {text}"}
-                ],
-                max_tokens=150,
-                temperature=0.1,
-                timeout=30
-            )
-            
-            if translation_response and translation_response.choices:
-                english_text = translation_response.choices[0].message.content.strip()
-                
-                # Remove single quotes
-                english_text = english_text.replace("'", "")
-                english_text = english_text.replace("'", "")
-                english_text = english_text.replace("'", "")
-                
-                # Apply simple formatting
-                if not re.search(r'\[S\d+\]', english_text):
-                    english_text = f"[S1] {english_text}"
-                
-                # Apply reference-style formatting
-                formatted_text = self._apply_reference_line_breaking(english_text)
-                
-                return formatted_text
-            else:
-                raise ValueError("Translation failed")
-                
-        except Exception as e:
-            # Ultimate fallback with reference formatting
-            logger.error(f"Enhanced fallback failed: {e}")
-            cleaned = self._clean_text(text)
-            
-            # Remove single quotes from fallback too
-            cleaned = cleaned.replace("'", "")
-            cleaned = cleaned.replace("'", "")
-            cleaned = cleaned.replace("'", "")
-            
-            if not cleaned.startswith('[S'):
-                cleaned = f"[S1] {cleaned}"
-            
-            # Apply reference formatting to fallback too
-            return self._apply_reference_line_breaking(cleaned)
-    
-    def format_dialogue_batch(self, text_list: List[str], speaker_data: List, words_data_list: List[List[Dict]] = None) -> List[str]:
-        """Simplified batch dialogue processing"""
-        if not text_list:
-            return []
-        
-        # Simplified speaker data handling
-        if not speaker_data:
-            speaker_data = ['A'] * len(text_list)
-        
-        # Ensure speaker_data matches text_list length
-        if len(speaker_data) != len(text_list):
-            logger.warning(f"Speaker data length mismatch, using default speakers")
-            speaker_data = ['A'] * len(text_list)
-        
-        # Ensure words_data_list has same length
-        if words_data_list is None:
-            words_data_list = [None] * len(text_list)
-        elif len(words_data_list) != len(text_list):
-            words_data_list = [None] * len(text_list)
-        
-        # Process each text with simplified logic
-        results = []
-        for i, (text, speaker, words_data) in enumerate(zip(text_list, speaker_data, words_data_list)):
-            try:
-                # Create simple speaker data format
-                simple_speaker_data = {
-                    'speakers': [speaker] if isinstance(speaker, str) else speaker.get('speakers', [speaker]),
-                    'is_multi_speaker': False,
-                    'primary_speaker': speaker if isinstance(speaker, str) else speaker.get('primary_speaker', 'A')
-                }
-                
-                formatted_text = self.format_dialogue_text(text, simple_speaker_data, words_data)
-                results.append(formatted_text)
-                
-            except Exception as e:
-                logger.error(f"Failed to format text {i+1}: {str(e)}")
-                results.append(text)  # Use original text as fallback
-        
-        return results
-    
-    def _clean_text(self, text: str) -> str:
-        """Clean text for processing - remove quotes, normalize spacing"""
-        # Remove excessive punctuation
-        text = re.sub(r'[.]{2,}', '.', text)
-        text = re.sub(r'[!]{2,}', '!', text)
-        text = re.sub(r'[?]{2,}', '?', text)
-        
-        # Remove single quotes completely for clean formatting
-        text = text.replace("'", "")
-        text = text.replace("'", "")
-        text = text.replace("'", "")
-        
-        # Normalize spacing
-        text = re.sub(r'\s+', ' ', text)
-        
-        # Clean text
-        text = text.strip()
-        if text and not text.endswith(('.', '!', '?')):
-            text += '.'
-        
-        return text
