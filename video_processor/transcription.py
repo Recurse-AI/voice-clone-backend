@@ -384,4 +384,14 @@ OUTPUT (English with [S1] tag, proper line breaks):"""
         return results
     
     def _clean_text(self, text: str) -> str:
+        # Remove quotes and extra whitespace
+        text = re.sub(r'^["\s]*', '', text).strip()
+        text = re.sub(r'["\s]*$', '', text)
+
+        # Clean up multiple spaces and normalize formatting
+        text = re.sub(r'\s+', ' ', text)
+        
+        # Remove extra spaces at the beginning and end
+        text = text.strip()
+
         return text
