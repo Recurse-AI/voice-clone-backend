@@ -64,11 +64,25 @@ class AudioProcessor:
                 audio_path, language_code, speakers_expected, audio_id, original_duration
             )
             
-            # Create segments
+            # Update progress for transcription completion
+            try:
+                from status_manager import status_manager, ProcessingStatus
+                status_manager.update_status(
+                    audio_id, 
+                    ProcessingStatus.PROCESSING, 
+                    progress=50, 
+                    details={"message": "Transcription completed, preparing segments"}
+                )
+            except:
+                pass
+            
+            # Create optimal segments
             segments = self.segment_manager.create_optimal_segments(transcript_data)
             
             if not segments:
-                return {"success": False, "error": "No viable segments created"}
+                raise ValueError("No valid segments created from transcript")
+            
+            logger.info(f"Created {len(segments)} segments for processing")
             
             # Create output directory
             output_dir = self.temp_dir / f"segments_{audio_id}"
@@ -274,6 +288,18 @@ class AudioProcessor:
             
             audio_url = upload_result["url"]
             
+            # Update progress for audio separation completion
+            try:
+                from status_manager import status_manager, ProcessingStatus
+                status_manager.update_status(
+                    audio_id, 
+                    ProcessingStatus.PROCESSING, 
+                    progress=40, 
+                    details={"message": "Audio separation completed, preparing transcription"}
+                )
+            except:
+                pass
+
             # Process with RunPod Queue Service
             from runpod_queue_service import runpod_queue_service
             
@@ -285,6 +311,18 @@ class AudioProcessor:
             if completion_result.get("status") != "COMPLETED":
                 error_msg = completion_result.get("error", "Unknown error")
                 return {"success": False, "error": f"RunPod job failed: {error_msg}"}
+            
+            # Update progress for transcription completion
+            try:
+                from status_manager import status_manager, ProcessingStatus
+                status_manager.update_status(
+                    audio_id, 
+                    ProcessingStatus.PROCESSING, 
+                    progress=50, 
+                    details={"message": "Transcription completed, preparing segments"}
+                )
+            except:
+                pass
             
             # Validate output
             if not completion_result.get("output") or not completion_result["output"].get("vocal_audio"):

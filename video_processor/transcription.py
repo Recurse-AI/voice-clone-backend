@@ -317,6 +317,7 @@ RULES:
 - Try to keep the text as close to the original as possible 
 - If the text is too long, break it into multiple lines
 - Try to generate words that are close to the original text
+- try to keep everything in max 5 lines
 
 
 EXAMPLE OUTPUT:

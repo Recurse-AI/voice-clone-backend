@@ -512,7 +512,19 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             speakers_expected=speakers_expected
         )
         
-        if not processing_result["success"]:
+        # Update progress after separation completes
+        try:
+            from status_manager import ProcessingStatus
+            status_manager.update_status(
+                audio_id, 
+                ProcessingStatus.PROCESSING, 
+                progress=40, 
+                details={"message": "Audio separation completed, transcription in progress"}
+            )
+        except:
+            pass
+        
+        if not processing_result or not processing_result.get("success"):
             return {"success": False, "error": f"Processing failed: {processing_result.get('error', 'Unknown error')}"}
         
         # Check if still processing
