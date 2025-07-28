@@ -289,7 +289,7 @@ RULES:
 - Lines should follow natural speech patterns
 - Maintain speaker consistency throughout
 - Try to keep the text as close to the original as possible
-- Don't make any line too long i.e more than 7 words
+- Don't make any line too long
 
 EXAMPLE OUTPUT:
 [S1] I will take care of all the cookies in a minute
@@ -311,7 +311,7 @@ RULES:
 - Maintain consistency for voice cloning
 - Keep the original meaning and emotion
 - Try to keep the text as close to the original as possible
-- Don't make any line too long i.e more than 7 words
+- Don't make any line too long
 - Break into multiple lines if text is long
 
 EXAMPLE OUTPUT:
