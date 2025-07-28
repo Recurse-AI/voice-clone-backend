@@ -286,15 +286,11 @@ RULES:
 - Lines should follow natural speech patterns
 - Maintain speaker consistency throughout
 - Try to keep the text as close to the original as possible
-- Don't make any line too long - break into multiple lines if text is long use new line '\n'
-- Try to keep single line around 9 words or less
+- Don't make any line too long - break into multiple lines
 
 EXAMPLE OUTPUT:
-[S1] I will take care of all the cookies in a minute
-and I will get back to you with the information you need
+[S1] I will take care of all the cookies in a minute.
 [S2] Just gather all the information you want about the cookies.
-also I will get back to you with the information you need
-as soon as possible
 
 OUTPUT (English with clean speaker tags, each speaker on new line):"""
                 else:
@@ -312,9 +308,7 @@ RULES:
 - Maintain consistency for voice cloning
 - Keep the original meaning and emotion
 - Try to keep the text as close to the original as possible
-- Don't make any line too long - break into multiple lines if text is long use new line '\n'
-- Try to keep the text as close to the original as possible and don't make it too long
-- Try to keep single line around 9 words or less
+- Don't make any line too long - break into multiple lines
 
 EXAMPLE OUTPUT:
 [S1] Hello this is an example of natural speech
