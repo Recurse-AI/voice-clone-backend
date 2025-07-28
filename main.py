@@ -300,6 +300,16 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
             
             # For voice cloning, use reference transcript + generation text
             combined_text = request.text + " " + request.text
+
+            print(f"Combined text: {combined_text}")
+            print(f"Reference audio URL: {request.reference_audio_url}")
+            print(f"Seed: {seed}")
+            print(f"Temperature: {temperature}")
+            print(f"CFG scale: {cfg_scale}")
+            print(f"Top P: {top_p}")
+            print(f"CFG filter top K: {settings.DIA_ENHANCED_CFG_FILTER_TOP_K}")
+            print(f"Max tokens: {settings.DIA_ENHANCED_MAX_TOKENS}")
+            
             
             import torch
             with torch.inference_mode():

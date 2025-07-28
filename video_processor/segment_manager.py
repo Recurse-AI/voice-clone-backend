@@ -22,6 +22,7 @@ class SegmentManager:
         self.optimal_duration = 8.0  # Dia works best with 5-10s segments
         self.min_duration = 5.0  # Dia recommendation: at least 5s for natural sound
         self.max_duration = 10.0  # Dia recommendation: max 10s for best quality
+        self.max_words_per_segment = 20  # Maximum words per segment for optimal processing
         self.silence_threshold = -40  # dB
         self.min_gap_duration = 2.5  # Only consider gaps >= 2.5s as actual breaks
     
@@ -68,7 +69,7 @@ class SegmentManager:
     
     def _create_simplified_segments(self, words: List[Dict], total_duration: float, 
                                    first_word_start: float) -> List[Dict]:
-        """Create segments with simplified logic - only break on significant gaps (>=2.5s)"""
+        """Create segments with simplified logic - split on duration, word count, or significant gaps"""
         segments = []
         current_segment = {
             'words': [],
@@ -78,7 +79,8 @@ class SegmentManager:
             'end': 0.0,
             'text': '',
             'speaker': 'A',
-            'duration': 0.0
+            'duration': 0.0,
+            'word_count': 0
         }
         
         current_time = 0.0
@@ -102,8 +104,15 @@ class SegmentManager:
             potential_end = word_end
             potential_duration = potential_end - current_segment['start']
             
-            if potential_duration > self.max_duration:
+            # Word count-based splitting (NEW)
+            current_word_count = len(current_segment['words'])
+            
+            if current_word_count >= self.max_words_per_segment:
                 should_split = True
+                logger.info(f"Word count limit reached: {current_word_count} words >= {self.max_words_per_segment} at {current_time:.2f}s")
+            elif potential_duration > self.max_duration:
+                should_split = True
+                logger.info(f"Duration limit reached: {potential_duration:.2f}s > {self.max_duration}s at {current_time:.2f}s")
             elif significant_gap and len(current_segment['words']) > 0:
                 # Only split on significant gaps
                 gap_duration = word_start - current_time
@@ -115,11 +124,13 @@ class SegmentManager:
                 current_segment['end'] = current_segment['words'][-1].get('end', 0) / 1000.0
                 current_segment['duration'] = current_segment['end'] - current_segment['start']
                 current_segment['text'] = ' '.join([w.get('text', '') for w in current_segment['words']])
+                current_segment['word_count'] = len(current_segment['words'])
                 current_segment['is_multi_speaker'] = len(current_segment['speakers_in_segment']) > 1
                 
                 # Only add segment if it meets minimum duration
                 if current_segment['duration'] >= self.min_duration:
                     segments.append(current_segment.copy())
+                    logger.info(f"Created segment {len(segments)}: {current_segment['word_count']} words, {current_segment['duration']:.2f}s")
                 else:
                     logger.info(f"Skipping short segment: {current_segment['duration']:.2f}s < {self.min_duration}s")
                 
@@ -132,7 +143,8 @@ class SegmentManager:
                     'end': 0.0,
                     'text': '',
                     'speaker': word_speaker,
-                    'duration': 0.0
+                    'duration': 0.0,
+                    'word_count': 0
                 }
             
             # Add word to current segment
@@ -148,11 +160,13 @@ class SegmentManager:
             current_segment['end'] = total_duration  # Ensure coverage to end
             current_segment['duration'] = current_segment['end'] - current_segment['start']
             current_segment['text'] = ' '.join([w.get('text', '') for w in current_segment['words']])
+            current_segment['word_count'] = len(current_segment['words'])
             current_segment['is_multi_speaker'] = len(current_segment['speakers_in_segment']) > 1
             
             # Only add segment if it meets minimum duration
             if current_segment['duration'] >= self.min_duration:
                 segments.append(current_segment)
+                logger.info(f"Created final segment {len(segments)}: {current_segment['word_count']} words, {current_segment['duration']:.2f}s")
             else:
                 logger.info(f"Skipping final short segment: {current_segment['duration']:.2f}s < {self.min_duration}s")
                 
@@ -162,9 +176,10 @@ class SegmentManager:
                     segments[-1]['duration'] = segments[-1]['end'] - segments[-1]['start']
                     segments[-1]['text'] += ' ' + current_segment['text']
                     segments[-1]['words'].extend(current_segment['words'])
-                    logger.info(f"Extended last segment to cover remaining duration")
+                    segments[-1]['word_count'] = len(segments[-1]['words'])
+                    logger.info(f"Extended last segment to {segments[-1]['word_count']} words, {segments[-1]['duration']:.2f}s")
         
-        logger.info(f"Created {len(segments)} segments covering 0.0s to {total_duration:.2f}s with minimum {self.min_duration}s duration")
+        logger.info(f"Created {len(segments)} segments covering 0.0s to {total_duration:.2f}s with max {self.max_words_per_segment} words per segment")
         return segments
     
     def _create_segment(self, words: List[Dict], start: float, end: float) -> Optional[Dict]:
@@ -299,6 +314,7 @@ class SegmentManager:
                 'speaker': segment.get('speaker', 'A'),
                 'confidence': confidence,
                 'word_count': len(segment.get('words', [])),
+                'actual_word_count': len(original_text.split()) if original_text.strip() else 0,
                 'is_silent_segment': not bool(original_text.strip()),
                 'segment_type': 'silent' if not original_text.strip() else 'speech'
             }
@@ -327,12 +343,20 @@ class SegmentManager:
         silent_segments = len(segments) - speech_segments
         total_duration = segments[-1]['end'] if segments else 0.0
         
+        # Calculate word count statistics
+        word_counts = [len(s.get('words', [])) for s in segments if s.get('text', '').strip()]
+        avg_words_per_segment = sum(word_counts) / len(word_counts) if word_counts else 0
+        max_words_in_segment = max(word_counts) if word_counts else 0
+        
         summary = {
             'processing_metadata': {
                 'total_segments': len(segments),
                 'speech_segments': speech_segments,
                 'silent_segments': silent_segments,
                 'total_duration': total_duration,
+                'max_words_per_segment': self.max_words_per_segment,
+                'avg_words_per_segment': round(avg_words_per_segment, 1),
+                'max_words_in_segment': max_words_in_segment,
                 'speakers': speakers,
                 'target_language': target_language,
                 'detected_language': detected_language,
