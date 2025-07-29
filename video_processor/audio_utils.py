@@ -318,6 +318,124 @@ class AudioUtils:
         
         return audio
     
+    @staticmethod
+    def detect_silence_boundaries(audio: np.ndarray, sr: int, threshold: float = 0.01, 
+                                 min_silence_duration: float = 0.5) -> List[Tuple[int, int]]:
+        """Detect silence boundaries in audio"""
+        # Calculate frame-based energy
+        frame_length = int(0.025 * sr)  # 25ms frames
+        hop_length = frame_length // 4
+        
+        # Calculate RMS energy
+        rms = librosa.feature.rms(y=audio, frame_length=frame_length, hop_length=hop_length)[0]
+        
+        # Find silent frames
+        silent_frames = rms < threshold
+        
+        # Convert frame indices to sample indices
+        silence_boundaries = []
+        in_silence = False
+        silence_start = 0
+        
+        for i, is_silent in enumerate(silent_frames):
+            sample_index = i * hop_length
+            
+            if is_silent and not in_silence:
+                # Start of silence
+                silence_start = sample_index
+                in_silence = True
+            elif not is_silent and in_silence:
+                # End of silence
+                silence_duration = (sample_index - silence_start) / sr
+                if silence_duration >= min_silence_duration:
+                    silence_boundaries.append((silence_start, sample_index))
+                in_silence = False
+        
+        # Handle silence at the end
+        if in_silence:
+            silence_duration = (len(audio) - silence_start) / sr
+            if silence_duration >= min_silence_duration:
+                silence_boundaries.append((silence_start, len(audio)))
+        
+        return silence_boundaries
+    
+    @staticmethod
+    def remove_tail_silence(audio: np.ndarray, sr: int, threshold: float = 0.01, 
+                           min_silence_duration: float = 0.3) -> np.ndarray:
+        """Remove silence from the tail (end) of audio after voice cloning"""
+        if len(audio) == 0:
+            return audio
+        
+        # Work backwards from the end to find where audio content actually ends
+        frame_length = int(0.025 * sr)  # 25ms frames
+        hop_length = frame_length // 4
+        
+        # Calculate RMS energy in small windows
+        window_size = int(0.1 * sr)  # 100ms windows
+        step_size = int(0.05 * sr)   # 50ms steps
+        
+        # Start from the end and work backwards
+        for i in range(len(audio) - window_size, 0, -step_size):
+            if i < 0:
+                break
+                
+            window = audio[i:i + window_size]
+            rms = np.sqrt(np.mean(window**2))
+            
+            # If we find a window with sufficient energy, this is where content ends
+            if rms > threshold:
+                # Add a small buffer to avoid cutting off speech
+                buffer = int(0.1 * sr)  # 100ms buffer
+                end_point = min(i + window_size + buffer, len(audio))
+                
+                # Only trim if we're actually removing a significant amount of silence
+                silence_duration = (len(audio) - end_point) / sr
+                if silence_duration >= min_silence_duration:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"Removed {silence_duration:.2f}s of tail silence")
+                    return audio[:end_point]
+                else:
+                    return audio  # Not enough silence to justify trimming
+        
+        # If no significant content found, return original audio
+        return audio
+    
+    @staticmethod
+    def remove_head_silence(audio: np.ndarray, sr: int, threshold: float = 0.01,
+                           min_silence_duration: float = 0.3) -> np.ndarray:
+        """Remove silence from the head (beginning) of audio"""
+        if len(audio) == 0:
+            return audio
+        
+        # Work forwards from the beginning to find where audio content starts
+        window_size = int(0.1 * sr)  # 100ms windows
+        step_size = int(0.05 * sr)   # 50ms steps
+        
+        # Start from the beginning and work forwards
+        for i in range(0, len(audio) - window_size, step_size):
+            window = audio[i:i + window_size]
+            rms = np.sqrt(np.mean(window**2))
+            
+            # If we find a window with sufficient energy, this is where content starts
+            if rms > threshold:
+                # Add a small buffer to avoid cutting off speech
+                buffer = int(0.05 * sr)  # 50ms buffer
+                start_point = max(i - buffer, 0)
+                
+                # Only trim if we're actually removing a significant amount of silence
+                silence_duration = start_point / sr
+                if silence_duration >= min_silence_duration:
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"Removed {silence_duration:.2f}s of head silence")
+                    return audio[start_point:]
+                else:
+                    return audio  # Not enough silence to justify trimming
+        
+        # If no significant content found, return original audio
+        return audio
+
     def mix_audio_tracks(self, track1: np.ndarray, track2: np.ndarray, 
                         ratio1: float = 0.8, ratio2: float = 0.2) -> np.ndarray:
         """Mix two audio tracks with specified ratios"""

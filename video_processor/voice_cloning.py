@@ -18,6 +18,7 @@ import torch
 import random
 
 from config import settings
+from .audio_utils import AudioUtils
 
 logger = logging.getLogger(__name__)
 
@@ -255,11 +256,85 @@ class OpenVoiceVoiceCloningService:
         """Check if OpenVoice models are loaded"""
         return self.openvoice_model is not None and self.tone_color_converter is not None
     
+    def _split_text_into_chunks(self, text: str, max_length: int = None) -> List[str]:
+        """Split long text into multiple chunks for voice cloning instead of truncating"""
+        if max_length is None:
+            max_length = settings.OPENVOICE_MAX_TEXT_LENGTH
+            
+        if not text or not text.strip():
+            return []
+        
+        text = text.strip()
+        
+        if len(text) <= max_length:
+            return [text]
+        
+        chunks = []
+        remaining_text = text
+        
+        while len(remaining_text) > max_length:
+            # Find the best place to split within max_length
+            chunk = remaining_text[:max_length]
+            
+            # Find the last space to avoid cutting words
+            last_space = chunk.rfind(' ')
+            last_period = chunk.rfind('.')
+            last_comma = chunk.rfind(',')
+            last_semicolon = chunk.rfind(';')
+            
+            # Use the latest punctuation or space as cutoff point
+            cutoff_points = [last_space, last_period, last_comma, last_semicolon]
+            best_cutoff = max([p for p in cutoff_points if p > max_length * 0.7])  # At least 70% of max length
+            
+            if best_cutoff > 0:
+                chunk_text = chunk[:best_cutoff].strip()
+                remaining_text = remaining_text[best_cutoff:].strip()
+            else:
+                # If no good cutoff point, split at max length
+                chunk_text = chunk.strip()
+                remaining_text = remaining_text[max_length:].strip()
+            
+            if chunk_text:
+                chunks.append(chunk_text)
+        
+        # Add the remaining text if any
+        if remaining_text.strip():
+            chunks.append(remaining_text.strip())
+        
+        logger.info(f"Split text into {len(chunks)} chunks (original: {len(text)} chars, max per chunk: {max_length})")
+        return chunks
+
+    def _concatenate_audio_chunks(self, audio_chunks: List[np.ndarray], gap_duration: float = 0.1) -> np.ndarray:
+        """Concatenate multiple audio chunks with small gaps between them"""
+        if not audio_chunks:
+            return np.array([])
+        
+        if len(audio_chunks) == 1:
+            return audio_chunks[0]
+        
+        # Create small gap between chunks
+        gap_samples = int(gap_duration * self.sample_rate)
+        gap = np.zeros(gap_samples, dtype=audio_chunks[0].dtype)
+        
+        # Concatenate all chunks with gaps
+        result = audio_chunks[0]
+        for i in range(1, len(audio_chunks)):
+            result = np.concatenate([result, gap, audio_chunks[i]])
+        
+        logger.info(f"Concatenated {len(audio_chunks)} audio chunks with {gap_duration}s gaps")
+        return result
+
     def generate_with_retry(self, chunk_text: str, audio_prompt: Optional[str] = None, 
                            custom_args: Optional[Args] = None) -> Optional[np.ndarray]:
         """
-        Generate voice cloned audio using OpenVoice with retry logic
+        Generate voice cloned audio using OpenVoice with retry logic and text chunking for long texts
         """
+        # Split text into chunks if it's too long
+        text_chunks = self._split_text_into_chunks(chunk_text)
+        if not text_chunks:
+            logger.warning("Empty or invalid text provided for voice cloning")
+            return None
+        
         # Ensure model is loaded before processing
         if not self.is_model_loaded():
             logger.warning("Model not loaded, attempting to load...")
@@ -268,6 +343,31 @@ class OpenVoiceVoiceCloningService:
                 return None
         
         args = custom_args or self.default_args
+        
+        # Process each chunk separately
+        audio_chunks = []
+        for i, text_chunk in enumerate(text_chunks):
+            logger.info(f"Processing chunk {i+1}/{len(text_chunks)}: '{text_chunk[:50]}...' ({len(text_chunk)} chars)")
+            
+            chunk_audio = self._generate_single_chunk(text_chunk, audio_prompt, args)
+            if chunk_audio is not None:
+                audio_chunks.append(chunk_audio)
+            else:
+                logger.error(f"Failed to generate audio for chunk {i+1}")
+                return None
+        
+        # Concatenate all audio chunks
+        if audio_chunks:
+            final_audio = self._concatenate_audio_chunks(audio_chunks, gap_duration=0.1)
+            logger.info(f"✅ Generated complete audio from {len(text_chunks)} chunks: '{chunk_text[:50]}...' (total: {len(chunk_text)} chars)")
+            return final_audio
+        else:
+            logger.error("No audio chunks were generated successfully")
+            return None
+    
+    def _generate_single_chunk(self, chunk_text: str, audio_prompt: Optional[str] = None, 
+                              args: Optional[Args] = None) -> Optional[np.ndarray]:
+        """Generate audio for a single text chunk with retry logic"""
         retries = 0
         
         while retries <= args.max_retries:
@@ -298,21 +398,21 @@ class OpenVoiceVoiceCloningService:
                     # Cleanup memory
                     self._cleanup_memory()
                     
-                    logger.info(f"✅ Generated audio for text: '{chunk_text[:50]}...' (attempt {retries + 1})")
+                    logger.debug(f"✅ Generated audio chunk: '{chunk_text[:30]}...' (attempt {retries + 1})")
                     return audio
                 else:
-                    logger.warning(f"⚠️ Generation attempt {retries + 1} returned None")
+                    logger.warning(f"⚠️ Chunk generation attempt {retries + 1} returned None")
                 
             except Exception as e:
-                logger.warning(f"⚠️ Generation attempt {retries + 1} failed: {str(e)}")
+                logger.warning(f"⚠️ Chunk generation attempt {retries + 1} failed: {str(e)}")
             
             retries += 1
             
             if retries <= args.max_retries:
-                logger.info(f"🔄 Retrying generation (attempt {retries + 1}/{args.max_retries + 1})")
+                logger.debug(f"🔄 Retrying chunk generation (attempt {retries + 1}/{args.max_retries + 1})")
                 time.sleep(1)  # Short delay before retry
         
-        logger.error(f"❌ Failed to generate audio after {args.max_retries + 1} attempts")
+        logger.error(f"❌ Failed to generate audio chunk after {args.max_retries + 1} attempts")
         return None
     
     def _generate_openvoice_audio(self, text: str, reference_audio: Optional[str], args: Args) -> Optional[np.ndarray]:
@@ -409,6 +509,9 @@ class OpenVoiceVoiceCloningService:
                 if np.max(np.abs(audio)) > 0:
                     audio = audio / np.max(np.abs(audio)) * 0.9
                 
+                # Remove tail silence after voice cloning
+                audio = AudioUtils.remove_tail_silence(audio, self.sample_rate, threshold=0.01, min_silence_duration=0.3)
+                
                 # Cleanup temp files
                 import shutil
                 shutil.rmtree(output_dir, ignore_errors=True)
@@ -480,26 +583,32 @@ class OpenVoiceVoiceCloningService:
                 duration = segment.get('duration', 0.0)
                 speaker = segment.get('speaker', 'A')
                 
-                if not text.strip():
-                    logger.warning(f"⚠️ Segment {segment_index}: Empty text, skipping")
+                # Split text into chunks if needed
+                text_chunks = self._split_text_into_chunks(text)
+                if not text_chunks:
+                    logger.warning(f"⚠️ Segment {segment_index}: Empty or invalid text after chunking, skipping")
                     failed_segments += 1
                     continue
                 
-                logger.info(f"🎯 Processing segment {segment_index}: '{text[:50]}...' with OpenVoice")
+                total_text_length = sum(len(chunk) for chunk in text_chunks)
+                logger.info(f"🎯 Processing segment {segment_index}: {len(text_chunks)} chunks, total {total_text_length} chars with OpenVoice")
                 
                 # Generate speaker-specific seed for consistency
                 speaker_seed = args.seed + hash(speaker) % 1000
                 segment_args = Args(**args.__dict__)
                 segment_args.seed = speaker_seed
                 
-                # Generate cloned audio
+                # Generate cloned audio using chunking
                 cloned_audio = self.generate_with_retry(
-                    chunk_text=text,
+                    chunk_text=text,  # The method will handle chunking internally
                     audio_prompt=reference_audio,
                     custom_args=segment_args
                 )
                 
                 if cloned_audio is not None:
+                    # Remove tail silence after voice cloning  
+                    cloned_audio = AudioUtils.remove_tail_silence(cloned_audio, self.sample_rate, threshold=0.01, min_silence_duration=0.3)
+                    
                     # Adjust audio duration to match original
                     if duration > 0:
                         target_samples = int(duration * self.sample_rate)
@@ -523,6 +632,9 @@ class OpenVoiceVoiceCloningService:
                     processing_details.append({
                         "segment_index": segment_index,
                         "text": text[:100],
+                        "original_text_length": len(text),
+                        "chunks_count": len(text_chunks),
+                        "total_chunks_length": total_text_length,
                         "speaker": speaker,
                         "duration": duration,
                         "processing_time": segment_time,
@@ -536,6 +648,9 @@ class OpenVoiceVoiceCloningService:
                     processing_details.append({
                         "segment_index": segment_index,
                         "text": text[:100],
+                        "original_text_length": len(text),
+                        "chunks_count": len(text_chunks),
+                        "total_chunks_length": total_text_length,
                         "speaker": speaker,
                         "status": "failed",
                         "error": "Generation failed"
@@ -549,9 +664,19 @@ class OpenVoiceVoiceCloningService:
                 logger.error(f"❌ Error processing segment {i + 1}: {str(e)}")
                 failed_segments += 1
                 
+                # Get text and speaker for error reporting
+                text = segment.get('english_text', segment.get('original_text', ''))
+                speaker = segment.get('speaker', 'A')
+                text_chunks = self._split_text_into_chunks(text)
+                total_text_length = sum(len(chunk) for chunk in text_chunks)
+                
                 processing_details.append({
                     "segment_index": segment.get('segment_index', i + 1),
-                    "text": segment.get('english_text', '')[:100],
+                    "text": text[:100],
+                    "original_text_length": len(text),
+                    "chunks_count": len(text_chunks),
+                    "total_chunks_length": total_text_length,
+                    "speaker": speaker,
                     "status": "failed",
                     "error": str(e)
                 })
@@ -572,17 +697,19 @@ class OpenVoiceVoiceCloningService:
         }
     
     def _adjust_audio_duration(self, audio: np.ndarray, target_samples: int) -> np.ndarray:
-        """Adjust audio duration to match target length"""
+        """Adjust audio duration to match target length - improved for silence-trimmed audio"""
         current_samples = len(audio)
         
         if current_samples == target_samples:
             return audio
         elif current_samples < target_samples:
-            # Pad with silence
+            # Pad with silence at the end (after silence removal, we may need to add some back)
             padding = np.zeros(target_samples - current_samples, dtype=audio.dtype)
+            logger.debug(f"Padding audio with {len(padding)} samples ({len(padding)/self.sample_rate:.2f}s)")
             return np.concatenate([audio, padding])
         else:
-            # Trim to target length
+            # Audio is longer than target - trim from the end (preserve the content)
+            logger.debug(f"Trimming audio from {current_samples} to {target_samples} samples")
             return audio[:target_samples]
     
     def _cleanup_memory(self):
@@ -602,6 +729,25 @@ class OpenVoiceVoiceCloningService:
         self._cleanup_memory()
         logger.info("🧹 OpenVoice models cleared from memory")
     
+    def test_text_chunking(self, test_text: str) -> Dict[str, Any]:
+        """Test method to demonstrate text chunking functionality"""
+        logger.info(f"Testing text chunking for: '{test_text[:100]}...'")
+        
+        chunks = self._split_text_into_chunks(test_text)
+        
+        result = {
+            "original_text": test_text,
+            "original_length": len(test_text),
+            "chunks_count": len(chunks),
+            "chunks": [{"index": i+1, "text": chunk, "length": len(chunk)} for i, chunk in enumerate(chunks)],
+            "total_chunks_length": sum(len(chunk) for chunk in chunks),
+            "max_chunk_length": max(len(chunk) for chunk in chunks) if chunks else 0,
+            "min_chunk_length": min(len(chunk) for chunk in chunks) if chunks else 0
+        }
+        
+        logger.info(f"Chunking result: {len(chunks)} chunks, total length preserved: {result['total_chunks_length']}")
+        return result
+
     def validate_parameters(self, **kwargs) -> Args:
         """Validate and create OpenVoice generation arguments"""
         # Use defaults from settings, override with provided kwargs

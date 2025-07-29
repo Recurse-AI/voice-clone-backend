@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     OPENVOICE_MIN_REFERENCE_SECONDS: float = 3.0  # Minimum reference audio length
     OPENVOICE_MAX_REFERENCE_SECONDS: float = 30.0  # Maximum reference audio length  
     OPENVOICE_CHUNK_LENGTH: float = 30.0  # Maximum chunk length for processing
+    OPENVOICE_MAX_TEXT_LENGTH: int = 200  # Maximum text length for voice cloning (characters)
 
     # Voice Consistency Settings
     OPENVOICE_USE_GLOBAL_SEED: bool = True  # Use single seed for consistency
