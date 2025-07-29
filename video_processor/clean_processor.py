@@ -156,7 +156,7 @@ class CleanAudioProcessor:
             
             cloning_segments = self._prepare_segments_for_cloning(
                 segments, 
-                output_dir / "segments",
+                output_dir,  # Pass output_dir instead of output_dir / "segments"
                 audio_id
             )
             
