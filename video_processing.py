@@ -450,16 +450,14 @@ def process_video_background(
 
 
 def process_video_with_queue(queue_request) -> Dict[str, Any]:
-    """Process video with queue management - using global OpenVoice processor"""
+    """Process video with queue management - simplified for voice cloning only"""
     import time
     import logging
+    import os
     from config import settings
     from status_manager import status_manager, ProcessingStatus
-    from r2_storage import R2Storage
-    from video_processor.base_processor import AudioProcessor  # Keep for other functions
     from video_processor.clean_processor import clean_audio_processor  # Use global instance
     from video_processor.file_handler import FileHandler
-    from video_processor.video_queue_manager import VideoQueueStatus
     from utils import cleanup_temp_files
     
     logger = logging.getLogger(__name__)
@@ -473,28 +471,17 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     is_file_upload = queue_request.is_file_upload
     parameters = queue_request.parameters
     
-    include_instruments = parameters.get("include_instruments", True)
-    generate_subtitles = parameters.get("generate_subtitles", True)
     # OpenVoice parameters with defaults
     max_length = parameters.get("max_length", parameters.get("max_tokens", settings.OPENVOICE_MAX_LENGTH))
-    max_tokens = parameters.get("max_tokens", settings.OPENVOICE_MAX_LENGTH)
-    cfg_scale = parameters.get("cfg_scale", 3.0)  # Legacy parameter
     temperature = parameters.get("temperature", settings.OPENVOICE_TEMPERATURE)
     top_p = parameters.get("top_p", settings.OPENVOICE_TOP_P)
-    cfg_filter_top_k = parameters.get("cfg_filter_top_k", 50)  # Legacy parameter - use default
-    speed_factor = parameters.get("speed_factor", 1.0)  # Default speed
-    use_torch_compile = parameters.get("use_torch_compile", True)  # Legacy parameter
+    speed_factor = parameters.get("speed_factor", 1.0)
     target_language = parameters.get("target_language", "English")
     language_code = parameters.get("language_code")
     speakers_expected = parameters.get("speakers_expected", 1)
     original_filename = parameters.get("original_filename")
-    original_source_url = parameters.get("original_source_url")
-    # New OpenVoice specific parameters
     repetition_penalty = parameters.get("repetition_penalty", settings.OPENVOICE_REPETITION_PENALTY)
     emotion = parameters.get("emotion", settings.OPENVOICE_DEFAULT_EMOTION)
-    
-    # Initialize services
-    r2_storage = R2Storage()
     
     try:
         # Use global clean audio processor with OpenVoice
@@ -532,7 +519,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             language_code=language_code,
             speakers_expected=speakers_expected,
             # OpenVoice parameters
-            max_length=max_length or max_tokens,  # Map legacy parameter
+            max_length=max_length,  # Map legacy parameter
             temperature=temperature,
             top_p=top_p,
             repetition_penalty=repetition_penalty,
@@ -548,9 +535,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             return {"success": False, "error": error_msg, "details": processing_result}
         
         logger.info(f"✅ OpenVoice audio processing completed successfully")
-        
-        # Phase 3: Final audio reconstruction and upload (90% → 100%)
-        status_manager.update_status(audio_id, ProcessingStatus.UPLOADING, 90, "Uploading processed audio...")
         
         # Validate processing_result before accessing its content
         if not isinstance(processing_result, dict):
@@ -580,23 +564,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             status_manager.fail_processing(audio_id, error_msg)
             return {"success": False, "error": error_msg}
         
-        # Upload final audio to R2
-        audio_key = f"processed-audio/{audio_id}/final_audio.wav"
-        upload_result = r2_storage.upload_file(final_audio_path, audio_key, "audio/wav")
-        
-        if not upload_result.get("success"):
-            error_msg = f"Failed to upload final audio: {upload_result.get('error', 'Unknown error')}"
-            status_manager.fail_processing(audio_id, error_msg)
-            return {"success": False, "error": error_msg}
-        
-        final_audio_url = upload_result["url"]
-        
-        # Generate video with subtitles if requested
-        final_video_url = None
-        if generate_subtitles:
-            # Implementation for video generation would go here
-            pass
-        
         # Extract voice cloning stats (processing_result is already validated as dict)
         voice_cloning_data = processing_result.get("voice_cloning", {})
         if isinstance(voice_cloning_data, dict):
@@ -608,9 +575,9 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             successful_segments = 0
             logger.warning(f"⚠️ voice_cloning data is not a dict: {type(voice_cloning_data)}")
 
+        # Complete processing successfully
         status_manager.complete_processing(audio_id, {
-            "final_audio_url": final_audio_url,
-            "final_video_url": final_video_url,
+            "final_audio_path": final_audio_path,
             "processing_stats": {
                 "total_segments": total_segments,
                 "successful_segments": successful_segments,
@@ -618,11 +585,9 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             },
             "metadata": {
                 "original_filename": original_filename,
-                "original_source_url": original_source_url,
                 "processing_timeline": {
                     "transcription_source": "AssemblyAI",
-                    "voice_cloning_model": "OpenVoice",
-                    "separation_service": "RunPod"
+                    "voice_cloning_model": "OpenVoice"
                 }
             }
         })
@@ -632,8 +597,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         return {
             "success": True,
             "audio_id": audio_id,
-            "final_audio_url": final_audio_url,
-            "final_video_url": final_video_url,
+            "final_audio_path": final_audio_path,
             "model_used": "OpenVoice",
             "processing_result": processing_result
         }
