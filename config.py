@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     DIA_DEFAULT_SEED: int = 500  # Stable default seed (same as Gradio example)
     DIA_MEMORY_CLEANUP_FREQUENCY: int = 1  # Clean memory after each segment
     DIA_MAX_RETRIES: int = 2  # Retry count for failed generations
-    DIA_SILENCE_PADDING: float = 1.0  # Silence between segments (Gradio uses 0.3)
+    DIA_SILENCE_PADDING: float = 0.0  # Disable silence padding to fix duration mismatch
     
 
     

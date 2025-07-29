@@ -73,8 +73,8 @@ class AudioProcessor:
                     
                     # Upload extracted audio to get URL for RunPod
                     upload_result = r2_storage.upload_file(
-                        file_path=audio_path,
-                        key=f"processing/{audio_id}/extracted_audio.wav"
+                        local_path=audio_path,
+                        r2_key=f"processing/{audio_id}/extracted_audio.wav"
                     )
                     
                     if upload_result.get("success"):
