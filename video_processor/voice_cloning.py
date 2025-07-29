@@ -112,65 +112,52 @@ class OpenVoiceVoiceCloningService:
         else:
             return torch.device("cpu")
     
-    def ensure_model_loaded(self, retry_count: int = 3) -> bool:
-        """Ensure the model is loaded, with retry mechanism"""
-        if self.is_model_loaded():
-            return True
-        
-        logger.info("🔄 Model not loaded, attempting to load...")
-        
-        for attempt in range(retry_count):
-            try:
-                if self.load_model():
-                    logger.info(f"✅ Model loaded successfully on attempt {attempt + 1}")
-                    return True
-                else:
-                    logger.warning(f"⚠️ Model loading failed on attempt {attempt + 1}")
-                    
-            except Exception as e:
-                logger.error(f"❌ Model loading error on attempt {attempt + 1}: {str(e)}")
-            
-            if attempt < retry_count - 1:
-                import time
-                time.sleep(2)  # Wait 2 seconds before retry
-        
-        logger.error(f"❌ Failed to load model after {retry_count} attempts")
-        return False
-
     def load_model(self, model_path: str = None) -> bool:
-        """Load OpenVoice model from installed package"""
+        """Load OpenVoice model - Commercial Grade Setup"""
         try:
             logger.info(f"🎙️ Loading OpenVoice model...")
             start_time = time.time()
             
             # Import OpenVoice components
             try:
-                # Import OpenVoice modules
                 from openvoice import se_extractor
                 from openvoice.api import BaseSpeakerTTS, ToneColorConverter
                 logger.info("✅ OpenVoice modules imported successfully")
                 
             except ImportError as e:
                 logger.error(f"❌ OpenVoice not installed: {str(e)}")
-                logger.error("Please run: pip install git+https://github.com/myshell-ai/OpenVoice.git")
                 return False
+            
+            # Model paths - using official structure
+            model_dir = "/workspace/voice-clone-backend/models/openvoice"
+            base_config = f"{model_dir}/checkpoints/base_speakers/EN/config.json"
+            base_ckpt = f"{model_dir}/checkpoints/base_speakers/EN/checkpoint.pth"
+            converter_config = f"{model_dir}/checkpoints/converter/config.json"
+            converter_ckpt = f"{model_dir}/checkpoints/converter/checkpoint.pth"
+            
+            # Download models if not exist
+            if not all(os.path.exists(p) for p in [base_config, base_ckpt, converter_config, converter_ckpt]):
+                logger.info("📥 Downloading OpenVoice models...")
+                self._download_models(model_dir)
             
             # Load Base Speaker TTS Model
             try:
-                self.openvoice_model = BaseSpeakerTTS.from_pretrained("myshell-ai/openvoice", device=self.device)
+                self.openvoice_model = BaseSpeakerTTS(base_config, device=self.device)
+                self.openvoice_model.load_ckpt(base_ckpt)
                 logger.info("✅ OpenVoice Base TTS model loaded")
                 
             except Exception as e:
-                logger.error(f"❌ Failed to load OpenVoice base model: {e}")
+                logger.error(f"❌ Failed to load base model: {e}")
                 return False
             
             # Load Tone Color Converter
             try:
-                self.tone_color_converter = ToneColorConverter.from_pretrained("myshell-ai/openvoice", device=self.device)
+                self.tone_color_converter = ToneColorConverter(converter_config, device=self.device)
+                self.tone_color_converter.load_ckpt(converter_ckpt)
                 logger.info("✅ OpenVoice Tone Color Converter loaded")
                 
             except Exception as e:
-                logger.error(f"❌ Failed to load OpenVoice converter: {e}")
+                logger.error(f"❌ Failed to load converter: {e}")
                 return False
             
             # Enable torch.compile if requested
@@ -178,17 +165,67 @@ class OpenVoiceVoiceCloningService:
                 try:
                     self.openvoice_model = torch.compile(self.openvoice_model)
                     self.tone_color_converter = torch.compile(self.tone_color_converter)
-                    logger.info("✅ OpenVoice models compiled with torch.compile")
+                    logger.info("✅ Models compiled with torch.compile")
                 except Exception as e:
-                    logger.warning(f"Failed to compile models: {e}")
+                    logger.warning(f"Failed to compile: {e}")
             
             load_time = time.time() - start_time
             logger.info(f"✅ OpenVoice loaded successfully in {load_time:.2f} seconds")
             return True
             
         except Exception as e:
-            logger.error(f"❌ Failed to load OpenVoice model: {str(e)}")
+            logger.error(f"❌ Failed to load OpenVoice: {str(e)}")
             return False
+    
+    def _download_models(self, model_dir: str):
+        """Download OpenVoice models from official sources"""
+        try:
+            os.makedirs(model_dir, exist_ok=True)
+            
+            # Download using wget/curl for reliability
+            import subprocess
+            
+            logger.info("📥 Downloading official OpenVoice checkpoints...")
+            
+            # Create checkpoints structure
+            os.makedirs(f"{model_dir}/checkpoints/base_speakers/EN", exist_ok=True)
+            os.makedirs(f"{model_dir}/checkpoints/converter", exist_ok=True)
+            
+            # Download base model files
+            base_urls = {
+                "config.json": "https://huggingface.co/myshell-ai/OpenVoice/resolve/main/checkpoints/base_speakers/EN/config.json",
+                "checkpoint.pth": "https://huggingface.co/myshell-ai/OpenVoice/resolve/main/checkpoints/base_speakers/EN/checkpoint.pth"
+            }
+            
+            # Download converter files
+            converter_urls = {
+                "config.json": "https://huggingface.co/myshell-ai/OpenVoice/resolve/main/checkpoints/converter/config.json", 
+                "checkpoint.pth": "https://huggingface.co/myshell-ai/OpenVoice/resolve/main/checkpoints/converter/checkpoint.pth"
+            }
+            
+            # Download base model
+            for filename, url in base_urls.items():
+                output_path = f"{model_dir}/checkpoints/base_speakers/EN/{filename}"
+                logger.info(f"📥 Downloading {filename}...")
+                subprocess.run([
+                    "wget", "-O", output_path, url, 
+                    "--progress=bar", "--no-check-certificate"
+                ], check=True)
+            
+            # Download converter model
+            for filename, url in converter_urls.items():
+                output_path = f"{model_dir}/checkpoints/converter/{filename}"
+                logger.info(f"📥 Downloading {filename}...")
+                subprocess.run([
+                    "wget", "-O", output_path, url,
+                    "--progress=bar", "--no-check-certificate"
+                ], check=True)
+            
+            logger.info("✅ All OpenVoice models downloaded successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to download models: {e}")
+            raise
         
     def is_model_loaded(self) -> bool:
         """Check if OpenVoice models are loaded"""
@@ -200,9 +237,11 @@ class OpenVoiceVoiceCloningService:
         Generate voice cloned audio using OpenVoice with retry logic
         """
         # Ensure model is loaded before processing
-        if not self.ensure_model_loaded():
-            logger.error("OpenVoice models not loaded and failed to load")
-            return None
+        if not self.is_model_loaded():
+            logger.warning("Model not loaded, attempting to load...")
+            if not self.load_model():
+                logger.error("Failed to load OpenVoice model")
+                return None
         
         args = custom_args or self.default_args
         retries = 0
@@ -375,8 +414,10 @@ class OpenVoiceVoiceCloningService:
         Process multiple segments with OpenVoice voice cloning
         """
         # Ensure model is loaded before processing
-        if not self.ensure_model_loaded():
-            return {"success": False, "error": "OpenVoice models not loaded and failed to load"}
+        if not self.is_model_loaded():
+            logger.warning("Model not loaded, attempting to load...")
+            if not self.load_model():
+                return {"success": False, "error": "Failed to load OpenVoice model"}
         
         logger.info(f"🎙️ Starting OpenVoice batch processing for {len(segments)} segments")
         batch_start = time.time()
