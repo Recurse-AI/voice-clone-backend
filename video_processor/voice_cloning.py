@@ -324,22 +324,36 @@ class OpenVoiceVoiceCloningService:
             # Step 1: Generate base speech using Base TTS
             logger.debug("🎯 Step 1: Generating base speech...")
             
-            base_speaker = 'EN-Default'  # Use default English speaker
+            # Use proper OpenVoice styles (from Colab example)
+            style_options = ['default', 'friendly', 'cheerful', 'sad']
             output_dir = tempfile.mkdtemp()
-            
-            # Generate base audio
             src_path = os.path.join(output_dir, 'tmp.wav')
             
-            self.openvoice_model.tts(
-                text,
-                src_path,
-                speaker=base_speaker,
-                language='English',
-                speed=1.0
-            )
+            # Try different styles until one works
+            generation_success = False
+            for style in style_options:
+                try:
+                    logger.debug(f"🎯 Trying style: {style}")
+                    # Use proper OpenVoice TTS call (based on Colab example)
+                    self.openvoice_model.tts(
+                        text,
+                        src_path,
+                        speaker=style,
+                        language='English'
+                    )
+                    if os.path.exists(src_path) and os.path.getsize(src_path) > 0:
+                        logger.debug(f"✅ Successfully used style: {style}")
+                        generation_success = True
+                        break
+                except Exception as e:
+                    logger.debug(f"❌ Style '{style}' failed: {str(e)}")
+                    # Clean up failed attempt
+                    if os.path.exists(src_path):
+                        os.remove(src_path)
+                    continue
             
-            if not os.path.exists(src_path):
-                logger.error("Base audio generation failed")
+            if not generation_success:
+                logger.error("❌ All style options failed")
                 return None
             
             # Step 2: Clone tone color if reference audio provided
