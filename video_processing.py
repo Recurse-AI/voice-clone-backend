@@ -573,6 +573,13 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         audio_key = f"processed-audio/{audio_id}/final_audio.wav"
         upload_result = r2_storage.upload_file(final_audio_path, audio_key, "audio/wav")
         
+        # Validate upload_result before accessing its content
+        if not isinstance(upload_result, dict):
+            error_msg = f"R2 upload returned invalid response type: {type(upload_result)} - {upload_result}"
+            logger.error(f"❌ {error_msg}")
+            status_manager.fail_processing(audio_id, error_msg)
+            return {"success": False, "error": error_msg}
+        
         if not upload_result.get("success"):
             error_msg = f"Failed to upload final audio to R2: {upload_result.get('error', 'Unknown error')}"
             logger.error(f"❌ {error_msg}")
