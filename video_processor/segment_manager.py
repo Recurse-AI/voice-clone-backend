@@ -15,12 +15,12 @@ logger = logging.getLogger(__name__)
 
 
 class SegmentManager:
-    """Enhanced segment manager with 11-13s optimal segments and complete coverage"""
+    """Enhanced segment manager with 7-11s optimal segments and complete coverage"""
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.optimal_duration = 12.0  # Optimal target for 11-13s range
-        self.min_duration = 8.0  # Minimum duration to avoid too short segments
+        self.optimal_duration = 9.0  # Optimal target for 7-11s range
+        self.min_duration = 7.0  # Minimum duration to avoid too short segments
         self.max_duration = 15.0  # Maximum allowed duration for quality
         self.min_gap_duration = 2.5  # Only consider gaps >= 2.5s as actual breaks
     
@@ -46,7 +46,7 @@ class SegmentManager:
         
         logger.info(f"Audio duration info: original={audio_duration:.2f}s, transcribed_end={last_word_end:.2f}s, using_total={total_duration:.2f}s")
         
-        # Handle short audio clips (Dia works better with 11-13s but can handle shorter)
+        # Handle short audio clips (Dia works better with 7-11s but can handle shorter)
         if total_duration < 5.0:
             logger.warning(f"Audio duration ({total_duration:.2f}s) is too short for quality voice cloning - skipping segmentation")
             return []
@@ -66,7 +66,7 @@ class SegmentManager:
     
     def _create_simplified_segments(self, words: List[Dict], total_duration: float, 
                                    first_word_start: float) -> List[Dict]:
-        """Create 11-13s optimal segments with proper concatenation for short segments"""
+        """Create 7-11s optimal segments with proper concatenation for short segments"""
         segments = []
         current_segment = {
             'words': [],
@@ -94,22 +94,22 @@ class SegmentManager:
             potential_end = word_end
             potential_duration = potential_end - current_segment['start']
             
-            # Split when reaching optimal duration (12s) or on significant gaps, target 11-13s range
+            # Split when reaching optimal duration (9s) or on significant gaps, target 7-11s range
             significant_gap = word_start > current_time + self.min_gap_duration
             should_split = False
             
-            # Check if we're in the optimal range (11-13s)
-            if potential_duration >= 11.0:  # Start considering split at 11s
-                if potential_duration >= 13.0:  # Force split at 13s to stay in range
+            # Check if we're in the optimal range (7-11s)
+            if potential_duration >= 7.0:  # Start considering split at 7s
+                if potential_duration >= 11.0:  # Force split at 11s to stay in range
                     should_split = True
                     logger.info(f"Segment reached maximum optimal duration: {potential_duration:.2f}s, forcing split")
-                elif potential_duration >= self.optimal_duration:  # 12 seconds
+                elif potential_duration >= self.optimal_duration:  # 9 seconds
                     should_split = True
                     logger.info(f"Segment reached optimal duration: {potential_duration:.2f}s")
             elif significant_gap and len(current_segment['words']) > 0:
-                # Only split on significant gaps if we have some content and are at least 8s
+                # Only split on significant gaps if we have some content and are at least 7s
                 current_duration = current_time - current_segment['start']
-                if current_duration >= self.min_duration:  # At least 8s before considering gap split
+                if current_duration >= self.min_duration:  # At least 7s before considering gap split
                     gap_duration = word_start - current_time
                     logger.info(f"Significant gap detected: {gap_duration:.2f}s at {current_time:.2f}s")
                     should_split = True
@@ -183,7 +183,7 @@ class SegmentManager:
             else:
                 final_segments.append(segment)
         
-        logger.info(f"Created {len(final_segments)} final segments covering 0.0s to {total_duration:.2f}s with 11-13s optimal range (12s target)")
+        logger.info(f"Created {len(final_segments)} final segments covering 0.0s to {total_duration:.2f}s with 7-11s optimal range (9s target)")
         return final_segments
     
     def _validate_and_fix_segments(self, segments: List[Dict], total_duration: float) -> List[Dict]:
