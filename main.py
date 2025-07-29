@@ -309,7 +309,7 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
                 raise HTTPException(status_code=500, detail="Dia model not available")
             
             # For voice cloning, use reference transcript + generation text
-            combined_text = request.text + " " + request.text
+            combined_text = request.text + "\n" + request.text
 
             print(f"Combined text: {combined_text}")
             print(f"Reference audio URL: {request.reference_audio_url}")

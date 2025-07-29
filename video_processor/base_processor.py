@@ -49,10 +49,14 @@ class AudioProcessor:
         try:
             logger.info(f"🎬 Processing video with separation for {audio_id}")
             
-            # Extract audio from video
-            audio_path = self.video_processor.extract_audio_from_video(video_path, audio_id)
-            if not audio_path:
-                return {"success": False, "error": "Failed to extract audio from video"}
+            # Extract audio from video using audio_utils
+            audio_output_path = self.temp_dir / f"extracted_audio_{audio_id}.wav"
+            extraction_result = self.audio_utils.extract_audio_from_video(video_path, str(audio_output_path))
+            
+            if not extraction_result.get("success", False):
+                return {"success": False, "error": f"Failed to extract audio from video: {extraction_result.get('error', 'Unknown error')}"}
+            
+            audio_path = str(audio_output_path)
             
             # Process audio segments
             segments_result = self.process_audio_segments(
