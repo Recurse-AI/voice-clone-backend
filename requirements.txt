@@ -24,7 +24,8 @@ accelerate
 openai
 
 # OpenVoice - MIT Licensed Voice Cloning (local GPU-based)
-# Clone from: https://github.com/myshell-ai/OpenVoice.git
+# Auto-downloads from: https://github.com/myshell-ai/OpenVoice.git
+# System requirement: git must be installed
 # Dependencies for OpenVoice
 whisper-timestamped
 eng_to_ipa
@@ -35,6 +36,9 @@ nltk
 g2p_en
 inflect
 unidecode
+langdetect
+pynini
+WeTextProcessing
 
 # Enhanced AssemblyAI for transcription
 assemblyai

@@ -112,10 +112,29 @@ class OpenVoiceVoiceCloningService:
             
             # Check if model path exists
             if not os.path.exists(model_path):
-                logger.error(f"OpenVoice model path not found: {model_path}")
-                logger.info("Please download OpenVoice model first:")
-                logger.info("git clone https://github.com/myshell-ai/OpenVoice.git ./models/openvoice")
-                return False
+                logger.info(f"OpenVoice model not found at {model_path}")
+                logger.info("🔄 Downloading OpenVoice model automatically...")
+                
+                # Auto-download the model
+                try:
+                    import subprocess
+                    
+                    # Create models directory
+                    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+                    
+                    # Clone OpenVoice repository
+                    cmd = ["git", "clone", "https://github.com/myshell-ai/OpenVoice.git", model_path]
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                    
+                    if result.returncode != 0:
+                        logger.error(f"Failed to download OpenVoice model: {result.stderr}")
+                        return False
+                    
+                    logger.info("✅ OpenVoice model downloaded successfully")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to auto-download OpenVoice model: {str(e)}")
+                    return False
             
             # Import OpenVoice components
             try:
