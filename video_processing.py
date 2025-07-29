@@ -552,6 +552,27 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         # Phase 3: Final audio reconstruction and upload (90% → 100%)
         status_manager.update_status(audio_id, ProcessingStatus.UPLOADING, 90, "Uploading processed audio...")
         
+        # Validate processing_result before accessing its content
+        if not isinstance(processing_result, dict):
+            error_msg = f"Processing result is not a dictionary: {type(processing_result)} - {processing_result}"
+            logger.error(f"❌ {error_msg}")
+            status_manager.fail_processing(audio_id, error_msg)
+            return {"success": False, "error": error_msg}
+        
+        # Check if output section exists
+        if "output" not in processing_result:
+            error_msg = "Output section missing from processing result"
+            logger.error(f"❌ {error_msg}")
+            status_manager.fail_processing(audio_id, error_msg)
+            return {"success": False, "error": error_msg}
+        
+        # Check if final_audio_path exists
+        if "final_audio_path" not in processing_result["output"]:
+            error_msg = "Final audio path missing from processing result output"
+            logger.error(f"❌ {error_msg}")
+            status_manager.fail_processing(audio_id, error_msg)
+            return {"success": False, "error": error_msg}
+        
         final_audio_path = processing_result["output"]["final_audio_path"]
         
         if not os.path.exists(final_audio_path):
@@ -576,22 +597,16 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             # Implementation for video generation would go here
             pass
         
-        # Safe extraction of voice cloning stats with processing_result validation
-        if not isinstance(processing_result, dict):
-            logger.error(f"❌ processing_result is not a dict: {type(processing_result)} - {processing_result}")
-            # Set default values when processing_result is not a dict
+        # Extract voice cloning stats (processing_result is already validated as dict)
+        voice_cloning_data = processing_result.get("voice_cloning", {})
+        if isinstance(voice_cloning_data, dict):
+            total_segments = voice_cloning_data.get("total_segments", 0)
+            successful_segments = voice_cloning_data.get("successful_segments", 0)
+        else:
+            # Fallback if voice_cloning section is not a dict
             total_segments = 0
             successful_segments = 0
-        else:
-            voice_cloning_data = processing_result.get("voice_cloning", {})
-            if isinstance(voice_cloning_data, dict):
-                total_segments = voice_cloning_data.get("total_segments", 0)
-                successful_segments = voice_cloning_data.get("successful_segments", 0)
-            else:
-                # Fallback if voice_cloning is not a dict
-                total_segments = 0
-                successful_segments = 0
-                logger.warning(f"⚠️ voice_cloning data is not a dict: {type(voice_cloning_data)}")
+            logger.warning(f"⚠️ voice_cloning data is not a dict: {type(voice_cloning_data)}")
 
         status_manager.complete_processing(audio_id, {
             "final_audio_url": final_audio_url,
