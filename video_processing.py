@@ -451,14 +451,21 @@ def process_video_background(
 
 def process_video_with_queue(queue_request) -> Dict[str, Any]:
     """Process video with queue management - using global OpenVoice processor"""
+    import time
+    import logging
     from config import settings
-    from status_manager import status_manager
+    from status_manager import status_manager, ProcessingStatus
     from r2_storage import R2Storage
     from video_processor.base_processor import AudioProcessor  # Keep for other functions
     from video_processor.clean_processor import clean_audio_processor  # Use global instance
     from video_processor.file_handler import FileHandler
     from video_processor.video_queue_manager import VideoQueueStatus
     from utils import cleanup_temp_files
+    
+    logger = logging.getLogger(__name__)
+    
+    # Initialize variables to avoid UnboundLocalError
+    video_temp_path = None
     
     # Extract parameters from queue request
     audio_id = queue_request.audio_id
@@ -500,7 +507,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         total_start_time = time.time()
         
         # Initialize file handler
-        from video_processor.file_handler import FileHandler
         file_handler = FileHandler(settings.TEMP_DIR)
         
         # Phase 1: Handle file source (0% → 10%)
