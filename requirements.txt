@@ -18,8 +18,7 @@ moviepy
 
 # AI/ML
 torch>=2.0.0
-transformers>=4.44.0
-tokenizers
+transformers>=4.44.0,<4.46.0
 accelerate
 openai
 
