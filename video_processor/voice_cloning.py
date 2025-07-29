@@ -179,6 +179,28 @@ class OpenVoiceVoiceCloningService:
             logger.error(f"❌ Failed to load OpenVoice: {str(e)}")
             return False
     
+    def _models_exist_and_valid(self, file_paths: List[str]) -> bool:
+        """Check if all model files exist and have reasonable sizes"""
+        try:
+            for file_path in file_paths:
+                if not os.path.exists(file_path):
+                    logger.info(f"Missing file: {file_path}")
+                    return False
+                
+                # Check file size (avoid corrupted downloads)
+                file_size = os.path.getsize(file_path)
+                if file_path.endswith('.pth') and file_size < 1024 * 1024:  # .pth files should be > 1MB
+                    logger.info(f"File too small (possibly corrupted): {file_path}")
+                    return False
+                elif file_path.endswith('.json') and file_size < 100:  # .json files should be > 100 bytes
+                    logger.info(f"Config file too small: {file_path}")
+                    return False
+            
+            return True
+        except Exception as e:
+            logger.warning(f"Error checking model files: {e}")
+            return False
+    
     def _download_models(self, model_dir: str):
         """Download OpenVoice models from official sources"""
         try:
