@@ -532,11 +532,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             emotion=emotion
         )
         
-        # CRITICAL DEBUG: Check processing_result immediately after getting it
-        logger.info(f"🔍 CRITICAL DEBUG: processing_result type: {type(processing_result)}")
-        logger.info(f"🔍 CRITICAL DEBUG: processing_result content (first 200 chars): {str(processing_result)[:200]}")
-        
-        # CRITICAL FIX: Check if processing_result is a dict before calling .get()
+        # Check processing result type before any .get() calls
         if not isinstance(processing_result, dict):
             error_msg = f"CRITICAL ERROR: processing_result is not a dictionary: {type(processing_result)} - {processing_result}"
             logger.error(f"❌ {error_msg}")
@@ -551,7 +547,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         
         logger.info(f"✅ OpenVoice audio processing completed successfully")
         
-        logger.info(f"🔍 DEBUG: About to validate processing_result - Step 1")
         # Validate processing_result before accessing its content
         if not isinstance(processing_result, dict):
             error_msg = f"Processing result is not a dictionary: {type(processing_result)} - {processing_result}"
@@ -559,7 +554,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             status_manager.fail_processing(audio_id, error_msg)
             return {"success": False, "error": error_msg}
         
-        logger.info(f"🔍 DEBUG: About to check output section - Step 2")
         # Check if output section exists
         if "output" not in processing_result:
             error_msg = "Output section missing from processing result"
@@ -567,7 +561,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             status_manager.fail_processing(audio_id, error_msg)
             return {"success": False, "error": error_msg}
         
-        logger.info(f"🔍 DEBUG: About to check final_audio_path - Step 3")
         # Check if final_audio_path exists
         if "final_audio_path" not in processing_result["output"]:
             error_msg = "Final audio path missing from processing result output"
@@ -575,26 +568,21 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             status_manager.fail_processing(audio_id, error_msg)
             return {"success": False, "error": error_msg}
         
-        logger.info(f"🔍 DEBUG: About to extract final_audio_path - Step 4")
         final_audio_path = processing_result["output"]["final_audio_path"]
-        logger.info(f"🔍 DEBUG: final_audio_path extracted: {final_audio_path}")
         
-        logger.info(f"🔍 DEBUG: About to check file exists - Step 5")
         if not os.path.exists(final_audio_path):
             error_msg = "Final audio file not found after processing"
             status_manager.fail_processing(audio_id, error_msg)
             return {"success": False, "error": error_msg}
         
-        logger.info(f"🔍 DEBUG: About to upload to R2 - Step 6")
-        # Upload final audio to R2 bucket
-        status_manager.update_status(audio_id, ProcessingStatus.UPLOADING, 95, "Uploading processed audio to cloud...")
+        # Upload final audio to R2 bucket (with protected status update)
+        try:
+            status_manager.update_status(audio_id, ProcessingStatus.UPLOADING, 95, "Uploading processed audio to cloud...")
+        except Exception as status_error:
+            logger.error(f"⚠️ Status update failed: {str(status_error)} - continuing anyway")
+        
         audio_key = f"processed-audio/{audio_id}/final_audio.wav"
-        
-        logger.info(f"🔍 DEBUG: About to call R2 upload - Step 7")
         upload_result = r2_storage.upload_file(final_audio_path, audio_key, "audio/wav")
-        logger.info(f"🔍 DEBUG: R2 upload result type: {type(upload_result)}")
-        
-        logger.info(f"🔍 DEBUG: About to validate upload_result - Step 8")
         
         # Validate upload_result before accessing its content
         if not isinstance(upload_result, dict):
@@ -632,10 +620,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
                 successful_segments = 0
 
         # Complete processing successfully
-        logger.info(f"🔍 DEBUG: About to complete processing for {audio_id}")
-        logger.info(f"🔍 DEBUG: total_segments={total_segments}, successful_segments={successful_segments}")
-        logger.info(f"🔍 DEBUG: final_audio_url type: {type(final_audio_url)}")
-        
         try:
             status_manager.complete_processing(audio_id, {
                 "final_audio_url": final_audio_url,
@@ -652,14 +636,12 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
                     }
                 }
             })
-            logger.info(f"🔍 DEBUG: Status completion successful for {audio_id}")
         except Exception as status_error:
             logger.error(f"❌ Status completion failed: {str(status_error)}")
             # Continue anyway since processing was successful
             
         logger.info(f"🎉 Queue processing completed successfully for {audio_id}")
         
-        logger.info(f"🔍 DEBUG: About to return result for {audio_id}")
         return {
             "success": True,
             "audio_id": audio_id,
@@ -669,19 +651,13 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         }
         
     except Exception as e:
-        logger.error(f"🔍 EXCEPTION DEBUG: Caught exception type: {type(e)}")
-        logger.error(f"🔍 EXCEPTION DEBUG: Exception message: {str(e)}")
-        logger.error(f"🔍 EXCEPTION DEBUG: Exception args: {e.args}")
-        
         error_msg = f"Queue processing failed: {str(e)}"
         logger.error(f"❌ {error_msg}")
         
-        logger.error(f"🔍 EXCEPTION DEBUG: About to call status_manager.fail_processing")
         try:
             status_manager.fail_processing(audio_id, error_msg)
-            logger.error(f"🔍 EXCEPTION DEBUG: status_manager.fail_processing completed")
         except Exception as status_error:
-            logger.error(f"🔍 EXCEPTION DEBUG: status_manager.fail_processing failed: {str(status_error)}")
+            logger.error(f"❌ Status manager error: {str(status_error)}")
         
         return {"success": False, "error": error_msg}
     
