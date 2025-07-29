@@ -10,32 +10,40 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 import soundfile as sf
 import requests
+import torch
+import gc
 
 logger = logging.getLogger(__name__)
 
 def process_video_background(
     video_source: str, audio_id: str, include_instruments: bool,
     generate_subtitles: bool, 
-    # Enhanced Dia Parameters
+    # Enhanced Dia Parameters (using global clean processor)
     max_tokens: int, cfg_scale: float, temperature: float, top_p: float,
     cfg_filter_top_k: int, speed_factor: float, use_torch_compile: bool,
     target_language: str, language_code: Optional[str], speakers_expected: Optional[int], is_file_upload: bool,
     audio_processor=None, original_filename: Optional[str] = None, original_source_url: Optional[str] = None
 ):
-    """Background video processing - handles both URL and file inputs"""
+    """Background video processing - using global clean processor to avoid duplicate model loading"""
     from config import settings
     from status_manager import status_manager, ProcessingStatus
     from r2_storage import R2Storage
-    from video_processor.base_processor import AudioProcessor
+    from video_processor.base_processor import AudioProcessor  # Keep for other functions
+    from main import clean_audio_processor  # Use global instance
     from utils import cleanup_temp_files, local_storage
     
     # Initialize required services
     r2_storage = R2Storage()
     
-    # Use passed audio_processor or create new one
+    # Use existing processor for video/audio processing (non-cloning functions)
     if audio_processor is None:
         from video_processor import get_audio_processor
         audio_processor = get_audio_processor()
+    
+    # Use global clean processor (already loaded) - no duplicate model loading
+    if not clean_audio_processor.is_ready():
+        status_manager.fail_processing(audio_id, "Dia model not loaded in global processor")
+        return
     
     final_language_code = language_code if language_code and language_code.strip() else None
     video_temp_path = None
@@ -197,7 +205,7 @@ def process_video_background(
             details={"message": "Starting enhanced voice cloning process..."}
         )
         
-        cloning_result = audio_processor.clone_voice_segments(
+        cloning_result = clean_audio_processor.clone_voice_segments(
             segments_dir=processing_result["segments_dir"],
             audio_id=audio_id,
             max_tokens=max_tokens,
@@ -214,7 +222,8 @@ def process_video_background(
             status_manager.fail_processing(audio_id, f"Voice cloning failed: {cloning_result.get('error', 'Unknown error')}")
             return
         
-        audio_processor.voice_cloning_service.clear_cache()
+        # Clean up memory after voice cloning
+        clean_audio_processor.clear_model()
         
         # Update status after voice cloning completion
         from status_manager import ProcessingStatus
@@ -435,39 +444,31 @@ def process_video_background(
 
 
 def process_video_with_queue(queue_request) -> Dict[str, Any]:
-    """
-    Process video using queue system with timeout monitoring
-    
-    Args:
-        queue_request: VideoQueueRequest object containing all processing parameters
-        
-    Returns:
-        Result dictionary with success/error information
-    """
+    """Process video with queue management - using global clean processor"""
     from config import settings
     from status_manager import status_manager
     from r2_storage import R2Storage
-    from video_processor.base_processor import AudioProcessor
+    from video_processor.base_processor import AudioProcessor  # Keep for other functions
+    from main import clean_audio_processor  # Use global instance
     from video_processor.file_handler import FileHandler
     from video_processor.video_queue_manager import VideoQueueStatus
     from utils import cleanup_temp_files
     
+    # Extract parameters from queue request
     audio_id = queue_request.audio_id
     video_source = queue_request.video_source
     is_file_upload = queue_request.is_file_upload
     parameters = queue_request.parameters
     
-    # Extract enhanced parameters
     include_instruments = parameters.get("include_instruments", True)
     generate_subtitles = parameters.get("generate_subtitles", True)
-    # Enhanced Dia Parameters with Colab defaults
-    max_tokens = parameters.get("max_tokens", settings.DIA_ENHANCED_MAX_TOKENS)
-    cfg_scale = parameters.get("cfg_scale", settings.DIA_ENHANCED_CFG_SCALE)
-    temperature = parameters.get("temperature", settings.DIA_ENHANCED_TEMPERATURE)
-    top_p = parameters.get("top_p", settings.DIA_ENHANCED_TOP_P)
-    cfg_filter_top_k = parameters.get("cfg_filter_top_k", settings.DIA_ENHANCED_CFG_FILTER_TOP_K)
-    speed_factor = parameters.get("speed_factor", settings.DIA_ENHANCED_SPEED_FACTOR)
-    use_torch_compile = parameters.get("use_torch_compile", settings.DIA_ENHANCED_USE_TORCH_COMPILE)
+    max_tokens = parameters.get("max_tokens", 3072)
+    cfg_scale = parameters.get("cfg_scale", 3.0)
+    temperature = parameters.get("temperature", 1.3)
+    top_p = parameters.get("top_p", 0.95)
+    cfg_filter_top_k = parameters.get("cfg_filter_top_k", 30)
+    speed_factor = parameters.get("speed_factor", 0.95)
+    use_torch_compile = parameters.get("use_torch_compile", True)
     target_language = parameters.get("target_language", "English")
     language_code = parameters.get("language_code")
     speakers_expected = parameters.get("speakers_expected", 1)
@@ -476,8 +477,16 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     
     # Initialize services
     r2_storage = R2Storage()
+    
+    # Use existing processor for video/audio processing (non-cloning functions)
     from video_processor import get_audio_processor
     audio_processor = get_audio_processor()
+    
+    # Use global clean processor (already loaded) - no duplicate model loading
+    if not clean_audio_processor.is_ready():
+        status_manager.fail_processing(audio_id, "Dia model not loaded in global processor")
+        return {"success": False, "error": "Dia model not loaded"}
+    
     file_handler = FileHandler(settings.TEMP_DIR)
     
     video_temp_path = None
@@ -568,16 +577,11 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         if queue_request.status != VideoQueueStatus.PROCESSING:
             return {"success": False, "error": "Request was cancelled or timed out"}
         
-        # Clone voices with enhanced parameters
-        from status_manager import ProcessingStatus
-        status_manager.update_status(
-            audio_id, 
-            ProcessingStatus.PROCESSING, 
-            progress=60, 
-            details={"message": "Starting enhanced voice cloning process..."}
-        )
+        # Clone voices with enhanced parameters using clean processor
+        status_manager.set_progress(audio_id, 60)
         
-        cloning_result = audio_processor.clone_voice_segments(
+        # Use clean voice processor for stable voice cloning
+        cloning_result = clean_audio_processor.process_voice_cloning_only(
             segments_dir=processing_result["segments_dir"],
             audio_id=audio_id,
             max_tokens=max_tokens,
@@ -586,14 +590,17 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             top_p=top_p,
             cfg_filter_top_k=cfg_filter_top_k,
             speed_factor=speed_factor,
-            seed=settings.DEFAULT_SEED,
+            seed=settings.DIA_DEFAULT_SEED,  # Use consistent seed from config
             use_torch_compile=use_torch_compile
         )
         
         if not cloning_result["success"]:
             return {"success": False, "error": f"Voice cloning failed: {cloning_result.get('error', 'Unknown error')}"}
         
-        audio_processor.voice_cloning_service.clear_cache()
+        # No need to clear model as it's global - just cleanup memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
         
         # Check if still processing
         if queue_request.status != VideoQueueStatus.PROCESSING:

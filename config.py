@@ -35,15 +35,21 @@ class Settings(BaseSettings):
     DIA_USE_TORCH_COMPILE: bool = False
     DIA_VERBOSE: bool = False
     
-    # Enhanced Dia Generation Parameters (Colab optimized)
-    # These provide better control and consistency for voice cloning
-    DIA_ENHANCED_MAX_TOKENS: int = 3072  # ~36 seconds (Colab optimal)
-    DIA_ENHANCED_CFG_SCALE: float = 3.0  # Better adherence balance (Colab optimal)
-    DIA_ENHANCED_TEMPERATURE: float = 1.8  # Optimal randomness (Reference code optimal)
-    DIA_ENHANCED_TOP_P: float = 0.95  # Nucleus sampling (Colab optimal)
-    DIA_ENHANCED_CFG_FILTER_TOP_K: int = 45  # CFG filtering (Colab optimal)
-    DIA_ENHANCED_SPEED_FACTOR: float = 1.0  # Audio speed adjustment (Slower, more natural speech)
-    DIA_ENHANCED_USE_TORCH_COMPILE: bool = False  # Keep False for stability like reference
+    # Enhanced Dia Generation Parameters (Stable & Consistent like Gradio example)
+    DIA_ENHANCED_MAX_TOKENS: int = 3072  # Consistent with Gradio example
+    DIA_ENHANCED_CFG_SCALE: float = 3.0  # Stable CFG like Gradio
+    DIA_ENHANCED_TEMPERATURE: float = 1.3  # Lower temp for consistency (Gradio uses 1.3)
+    DIA_ENHANCED_TOP_P: float = 0.95  # Consistent nucleus sampling
+    DIA_ENHANCED_CFG_FILTER_TOP_K: int = 30  # Lower for stability (Gradio uses 30)
+    DIA_ENHANCED_SPEED_FACTOR: float = 0.95  # Slightly slower for better quality (Gradio uses 0.9-0.95)
+    DIA_ENHANCED_USE_TORCH_COMPILE: bool = True  # Use torch compile for stability
+    
+    # Voice Consistency Settings (New for stability)
+    DIA_USE_GLOBAL_SEED: bool = True  # Use single seed for all segments for consistency
+    DIA_DEFAULT_SEED: int = 500  # Stable default seed (same as Gradio example)
+    DIA_MEMORY_CLEANUP_FREQUENCY: int = 1  # Clean memory after each segment
+    DIA_MAX_RETRIES: int = 2  # Retry count for failed generations
+    DIA_SILENCE_PADDING: float = 1.0  # Silence between segments (Gradio uses 0.3)
     
 
     

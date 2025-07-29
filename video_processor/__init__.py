@@ -2,7 +2,7 @@
 Video Processor Module
 
 Provides shared instances for video processing components.
-Ensures Dia model is loaded only once globally.
+AudioProcessor now handles only core functionality - voice cloning handled separately.
 """
 
 import threading
@@ -12,45 +12,32 @@ from .base_processor import AudioProcessor
 
 logger = logging.getLogger(__name__)
 
-# Global shared audio processor instance
+# Global shared audio processor instance (no voice cloning)
 _audio_processor = None
-_model_loaded = False
 _loading_lock = threading.Lock()
 
-def get_audio_processor(load_model: bool = True):
+def get_audio_processor():
     """
-    Get the shared audio processor instance with optional model loading
-    
-    Args:
-        load_model: Whether to load the Dia model (default: True)
+    Get the shared audio processor instance for core functionality
+    (Voice cloning handled separately by CleanAudioProcessor)
     
     Returns:
-        AudioProcessor: Shared instance with model loaded
+        AudioProcessor: Shared instance for video/audio processing
     """
-    global _audio_processor, _model_loaded
+    global _audio_processor
     
     with _loading_lock:
         if _audio_processor is None:
-            logger.info("Creating shared AudioProcessor instance...")
+            logger.info("Creating shared AudioProcessor instance (no voice cloning)...")
             _audio_processor = AudioProcessor(settings.TEMP_DIR)
-            logger.info("AudioProcessor instance created")
-        
-        if load_model and not _model_loaded:
-            logger.info("Loading Dia model globally...")
-            try:
-                success = _audio_processor.load_dia_model(
-                    repo_id=settings.DIA_MODEL_REPO
-                )
-                if success:
-                    _model_loaded = True
-                    logger.info("Dia model loaded successfully (global instance)")
-                else:
-                    logger.error("Failed to load Dia model on global instance")
-            except Exception as e:
-                logger.error(f"Exception during global model loading: {e}")
+            logger.info("✅ AudioProcessor instance created for core functionality")
     
     return _audio_processor
 
-def is_model_loaded():
-    """Check if the Dia model is loaded globally"""
-    return _model_loaded 
+def cleanup_audio_processor():
+    """Clean up the global audio processor"""
+    global _audio_processor
+    with _loading_lock:
+        if _audio_processor:
+            _audio_processor = None
+            logger.info("🧹 Global AudioProcessor cleaned up") 

@@ -15,13 +15,13 @@ logger = logging.getLogger(__name__)
 
 
 class SegmentManager:
-    """Enhanced segment manager with 7-11s optimal segments and complete coverage"""
+    """Enhanced segment manager with STRICT 9-11s segments optimized for voice cloning and complete coverage"""
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.optimal_duration = 9.0  # Optimal target for 7-11s range
+        self.optimal_duration = 9.0  # Optimal target for voice cloning (9s sweet spot)
         self.min_duration = 7.0  # Minimum duration to avoid too short segments
-        self.max_duration = 15.0  # Maximum allowed duration for quality
+        self.max_duration = 11.0  # Maximum allowed duration - STRICT 9-11s range for voice cloning
         self.min_gap_duration = 2.5  # Only consider gaps >= 2.5s as actual breaks
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -66,7 +66,7 @@ class SegmentManager:
     
     def _create_simplified_segments(self, words: List[Dict], total_duration: float, 
                                    first_word_start: float) -> List[Dict]:
-        """Create 7-11s optimal segments with proper concatenation for short segments"""
+        """Create STRICT 9-11s segments optimized for voice cloning with proper concatenation for short segments"""
         segments = []
         current_segment = {
             'words': [],
@@ -98,12 +98,12 @@ class SegmentManager:
             significant_gap = word_start > current_time + self.min_gap_duration
             should_split = False
             
-            # Check if we're in the optimal range (7-11s)
+            # Check if we're in the optimal range (9-11s strict for voice cloning)
             if potential_duration >= 7.0:  # Start considering split at 7s
-                if potential_duration >= 11.0:  # Force split at 11s to stay in range
+                if potential_duration >= self.max_duration:  # Force split at max duration (11s) to stay in range
                     should_split = True
-                    logger.info(f"Segment reached maximum optimal duration: {potential_duration:.2f}s, forcing split")
-                elif potential_duration >= self.optimal_duration:  # 9 seconds
+                    logger.info(f"Segment reached maximum duration: {potential_duration:.2f}s, forcing split at {self.max_duration}s")
+                elif potential_duration >= self.optimal_duration:  # 9 seconds optimal
                     should_split = True
                     logger.info(f"Segment reached optimal duration: {potential_duration:.2f}s")
             elif significant_gap and len(current_segment['words']) > 0:
@@ -183,7 +183,7 @@ class SegmentManager:
             else:
                 final_segments.append(segment)
         
-        logger.info(f"Created {len(final_segments)} final segments covering 0.0s to {total_duration:.2f}s with 7-11s optimal range (9s target)")
+        logger.info(f"Created {len(final_segments)} final segments covering 0.0s to {total_duration:.2f}s with STRICT 9-11s range for voice cloning (9s optimal target)")
         return final_segments
     
     def _validate_and_fix_segments(self, segments: List[Dict], total_duration: float) -> List[Dict]:

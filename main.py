@@ -76,20 +76,22 @@ async def periodic_cleanup():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler"""
-    # Initialize shared audio processor with model loading
-    print("Starting API initialization...")
+    print("🚀 Starting Voice Cloning API...")
+    
     try:
-        # This will create the shared instance and load the model if not already loaded
-        audio_processor = get_audio_processor(load_model=True)
-        from video_processor import is_model_loaded
+        # Initialize core audio processor (no voice cloning)
+        audio_processor = get_audio_processor()
+        logger.info("✅ Core AudioProcessor initialized")
         
-        if not is_model_loaded():
-            print("WARNING: AudioProcessor initialized but Dia model not loaded")
-            logger.warning("AudioProcessor initialized but Dia model not loaded")
+        # Initialize clean voice cloning processor
+        if clean_audio_processor.load_model():
+            logger.info("✅ Dia model loaded successfully for voice cloning")
+        else:
+            logger.warning("⚠️ Failed to load Dia model - voice cloning will not work")
             
     except Exception as e:
+        logger.error(f"❌ Startup failed: {str(e)}")
         print(f"EXCEPTION during initialization: {e}")
-        logger.error(f"Exception during initialization: {e}")
     
     # Create temp directory
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
@@ -98,15 +100,21 @@ async def lifespan(app: FastAPI):
     import asyncio
     cleanup_task = asyncio.create_task(periodic_cleanup())
     
-    logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
+    logger.info(f"🎉 Voice Cloning API started successfully on {settings.HOST}:{settings.PORT}")
     yield
     
-    # Cancel cleanup task on shutdown
-    cleanup_task.cancel()
+    # Cleanup on shutdown
+    logger.info("🛑 Shutting down Voice Cloning API...")
     try:
+        clean_audio_processor.clear_model()
+        cleanup_task.cancel()
         await cleanup_task
     except asyncio.CancelledError:
         pass
+    except Exception as e:
+        logger.error(f"❌ Shutdown error: {str(e)}")
+    
+    logger.info("✅ Clean shutdown completed")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -129,6 +137,12 @@ app.add_middleware(
 r2_storage = R2Storage()
 from video_processor import get_audio_processor
 # Audio processor will be initialized in lifespan event
+
+# Initialize clean audio processor (Gradio-inspired)
+from video_processor.clean_processor import CleanAudioProcessor
+
+# Global clean processor instance
+clean_audio_processor = CleanAudioProcessor()
 
 # Response models
 
@@ -290,12 +304,8 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
             temp_ref_path = temp_ref.name
         
         try:
-            # Get shared audio processor
-            from video_processor import is_model_loaded, get_audio_processor
-            audio_processor = get_audio_processor(load_model=True)
-            voice_service = audio_processor.voice_cloning_service
-            
-            if not voice_service.is_model_loaded():
+            # Use global clean audio processor
+            if not clean_audio_processor.is_model_loaded():
                 raise HTTPException(status_code=500, detail="Dia model not available")
             
             # For voice cloning, use reference transcript + generation text
@@ -303,12 +313,11 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
 
             print(f"Combined text: {combined_text}")
             print(f"Reference audio URL: {request.reference_audio_url}")
-         
             
-            
+            # Use clean voice cloning service for generation
             import torch
             with torch.inference_mode():
-                cloned_audio = voice_service.dia_model.generate(
+                cloned_audio = clean_audio_processor.voice_service.dia_model.generate(
                     text=combined_text,
                     audio_prompt=temp_ref_path,
                     use_torch_compile=settings.DIA_ENHANCED_USE_TORCH_COMPILE,
@@ -323,11 +332,11 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
             if cloned_audio is None:
                 raise HTTPException(status_code=500, detail="Audio generation failed")
             
-            # Adjust audio length
-            adjusted_audio = voice_service._adjust_audio_length(
+            # Adjust audio length using clean processor
+            target_samples = int(request.duration * clean_audio_processor.voice_service.sample_rate)
+            adjusted_audio = clean_audio_processor.voice_service._adjust_audio_duration(
                 cloned_audio, 
-                request.duration, 
-                use_speed_adjustment=settings.USE_SPEED_ADJUSTMENT
+                target_samples
             )
             
             # Create output filename with timestamp
@@ -336,7 +345,7 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
             output_path = os.path.join(settings.TEMP_DIR, output_filename)
             
             # Save the audio
-            sf.write(output_path, adjusted_audio, voice_service.sample_rate)
+            sf.write(output_path, adjusted_audio, clean_audio_processor.voice_service.sample_rate)
             
             generation_time = time.time() - generation_start
             
