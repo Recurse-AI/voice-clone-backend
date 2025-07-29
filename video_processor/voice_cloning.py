@@ -212,19 +212,19 @@ class CleanVoiceCloningService:
             try:
                 # Extract segment data
                 segment_index = segment.get('segment_index', i + 1)
-                    english_text = segment.get('english_text', '').strip()
+                english_text = segment.get('english_text', '').strip()
                 duration = segment.get('duration', 10.0)
                 speaker = segment.get('speaker', 'A')
                 audio_path = segment.get('audio_path')
-                    
+                
                 logger.info(f"🎤 Processing segment {segment_index}/{len(segments)}: {duration:.2f}s, Speaker: {speaker}")
-                    
+                
                 # Handle silent/empty segments
-                    if not english_text or english_text in ['[SILENCE]', '']:
+                if not english_text or english_text in ['[SILENCE]', '']:
                     logger.info(f"🔇 Creating silence for segment {segment_index} ({duration:.2f}s)")
                     
                     silence_samples = int(duration * self.sample_rate)
-                        silence_audio = np.zeros(silence_samples, dtype=np.float32)
+                    silence_audio = np.zeros(silence_samples, dtype=np.float32)
                     
                     # Add padding silence if configured
                     if args.silence > 0:
@@ -235,15 +235,15 @@ class CleanVoiceCloningService:
                     sf.write(output_path, silence_audio, self.sample_rate)
                     
                     results.append({
-                                "success": True,
+                        "success": True,
                         "segment_index": segment_index,
                         "duration": duration,
-                                    "speaker": speaker,
+                        "speaker": speaker,
                         "output_path": str(output_path),
                         "type": "silence"
-                            })
-                            continue
-                        
+                    })
+                    continue
+                
                 # Process speech segment
                 generated_audio = self.generate_with_retry(
                     chunk_text=english_text + "\n" + english_text,
@@ -277,7 +277,7 @@ class CleanVoiceCloningService:
                         "type": "speech",
                         "processing_time": segment_time
                     })
-            else:
+                else:
                     logger.error(f"❌ Failed to generate audio for segment {segment_index}")
                     results.append({
                         "success": False,
@@ -289,7 +289,7 @@ class CleanVoiceCloningService:
                 if i % settings.DIA_MEMORY_CLEANUP_FREQUENCY == 0:
                     self._cleanup_memory()
                 
-        except Exception as e:
+            except Exception as e:
                 logger.error(f"❌ Error processing segment {segment_index}: {str(e)}")
                 results.append({
                     "success": False,
@@ -341,7 +341,7 @@ class CleanVoiceCloningService:
         if self.dia_model:
             del self.dia_model
             self.dia_model = None
-        self._cleanup_memory()
+            self._cleanup_memory()
             logger.info("Model cleared from memory")
 
     def validate_parameters(self, **kwargs) -> Args:
