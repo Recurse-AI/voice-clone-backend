@@ -38,11 +38,17 @@ def process_video_background(
     from r2_storage import R2Storage
     from video_processor.base_processor import AudioProcessor  # Keep for other functions
     from video_processor.clean_processor import clean_audio_processor  # Use global instance
+    from video_processor import get_audio_processor  # Get shared AudioProcessor instance
     from utils import cleanup_temp_files, local_storage
     
     # Initialize required services
     r2_storage = R2Storage()
     
+    # Initialize audio_processor at the beginning to avoid reference errors
+    if audio_processor is None:
+        # Use shared AudioProcessor instance for video/audio processing (not voice cloning)
+        audio_processor = get_audio_processor()
+
     # Use global clean audio processor with OpenVoice
     
     status_manager.update_status(audio_id, ProcessingStatus.INITIALIZING, "Starting video processing with OpenVoice...")
@@ -483,16 +489,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     # Initialize services
     r2_storage = R2Storage()
     
-    # Use existing processor for video/audio processing (non-cloning functions)
-    if audio_processor is None:
-        # Use global clean audio processor with OpenVoice
-        audio_processor = clean_audio_processor
-
-        # Check if OpenVoice model is loaded
-        if not audio_processor.is_ready():
-            status_manager.fail_processing(audio_id, "OpenVoice model not loaded in global processor")
-            return {"success": False, "error": "OpenVoice model not loaded"}
-
     try:
         # Use global clean audio processor with OpenVoice
         
