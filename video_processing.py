@@ -391,7 +391,7 @@ def process_video_background(
                     "separation_service": "RunPod"
                 }
             },
-            "segment_details": audio_processor.get_processing_stats(processing_result["segments_dir"]),
+            "segment_details": audio_processor.get_processing_stats(segments_dir),
             "r2_storage": {
                 "bucket": r2_storage.bucket_name,
                 "base_path": r2_storage.get_storage_info(audio_id)["base_path"],
@@ -423,7 +423,7 @@ def process_video_background(
                 "video_url": video_source if not is_file_upload else None,
                 "runpod_separation": True
             },
-            "processing_stats": audio_processor.get_processing_stats(processing_result["segments_dir"]),
+            "processing_stats": audio_processor.get_processing_stats(segments_dir),
             "cloning_results": cloning_result,
             "reconstruction_results": reconstruction_result,
             "video_generated": video_result is not None and video_result["success"],
@@ -785,7 +785,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
                     "separation_service": "RunPod"
                 }
             },
-            "segment_details": audio_processor.get_processing_stats(processing_result["segments_dir"]),
+            "segment_details": audio_processor.get_processing_stats(segments_dir),
             "r2_storage": {
                 "bucket": r2_storage.bucket_name,
                 "base_path": r2_storage.get_storage_info(audio_id)["base_path"],
@@ -820,7 +820,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
                 "video_url": video_source if not is_file_upload else None,
                 "runpod_separation": True
             },
-            "processing_stats": audio_processor.get_processing_stats(processing_result["segments_dir"]),
+            "processing_stats": audio_processor.get_processing_stats(segments_dir),
             "cloning_results": cloning_result,
             "reconstruction_results": reconstruction_result,
             "video_generated": video_result is not None and video_result["success"],

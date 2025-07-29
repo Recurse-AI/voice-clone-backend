@@ -275,14 +275,17 @@ class CleanAudioProcessor:
         """
         cloning_segments = []
         
+        # Segments are saved in a "segments" subdirectory by segment_manager
+        actual_segments_dir = segments_dir / "segments"
+        
         for i, segment in enumerate(segments):
-            # Find corresponding audio file
+            # Find corresponding audio file in the correct subdirectory
             audio_filename = f"segment_{i+1:03d}.wav"
-            audio_path = segments_dir / audio_filename
+            audio_path = actual_segments_dir / audio_filename
             
-            # Find corresponding metadata
+            # Find corresponding metadata in the correct subdirectory
             metadata_filename = f"segment_{i+1:03d}_metadata.json"
-            metadata_path = segments_dir / metadata_filename
+            metadata_path = actual_segments_dir / metadata_filename
             
             if metadata_path.exists():
                 import json
@@ -302,6 +305,7 @@ class CleanAudioProcessor:
                 }
                 
                 cloning_segments.append(cloning_segment)
+                logger.info(f"Converted segment {i+1}: '{cloning_segment['english_text'][:50]}...'")
         
         return cloning_segments
     
@@ -311,8 +315,17 @@ class CleanAudioProcessor:
         """
         cloning_segments = []
         
-        # Find all metadata files
-        metadata_files = sorted(list(segments_dir.glob("*_metadata.json")))
+        # Segments are saved in a "segments" subdirectory by segment_manager
+        actual_segments_dir = segments_dir / "segments"
+        
+        if not actual_segments_dir.exists():
+            logger.warning(f"Segments subdirectory not found: {actual_segments_dir}")
+            return cloning_segments
+        
+        # Find all metadata files in the correct subdirectory
+        metadata_files = sorted(list(actual_segments_dir.glob("*_metadata.json")))
+        
+        logger.info(f"Found {len(metadata_files)} metadata files in {actual_segments_dir}")
         
         for metadata_file in metadata_files:
             try:
@@ -333,11 +346,13 @@ class CleanAudioProcessor:
                 }
                 
                 cloning_segments.append(cloning_segment)
+                logger.info(f"Loaded segment {cloning_segment['segment_index']}: '{cloning_segment['english_text'][:50]}...'")
                 
             except Exception as e:
                 logger.warning(f"Failed to load metadata from {metadata_file}: {str(e)}")
                 continue
         
+        logger.info(f"Successfully loaded {len(cloning_segments)} segments for voice cloning")
         return cloning_segments
     
     def get_processing_stats(self, audio_id: str) -> Dict[str, Any]:
