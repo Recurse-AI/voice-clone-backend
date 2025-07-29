@@ -1,3 +1,4 @@
+# Core dependencies
 fastapi
 uvicorn[standard]
 python-multipart
@@ -16,9 +17,8 @@ torchaudio
 # Video processing
 moviepy
 
-# AI/ML
+# AI/ML - only essential
 torch>=2.0.0
-transformers>=4.44.0,<4.46.0
 accelerate
 openai
 
