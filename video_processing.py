@@ -51,7 +51,7 @@ def process_video_background(
 
     # Use global clean audio processor with OpenVoice
     
-    status_manager.update_status(audio_id, ProcessingStatus.INITIALIZING, "Starting video processing with OpenVoice...")
+    status_manager.update_status(audio_id, ProcessingStatus.PENDING, "Starting video processing with OpenVoice...")
     logger.info(f"🎙️ Starting background video processing with OpenVoice for audio_id: {audio_id}")
     
     logger.info(f"📊 OpenVoice Parameters - Temperature: {temperature}, Max Length: {max_length}, Emotion: {emotion}")
@@ -499,7 +499,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     try:
         # Use global clean audio processor with OpenVoice
         
-        status_manager.update_status(audio_id, ProcessingStatus.INITIALIZING, "Starting video processing with OpenVoice...")
+        status_manager.update_status(audio_id, ProcessingStatus.PENDING, "Starting video processing with OpenVoice...")
         logger.info(f"🎙️ Starting background video processing with OpenVoice for audio_id: {audio_id}")
         
         logger.info(f"📊 OpenVoice Parameters - Temperature: {temperature}, Max Length: {max_length}, Emotion: {emotion}")
