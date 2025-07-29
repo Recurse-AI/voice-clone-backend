@@ -532,6 +532,17 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             emotion=emotion
         )
         
+        # CRITICAL DEBUG: Check processing_result immediately after getting it
+        logger.info(f"🔍 CRITICAL DEBUG: processing_result type: {type(processing_result)}")
+        logger.info(f"🔍 CRITICAL DEBUG: processing_result content (first 200 chars): {str(processing_result)[:200]}")
+        
+        # CRITICAL FIX: Check if processing_result is a dict before calling .get()
+        if not isinstance(processing_result, dict):
+            error_msg = f"CRITICAL ERROR: processing_result is not a dictionary: {type(processing_result)} - {processing_result}"
+            logger.error(f"❌ {error_msg}")
+            status_manager.fail_processing(audio_id, error_msg)
+            return {"success": False, "error": error_msg}
+        
         if not processing_result.get("success", False):
             error_msg = f"OpenVoice audio processing failed: {processing_result.get('error', 'Unknown error')}"
             status_manager.fail_processing(audio_id, error_msg)
