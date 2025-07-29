@@ -135,14 +135,16 @@ class OpenVoiceVoiceCloningService:
             converter_config = f"{model_dir}/checkpoints/converter/config.json"
             converter_ckpt = f"{model_dir}/checkpoints/converter/checkpoint.pth"
             
-            # Download models if not exist
-            if not all(os.path.exists(p) for p in [base_config, base_ckpt, converter_config, converter_ckpt]):
-                logger.info("📥 Downloading OpenVoice models...")
+            # Check if models exist and are valid (not corrupted)
+            if not self._models_exist_and_valid([base_config, base_ckpt, converter_config, converter_ckpt]):
+                logger.info("📥 Downloading OpenVoice models (first time only)...")
                 self._download_models(model_dir)
+            else:
+                logger.info("✅ OpenVoice models already exist, skipping download")
             
             # Load Base Speaker TTS Model
             try:
-                self.openvoice_model = BaseSpeakerTTS(base_config, device=self.device)
+                self.openvoice_model = BaseSpeakerTTS(base_config, device=str(self.device))
                 self.openvoice_model.load_ckpt(base_ckpt)
                 logger.info("✅ OpenVoice Base TTS model loaded")
                 
@@ -152,7 +154,7 @@ class OpenVoiceVoiceCloningService:
             
             # Load Tone Color Converter
             try:
-                self.tone_color_converter = ToneColorConverter(converter_config, device=self.device)
+                self.tone_color_converter = ToneColorConverter(converter_config, device=str(self.device))
                 self.tone_color_converter.load_ckpt(converter_ckpt)
                 logger.info("✅ OpenVoice Tone Color Converter loaded")
                 
