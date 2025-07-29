@@ -464,12 +464,12 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     generate_subtitles = parameters.get("generate_subtitles", True)
     # OpenVoice parameters with defaults
     max_length = parameters.get("max_length", parameters.get("max_tokens", settings.OPENVOICE_MAX_LENGTH))
-    max_tokens = parameters.get("max_tokens", settings.FISH_SPEECH_MAX_NEW_TOKENS)
+    max_tokens = parameters.get("max_tokens", settings.OPENVOICE_MAX_LENGTH)
     cfg_scale = parameters.get("cfg_scale", 3.0)  # Legacy parameter
-    temperature = parameters.get("temperature", settings.FISH_SPEECH_TEMPERATURE)
-    top_p = parameters.get("top_p", settings.FISH_SPEECH_TOP_P)
-    cfg_filter_top_k = parameters.get("cfg_filter_top_k", settings.FISH_SPEECH_TOP_K)  # Map to top_k
-    speed_factor = parameters.get("speed_factor", settings.FISH_SPEECH_DEFAULT_SPEED)
+    temperature = parameters.get("temperature", settings.OPENVOICE_TEMPERATURE)
+    top_p = parameters.get("top_p", settings.OPENVOICE_TOP_P)
+    cfg_filter_top_k = parameters.get("cfg_filter_top_k", 50)  # Legacy parameter - use default
+    speed_factor = parameters.get("speed_factor", 1.0)  # Default speed
     use_torch_compile = parameters.get("use_torch_compile", True)  # Legacy parameter
     target_language = parameters.get("target_language", "English")
     language_code = parameters.get("language_code")
@@ -477,8 +477,8 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     original_filename = parameters.get("original_filename")
     original_source_url = parameters.get("original_source_url")
     # New OpenVoice specific parameters
-    repetition_penalty = parameters.get("repetition_penalty", settings.FISH_SPEECH_REPETITION_PENALTY)
-    emotion = parameters.get("emotion", settings.FISH_SPEECH_DEFAULT_EMOTION)
+    repetition_penalty = parameters.get("repetition_penalty", settings.OPENVOICE_REPETITION_PENALTY)
+    emotion = parameters.get("emotion", settings.OPENVOICE_DEFAULT_EMOTION)
     
     # Initialize services
     r2_storage = R2Storage()
