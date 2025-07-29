@@ -100,7 +100,7 @@ class FileManager:
                             metadata['audio_path'] = str(segments_folder / metadata['audio_file'])
                         
                         # Update cloned paths to new structure
-                        cloned_folder = segments_path / "cloned"
+                        cloned_folder = segments_path / "cloned_segments"  # Fixed: match voice_cloning service directory name
                         if 'cloned_audio_file' in metadata:
                             metadata['cloned_audio_path'] = str(cloned_folder / metadata['cloned_audio_file'])
                         

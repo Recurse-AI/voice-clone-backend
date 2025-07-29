@@ -101,7 +101,7 @@ class TimelineProcessor:
             return "source"
         else:
             # Default based on URL structure for voice cloning
-            if "/segments/" in url_lower and "/cloned/" in url_lower:
+            if "/segments/" in url_lower and ("/cloned/" in url_lower or "/cloned_segments/" in url_lower):
                 return "cloned"
             elif "/instruments/" in url_lower:
                 return "instruments"

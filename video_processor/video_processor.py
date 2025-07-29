@@ -56,7 +56,7 @@ class VideoProcessor:
                 segment_index = data.get('segment_index', 1)
                 
                 # Check if cloned audio exists in unified cloned folder
-                cloned_folder = segments_path / "cloned"
+                cloned_folder = segments_path / "cloned_segments"  # Fixed: match voice_cloning service directory name
                 cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
                 cloned_path = cloned_folder / cloned_filename
                 

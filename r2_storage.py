@@ -108,13 +108,13 @@ class R2Storage:
                             upload_results["files_uploaded"] += 1
             
             # Upload cloned segments directly
-            cloned_folder = segments_path / "cloned"
+            cloned_folder = segments_path / "cloned_segments"  # Fixed: match voice_cloning service directory name
             if cloned_folder.exists():
                 for cloned_file in cloned_folder.iterdir():
                     if cloned_file.is_file() and cloned_file.suffix == ".wav":
                         r2_key = self.generate_file_path(
                             audio_id, 
-                            "segments/cloned", 
+                            "segments/cloned_segments",  # Fixed: match voice_cloning service directory name
                             cloned_file.name
                         )
                         
@@ -299,5 +299,5 @@ class R2Storage:
         """Generate R2 URL for a cloned segment using unified structure"""
         cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
         # Use unified cloned folder structure
-        r2_key = self.generate_file_path(audio_id, "segments/cloned", cloned_filename)
+        r2_key = self.generate_file_path(audio_id, "segments/cloned_segments", cloned_filename)
         return f"{settings.R2_PUBLIC_URL}/{r2_key}" 

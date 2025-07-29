@@ -32,7 +32,7 @@ class AudioReconstructor:
             
             # Check unified structure
             segments_folder = segments_path / "segments"
-            cloned_folder = segments_path / "cloned"
+            cloned_folder = segments_path / "cloned_segments"  # Fixed: match voice_cloning service directory name
             metadata_folder = segments_path / "metadata"
             
             if not segments_folder.exists():
@@ -70,10 +70,13 @@ class AudioReconstructor:
                         metadata = json.load(f)
                     
                     segment_index = metadata.get('segment_index', 0)
-                    cloned_audio_path = metadata.get('cloned_audio_path')
                     
-                    if not cloned_audio_path or not os.path.exists(cloned_audio_path):
-                        logger.warning(f"Cloned audio not found for segment {segment_index}")
+                    # Construct cloned audio path from segment index (voice cloning service saves with this pattern)
+                    cloned_audio_filename = f"cloned_segment_{segment_index:03d}.wav"
+                    cloned_audio_path = cloned_folder / cloned_audio_filename
+                    
+                    if not cloned_audio_path.exists():
+                        logger.warning(f"Cloned audio not found for segment {segment_index}: {cloned_audio_path}")
                         continue
                     
                     # Load cloned audio
