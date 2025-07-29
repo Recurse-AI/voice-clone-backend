@@ -159,7 +159,8 @@ def process_video_background(
             audio_id,
             target_language,
             language_code=final_language_code,
-            speakers_expected=speakers_expected
+            speakers_expected=speakers_expected,
+            include_instruments=include_instruments
         )
         
         if not processing_result["success"]:
@@ -169,9 +170,11 @@ def process_video_background(
         status_manager.set_progress(audio_id, 50)
         
         # Get original audio details from processing result
-        audio_path = processing_result["audio_path"]  # Extracted audio file
+        audio_path = processing_result["audio_path"]  # Vocal track (for voice cloning)
+        instruments_path = processing_result.get("instruments_path")  # Instruments track (for mixing)
         segments_dir = processing_result["segments_dir"]  # Directory with segments
         total_segments = processing_result.get("total_segments", 0)
+        separation_performed = processing_result.get("separation_performed", False)
         
         # Load original audio details
         original_audio, original_sr = sf.read(audio_path)
@@ -242,7 +245,7 @@ def process_video_background(
                 processing_result["segments_dir"],
                 audio_id,
                 include_instruments=True,
-                instruments_path=None # Changed to None as instruments are not separated here
+                instruments_path=instruments_path # Use the instruments_path from processing_result
             )
         else:
             reconstruction_result = audio_processor.reconstruct_final_audio(
@@ -297,9 +300,15 @@ def process_video_background(
             vocal_r2_key = r2_storage.generate_file_path(audio_id, "vocal", vocal_filename)
             r2_vocal_result = r2_storage.upload_file(audio_path, vocal_r2_key, "audio/wav") # Use audio_path here
             
-            instruments_filename = f"instruments_separated_{audio_id}.wav"
-            instruments_r2_key = r2_storage.generate_file_path(audio_id, "instruments", instruments_filename)
-            r2_instruments_result = r2_storage.upload_file(None, instruments_r2_key, "audio/wav") # No instruments path here
+            # Upload instruments file if separation was performed
+            if separation_performed and instruments_path and os.path.exists(instruments_path):
+                instruments_filename = f"instruments_separated_{audio_id}.wav"
+                instruments_r2_key = r2_storage.generate_file_path(audio_id, "instruments", instruments_filename)
+                r2_instruments_result = r2_storage.upload_file(instruments_path, instruments_r2_key, "audio/wav")
+                logger.info(f"✅ Uploaded separated instruments to R2")
+            else:
+                r2_instruments_result = {"success": True, "message": "No instrument separation performed", "url": None}
+                logger.info(f"ℹ️ No instruments to upload (separation_performed={separation_performed})")
             
             r2_video_result = None
             r2_subtitle_result = None
@@ -380,10 +389,10 @@ def process_video_background(
                     "seeds_used": cloning_result.get("seeds_used", {})
                 },
                 "features_used": {
-                    "vocal_separation": True,
+                    "vocal_separation": separation_performed,
                     "voice_cloning": True,
                     "subtitle_generation": generate_subtitles,
-                    "instrument_mixing": include_instruments
+                    "instrument_mixing": separation_performed and include_instruments
                 },
                 "processing_timeline": {
                     "transcription_source": "AssemblyAI",
@@ -520,7 +529,8 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             audio_id,
             target_language,
             language_code=language_code,
-            speakers_expected=speakers_expected
+            speakers_expected=speakers_expected,
+            include_instruments=include_instruments
         )
         
         # Update progress after separation completes
@@ -545,9 +555,11 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         status_manager.set_progress(audio_id, 50)
         
         # Get original audio details from processing result
-        audio_path = processing_result["audio_path"]  # Extracted audio file
+        audio_path = processing_result["audio_path"]  # Vocal track (for voice cloning)
+        instruments_path = processing_result.get("instruments_path")  # Instruments track (for mixing)
         segments_dir = processing_result["segments_dir"]  # Directory with segments
         total_segments = processing_result.get("total_segments", 0)
+        separation_performed = processing_result.get("separation_performed", False)
         
         # Load original audio details
         original_audio, original_sr = sf.read(audio_path)
@@ -624,7 +636,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
                 processing_result["segments_dir"],
                 audio_id,
                 include_instruments=True,
-                instruments_path=None # Changed to None as instruments are not separated here
+                instruments_path=instruments_path # Use the instruments_path from processing_result
             )
         else:
             reconstruction_result = audio_processor.reconstruct_final_audio(
@@ -682,8 +694,15 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             vocal_r2_key = r2_storage.generate_file_path(audio_id, "vocal", vocal_filename)
             r2_vocal_result = r2_storage.upload_file(audio_path, vocal_r2_key, "audio/wav")
             
-            # Note: No instrument separation in this version, so we skip instrument upload
-            r2_instruments_result = {"success": True, "message": "No instrument separation performed", "url": None}
+            # Upload instruments file if separation was performed
+            if separation_performed and instruments_path and os.path.exists(instruments_path):
+                instruments_filename = f"instruments_separated_{audio_id}.wav"
+                instruments_r2_key = r2_storage.generate_file_path(audio_id, "instruments", instruments_filename)
+                r2_instruments_result = r2_storage.upload_file(instruments_path, instruments_r2_key, "audio/wav")
+                logger.info(f"✅ Uploaded separated instruments to R2")
+            else:
+                r2_instruments_result = {"success": True, "message": "No instrument separation performed", "url": None}
+                logger.info(f"ℹ️ No instruments to upload (separation_performed={separation_performed})")
             
             # Upload original video file for reference (especially for file uploads)
             r2_original_video_result = None
@@ -774,10 +793,10 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
                     "seeds_used": cloning_result.get("seeds_used", {})
                 },
                 "features_used": {
-                    "vocal_separation": True,
+                    "vocal_separation": separation_performed,
                     "voice_cloning": True,
                     "subtitle_generation": generate_subtitles,
-                    "instrument_mixing": include_instruments
+                    "instrument_mixing": separation_performed and include_instruments
                 },
                 "processing_timeline": {
                     "transcription_source": "AssemblyAI",

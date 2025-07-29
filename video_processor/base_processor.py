@@ -44,8 +44,9 @@ class AudioProcessor:
     def process_video_with_separation(self, video_path: str, audio_id: str, 
                                     target_language: str = "English",
                                     language_code: Optional[str] = None,
-                                    speakers_expected: Optional[int] = 1) -> Dict[str, Any]:
-        """Process video and create segments (no voice cloning)"""
+                                    speakers_expected: Optional[int] = 1,
+                                    include_instruments: bool = True) -> Dict[str, Any]:
+        """Process video with proper vocal/instrument separation using RunPod"""
         try:
             logger.info(f"🎬 Processing video with separation for {audio_id}")
             
@@ -58,9 +59,61 @@ class AudioProcessor:
             
             audio_path = str(audio_output_path)
             
-            # Process audio segments
+            # Perform vocal/instrument separation if requested
+            vocal_path = audio_path  # Default to original audio
+            instruments_path = None
+            
+            if include_instruments:
+                try:
+                    logger.info(f"🎵 Starting vocal/instrument separation for {audio_id}")
+                    
+                    # Upload audio to R2 for RunPod processing
+                    from r2_storage import R2Storage
+                    r2_storage = R2Storage()
+                    
+                    # Upload extracted audio to get URL for RunPod
+                    upload_result = r2_storage.upload_file(
+                        file_path=audio_path,
+                        key=f"processing/{audio_id}/extracted_audio.wav"
+                    )
+                    
+                    if upload_result.get("success"):
+                        audio_url = upload_result.get("url")
+                        
+                        # Submit to RunPod for separation
+                        separation_result = self.runpod_service.process_audio_separation(audio_url)
+                        
+                        if separation_result.get("success"):
+                            # Wait for completion
+                            completion_result = self.runpod_service.wait_for_completion(separation_result["id"])
+                            
+                            if completion_result.get("success"):
+                                # Download separated files
+                                vocal_url = completion_result.get("vocal_url")
+                                instruments_url = completion_result.get("instruments_url")
+                                
+                                if vocal_url:
+                                    vocal_path = str(self.temp_dir / f"vocal_separated_{audio_id}.wav")
+                                    self._download_file(vocal_url, vocal_path)
+                                    logger.info(f"✅ Downloaded separated vocal: {vocal_path}")
+                                
+                                if instruments_url:
+                                    instruments_path = str(self.temp_dir / f"instruments_separated_{audio_id}.wav")
+                                    self._download_file(instruments_url, instruments_path)
+                                    logger.info(f"✅ Downloaded separated instruments: {instruments_path}")
+                            else:
+                                logger.warning("RunPod separation completed but failed to get results, using original audio")
+                        else:
+                            logger.warning("RunPod separation failed, using original audio")
+                    else:
+                        logger.warning("Failed to upload audio for separation, using original audio")
+                        
+                except Exception as e:
+                    logger.warning(f"Separation failed: {str(e)}, using original audio")
+            
+            # Process audio segments using vocal track (or original if separation failed)
             segments_result = self.process_audio_segments(
-                audio_path=audio_path,
+                audio_path=vocal_path,
                 audio_id=audio_id,
                 target_language=target_language,
                 language_code=language_code,
@@ -73,8 +126,10 @@ class AudioProcessor:
             return {
                 "success": True,
                 "segments_dir": segments_result.get("segments_dir"),
-                "audio_path": audio_path,
-                "total_segments": segments_result.get("total_segments", 0)
+                "audio_path": vocal_path,  # Return vocal path for voice cloning
+                "instruments_path": instruments_path,  # Return instruments path for mixing
+                "total_segments": segments_result.get("total_segments", 0),
+                "separation_performed": include_instruments and instruments_path is not None
             }
             
         except Exception as e:
@@ -240,3 +295,18 @@ class AudioProcessor:
                 logger.info(f"🧹 Cleaned up temp files for {audio_id}")
         except Exception as e:
             logger.error(f"❌ Cleanup failed: {str(e)}")
+    
+    def _download_file(self, url: str, local_path: str) -> bool:
+        """Download file from URL to local path"""
+        try:
+            import requests
+            response = requests.get(url, timeout=60)
+            response.raise_for_status()
+            
+            with open(local_path, 'wb') as f:
+                f.write(response.content)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to download {url}: {str(e)}")
+            return False

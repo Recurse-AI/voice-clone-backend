@@ -189,7 +189,8 @@ class CleanVoiceCloningService:
         if not segments:
             return {"success": False, "error": "No segments provided"}
         
-        args = custom_args or self.default_args
+        # args = custom_args or self.default_args
+        args = self.default_args
         
         # Set global seed for consistency (key improvement from Gradio approach)
         if settings.DIA_USE_GLOBAL_SEED:

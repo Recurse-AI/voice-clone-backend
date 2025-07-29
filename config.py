@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     DIA_ENHANCED_CFG_SCALE: float = 3.0  # Stable CFG like Gradio
     DIA_ENHANCED_TEMPERATURE: float = 1.3  # Lower temp for consistency (Gradio uses 1.3)
     DIA_ENHANCED_TOP_P: float = 0.95  # Consistent nucleus sampling
-    DIA_ENHANCED_CFG_FILTER_TOP_K: int = 30  # Lower for stability (Gradio uses 30)
+    DIA_ENHANCED_CFG_FILTER_TOP_K: int = 35  # Lower for stability (Gradio uses 30)
     DIA_ENHANCED_SPEED_FACTOR: float = 0.95  # Slightly slower for better quality (Gradio uses 0.9-0.95)
     DIA_ENHANCED_USE_TORCH_COMPILE: bool = True  # Use torch compile for stability
     
