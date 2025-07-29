@@ -23,22 +23,14 @@ tokenizers
 accelerate
 openai
 
-# OpenVoice - MIT Licensed Voice Cloning (local GPU-based)
-# Auto-downloads from: https://github.com/myshell-ai/OpenVoice.git
-# System requirement: git must be installed
-# Dependencies for OpenVoice
+# OpenVoice - MIT Licensed Voice Cloning (direct from repository)
+git+https://github.com/myshell-ai/OpenVoice.git
+
+# Core OpenVoice dependencies
 whisper-timestamped
 eng_to_ipa
-pypinyin
-cn2an
-jieba
-nltk
-g2p_en
-inflect
-unidecode
-langdetect
-pynini
-WeTextProcessing
+monotonic-align
+silero-vad>=4.0.0
 
 # Enhanced AssemblyAI for transcription
 assemblyai
