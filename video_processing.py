@@ -576,13 +576,23 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             # Implementation for video generation would go here
             pass
         
-        # Complete processing
+        # Safe extraction of voice cloning stats
+        voice_cloning_data = processing_result.get("voice_cloning", {})
+        if isinstance(voice_cloning_data, dict):
+            total_segments = voice_cloning_data.get("total_segments", 0)
+            successful_segments = voice_cloning_data.get("successful_segments", 0)
+        else:
+            # Fallback if voice_cloning is not a dict
+            total_segments = 0
+            successful_segments = 0
+            logger.warning(f"⚠️ voice_cloning data is not a dict: {type(voice_cloning_data)}")
+
         status_manager.complete_processing(audio_id, {
             "final_audio_url": final_audio_url,
             "final_video_url": final_video_url,
             "processing_stats": {
-                "total_segments": processing_result.get("voice_cloning", {}).get("total_segments", 0),
-                "successful_segments": processing_result.get("voice_cloning", {}).get("successful_segments", 0),
+                "total_segments": total_segments,
+                "successful_segments": successful_segments,
                 "model_used": "OpenVoice"
             },
             "metadata": {
