@@ -591,34 +591,52 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         
         # Extract voice cloning stats (processing_result is already validated as dict)
         voice_cloning_data = processing_result.get("voice_cloning", {})
-        if isinstance(voice_cloning_data, dict):
-            total_segments = voice_cloning_data.get("total_segments", 0)
-            successful_segments = voice_cloning_data.get("successful_segments", 0)
-        else:
-            # Fallback if voice_cloning section is not a dict
+        
+        # Additional validation for voice_cloning_data
+        if not isinstance(voice_cloning_data, dict):
+            logger.warning(f"⚠️ voice_cloning data is not a dict: {type(voice_cloning_data)} - {voice_cloning_data}")
+            # Set safe defaults
             total_segments = 0
             successful_segments = 0
-            logger.warning(f"⚠️ voice_cloning data is not a dict: {type(voice_cloning_data)}")
+        else:
+            total_segments = voice_cloning_data.get("total_segments", 0)
+            successful_segments = voice_cloning_data.get("successful_segments", 0)
+            
+            # Additional safety checks for the values
+            if not isinstance(total_segments, (int, float)):
+                total_segments = 0
+            if not isinstance(successful_segments, (int, float)):
+                successful_segments = 0
 
         # Complete processing successfully
-        status_manager.complete_processing(audio_id, {
-            "final_audio_url": final_audio_url,
-            "processing_stats": {
-                "total_segments": total_segments,
-                "successful_segments": successful_segments,
-                "model_used": "OpenVoice"
-            },
-            "metadata": {
-                "original_filename": original_filename,
-                "processing_timeline": {
-                    "transcription_source": "AssemblyAI",
-                    "voice_cloning_model": "OpenVoice"
-                }
-            }
-        })
+        logger.info(f"🔍 DEBUG: About to complete processing for {audio_id}")
+        logger.info(f"🔍 DEBUG: total_segments={total_segments}, successful_segments={successful_segments}")
+        logger.info(f"🔍 DEBUG: final_audio_url type: {type(final_audio_url)}")
         
+        try:
+            status_manager.complete_processing(audio_id, {
+                "final_audio_url": final_audio_url,
+                "processing_stats": {
+                    "total_segments": total_segments,
+                    "successful_segments": successful_segments,
+                    "model_used": "OpenVoice"
+                },
+                "metadata": {
+                    "original_filename": original_filename,
+                    "processing_timeline": {
+                        "transcription_source": "AssemblyAI",
+                        "voice_cloning_model": "OpenVoice"
+                    }
+                }
+            })
+            logger.info(f"🔍 DEBUG: Status completion successful for {audio_id}")
+        except Exception as status_error:
+            logger.error(f"❌ Status completion failed: {str(status_error)}")
+            # Continue anyway since processing was successful
+            
         logger.info(f"🎉 Queue processing completed successfully for {audio_id}")
         
+        logger.info(f"🔍 DEBUG: About to return result for {audio_id}")
         return {
             "success": True,
             "audio_id": audio_id,
