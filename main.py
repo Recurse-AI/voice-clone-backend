@@ -83,11 +83,11 @@ async def lifespan(app: FastAPI):
         audio_processor = get_audio_processor()
         logger.info("✅ Core AudioProcessor initialized")
         
-        # Initialize clean voice cloning processor
+        # Initialize clean voice cloning processor with OpenVoice
         if clean_audio_processor.load_model():
-            logger.info("✅ Dia model loaded successfully for voice cloning")
+            logger.info("✅ OpenVoice model loaded successfully for voice cloning")
         else:
-            logger.warning("⚠️ Failed to load Dia model - voice cloning will not work")
+            logger.warning("⚠️ Failed to load OpenVoice model - voice cloning will not work")
             
     except Exception as e:
         logger.error(f"❌ Startup failed: {str(e)}")
@@ -160,19 +160,24 @@ async def process_video(
     video_url: str = Form(..., description="Video URL (already uploaded to Cloudflare) for processing"),
     include_instruments: bool = Form(True, description="Whether to include instruments in final audio"),
     generate_subtitles: bool = Form(True, description="Whether to generate subtitles"),
-    # Enhanced Dia Parameters (Colab optimized defaults)
-    max_tokens: int = Form(3072, description="Maximum tokens for generation (~36 seconds audio)"),
-    cfg_scale: float = Form(3.0, description="CFG scale for voice cloning (1.0-15.0)"),
-    temperature: float = Form(1.8, description="Voice cloning temperature (0.5-2.0) - Reference optimized"),
-    top_p: float = Form(0.95, description="Top-p for voice cloning (0.5-1.0)"),
-    cfg_filter_top_k: int = Form(45, description="CFG filter top K (15-100)"),
-    speed_factor: float = Form(1.0, description="Audio speed factor (0.5-1.5) - Reference optimal"),
-    use_torch_compile: bool = Form(False, description="Use torch.compile for optimization - Reference stable"),
+    # OpenVoice Parameters (MIT Licensed - Voice Cloning Focused)
+    max_length: int = Form(8192, description="Maximum audio length for OpenVoice generation"),
+    temperature: float = Form(0.7, description="OpenVoice temperature (0.1-2.0) for creativity control"),
+    top_p: float = Form(0.8, description="Top-p for OpenVoice (0.1-1.0)"),
+    repetition_penalty: float = Form(1.2, description="OpenVoice repetition penalty (1.0-2.0)"),
+    speed_factor: float = Form(1.0, description="Audio speed factor (0.5-1.5)"),
     target_language: str = Form("English", description="Target language for translation"),
     language_code: Optional[str] = Form(None, description="Language code for transcription (e.g., en, es, fr, de, hi, ja, zh) - leave empty/None for auto-detection"),
-    speakers_expected: Optional[str] = Form(None, description="Expected number of speakers (1-10)")
+    speakers_expected: Optional[str] = Form(None, description="Expected number of speakers (1-10)"),
+    # OpenVoice specific parameters
+    emotion: str = Form("neutral", description="Emotion for OpenVoice (neutral, happy, sad, excited, etc.)"),
+    # Legacy compatibility parameters (kept for backward compatibility but ignored)
+    max_tokens: int = Form(8192, description="Legacy parameter - mapped to max_length for OpenVoice"),
+    cfg_scale: float = Form(3.0, description="Legacy parameter - ignored by OpenVoice"),
+    cfg_filter_top_k: int = Form(100, description="Legacy parameter - ignored by OpenVoice"),
+    use_torch_compile: bool = Form(True, description="Legacy parameter - ignored by OpenVoice")
 ):
-    """Start video processing with Cloudflare URL"""
+    """Start video processing with Cloudflare URL and OpenVoice (MIT Licensed)"""
     
     # Clean up inputs
     video_url = video_url.strip()
@@ -209,22 +214,26 @@ async def process_video(
     # Submit to video processing queue
     from video_processor.video_queue_manager import video_queue_manager
     
-    # Prepare enhanced parameters for queue processing
+    # Prepare OpenVoice parameters for queue processing
     queue_parameters = {
         "include_instruments": include_instruments,
         "generate_subtitles": generate_subtitles,
-        # Enhanced Dia Parameters
-        "max_tokens": max_tokens,
-        "cfg_scale": cfg_scale,
+        # OpenVoice Parameters
+        "max_length": max_length,
         "temperature": temperature,
         "top_p": top_p,
-        "cfg_filter_top_k": cfg_filter_top_k,
+        "repetition_penalty": repetition_penalty,
         "speed_factor": speed_factor,
-        "use_torch_compile": use_torch_compile,
         "target_language": target_language,
         "language_code": language_code,
         "speakers_expected": speakers_expected,
-        "original_source_url": original_source_url
+        "original_source_url": original_source_url,
+        "emotion": emotion,
+        # Legacy compatibility parameters (mapped/ignored)
+        "max_tokens": max_tokens,  # Will be mapped to max_length
+        "cfg_scale": cfg_scale,  # Ignored
+        "cfg_filter_top_k": cfg_filter_top_k,  # Ignored
+        "use_torch_compile": use_torch_compile  # Ignored
     }
     
     # Submit to queue (this will handle the processing automatically)
@@ -244,14 +253,14 @@ async def process_video(
         queue_position = queue_request_status.get("queue_position") if queue_request_status else None
         if queue_request_status and queue_position is not None and queue_position > 0:
             message = f"Video processing queued successfully (position: {queue_position})"
-            estimated_time = queue_request_status.get("estimated_time", "15-30 minutes")
+            estimated_time = queue_request_status.get("estimated_time", "10-20 minutes")
         else:
             message = "Video processing started successfully"
-            estimated_time = "10-20 minutes"
+            estimated_time = "5-12 minutes"
     except Exception as e:
         logger.warning(f"Failed to get queue info: {e}")
         message = "Video processing started successfully"
-        estimated_time = "10-20 minutes"
+        estimated_time = "5-12 minutes"
     
     # Return immediate response
     return StartProcessingResponse(
@@ -265,7 +274,7 @@ async def process_video(
 
 @app.post("/regenerate-segment", response_model=RegenerateSegmentResponse)
 async def regenerate_segment(request: RegenerateSegmentRequest):
-    """Regenerate a single audio segment with custom parameters"""
+    """Regenerate a single audio segment with OpenVoice (MIT Licensed)"""
     try:
         import tempfile
         import time
@@ -282,11 +291,11 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
         if request.duration <= 0:
             raise HTTPException(status_code=400, detail="Duration must be positive")
         
-        # Set parameters with defaults
+        # Set parameters with defaults for OpenVoice
         seed = request.seed or random.randint(1, 1000000)
-        temperature = request.temperature or 1.0
-        cfg_scale = request.cfg_scale or 3.5
-        top_p = request.top_p or 0.95
+        temperature = request.temperature or settings.OPENVOICE_TEMPERATURE
+        repetition_penalty = request.repetition_penalty or settings.OPENVOICE_REPETITION_PENALTY
+        top_p = request.top_p or settings.OPENVOICE_TOP_P
         
         generation_start = time.time()
         
@@ -304,33 +313,47 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
             temp_ref_path = temp_ref.name
         
         try:
-            # Use global clean audio processor
-            if not clean_audio_processor.is_model_loaded():
-                raise HTTPException(status_code=500, detail="Dia model not available")
+            # Use global clean audio processor with OpenVoice
+            if not clean_audio_processor.is_ready():
+                raise HTTPException(status_code=500, detail="OpenVoice model not available")
             
-            # For voice cloning, use reference transcript + generation text
-            combined_text = request.text + "\n" + request.text
+            # For voice cloning, prepare text for OpenVoice
+            processed_text = request.text
+            
+            # Add emotion marker if needed
+            if hasattr(request, 'emotion') and request.emotion and request.emotion != "neutral":
+                emotion_markers = {
+                    "happy": "Speaking with joy and enthusiasm: ",
+                    "sad": "Speaking with sadness: ",
+                    "excited": "Speaking with great excitement: ",
+                    "calm": "Speaking calmly and peacefully: ",
+                    "confident": "Speaking with confidence: ",
+                    "nervous": "Speaking with some nervousness: "
+                }
+                marker = emotion_markers.get(request.emotion, f"Speaking with {request.emotion}: ")
+                processed_text = f"{marker}{request.text}"
 
-            print(f"Combined text: {combined_text}")
+            print(f"Processed text: {processed_text}")
             print(f"Reference audio URL: {request.reference_audio_url}")
             
-            # Use clean voice cloning service for generation
-            import torch
-            with torch.inference_mode():
-                cloned_audio = clean_audio_processor.voice_service.dia_model.generate(
-                    text=combined_text,
-                    audio_prompt=temp_ref_path,
-                    use_torch_compile=settings.DIA_ENHANCED_USE_TORCH_COMPILE,
-                    cfg_scale=settings.DIA_ENHANCED_CFG_SCALE,
-                    temperature=settings.DIA_ENHANCED_TEMPERATURE,
-                    top_p=settings.DIA_ENHANCED_TOP_P,
-                    cfg_filter_top_k=settings.DIA_ENHANCED_CFG_FILTER_TOP_K,
-                    max_tokens=settings.DIA_ENHANCED_MAX_TOKENS,
-                    verbose=False
-                )
+            # Use OpenVoice voice cloning service for generation
+            voice_args = clean_audio_processor.voice_service.validate_parameters(
+                temperature=temperature,
+                top_p=top_p,
+                repetition_penalty=repetition_penalty,
+                seed=seed,
+                max_length=min(request.duration * 200, settings.OPENVOICE_MAX_LENGTH)  # Rough estimate for OpenVoice
+            )
+            
+            # Generate using OpenVoice
+            cloned_audio = clean_audio_processor.voice_service.generate_with_retry(
+                chunk_text=processed_text,
+                audio_prompt=temp_ref_path,
+                custom_args=voice_args
+            )
             
             if cloned_audio is None:
-                raise HTTPException(status_code=500, detail="Audio generation failed")
+                raise HTTPException(status_code=500, detail="OpenVoice audio generation failed")
             
             # Adjust audio length using clean processor
             target_samples = int(request.duration * clean_audio_processor.voice_service.sample_rate)
@@ -361,17 +384,17 @@ async def regenerate_segment(request: RegenerateSegmentRequest):
             
             return RegenerateSegmentResponse(
                 success=True,
-                message="Segment regenerated successfully",
+                message="Segment regenerated successfully with OpenVoice",
                 audio_url=audio_url,
                 duration=request.duration,
                 generation_time=generation_time,
                 parameters_used={
                     "seed": seed,
                     "temperature": temperature,
-                    "cfg_scale": cfg_scale,
                     "top_p": top_p,
                     "text": request.text,
-                    "reference_audio_url": request.reference_audio_url
+                    "reference_audio_url": request.reference_audio_url,
+                    "model_used": "OpenVoice"
                 }
             )
             

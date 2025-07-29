@@ -46,7 +46,7 @@ class SegmentManager:
         
         logger.info(f"Audio duration info: original={audio_duration:.2f}s, transcribed_end={last_word_end:.2f}s, using_total={total_duration:.2f}s")
         
-        # Handle short audio clips (Dia works better with 7-11s but can handle shorter)
+        # Handle short audio clips (OpenVoice works well with 3-10s segments and can handle shorter)
         if total_duration < 5.0:
             logger.warning(f"Audio duration ({total_duration:.2f}s) is too short for quality voice cloning - skipping segmentation")
             return []

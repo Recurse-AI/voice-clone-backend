@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # API Configuration
     API_TITLE: str = "Voice Cloning API"
     API_VERSION: str = "1.0.0"
-    API_DESCRIPTION: str = "Production Voice Cloning API with Dia Model"
+    API_DESCRIPTION: str = "Production Voice Cloning API with OpenVoice Model (MIT Licensed)"
     
     # Server Configuration
     HOST: str = "0.0.0.0"
@@ -28,30 +28,40 @@ class Settings(BaseSettings):
     LOCAL_STORAGE_DIR: str = os.getenv('LOCAL_STORAGE_DIR', './tmp/local_storage')
     LOCAL_STORAGE_RETENTION_HOURS: int = int(os.getenv('LOCAL_STORAGE_RETENTION_HOURS', '1'))
     
-    # Dia Model Configuration
-    DIA_MODEL_REPO: str = "nari-labs/Dia-1.6B-0626"
-    DIA_DEVICE: str = "cuda" if (os.getenv("CUDA_AVAILABLE") and torch.cuda.is_available()) else "cpu"
-    DIA_COMPUTE_DTYPE: str = "float16"  # float16 for CUDA, float32 for CPU
-    DIA_USE_TORCH_COMPILE: bool = False
-    DIA_VERBOSE: bool = False
-    
-    # Enhanced Dia Generation Parameters (Stable & Consistent like Gradio example)
-    DIA_ENHANCED_MAX_TOKENS: int = 3072  # Consistent with Gradio example
-    DIA_ENHANCED_CFG_SCALE: float = 3.0  # Stable CFG like Gradio
-    DIA_ENHANCED_TEMPERATURE: float = 1.3  # Lower temp for consistency (Gradio uses 1.3)
-    DIA_ENHANCED_TOP_P: float = 0.95  # Consistent nucleus sampling
-    DIA_ENHANCED_CFG_FILTER_TOP_K: int = 35  # Lower for stability (Gradio uses 30)
-    DIA_ENHANCED_SPEED_FACTOR: float = 0.95  # Slightly slower for better quality (Gradio uses 0.9-0.95)
-    DIA_ENHANCED_USE_TORCH_COMPILE: bool = True  # Use torch compile for stability
-    
-    # Voice Consistency Settings (New for stability)
-    DIA_USE_GLOBAL_SEED: bool = True  # Use single seed for all segments for consistency
-    DIA_DEFAULT_SEED: int = 500  # Stable default seed (same as Gradio example)
-    DIA_MEMORY_CLEANUP_FREQUENCY: int = 1  # Clean memory after each segment
-    DIA_MAX_RETRIES: int = 2  # Retry count for failed generations
-    DIA_SILENCE_PADDING: float = 0.0  # Disable silence padding to fix duration mismatch
-    
+    # OpenVoice Model Configuration (MIT License - Dedicated Voice Cloning)
+    OPENVOICE_MODEL_PATH: str = os.getenv("OPENVOICE_MODEL_PATH", "./models/openvoice")
+    OPENVOICE_DEVICE: str = "cuda" if (os.getenv("CUDA_AVAILABLE") and torch.cuda.is_available()) else "cpu"
+    OPENVOICE_COMPILE: bool = True  # Enable torch.compile for better performance
+    OPENVOICE_VERBOSE: bool = False
 
+    # OpenVoice Generation Parameters (Optimized for voice cloning)
+    OPENVOICE_MAX_LENGTH: int = 8192  # Maximum audio length
+    OPENVOICE_TEMPERATURE: float = 0.7  # Balance creativity and consistency  
+    OPENVOICE_TOP_P: float = 0.8  # Nucleus sampling
+    OPENVOICE_REPETITION_PENALTY: float = 1.2  # Avoid repetition
+    OPENVOICE_USE_AUTOCAST: bool = True  # Mixed precision for CUDA
+
+    # Voice Cloning Settings (OpenVoice specific)
+    OPENVOICE_SAMPLE_RATE: int = 24000  # OpenVoice native sample rate
+    OPENVOICE_MIN_REFERENCE_SECONDS: float = 3.0  # Minimum reference audio length
+    OPENVOICE_MAX_REFERENCE_SECONDS: float = 30.0  # Maximum reference audio length  
+    OPENVOICE_CHUNK_LENGTH: float = 30.0  # Maximum chunk length for processing
+
+    # Voice Consistency Settings
+    OPENVOICE_USE_GLOBAL_SEED: bool = True  # Use single seed for consistency
+    OPENVOICE_DEFAULT_SEED: int = 42  # Default seed value
+    OPENVOICE_MEMORY_CLEANUP_FREQUENCY: int = 1  # Clean memory after processing
+    OPENVOICE_MAX_RETRIES: int = 3  # Retry count for failed generations
+
+    # Style Control Settings (OpenVoice advanced features)
+    OPENVOICE_ENABLE_EMOTION_CONTROL: bool = True  # Enable emotion control
+    OPENVOICE_DEFAULT_EMOTION: str = "neutral"  # Default emotion
+    OPENVOICE_ENABLE_ACCENT_CONTROL: bool = True  # Enable accent control
+    OPENVOICE_ENABLE_RHYTHM_CONTROL: bool = True  # Enable rhythm/pace control
+
+    # Performance Settings (GPU optimized)
+    OPENVOICE_BATCH_SIZE: int = 1  # Batch size for generation
+    OPENVOICE_NUM_WORKERS: int = 4  # Number of workers for data loading
     
     # R2 Bucket Configuration
     R2_ACCESS_KEY_ID: str = os.getenv("R2_ACCESS_KEY_ID", "")

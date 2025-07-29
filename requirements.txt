@@ -11,21 +11,32 @@ numpy
 scipy
 pydub
 ffmpeg-python
+torchaudio
 
 # Video processing
 moviepy
 
 # AI/ML
-torch
-transformers>=4.40.0
+torch>=2.0.0
+transformers>=4.44.0
 tokenizers
 accelerate
 openai
 
-# Dia Model - Install latest transformers and dia
-git+https://github.com/nari-labs/dia.git
+# OpenVoice - MIT Licensed Voice Cloning (local GPU-based)
+# Clone from: https://github.com/myshell-ai/OpenVoice.git
+# Dependencies for OpenVoice
+whisper-timestamped
+eng_to_ipa
+pypinyin
+cn2an
+jieba
+nltk
+g2p_en
+inflect
+unidecode
 
-# AssemblyAI for transcription
+# Enhanced AssemblyAI for transcription
 assemblyai
 
 # Storage
