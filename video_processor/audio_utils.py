@@ -21,26 +21,133 @@ class AudioUtils:
         pass
     
     def extract_audio_from_video(self, video_path: str, output_path: str) -> Dict[str, Any]:
-        """Extract audio from video file using ffmpeg"""
+        """Extract audio from video file using ffmpeg with format compatibility handling"""
         try:
             # Get FFmpeg executable path
             ffmpeg_path = self._get_ffmpeg_path()
             
-            cmd = [
-                ffmpeg_path, '-y',
-                '-i', video_path,
-                '-ac', '2',  # Stereo
-                '-ar', '44100',  # Sample rate
-                '-acodec', 'pcm_s16le',  # Audio codec
-                output_path
+            # First, try to probe the video file
+            probe_result = self._probe_video_file(ffmpeg_path, video_path)
+            if not probe_result["success"]:
+                return {"success": False, "error": f"Cannot read video file: {probe_result['error']}"}
+            
+            # Try multiple extraction strategies for maximum compatibility
+            strategies = [
+                # Strategy 1: Standard extraction
+                {
+                    "name": "standard",
+                    "cmd": [
+                        ffmpeg_path, '-y', '-i', video_path,
+                        '-ac', '2',  # Stereo
+                        '-ar', '44100',  # Sample rate
+                        '-acodec', 'pcm_s16le',  # Audio codec
+                        output_path
+                    ]
+                },
+                # Strategy 2: More compatible extraction with format specification
+                {
+                    "name": "compatible",
+                    "cmd": [
+                        ffmpeg_path, '-y', '-f', 'mp4', '-i', video_path,
+                        '-vn',  # No video
+                        '-acodec', 'pcm_s16le',
+                        '-ac', '2',
+                        '-ar', '44100',
+                        '-f', 'wav',
+                        output_path
+                    ]
+                },
+                # Strategy 3: Auto-detect input format, force WAV output
+                {
+                    "name": "auto_detect",
+                    "cmd": [
+                        ffmpeg_path, '-y', '-i', video_path,
+                        '-map', '0:a:0',  # Select first audio stream
+                        '-c:a', 'pcm_s16le',
+                        '-ac', '2',
+                        '-ar', '44100',
+                        output_path
+                    ]
+                },
+                # Strategy 4: Last resort - copy audio stream and convert
+                {
+                    "name": "copy_convert", 
+                    "cmd": [
+                        ffmpeg_path, '-y', '-i', video_path,
+                        '-vn', '-acodec', 'copy', '-f', 'mp3',
+                        f"{output_path}.mp3"
+                    ]
+                }
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            for strategy in strategies:
+                try:
+                    result = subprocess.run(strategy["cmd"], capture_output=True, text=True, timeout=300)
+                    
+                    if result.returncode == 0:
+                        # Check if output file exists and is valid
+                        if strategy["name"] == "copy_convert":
+                            # Convert MP3 to WAV
+                            mp3_path = f"{output_path}.mp3"
+                            if os.path.exists(mp3_path):
+                                convert_result = self._convert_mp3_to_wav(ffmpeg_path, mp3_path, output_path)
+                                os.unlink(mp3_path)  # Clean up MP3
+                                if convert_result["success"]:
+                                    return {"success": True, "audio_path": output_path}
+                        else:
+                            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                                return {"success": True, "audio_path": output_path}
+                    
+                    # Log the attempt for debugging
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.info(f"Audio extraction strategy '{strategy['name']}' failed: {result.stderr[:200]}")
+                    
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"Audio extraction strategy '{strategy['name']}' timed out")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Audio extraction strategy '{strategy['name']}' error: {str(e)}")
+                    continue
+            
+            return {"success": False, "error": "All audio extraction strategies failed. Video format may not be supported."}
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def _probe_video_file(self, ffmpeg_path: str, video_path: str) -> Dict[str, Any]:
+        """Probe video file to check if it's readable"""
+        try:
+            cmd = [ffmpeg_path, '-v', 'quiet', '-i', video_path, '-f', 'null', '-']
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             
             if result.returncode == 0:
-                return {"success": True, "audio_path": output_path}
+                return {"success": True}
             else:
-                return {"success": False, "error": f"FFmpeg error: {result.stderr}"}
+                return {"success": False, "error": result.stderr}
+                
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Video probe timed out"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def _convert_mp3_to_wav(self, ffmpeg_path: str, mp3_path: str, wav_path: str) -> Dict[str, Any]:
+        """Convert MP3 to WAV format"""
+        try:
+            cmd = [
+                ffmpeg_path, '-y', '-i', mp3_path,
+                '-acodec', 'pcm_s16le',
+                '-ac', '2',
+                '-ar', '44100',
+                wav_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            if result.returncode == 0:
+                return {"success": True}
+            else:
+                return {"success": False, "error": result.stderr}
                 
         except Exception as e:
             return {"success": False, "error": str(e)}

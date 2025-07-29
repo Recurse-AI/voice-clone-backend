@@ -99,8 +99,41 @@ class CleanAudioProcessor:
             # Step 3: Save segments and prepare for voice cloning
             logger.info("💾 Step 3: Saving segments...")
             
+            # First, extract audio from video if needed
+            import os
+            from .audio_utils import AudioUtils
+            
+            # Check if input is a video file that needs audio extraction
+            video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
+            audio_extensions = {'.wav', '.mp3', '.flac', '.ogg', '.m4a'}
+            
+            file_ext = Path(audio_path).suffix.lower()
+            
+            if file_ext in video_extensions:
+                # Extract audio from video file
+                logger.info(f"🎵 Extracting audio from video file: {audio_path}")
+                audio_utils = AudioUtils()
+                extracted_audio_path = Path(settings.TEMP_DIR) / f"extracted_audio_{audio_id}.wav"
+                
+                extraction_result = audio_utils.extract_audio_from_video(audio_path, str(extracted_audio_path))
+                
+                if not extraction_result.get("success", False):
+                    return {"success": False, "error": f"Failed to extract audio from video: {extraction_result.get('error', 'Unknown error')}"}
+                
+                # Use extracted audio file
+                audio_file_path = str(extracted_audio_path)
+                logger.info(f"✅ Audio extracted successfully: {audio_file_path}")
+            else:
+                # Direct audio file
+                audio_file_path = audio_path
+            
             # Load original audio for reference
-            original_audio, sr = sf.read(audio_path)
+            try:
+                original_audio, sr = sf.read(audio_file_path)
+                logger.info(f"✅ Audio loaded: {len(original_audio)} samples at {sr}Hz")
+            except Exception as e:
+                return {"success": False, "error": f"Failed to read audio file: {str(e)}"}
+            
             speakers = transcript_result.get('speakers', ['A'])
             detected_language = transcript_result.get('metadata', {}).get('language_code', '')
             
