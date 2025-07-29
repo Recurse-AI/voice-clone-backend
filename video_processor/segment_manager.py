@@ -19,8 +19,8 @@ class SegmentManager:
     
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
-        self.optimal_duration = 9.0  # Optimal target for voice cloning (9s sweet spot)
-        self.min_duration = 7.0  # Minimum duration to avoid too short segments
+        self.optimal_duration = 11.0  # Optimal target for voice cloning (9s sweet spot)
+        self.min_duration = 9.0  # Minimum duration to avoid too short segments
         self.max_duration = 13.0  # Maximum allowed duration - Updated to 13s as requested by user
         self.min_gap_duration = 2.5  # Only consider gaps >= 2.5s as actual breaks
     
@@ -106,7 +106,7 @@ class SegmentManager:
                 should_split = True
                 logger.info(f"STRICT: Forcing split to prevent exceeding max duration. Potential: {potential_duration:.2f}s > {self.max_duration}s")
             # Check if we're in the optimal range (7-13s for voice cloning)
-            elif potential_duration >= 7.0:  # Start considering split at 7s
+            elif potential_duration >= 9.0:  # Start considering split at 7s
                 if potential_duration >= self.optimal_duration:  # 9 seconds optimal
                     should_split = True
                     logger.info(f"Segment reached optimal duration: {potential_duration:.2f}s")

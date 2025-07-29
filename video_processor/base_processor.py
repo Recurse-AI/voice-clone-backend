@@ -87,10 +87,11 @@ class AudioProcessor:
                             # Wait for completion
                             completion_result = self.runpod_service.wait_for_completion(separation_result["id"])
                             
-                            if completion_result.get("success"):
+                            if completion_result.get("status") == "COMPLETED":  # Changed from get("success") to status check
                                 # Download separated files
-                                vocal_url = completion_result.get("vocal_url")
-                                instruments_url = completion_result.get("instruments_url")
+                                output = completion_result.get("output", {})  # Get output object
+                                vocal_url = output.get("vocal_audio")  # Get from output object
+                                instruments_url = output.get("instrument_audio")  # Get from output object
                                 
                                 if vocal_url:
                                     vocal_path = str(self.temp_dir / f"vocal_separated_{audio_id}.wav")

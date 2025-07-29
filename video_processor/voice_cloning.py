@@ -247,7 +247,7 @@ class CleanVoiceCloningService:
                 
                 # Process speech segment
                 generated_audio = self.generate_with_retry(
-                    chunk_text=english_text + "\n" + english_text,
+                    chunk_text=english_text,
                     audio_prompt=audio_path if audio_path and Path(audio_path).exists() else None,
                     custom_args=args
                 )
