@@ -418,3 +418,6 @@ class CleanAudioProcessor:
         """Clear OpenVoice model from memory"""
         self.voice_service.clear_model()
         logger.info("🧹 OpenVoice model cleared from memory")
+
+# Global instance for import by other modules
+clean_audio_processor = CleanAudioProcessor()

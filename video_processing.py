@@ -212,17 +212,14 @@ def process_video_background(
         details={"message": "Starting enhanced voice cloning process..."}
     )
     
-    cloning_result = clean_audio_processor.clone_voice_segments(
+    cloning_result = clean_audio_processor.process_voice_cloning_only(
         segments_dir=processing_result["segments_dir"],
         audio_id=audio_id,
-        max_tokens=max_tokens,
-        cfg_scale=cfg_scale,
+        max_length=max_tokens,
         temperature=temperature,
         top_p=top_p,
-        cfg_filter_top_k=cfg_filter_top_k,
         speed_factor=speed_factor,
-        seed=settings.FISH_SPEECH_DEFAULT_SEED,
-        use_torch_compile=use_torch_compile
+        seed=settings.OPENVOICE_DEFAULT_SEED
     )
     
     if not cloning_result["success"]:
