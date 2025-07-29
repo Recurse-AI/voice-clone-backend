@@ -456,6 +456,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     import os
     from config import settings
     from status_manager import status_manager, ProcessingStatus
+    from r2_storage import R2Storage
     from video_processor.clean_processor import clean_audio_processor  # Use global instance
     from video_processor.file_handler import FileHandler
     from utils import cleanup_temp_files
@@ -482,6 +483,9 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     original_filename = parameters.get("original_filename")
     repetition_penalty = parameters.get("repetition_penalty", settings.OPENVOICE_REPETITION_PENALTY)
     emotion = parameters.get("emotion", settings.OPENVOICE_DEFAULT_EMOTION)
+    
+    # Initialize R2 storage for uploading final audio
+    r2_storage = R2Storage()
     
     try:
         # Use global clean audio processor with OpenVoice
@@ -564,6 +568,20 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             status_manager.fail_processing(audio_id, error_msg)
             return {"success": False, "error": error_msg}
         
+        # Upload final audio to R2 bucket
+        status_manager.update_status(audio_id, ProcessingStatus.UPLOADING, 95, "Uploading processed audio to cloud...")
+        audio_key = f"processed-audio/{audio_id}/final_audio.wav"
+        upload_result = r2_storage.upload_file(final_audio_path, audio_key, "audio/wav")
+        
+        if not upload_result.get("success"):
+            error_msg = f"Failed to upload final audio to R2: {upload_result.get('error', 'Unknown error')}"
+            logger.error(f"❌ {error_msg}")
+            status_manager.fail_processing(audio_id, error_msg)
+            return {"success": False, "error": error_msg}
+        
+        final_audio_url = upload_result["url"]
+        logger.info(f"✅ Final audio uploaded to R2: {final_audio_url}")
+        
         # Extract voice cloning stats (processing_result is already validated as dict)
         voice_cloning_data = processing_result.get("voice_cloning", {})
         if isinstance(voice_cloning_data, dict):
@@ -577,7 +595,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
 
         # Complete processing successfully
         status_manager.complete_processing(audio_id, {
-            "final_audio_path": final_audio_path,
+            "final_audio_url": final_audio_url,
             "processing_stats": {
                 "total_segments": total_segments,
                 "successful_segments": successful_segments,
@@ -597,7 +615,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         return {
             "success": True,
             "audio_id": audio_id,
-            "final_audio_path": final_audio_path,
+            "final_audio_url": final_audio_url,
             "model_used": "OpenVoice",
             "processing_result": processing_result
         }
