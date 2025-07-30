@@ -526,7 +526,7 @@ IMPORTANT: All translated_text MUST be in {target_language} using {target_script
     def _get_translation_system_prompt(self, target_language: str) -> str:
         """Get system prompt for translation"""
         
-        # Fish Speech supported languages script requirements
+        # Fish Speech supported languages
         script_requirements = {
             # Fish Speech supported languages
             "english": "English alphabet only - no foreign scripts",
