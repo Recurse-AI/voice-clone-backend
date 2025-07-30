@@ -82,6 +82,15 @@ class AudioProcessor:
             
             logger.info(f"Created {len(segments)} segments for processing")
             
+            # Translate segments for target language if needed
+            detected_language = transcript_data.get('metadata', {}).get('language_code', 'en')
+            if target_language.lower() != "same" and detected_language != target_language.lower()[:2]:
+                logger.info(f"Translating segments from {detected_language} to {target_language}")
+                segments = self.transcription_service.translate_segments_for_dubbing(
+                    segments, target_language, detected_language, audio_id
+                )
+                logger.info(f"Translation completed for {len(segments)} segments")
+            
             # Create output directory
             output_dir = self.temp_dir / f"segments_{audio_id}"
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -90,7 +99,6 @@ class AudioProcessor:
             self.file_manager.create_directory_structure(output_dir, transcript_data['speakers'])
             
             # Save segments
-            detected_language = transcript_data.get('metadata', {}).get('language_code', 'en')
             segment_result = self.segment_manager.save_optimal_segments(
                 segments, audio, sr, output_dir, 
                 transcript_data['speakers'], target_language, detected_language,
@@ -454,14 +462,9 @@ class AudioProcessor:
                     # Add required fields for voice cloning
                     segment_metadata["audio_id"] = audio_id
                     
-                    # Find corresponding reference audio path
-                    ref_audio_path = segments_dir / "reference" / f"ref_segment_{segment_index:03d}.wav"
-                    if ref_audio_path.exists():
-                        segment_metadata["reference_audio_path"] = str(ref_audio_path)
-                    else:
-                        # Use original segment audio as reference if reference not found
-                        original_audio_path = segments_dir / "segments" / f"segment_{segment_index:03d}.wav"
-                        segment_metadata["reference_audio_path"] = str(original_audio_path)
+                    # Use original vocal segment audio as reference (no separate reference folder needed)
+                    original_audio_path = segments_dir / "segments" / f"segment_{segment_index:03d}.wav"
+                    segment_metadata["reference_audio_path"] = str(original_audio_path)
                     
                     # Perform voice cloning with single metadata parameter
                     cloning_result = fish_service.clone_voice_for_segment(segment_metadata)

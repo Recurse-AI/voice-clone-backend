@@ -38,7 +38,7 @@ class SegmentManager:
     """Simple segment manager using AssemblyAI sentences API"""
     
     def __init__(self):
-        self.silent_threshold = 0.5  # 0.5s+ gaps treated as silent parts
+        self.silent_threshold = 0.3  # 0.3s+ gaps treated as silent parts (reduced for better segmentation)
         
     def _fetch_sentences_from_assemblyai(self, transcript_id: str, api_key: str) -> List[Dict]:
         """Fetch sentences from AssemblyAI API"""
@@ -151,7 +151,7 @@ class SegmentManager:
             start_sample = int(start_sec * sample_rate)
             end_sample = int(end_sec * sample_rate)
             
-            # Ensure bounds
+            # Ensure bounds with small padding for better quality
             start_sample = max(0, start_sample)
             end_sample = min(len(audio), end_sample)
             
@@ -161,8 +161,13 @@ class SegmentManager:
                 segment_length = end_sample - start_sample
                 segment_audio = np.zeros(segment_length, dtype=audio.dtype)
             else:
-                # Extract actual audio
+                # Extract actual audio with precise boundaries
                 segment_audio = audio[start_sample:end_sample]
+                
+                # Ensure minimum audio length for speech segments
+                if len(segment_audio) < sample_rate * 0.1:  # Minimum 100ms
+                    padding_needed = int(sample_rate * 0.1) - len(segment_audio)
+                    segment_audio = np.pad(segment_audio, (0, padding_needed), 'constant')
             
             # Add audio data to segment
             segment_with_audio = segment.copy()
@@ -173,32 +178,7 @@ class SegmentManager:
         
         return processed_segments
     
-    def _create_reference_audio_segments(self, segments: List[Dict], audio_id: str, reference_folder: Path) -> List[Dict]:
-        """Create reference audio segments for voice cloning from original vocal audio"""
-        reference_segments = []
-        
-        for segment in segments:
-            if segment["type"] == "speech" and len(segment.get("audio", [])) > 0:
-                # Save reference audio file for voice cloning using the reference_folder we created
-                ref_audio_path = reference_folder / f"ref_segment_{segment['index']:03d}.wav"
-                
-                # Save reference audio
-                sf.write(ref_audio_path, segment["audio"], segment["sample_rate"])
-                
-                # Create reference segment metadata for voice cloning
-                reference_segment = {
-                    "index": segment["index"],
-                    "audio_id": audio_id,
-                    "reference_audio_path": str(ref_audio_path),
-                    "sample_rate": segment["sample_rate"],
-                    "duration": segment["duration"],
-                "speaker": segment["speaker"],
-                    "text": segment["text"],
-                    "type": segment["type"]
-                }
-                reference_segments.append(reference_segment)
-        
-        return reference_segments
+
     
     def create_optimal_segments(self, transcript_data: Dict[str, Any], 
                               target_language: str = "English", audio_id: str = None) -> List[Dict[str, Any]]:
@@ -279,18 +259,16 @@ class SegmentManager:
             # Main segments directory that will contain segmentation_summary.json
             segments_dir = output_dir  # Use output_dir directly (already contains audio_id)
             segments_folder = segments_dir / "segments"  # Individual segment files
-            reference_folder = segments_dir / "reference"  # Reference audio files
+            # No separate reference folder needed - use original segments
             
             # Create directories BEFORE using them
             segments_dir.mkdir(parents=True, exist_ok=True)
             segments_folder.mkdir(exist_ok=True)
-            reference_folder.mkdir(exist_ok=True)
             
-            # Create reference audio segments for voice cloning
-            reference_segments = self._create_reference_audio_segments(processed_segments, audio_id, reference_folder)
+            # No need for separate reference audio segments - use original vocal segments directly
             
             # Prepare speech segments for voice cloning
-            speech_segments_for_cloning = self.prepare_segments_for_voice_cloning(reference_segments, target_language)
+            speech_segments_for_cloning = self.prepare_segments_for_voice_cloning(processed_segments, target_language)
             
             # Save segments locally with compatible structure
             saved_segments = []
@@ -324,10 +302,9 @@ class SegmentManager:
                     
                     saved_segments.append(segment_metadata)
             
-            # Save reference segments metadata
+            # Save segments metadata (no separate reference segments needed)
             reference_metadata = {
                 "audio_id": audio_id,
-                "reference_segments": reference_segments,
                 "total_segments": len(saved_segments),
                 "target_language": target_language,
                 "detected_language": detected_language,
@@ -364,7 +341,6 @@ class SegmentManager:
             
             return {
                 "segments": saved_segments,
-                "reference_segments": reference_segments,
                 "speech_segments_for_cloning": speech_segments_for_cloning,
                 "metadata_path": str(metadata_path),
                 "segmentation_summary_path": str(summary_path),
@@ -373,4 +349,4 @@ class SegmentManager:
             
         except Exception as e:
             logger.error(f"Failed to save segments: {str(e)}")
-            return {"segments": [], "reference_segments": [], "speech_segments_for_cloning": [], "metadata_path": None}
+            return {"segments": [], "speech_segments_for_cloning": [], "metadata_path": None}

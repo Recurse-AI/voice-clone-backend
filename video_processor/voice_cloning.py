@@ -184,8 +184,13 @@ class FishSpeechService:
             from fish_speech.utils.schema import ServeTTSRequest, ServeReferenceAudio
             from fish_speech.utils.file import audio_to_bytes
             
-            # Get text to synthesize
-            text_to_clone = segment_metadata.get("text", "")
+            # Get target language text to synthesize (translated text, not original)
+            text_to_clone = segment_metadata.get("translated_text", "")
+            if not text_to_clone or text_to_clone.startswith("[TO_TRANSLATE:"):
+                # Fallback to original text if translation not available
+                text_to_clone = segment_metadata.get("text", "")
+                logger.warning(f"Using original text as translated text not available: {text_to_clone[:50]}...")
+            
             segment_type = segment_metadata.get("type", "speech")
             reference_audio_path = segment_metadata.get("reference_audio_path")
             
@@ -206,7 +211,8 @@ class FishSpeechService:
             
             # Prepare reference audio
             reference_audio_bytes = audio_to_bytes(reference_audio_path)
-            reference_text = segment_metadata.get("text", text_to_clone)  # Use same text as reference
+            # Use original text as reference for voice style, translated text for synthesis
+            reference_text = segment_metadata.get("text", text_to_clone)
             
             # Create reference
             references = [ServeReferenceAudio(

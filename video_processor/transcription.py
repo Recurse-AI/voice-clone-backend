@@ -642,6 +642,7 @@ Focus on accuracy and uniqueness for each segment."""
                     segment_copy["original_text"] = segment.get("text", "")
                     segment_copy["text"] = optimized_text
                     segment_copy["english_text"] = optimized_text
+                    segment_copy["translated_text"] = optimized_text  # For voice cloning
                     
                     # Simple translation metadata
                     segment_copy["translation"] = {
@@ -651,6 +652,7 @@ Focus on accuracy and uniqueness for each segment."""
                     }
                 else:
                     # No translation found, keep original
+                    segment_copy["translated_text"] = segment.get("text", "")  # Use original as translated
                     segment_copy["translation"] = {
                         "translated": False,
                         "reason": "no_translation_needed_or_failed"
