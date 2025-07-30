@@ -30,6 +30,7 @@ class FishSpeechService:
         # Model configuration
         self.model_repo = "fishaudio/fish-speech-1.5"
         self.model_path = "checkpoints/fish-speech-1.5"
+        self.codec_filename = "codec.pth"  # Default, will be updated if different file found
         
         # Initialize as None, will be loaded lazily
         self.inference_engine = None
@@ -63,8 +64,8 @@ class FishSpeechService:
         
         model_files = ["config.json", "model.pth", "special_tokens.json", "tokenizer.tiktoken"]
         
-        # Try to download codec file (different possible names)
-        codec_files = ["codec.pth", "decoder.pth", "vqgan.pth", "vq_codec.pth"]
+        # Try to download codec file (fish-speech-1.5 has firefly-gan codec)
+        codec_files = ["firefly-gan-vq-fsq-8x1024-21hz-generator.pth", "codec.pth"]
         
         for file_name in model_files:
             if not (model_dir / file_name).exists():
@@ -77,10 +78,10 @@ class FishSpeechService:
                 )
                 logger.info(f"✅ Downloaded {file_name}")
         
-        # Try to download codec file
+        # Download codec file (fish-speech-1.5 uses firefly-gan)
         codec_downloaded = False
         for codec_name in codec_files:
-            if not codec_downloaded and not (model_dir / "codec.pth").exists():
+            if not codec_downloaded:
                 try:
                     hf_hub_download(
                         repo_id=self.model_repo,
@@ -89,16 +90,17 @@ class FishSpeechService:
                         local_dir_use_symlinks=False,
                         resume_download=True
                     )
-                    # Rename to codec.pth if downloaded with different name
-                    if codec_name != "codec.pth":
-                        (model_dir / codec_name).rename(model_dir / "codec.pth")
                     logger.info(f"✅ Downloaded codec: {codec_name}")
                     codec_downloaded = True
+                    # Store the actual codec filename
+                    self.codec_filename = codec_name
+                    break
                 except:
                     continue
         
         if not codec_downloaded:
             logger.warning("⚠️ Codec file not found, will use Fish Speech without codec")
+            self.codec_filename = None
         
         logger.info("✅ Models ready")
     
@@ -132,17 +134,21 @@ class FishSpeechService:
             logger.info("✅ Language model loaded")
             
             # Load Fish Speech decoder model (if codec available)
-            codec_path = f"{self.model_path}/codec.pth"
-            if Path(codec_path).exists():
-                self.decoder_model = load_decoder_model(
-                    config_name="modded_dac_vq",
-                    checkpoint_path=codec_path,
-                    device=self.device,
-                )
-                logger.info("✅ Decoder model loaded")
+            if self.codec_filename:
+                codec_path = f"{self.model_path}/{self.codec_filename}"
+                if Path(codec_path).exists():
+                    self.decoder_model = load_decoder_model(
+                        config_name="modded_dac_vq", 
+                        checkpoint_path=codec_path,
+                        device=self.device,
+                    )
+                    logger.info("✅ Decoder model loaded")
+                else:
+                    self.decoder_model = None
+                    logger.info("📝 Decoder model skipped (codec not available)")
             else:
                 self.decoder_model = None
-                logger.info("📝 Decoder model skipped (codec not available)")
+                logger.info("📝 Decoder model skipped (no codec file)")
             
             # Initialize TTS inference engine
             if self.decoder_model:
