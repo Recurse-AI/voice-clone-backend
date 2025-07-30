@@ -239,48 +239,78 @@ class FishSpeechService:
             import io
             import soundfile as sf
             
-            # Handle Fish Speech audio chunks with proper type handling
-            audio_arrays = []
-            for chunk in audio_chunks:
-                chunk_audio = None
-                
-                # Handle different chunk types from Fish Speech
-                if hasattr(chunk, 'audio'):
-                    chunk_audio = chunk.audio
-                elif isinstance(chunk, tuple) and len(chunk) > 0:
-                    # Fish Speech sometimes returns tuples - take first element
-                    chunk_audio = chunk[0]
-                elif isinstance(chunk, np.ndarray):
-                    chunk_audio = chunk
-                else:
-                    chunk_audio = chunk
-                
-                # Process audio data
-                if isinstance(chunk_audio, np.ndarray):
-                    # Handle different shapes - flatten to 1D
-                    if chunk_audio.ndim > 1:
-                        chunk_audio = chunk_audio.flatten()
-                    audio_arrays.append(chunk_audio)
-                elif isinstance(chunk_audio, (list, tuple)):
-                    # Convert list/tuple to numpy array
-                    chunk_array = np.array(chunk_audio, dtype=np.float32)
-                    if chunk_array.ndim > 1:
-                        chunk_array = chunk_array.flatten()
-                    audio_arrays.append(chunk_array)
-                else:
-                    logger.warning(f"Skipping chunk with unsupported type: {type(chunk_audio)}")
+            # Debug: Log chunk details
+            logger.info(f"Processing {len(audio_chunks)} chunks from Fish Speech")
+            for i, chunk in enumerate(audio_chunks[:2]):  # Log first 2 chunks
+                logger.info(f"Chunk {i}: type={type(chunk)}")
+                if isinstance(chunk, tuple):
+                    logger.info(f"  Tuple length: {len(chunk)}")
+                    for j, item in enumerate(chunk):
+                        logger.info(f"    Item {j}: type={type(item)}, shape={getattr(item, 'shape', 'N/A')}")
+                elif hasattr(chunk, 'shape'):
+                    logger.info(f"  Shape: {chunk.shape}")
             
-            # Combine arrays safely
+            # Handle Fish Speech inference results properly
+            audio_arrays = []
+            for i, chunk in enumerate(audio_chunks):
+                try:
+                    chunk_audio = None
+                    
+                    # Fish Speech inference returns InferenceResult or tuples
+                    if isinstance(chunk, tuple) and len(chunk) >= 2:
+                        # Fish Speech typically returns (audio_array, sr) or (audio, metadata)
+                        chunk_audio = chunk[0]  # First element is usually audio
+                        logger.info(f"Extracted audio from tuple: {type(chunk_audio)}, shape={getattr(chunk_audio, 'shape', 'N/A')}")
+                    elif hasattr(chunk, 'audio'):
+                        chunk_audio = chunk.audio
+                    elif isinstance(chunk, np.ndarray):
+                        chunk_audio = chunk
+                    else:
+                        chunk_audio = chunk
+                    
+                    # Convert to numpy array and validate
+                    if isinstance(chunk_audio, np.ndarray):
+                        if chunk_audio.size > 0:  # Check if array has data
+                            # Flatten if multi-dimensional
+                            if chunk_audio.ndim > 1:
+                                chunk_audio = chunk_audio.flatten()
+                            audio_arrays.append(chunk_audio)
+                            logger.info(f"Added chunk {i}: shape={chunk_audio.shape}, size={chunk_audio.size}")
+                        else:
+                            logger.warning(f"Skipping empty array in chunk {i}")
+                    elif chunk_audio is not None:
+                        # Try to convert other types to numpy
+                        try:
+                            chunk_array = np.array(chunk_audio, dtype=np.float32)
+                            if chunk_array.size > 0:
+                                if chunk_array.ndim > 1:
+                                    chunk_array = chunk_array.flatten()
+                                audio_arrays.append(chunk_array)
+                                logger.info(f"Converted chunk {i} to numpy: shape={chunk_array.shape}")
+                            else:
+                                logger.warning(f"Converted chunk {i} is empty")
+                        except Exception as e:
+                            logger.warning(f"Failed to convert chunk {i} to numpy: {e}")
+                    else:
+                        logger.warning(f"Chunk {i} is None or invalid")
+                        
+                except Exception as e:
+                    logger.error(f"Error processing chunk {i}: {e}")
+            
+            # Combine arrays
             if audio_arrays:
-                # Concatenate all 1D arrays
+                logger.info(f"Combining {len(audio_arrays)} audio arrays")
                 combined_audio_array = np.concatenate(audio_arrays)
+                logger.info(f"Combined audio shape: {combined_audio_array.shape}, duration: {len(combined_audio_array)/44100:.2f}s")
                 
                 # Convert to WAV bytes
                 buffer = io.BytesIO()
                 sf.write(buffer, combined_audio_array, 44100, format='WAV')
                 combined_audio = buffer.getvalue()
+                logger.info(f"Generated WAV file: {len(combined_audio)} bytes")
             else:
-                return {"success": False, "error": "No audio data in chunks"}
+                logger.error("No audio arrays to combine - all chunks were invalid")
+                return {"success": False, "error": "No valid audio data found in inference results"}
             
             # Save cloned audio
             segment_index = segment_metadata.get("segment_index", 1)
