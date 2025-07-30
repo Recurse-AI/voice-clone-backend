@@ -289,6 +289,7 @@ class TranscriptionService:
         
         return {
             "transcript_id": transcript.id,
+            "api_key": settings.ASSEMBLYAI_API_KEY,  # Add API key for segment manager
             "text": transcript.text,
             "language_code": language_code,
             "confidence": confidence,

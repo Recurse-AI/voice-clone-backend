@@ -3,19 +3,17 @@ Simple Segment Manager - AssemblyAI Sentence-based Segmentation
 Clean and neat implementation for sentence-wise audio cropping
 
 Usage Example:
-    # Initialize
+    # Initialize (called automatically by base_processor)
     segment_manager = SegmentManager()
     
-    # Create segments from AssemblyAI
-    transcript_data = {
-        "transcript_id": "transcript_123",
-        "api_key": "your_assemblyai_key", 
-        "audio_duration": 120.5
-    }
+    # Create segments from AssemblyAI (transcript_data from transcription service)
     segments = segment_manager.create_optimal_segments(transcript_data, target_language="Bengali")
     
-    # Save segments with audio cropping
-    result = segment_manager.save_optimal_segments(segments, audio_array, sample_rate, "audio_123")
+    # Save segments with audio cropping (called by base_processor)
+    result = segment_manager.save_optimal_segments(
+        segments, audio_array, sample_rate, output_dir, 
+        speakers_data, target_language, detected_language
+    )
     
     # Use with voice cloning
     speech_segments = result["speech_segments_for_cloning"]
@@ -262,11 +260,18 @@ class SegmentManager:
         return speech_segments
     
     def save_optimal_segments(self, segments: List[Dict[str, Any]], audio: np.ndarray,
-                            sample_rate: int, audio_id: str, 
-                            target_language: str = "English") -> Dict[str, Any]:
+                            sample_rate: int, output_dir, speakers_data: List[Dict], 
+                            target_language: str = "English", detected_language: str = "en",
+                            original_audio_details = None) -> Dict[str, Any]:
         """Save cropped audio segments and create reference segments"""
         try:
-            logger.info(f"Processing and saving {len(segments)} segments")
+            # Extract audio_id from output_dir path
+            if hasattr(output_dir, 'name'):
+                audio_id = output_dir.name.replace('segments_', '')
+            else:
+                audio_id = str(output_dir).split('/')[-1].replace('segments_', '')
+                
+            logger.info(f"Processing and saving {len(segments)} segments for {audio_id}")
             
             # Crop audio for each segment
             processed_segments = self._crop_audio_segments(segments, audio, sample_rate)
@@ -312,7 +317,9 @@ class SegmentManager:
                 "audio_id": audio_id,
                 "reference_segments": reference_segments,
                 "total_segments": len(saved_segments),
-                "target_language": target_language
+                "target_language": target_language,
+                "detected_language": detected_language,
+                "speakers_data": speakers_data
             }
             
             # Store metadata
