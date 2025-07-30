@@ -106,12 +106,9 @@ class AudioProcessor:
             )
             
             # Audio reconstruction - create complete dubbed track
-            if cloning_result.get("success"):
-                reconstruction_result = self._perform_audio_reconstruction(
-                    Path(segments_directory), audio_id, False, None  # No instruments for vocal-only processing
-                )
-            else:
-                reconstruction_result = {"success": False, "error": "Voice cloning failed"}
+            reconstruction_result = self._perform_audio_reconstruction(
+                Path(segments_directory), audio_id, False, None  # No instruments for vocal-only processing
+            )
             
             return {
                 "success": True,
@@ -273,14 +270,8 @@ class AudioProcessor:
             voice_cloning = segment_result.get("voice_cloning", {})
             audio_reconstruction = segment_result.get("audio_reconstruction", {})
             
-            # If voice cloning succeeded, perform final reconstruction with instruments if requested
-            if voice_cloning.get("success") and audio_reconstruction.get("success"):
-                final_reconstruction = self._perform_audio_reconstruction(
-                    Path(segment_result["segments_dir"]), audio_id, include_instruments, 
-                    str(instrument_path) if include_instruments else None
-                )
-            else:
-                final_reconstruction = audio_reconstruction
+            # Use the audio reconstruction result (no duplicate reconstruction needed)
+            final_reconstruction = audio_reconstruction
             
             return {
                 "success": True,
@@ -440,15 +431,15 @@ class AudioProcessor:
                     except:
                         pass
                     
-                    # Skip silence segments for voice cloning (keep for reconstruction)
+                    # Skip silent segments for voice cloning (keep for reconstruction)
                     segment_type = segment.get("type", "speech")
-                    if segment_type == "silence":
+                    if segment_type == "silent":
                         cloning_stats["skipped_segments"] += 1
-                        logger.info(f"Skipping silence segment {segment.get('segment_index', i+1)} for voice cloning")
+                        logger.info(f"Skipping silent segment {segment.get('index', i)} for voice cloning")
                         continue
                     
-                    # Get segment metadata file
-                    segment_index = segment.get("segment_index", i + 1)
+                    # Get segment metadata file - use index field from segment_manager 
+                    segment_index = segment.get("index", i)
                     metadata_file = segments_dir / "segments" / f"segment_{segment_index:03d}_metadata.json"
                     
                     if not metadata_file.exists():
@@ -460,10 +451,20 @@ class AudioProcessor:
                     with open(metadata_file, 'r', encoding='utf-8') as f:
                         segment_metadata = json.load(f)
                     
-                    # Perform voice cloning
-                    cloning_result = fish_service.clone_voice_for_segment(
-                        segment_metadata, reference_audio_path, audio_id
-                    )
+                    # Add required fields for voice cloning
+                    segment_metadata["audio_id"] = audio_id
+                    
+                    # Find corresponding reference audio path
+                    ref_audio_path = segments_dir / "reference" / f"ref_segment_{segment_index:03d}.wav"
+                    if ref_audio_path.exists():
+                        segment_metadata["reference_audio_path"] = str(ref_audio_path)
+                    else:
+                        # Use original segment audio as reference if reference not found
+                        original_audio_path = segments_dir / "segments" / f"segment_{segment_index:03d}.wav"
+                        segment_metadata["reference_audio_path"] = str(original_audio_path)
+                    
+                    # Perform voice cloning with single metadata parameter
+                    cloning_result = fish_service.clone_voice_for_segment(segment_metadata)
                     
                     # Define expected path for both success and failure cases
                     expected_cloned_path = cloned_dir / f"cloned_segment_{segment_index:03d}.wav"
