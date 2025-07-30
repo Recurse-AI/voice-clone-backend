@@ -22,14 +22,13 @@ tokenizers
 accelerate
 openai
 
-# Fish Speech TTS - Direct from GitHub (clean approach)
-git+https://github.com/fishaudio/fish-speech.git
-
-# Fish Speech dependencies (minimal required)
+# Fish Speech TTS dependencies (manual install to avoid pyaudio issues)
 huggingface_hub>=0.20.0
 einx>=0.1.3
 tiktoken>=0.5.0
 ormsgpack>=1.4.0
+loguru>=0.7.0
+torchaudio
 
 # AssemblyAI for transcription
 assemblyai

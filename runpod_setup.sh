@@ -95,13 +95,56 @@ python3 -m venv venv || { echo "❌ Failed to create virtual environment"; exit 
 source venv/bin/activate || { echo "❌ Failed to activate virtual environment"; exit 1; }
 pip install --upgrade pip || { echo "❌ Failed to upgrade pip"; exit 1; }
 
+# Install system dependencies for Fish Speech
+echo "🎵 Installing Fish Speech system dependencies..."
+apt-get install -y portaudio19-dev python3-pyaudio || {
+    echo "⚠️  Audio dependencies failed, continuing without pyaudio..."
+}
+
 # Install Python dependencies
 echo "📚 Installing Python dependencies..."
 pip install -r requirements.txt || { echo "❌ Failed to install requirements"; exit 1; }
 
+# Setup Fish Speech manually (clean approach)
+echo "🎵 Setting up Fish Speech for voice cloning..."
+if [ ! -d "fish-speech" ]; then
+    echo "📥 Cloning Fish Speech repository..."
+    git clone https://github.com/fishaudio/fish-speech.git || { echo "❌ Failed to clone Fish Speech"; exit 1; }
+else
+    echo "✅ Fish Speech repository already exists"
+fi
+
+# Install Fish Speech dependencies (skip problematic ones)
+echo "📦 Installing Fish Speech dependencies..."
+pip install torch torchaudio transformers accelerate librosa matplotlib fire hydra-core wandb vector-quantize-pytorch natsort silero-vad || {
+    echo "⚠️  Some Fish Speech dependencies failed, continuing..."
+}
+
+# Install Fish Speech in development mode (skip pyaudio)
+echo "🔧 Installing Fish Speech package..."
+cd fish-speech
+pip install -e . --no-deps || { echo "❌ Fish Speech installation failed"; exit 1; }
+cd ..
+
+# Add Fish Speech to Python path
+export PYTHONPATH="${PWD}/fish-speech:${PYTHONPATH}"
+
 # Verify critical packages
 echo "🔍 Verifying critical packages..."
 python3 -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')" || { echo "❌ PyTorch verification failed"; exit 1; }
+
+# Verify Fish Speech installation
+echo "🔍 Verifying Fish Speech installation..."
+python3 -c "
+import sys
+sys.path.insert(0, './fish-speech')
+try:
+    from fish_speech.models.text2semantic.llama import BaseTransformer
+    print('✅ Fish Speech modules imported successfully!')
+except Exception as e:
+    print(f'⚠️  Fish Speech verification failed: {e}')
+    print('Continuing anyway...')
+" || echo "⚠️  Fish Speech verification had issues, but continuing..."
 
 # Create .env file
 echo "⚙️  Creating configuration..."

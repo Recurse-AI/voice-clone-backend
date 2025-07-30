@@ -4,6 +4,7 @@ Auto-downloads models and provides high-quality voice cloning
 """
 
 import logging
+import sys
 import threading
 from pathlib import Path
 from typing import Dict, Any
@@ -44,13 +45,18 @@ class FishSpeechService:
         logger.info(f"FishSpeechService initialized with device: {self.device}")
     
     def _ensure_fish_speech_available(self):
-        """Verify Fish Speech installation"""
+        """Verify Fish Speech is ready (setup done by runpod_setup.sh)"""
         try:
-            # Test Fish Speech import
-            import fish_speech
-            logger.debug("Fish Speech package found")
+            # Fish Speech should be setup by runpod_setup.sh
+            sys.path.insert(0, "./fish-speech")
+            from fish_speech.models.text2semantic.llama import BaseTransformer
+            logger.debug("Fish Speech ready")
+            return True
         except ImportError:
-            raise Exception("Fish Speech not installed. Run: pip install git+https://github.com/fishaudio/fish-speech.git")
+            raise Exception(
+                "Fish Speech not found. Make sure to run ./runpod_setup.sh first "
+                "to setup the complete environment including Fish Speech."
+            )
     
     def _download_models(self):
         """Download Fish Speech models automatically"""
@@ -79,15 +85,16 @@ class FishSpeechService:
             if self._is_initialized:
                 return
             
-            logger.info("🔍 Verifying Fish Speech installation...")
+            logger.info("🔍 Verifying Fish Speech...")
             self._ensure_fish_speech_available()
             
             logger.info("📥 Downloading OpenAudio S1 models...")
             self._download_models()
             
-            logger.info("🚀 Loading Fish Speech models...")
+            logger.info("🚀 Loading models...")
             
-            # Import Fish Speech modules directly (installed package)
+            # Import Fish Speech modules (manual setup)
+            sys.path.insert(0, "./fish-speech")
             from fish_speech.inference_engine import TTSInferenceEngine
             from fish_speech.models.dac.inference import load_model as load_decoder_model
             from fish_speech.models.text2semantic.inference import launch_thread_safe_queue

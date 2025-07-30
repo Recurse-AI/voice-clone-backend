@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
         
     except Exception as e:
         logger.error(f"❌ Fish Speech initialization failed: {str(e)}")
-        logger.error("Make sure to run: pip install -r requirements.txt")
+        logger.error("Make sure to run: ./runpod_setup.sh to setup the complete environment")
         raise e  # Exit if models can't load
     
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
