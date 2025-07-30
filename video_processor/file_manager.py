@@ -154,14 +154,29 @@ class FileManager:
         
         return '\n'.join(lines) if lines else f"[S{speaker_num}] {text}"
     
-    def cleanup_temp_files(self, audio_id: str):
+    def cleanup_temp_files(self, audio_id: str, keep_final_output: bool = True):
         """Clean up temporary files"""
         try:
+            # Files to preserve for upload
+            preserve_patterns = []
+            if keep_final_output:
+                preserve_patterns = [
+                    f"dubbed_vocal_{audio_id}.wav",
+                    f"dubbed_final_{audio_id}.wav",
+                    f"final_output_{audio_id}.wav",
+                    f"video_processed_{audio_id}.mp4",
+                    f"subtitles_{audio_id}.srt"
+                ]
+            
             for item in self.temp_dir.iterdir():
                 if audio_id in item.name:
-                    if item.is_dir():
-                        shutil.rmtree(item)
-                    else:
-                        item.unlink()
+                    # Check if this file should be preserved
+                    should_preserve = any(pattern in item.name for pattern in preserve_patterns)
+                    
+                    if not should_preserve:
+                        if item.is_dir():
+                            shutil.rmtree(item)
+                        else:
+                            item.unlink()
         except Exception:
             pass

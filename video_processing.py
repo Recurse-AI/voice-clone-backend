@@ -392,6 +392,19 @@ def process_video_background(
         }
         
         r2_storage.create_processing_summary(audio_id, processing_data)
+        
+        # Clean up all temp files after successful upload
+        try:
+            # Now we can clean up everything including final output files
+            from video_processor.file_manager import FileManager
+            file_manager = FileManager(temp_dir="./tmp/voice_cloning")
+            file_manager.cleanup_temp_files(audio_id, keep_final_output=False)
+            
+            # Also clean up the reconstructed audio file
+            if final_audio_path and os.path.exists(final_audio_path):
+                os.unlink(final_audio_path)
+        except Exception as e:
+            logger.warning(f"Post-upload cleanup failed: {str(e)}")
 
         
     except Exception as e:
@@ -732,6 +745,19 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         
         # Mark as completed
         status_manager.complete_processing(audio_id, completion_data)
+        
+        # Clean up all temp files after successful upload
+        try:
+            # Now we can clean up everything including final output files
+            from video_processor.file_manager import FileManager
+            file_manager = FileManager(temp_dir="./tmp/voice_cloning")
+            file_manager.cleanup_temp_files(audio_id, keep_final_output=False)
+            
+            # Also clean up the reconstructed audio file
+            if final_audio_path and os.path.exists(final_audio_path):
+                os.unlink(final_audio_path)
+        except Exception as e:
+            logger.warning(f"Post-upload cleanup failed: {str(e)}")
         
         # Create processing summary
         processing_data = {

@@ -324,13 +324,27 @@ def cleanup_temp_files(audio_id: str, audio_temp_path: Optional[str] = None,
                     pass
         
         # Clean up any remaining temp files for this audio_id
+        # But preserve final output files that might be needed for upload
+        preserve_patterns = [
+            f"dubbed_vocal_{audio_id}.wav",
+            f"dubbed_final_{audio_id}.wav", 
+            f"final_output_{audio_id}.wav",
+            f"video_processed_{audio_id}.mp4",
+            f"subtitles_{audio_id}.srt",
+            f"vocal_separated_{audio_id}.wav",
+            f"instruments_separated_{audio_id}.wav"
+        ]
+        
         temp_dir = Path(settings.TEMP_DIR)
         for temp_file in temp_dir.glob(f"*{audio_id}*"):
             if temp_file.is_file():
-                try:
-                    temp_file.unlink()
-                except Exception:
-                    pass
+                # Check if this file should be preserved
+                should_preserve = any(pattern in temp_file.name for pattern in preserve_patterns)
+                if not should_preserve:
+                    try:
+                        temp_file.unlink()
+                    except Exception:
+                        pass
                     
         logger.info(f"Cleanup completed for {audio_id}")
         
