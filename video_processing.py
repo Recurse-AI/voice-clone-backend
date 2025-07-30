@@ -63,12 +63,15 @@ def process_video_background(
             
             from video_processor.file_handler import FileHandler
             file_handler = FileHandler(temp_dir="./tmp/voice_cloning")
-            download_result = file_handler.download_video(video_source, audio_id, original_filename)
+            success, video_temp_path, error = file_handler.handle_video_source(
+                video_source, 
+                audio_id, 
+                False,  # is_file_upload = False for URL
+                status_manager
+            )
             
-            if not download_result["success"]:
-                raise Exception(f"Failed to download video: {download_result['error']}")
-            
-            video_temp_path = download_result["file_path"]
+            if not success:
+                raise Exception(f"Failed to download video: {error or 'Unknown error'}")
             # For URLs, use the URL as the display name
             display_filename = original_filename or video_source.split('/')[-1]
         else:
@@ -102,11 +105,10 @@ def process_video_background(
         processing_result = audio_processor.process_audio_segments(
             video_temp_path, 
             audio_id,
-            include_instruments=include_instruments,
-            generate_subtitles=generate_subtitles,
             target_language=target_language,
             language_code=language_code,
-            speakers_expected=speakers_expected
+            speakers_expected=speakers_expected,
+            original_audio_details=original_audio_details
         )
         
         if not processing_result["success"]:
@@ -380,7 +382,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     """
     from config import settings
     from status_manager import status_manager, ProcessingStatus
-    from video_processor.base_processor import AudioProcessor
     from video_processor.file_handler import FileHandler
     from video_processor.video_queue_manager import VideoQueueStatus
     
@@ -412,21 +413,19 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             "stage": "initialization"
         })
         
-        # Handle video download if URL
-        if not is_file_upload:
-            logger.info(f"Downloading video from URL: {video_source}")
-            download_result = file_handler.download_video(
-                video_source, 
-                audio_id, 
-                parameters.get("original_filename")
-            )
-            
-            if not download_result["success"]:
-                return {"success": False, "error": download_result["error"]}
-            
-            video_temp_path = download_result["file_path"]
-        else:
-            video_temp_path = video_source
+        # Handle video source (download if URL, or use file path)
+        logger.info(f"Handling video source: {video_source}")
+        success, video_temp_path, error = file_handler.handle_video_source(
+            video_source, 
+            audio_id, 
+            is_file_upload,
+            status_manager
+        )
+        
+        if not success:
+            return {"success": False, "error": error or "Failed to handle video source"}
+        
+        logger.info(f"Video ready at: {video_temp_path}")
         
         # Check if still processing
         if queue_request.status != VideoQueueStatus.PROCESSING:
@@ -437,8 +436,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         processing_result = audio_processor.process_audio_segments(
             video_temp_path, 
             audio_id,
-            include_instruments=False,  # Keep it simple
-            generate_subtitles=False,   # No subtitles
             target_language=target_language
         )
         
@@ -451,7 +448,9 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         if not reconstruction_result["success"]:
             return {"success": False, "error": f"Audio reconstruction failed: {reconstruction_result['error']}"}
         
-        status_manager.set_progress(audio_id, 80)
+        status_manager.update_status(audio_id, ProcessingStatus.PROCESSING, 80, {
+            "message": "Audio reconstruction completed"
+        })
         
         # Get the output path directly - NO FALLBACK
         final_audio_path = reconstruction_result.get("output_path")
@@ -463,6 +462,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         })
         
         try:
+            import os
             from r2_storage import R2Storage
             r2_storage = R2Storage()
             
@@ -486,13 +486,8 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             "download_url": final_audio_url
         })
         
-        # Clean up local file after successful upload
-        try:
-            if os.path.exists(final_audio_path):
-                os.unlink(final_audio_path)
-                logger.info(f"Cleaned up local file: {final_audio_path}")
-        except Exception as e:
-            logger.warning(f"Failed to cleanup local file: {str(e)}")
+        # Keep local file for now - don't cleanup immediately
+        logger.info(f"Keeping local file for potential reuse: {final_audio_path}")
         
         return {
             "success": True,
