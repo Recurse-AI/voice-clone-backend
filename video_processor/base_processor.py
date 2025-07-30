@@ -131,9 +131,15 @@ class AudioProcessor:
                                include_instruments: bool = False,
                                instruments_path: Optional[str] = None) -> Dict[str, Any]:
         """Reconstruct final audio from cloned segments"""
-        return self.audio_reconstructor.reconstruct_final_audio(
+        result = self.audio_reconstructor.reconstruct_final_audio(
             segments_dir, audio_id, include_instruments, instruments_path
         )
+        
+        # Add final_audio_path key for compatibility
+        if result.get("success") and "output_path" in result:
+            result["final_audio_path"] = result["output_path"]
+        
+        return result
     
     def create_video_with_subtitles(self, video_path: str, audio_path: str, 
                                    segments_dir: str, audio_id: str,
