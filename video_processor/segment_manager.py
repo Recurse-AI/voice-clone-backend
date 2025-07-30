@@ -277,20 +277,20 @@ class SegmentManager:
             
             # Create proper directory structure for audio_reconstructor
             # Main segments directory that will contain segmentation_summary.json
-            segments_dir = output_dir / "segments" / audio_id  
+            segments_dir = output_dir  # Use output_dir directly (already contains audio_id)
             segments_folder = segments_dir / "segments"  # Individual segment files
             reference_folder = segments_dir / "reference"  # Reference audio files
+            
+            # Create directories BEFORE using them
+            segments_dir.mkdir(parents=True, exist_ok=True)
+            segments_folder.mkdir(exist_ok=True)
+            reference_folder.mkdir(exist_ok=True)
             
             # Create reference audio segments for voice cloning
             reference_segments = self._create_reference_audio_segments(processed_segments, audio_id, reference_folder)
             
             # Prepare speech segments for voice cloning
             speech_segments_for_cloning = self.prepare_segments_for_voice_cloning(reference_segments, target_language)
-            
-            # Create directories
-            segments_dir.mkdir(parents=True, exist_ok=True)
-            segments_folder.mkdir(exist_ok=True)
-            reference_folder.mkdir(exist_ok=True)
             
             # Save segments locally with compatible structure
             saved_segments = []
