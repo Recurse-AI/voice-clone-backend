@@ -219,26 +219,7 @@ class VideoProcessor:
         millisecs = int((seconds % 1) * 1000)
         return f"{hours:02d}:{minutes:02d}:{secs:02d},{millisecs:03d}"
     
-    def cleanup_temp_files(self, audio_id: str):
-        try:
-            patterns = [
-                f"video_with_subtitles_{audio_id}.mp4",
-                f"video_no_subtitles_{audio_id}.mp4",
-                f"final_mixed_audio_{audio_id}.wav",
-                f"subtitles_{audio_id}.srt"
-            ]
-            
-            for pattern in patterns:
-                temp_file = self.temp_dir / pattern
-                if temp_file.exists():
-                    temp_file.unlink()
-            
-            for temp_file in self.temp_dir.glob(f"*{audio_id}*"):
-                if temp_file.is_file():
-                    temp_file.unlink()
-                    
-        except Exception:
-            pass
+    # Removed cleanup_temp_files - cleanup only happens after successful upload
     
     def create_video_with_subtitles(self, video_path: str, audio_path: str, 
                                    segments_dir: str, audio_id: str,

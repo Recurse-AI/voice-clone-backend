@@ -308,7 +308,7 @@ class StatusManager:
             return {k: v.copy() for k, v in self._statuses.items()}
 
     def _terminate_failed_process(self, audio_id: str, request_id: str, error_msg: str):
-        """Terminate a failed process and clean up resources"""
+        """Terminate a failed process"""
         try:
             logger.info(f"Terminating failed process for {audio_id} (request_id: {request_id})")
             
@@ -316,8 +316,7 @@ class StatusManager:
             from video_processor.video_queue_manager import video_queue_manager
             video_queue_manager.cancel_request(request_id)
             
-            # Clean up temp files
-            self._cleanup_process_files(audio_id)
+            # Don't cleanup files here - let user retry if needed
             
             # Update internal tracking
             if audio_id in self._statuses:
@@ -340,8 +339,7 @@ class StatusManager:
                         video_queue_manager.cancel_request(request_id)
                         break
             
-            # Clean up temp files
-            self._cleanup_process_files(audio_id)
+            # Don't cleanup files here
             
             # Update internal tracking
             if audio_id in self._statuses:

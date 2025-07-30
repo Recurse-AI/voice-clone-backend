@@ -411,11 +411,8 @@ def process_video_background(
         status_manager.fail_processing(audio_id, f"Unexpected error: {str(e)}")
         
     finally:
-        # Clean up temp files
-        try:
-            cleanup_temp_files(audio_id, None, None, video_temp_path)
-        except Exception:
-            pass
+        # Don't cleanup here - only cleanup after successful upload
+        pass
 
 
 def process_video_with_queue(queue_request) -> Dict[str, Any]:
@@ -582,11 +579,16 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             return {"success": False, "error": f"Audio reconstruction failed: {reconstruction_result['error']}"}
         
         status_manager.set_progress(audio_id, 80)
-        final_audio_path = reconstruction_result.get("final_audio_path") or reconstruction_result.get("output_path")
         
-        # Check if still processing
-        if queue_request.status != VideoQueueStatus.PROCESSING:
-            return {"success": False, "error": "Request was cancelled or timed out"}
+        # Get the actual reconstruction output path
+        final_audio_path = reconstruction_result.get("output_path")
+        if not final_audio_path:
+            # Fallback to expected path
+            final_audio_path = f"./tmp/voice_cloning/dubbed_vocal_{audio_id}.wav"
+            if not os.path.exists(final_audio_path):
+                return {"success": False, "error": "Reconstructed audio file not found"}
+        
+        logger.info(f"Using final audio path: {final_audio_path}")
         
         # Create video
         video_result = None
@@ -803,8 +805,5 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         return {"success": False, "error": error_msg}
         
     finally:
-        # Clean up temp files
-        try:
-            cleanup_temp_files(audio_id, None, None, video_temp_path)
-        except Exception:
-            pass
+        # Don't cleanup here - only cleanup after successful upload
+        pass
