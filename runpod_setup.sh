@@ -57,13 +57,13 @@ for i in {1..3}; do
     fi
 done
 
-# Install dependencies with fallback
+# Install dependencies with fallback (including Fish Speech 1.5 requirements)
 echo "📦 Installing required packages..."
-apt-get install -y ffmpeg libsndfile1 python3-dev python3-pip python3-venv git curl build-essential || {
+apt-get install -y ffmpeg libsndfile1 python3-dev python3-pip python3-venv git curl build-essential portaudio19-dev libsox-dev || {
     echo "⚠️  Some packages failed to install, checking what's available..."
     
     # Try installing packages individually
-    for package in ffmpeg libsndfile1 python3-dev python3-pip python3-venv git curl build-essential; do
+    for package in ffmpeg libsndfile1 python3-dev python3-pip python3-venv git curl build-essential portaudio19-dev libsox-dev; do
         if apt-get install -y "$package"; then
             echo "✅ Installed $package"
         else
@@ -106,7 +106,7 @@ echo "📚 Installing Python dependencies..."
 pip install -r requirements.txt || { echo "❌ Failed to install requirements"; exit 1; }
 
 # Setup Fish Speech manually (clean approach)
-echo "🎵 Setting up Fish Speech for voice cloning..."
+echo "🎵 Setting up Fish Speech 1.5 (OpenAudio) for voice cloning..."
 if [ ! -d "fish-speech" ]; then
     echo "📥 Cloning Fish Speech repository..."
     git clone https://github.com/fishaudio/fish-speech.git || { echo "❌ Failed to clone Fish Speech"; exit 1; }

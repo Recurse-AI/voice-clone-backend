@@ -31,9 +31,9 @@ class FishSpeechService:
         self.models_dir = Path("./fish_speech_models")
         self.models_dir.mkdir(exist_ok=True)
         
-        # Use OpenAudio S1 official model (from Fish Audio documentation)
-        self.model_repo = "fishaudio/fish-speech-1"  # Latest stable Fish Speech
-        self.model_local_path = self.models_dir / "fish-speech"
+        # Use OpenAudio S1-mini model (official Fish Speech 1.5 model)
+        self.model_repo = "fishaudio/openaudio-s1-mini"  # Official OpenAudio S1-mini
+        self.model_local_path = self.models_dir / "openaudio-s1-mini"
         
         # Initialize as None, will be loaded lazily
         self.inference_engine = None
@@ -65,18 +65,19 @@ class FishSpeechService:
         # Create model directory
         self.model_local_path.mkdir(parents=True, exist_ok=True)
         
-        # Try different model repositories based on official Fish Audio documentation
+        # Try different model repositories (OpenAudio S1 series from Fish Audio)
         model_repos = [
-            "fishaudio/fish-speech-1",      # Latest stable version
-            "fishaudio/speech-lm",          # Alternative model repository
-            "fishaudio/fish-speech"         # Base repository
+            "fishaudio/openaudio-s1-mini", # Official OpenAudio S1-mini (0.5B parameters)
+            "fishaudio/fish-speech-1.5",   # Fish Speech 1.5 (backup)
+            "fishaudio/fish-speech-1.4",   # Previous stable version  
+            "fishaudio/fish-speech-1"      # Earlier version
         ]
         
-        # Try to download any available model files (all optional for flexibility)
+        # OpenAudio S1-mini model files (based on official documentation)
         model_files = [
             "config.json", "model.pth", "codec.pth", 
             "special_tokens.json", "tokenizer.tiktoken",
-            "pytorch_model.bin", "model.safetensors"
+            "README.md", ".gitattributes"  # Additional available files
         ]
         
         downloaded_files = 0
