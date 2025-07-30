@@ -114,10 +114,16 @@ else
     echo "✅ Fish Speech repository already exists"
 fi
 
-# Install Fish Speech dependencies (skip problematic ones)
+# Install Fish Speech dependencies (comprehensive list)
 echo "📦 Installing Fish Speech dependencies..."
-pip install torch torchaudio transformers accelerate librosa matplotlib fire hydra-core wandb vector-quantize-pytorch natsort silero-vad || {
+pip install torch torchaudio transformers accelerate librosa matplotlib fire hydra-core wandb vector-quantize-pytorch natsort silero-vad loralib einops omegaconf tensorboard gradio pescador || {
     echo "⚠️  Some Fish Speech dependencies failed, continuing..."
+}
+
+# Install specific versions of critical dependencies
+echo "📦 Installing specific Fish Speech requirements..."
+pip install "hydra-core>=1.2.0" "omegaconf>=2.2.0" "einops>=0.6.0" || {
+    echo "⚠️  Some specific dependencies failed, continuing..."
 }
 
 # Install Fish Speech in development mode (skip pyaudio)
