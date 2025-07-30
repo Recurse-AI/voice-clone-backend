@@ -454,9 +454,9 @@ class TranscriptionService:
         target_script_instruction = language_output_map.get(target_language.lower(), f"{target_language} script only")
         
         prompt = f"""
-PROFESSIONAL DUBBING TRANSLATION TASK
+SIMPLE TRANSLATION TASK
 
-You are an expert dubbing translator specializing in video content translation from {detected_language} to {target_language}.
+Translate {len(requests)} segments from {detected_language} to {target_language}.
 
 CRITICAL DUBBING REQUIREMENTS:
 1. OUTPUT SCRIPT: Use {target_script_instruction} - NO mixing of scripts or languages
@@ -470,7 +470,7 @@ FISH SPEECH TTS OPTIMIZATION & TIMING CONTROL:
 - Use clear, pronounceable {target_language} text
 - Add emotional markers when appropriate: (happy), (excited), (sad), (serious), (casual), (confident), etc.
 - Use natural pauses with commas and periods for timing control
-- Add strategic extra spaces "   " at sentence endings for duration matching
+- Add strategic extra spaces "        " at sentence endings for duration matching
 - Use ellipses "..." for longer pauses when needed
 - Control speaking speed with punctuation and spacing
 - Match speaking rhythm to original timing ({sum(req['duration'] for req in requests):.1f}s total)
@@ -478,48 +478,24 @@ FISH SPEECH TTS OPTIMIZATION & TIMING CONTROL:
 SEGMENTS TO TRANSLATE:
 {json.dumps(context_info, indent=2, ensure_ascii=False)}
 
-TRANSLATION GUIDELINES & TIMING CONTROL:
-1. Each segment MUST be translated to proper {target_language} using {target_script_instruction}
-2. Preserve speaker personality and speaking style
-3. **CRITICAL TIMING MATCH**: Each segment must fill its exact duration to avoid silence gaps
-4. Add appropriate Fish Speech emotion markers: (happy), (excited), (serious), (casual), etc.
-5. Maintain conversational flow between segments
-6. Consider video context (podcast, interview, presentation, etc.)
+RULES:
+1. Each segment gets unique translation (no duplicates)
+2. Use {target_script_instruction} only
+3. Add extra spaces for timing: "word   word" 
+4. Keep it natural and conversational
 
-TIMING SYNCHRONIZATION TECHNIQUES:
-- If translation is shorter than original: Add strategic extra spaces "   " between words
-- Use ellipses "..." for natural pauses and timing extension
-- Add descriptive words or filler phrases when culturally appropriate
-- Use slower pacing markers like commas, periods for natural delays
-- Example: "What was the reason?   The actual reason for their success was...   hard work and one more thing."
-- Target: Fill the ENTIRE segment duration with natural-sounding speech
-
-MANDATORY OUTPUT FORMAT (JSON):
+JSON OUTPUT:
 {{
   "translations": [
     {{
-      "segment_id": "segment_001",
-      "original_text": "original text in source language",
-      "translated_text": "TRANSLATED TEXT WITH TIMING CONTROL (extra spaces   and pauses... as needed)",
-      "emotion_detected": "happy/sad/neutral/excited/serious/casual/etc",
-      "translation_notes": "timing strategy used (added spaces/pauses/extended phrases)",
-      "duration_match": "extended_to_match/natural_match/compressed",
-      "timing_adjustments": "spaces added between words / ellipses for pauses / extended phrasing",
-      "estimated_speech_time": "{req['duration']:.1f}s target"
+      "segment_id": "segment_001", 
+      "original_text": "source text",
+      "translated_text": "target text with   extra spaces"
     }}
-  ],
-  "translation_summary": {{
-    "source_language": "{detected_language}",
-    "target_language": "{target_language}",
-    "target_script": "{target_script_instruction}",
-    "total_segments": {len(requests)},
-    "total_duration": "{sum(req['duration'] for req in requests):.1f}s",
-    "translation_approach": "timing-aware dubbing with duration matching",
-    "sync_strategy": "spaces and pauses added to match original video timing"
-  }}
+  ]
 }}
 
-IMPORTANT: All translated_text MUST be in {target_language} using {target_script_instruction}. NO exceptions.
+Max 1000 tokens.
 """
         return prompt
     
@@ -549,33 +525,16 @@ IMPORTANT: All translated_text MUST be in {target_language} using {target_script
         
         script_req = script_requirements.get(target_language.lower(), f"{target_language} script only")
         
-        return f"""You are an expert dubbing translator with extensive experience in video localization and voice-over work.
+        return f"""You are a professional translator.
 
-CRITICAL LANGUAGE OUTPUT REQUIREMENT:
-- ALL translations MUST use {script_req}
-- NO mixing of scripts or languages in output
-- Translations must be grammatically correct {target_language}
+REQUIREMENTS:
+- Translate to {target_language} using {script_req}
+- Each segment must have unique, different text (no duplicates)
+- Add extra spaces between words for timing control
+- Keep translations natural and conversational
+- No mixing of languages or scripts
 
-Your specializations:
-- Professional video dubbing translation
-- Cross-cultural adaptation for {target_language} audiences  
-- Natural speech patterns and conversational flow
-- Text-to-Speech optimization for AI voice cloning
-- Emotional tone and speaker personality preservation
-- Timing-aware translation (matching speaking duration)
-
-Dubbing translation principles:
-- Translate for spoken dialogue, not written text
-- Use natural, conversational {target_language} 
-- Maintain speaker's emotional tone and personality
-- **CRITICAL**: Match exact segment duration to prevent silence gaps
-- Add strategic spaces and pauses for timing synchronization
-- Use timing control: extra spaces "   ", ellipses "...", natural pauses
-- Add appropriate emotion markers for TTS enhancement
-- Ensure cultural authenticity for {target_language} speakers
-- Fill the entire audio duration with natural-sounding speech
-
-MANDATORY: Every translated text must be in proper {target_language} using {script_req}. This is non-negotiable for dubbing quality."""
+Focus on accuracy and uniqueness for each segment."""
     
     def _validate_translation_script(self, text: str, target_language: str) -> bool:
         """Validate that translated text uses correct script for target language"""
@@ -673,46 +632,20 @@ MANDATORY: Every translated text must be in proper {target_language} using {scri
                     translation = translations_map[segment_id]
                     translated_text = translation.get("translated_text", segment.get("text", ""))
                     
-                    # Apply timing optimization for better video sync
+                    # Simple timing optimization 
                     segment_duration = segment.get("duration", 1.0)
                     optimized_text = self._optimize_timing_for_tts(translated_text, segment_duration)
                     
-                    # Validate translation script
-                    target_language = translation_result.get("translation_summary", {}).get("target_language", "English")
-                    is_valid_script = self._validate_translation_script(optimized_text, target_language)
-                    
-                    if not is_valid_script:
-                        logger.warning(f"Translation validation failed for segment {segment_id}: incorrect script for {target_language}")
-                        # Fallback to original text if validation fails
-                        final_text = segment.get("text", "")
-                        translation_quality = "validation_failed_fallback"
-                        script_valid = False
-                    else:
-                        final_text = optimized_text  # Use timing-optimized text
-                        translation_quality = "openai_gpt4o_timing_optimized"
-                        script_valid = True
-                    
                     # Add translation fields
                     segment_copy["original_text"] = segment.get("text", "")
-                    segment_copy["text"] = final_text
-                    segment_copy["english_text"] = final_text
+                    segment_copy["text"] = optimized_text
+                    segment_copy["english_text"] = optimized_text
                     
-                    # Add translation metadata with timing information
-                    timing_applied = optimized_text != translated_text
+                    # Simple translation metadata
                     segment_copy["translation"] = {
-                        "translated": script_valid,
-                        "script_validation": is_valid_script,
-                        "emotion_detected": translation.get("emotion_detected", "neutral"),
-                        "translation_notes": translation.get("translation_notes", ""),
-                        "duration_match": translation.get("duration_match", "similar"),
-                        "timing_adjustments": translation.get("timing_adjustments", "automatic_spacing" if timing_applied else "none"),
-                        "estimated_speech_time": f"{segment_duration:.1f}s",
-                        "translation_quality": translation_quality,
-                        "target_language": target_language,
-                        "sync_optimized": True,  # Indicates timing-aware translation
-                        "original_duration": segment.get("duration", 0),
-                        "timing_optimization_applied": timing_applied,
-                        "pre_optimization_text": translated_text if timing_applied else None
+                        "translated": True,
+                        "quality": "simple_translation",
+                        "timing_optimized": True
                     }
                 else:
                     # No translation found, keep original

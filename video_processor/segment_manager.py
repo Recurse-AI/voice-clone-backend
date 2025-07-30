@@ -175,15 +175,24 @@ Max 200 tokens."""
             merged_segment["duration"] = merged_segment["end"] - merged_segment["start"]
             merged_segment["speaker"] = merge.get("speaker", merged_segment["speaker"])
             
-            # Preserve ALL text content - no truncation
+            # Combine unique text content - avoid duplication
             combined_texts = []
             combined_utterances = []
-            for i in indices:
-                if segments[i].get("text", "").strip():
-                    combined_texts.append(segments[i]["text"].strip())
-                combined_utterances.extend(segments[i].get("utterances", []))
+            seen_utterances = set()
             
-            merged_segment["text"] = " ".join(combined_texts)  # Keep all text
+            for i in indices:
+                segment_text = segments[i].get("text", "").strip()
+                if segment_text and segment_text not in combined_texts:
+                    combined_texts.append(segment_text)
+                
+                # Add unique utterances only
+                for utterance in segments[i].get("utterances", []):
+                    utterance_key = f"{utterance['start']}-{utterance['end']}-{utterance['text']}"
+                    if utterance_key not in seen_utterances:
+                        combined_utterances.append(utterance)
+                        seen_utterances.add(utterance_key)
+            
+            merged_segment["text"] = " ".join(combined_texts)  # Unique text only
             merged_segment["utterances"] = combined_utterances
             merged_segment["is_merged"] = True
             merged_segment["merged_from"] = indices
@@ -550,23 +559,19 @@ Keep response under 500 tokens."""
             if i == num_segments - 1:
                 segment_end = segment["end"]
             
-            # Find utterances for this segment
+            # Find utterances that belong primarily to this segment (no duplication)
             segment_utterances = []
             segment_text_parts = []
             
             for utterance in utterances:
-                # Check if utterance overlaps with this segment
-                if (utterance["start"] < segment_end and utterance["end"] > segment_start):
-                    # Calculate overlap
-                    overlap_start = max(utterance["start"], segment_start)
-                    overlap_end = min(utterance["end"], segment_end)
-                    overlap_duration = overlap_end - overlap_start
-                    
-                    # Include if significant overlap (>50% of utterance or >1 second)
-                    utterance_duration = utterance["end"] - utterance["start"]
-                    if (overlap_duration > utterance_duration * 0.5 or overlap_duration > 1.0):
-                        segment_utterances.append(utterance)
-                        segment_text_parts.append(utterance["text"])
+                utterance_start = utterance["start"]
+                utterance_end = utterance["end"]
+                utterance_center = (utterance_start + utterance_end) / 2
+                
+                # Assign utterance to segment if its center point falls within this segment
+                if segment_start <= utterance_center < segment_end:
+                    segment_utterances.append(utterance)
+                    segment_text_parts.append(utterance["text"])
             
             # Create segment
             split_segment = {
@@ -621,7 +626,7 @@ Keep response under 500 tokens."""
                         "duration": next_segment["end"] - current_segment["start"],
                         "speaker": current_segment["speaker"] if current_segment["type"] != "silence" else next_segment["speaker"],
                         "type": "speech" if (current_segment["type"] == "speech" or next_segment["type"] == "speech") else "silence",
-                        "text": f"{current_segment['text']} {next_segment['text']}".strip(),
+                        "text": self._combine_unique_text([current_segment['text'], next_segment['text']]),
                         "utterances": current_segment["utterances"] + next_segment["utterances"],
                         "confidence": (current_segment["confidence"] + next_segment["confidence"]) / 2,
                         "is_merged": True
@@ -975,7 +980,7 @@ Keep response under 500 tokens."""
                             "duration": combined_duration,
                             "speaker": current_segment["speaker"] if current_segment["type"] == "speech" else next_segment["speaker"],
                             "type": "speech" if (current_segment["type"] == "speech" or next_segment["type"] == "speech") else current_segment["type"],
-                            "text": f"{current_segment.get('text', '')} {next_segment.get('text', '')}".strip(),
+                            "text": self._combine_unique_text([current_segment.get('text', ''), next_segment.get('text', '')]),
                             "utterances": current_segment.get("utterances", []) + next_segment.get("utterances", []),
                             "confidence": (current_segment.get("confidence", 0.5) + next_segment.get("confidence", 0.5)) / 2,
                             "is_merged": True,
@@ -996,7 +1001,7 @@ Keep response under 500 tokens."""
                         # Update the previous segment to include current
                         prev_segment["end"] = current_segment["end"]
                         prev_segment["duration"] = combined_duration
-                        prev_segment["text"] = f"{prev_segment.get('text', '')} {current_segment.get('text', '')}".strip()
+                        prev_segment["text"] = self._combine_unique_text([prev_segment.get('text', ''), current_segment.get('text', '')])
                         prev_segment["utterances"] = prev_segment.get("utterances", []) + current_segment.get("utterances", [])
                         prev_segment["is_merged"] = True
                         if "merged_from" not in prev_segment:
@@ -1023,4 +1028,13 @@ Keep response under 500 tokens."""
             segment["segment_id"] = f"segment_{i+1:03d}"
         
         return cleaned_segments
+
+    def _combine_unique_text(self, texts: List[str]) -> str:
+        """Combine text parts avoiding duplication"""
+        unique_parts = []
+        for text in texts:
+            text = text.strip()
+            if text and text not in unique_parts:
+                unique_parts.append(text)
+        return " ".join(unique_parts)
 
