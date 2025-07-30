@@ -227,8 +227,23 @@ class FishSpeechService:
             if not audio_chunks:
                 return {"success": False, "error": "No audio generated"}
             
-            # Combine audio chunks
-            combined_audio = b''.join(audio_chunks)
+            # Combine audio chunks - handle InferenceResult objects
+            try:
+                # Extract bytes from InferenceResult objects
+                audio_bytes_list = []
+                for chunk in audio_chunks:
+                    if hasattr(chunk, 'audio_bytes'):
+                        audio_bytes_list.append(chunk.audio_bytes)
+                    elif isinstance(chunk, bytes):
+                        audio_bytes_list.append(chunk)
+                    else:
+                        # Convert chunk to bytes if it's something else
+                        audio_bytes_list.append(bytes(chunk))
+                
+                combined_audio = b''.join(audio_bytes_list)
+            except Exception as e:
+                logger.error(f"Failed to combine audio chunks: {str(e)}")
+                return {"success": False, "error": f"Audio combination failed: {str(e)}"}
             
             # Save cloned audio
             segment_index = segment_metadata.get("segment_index", 1)

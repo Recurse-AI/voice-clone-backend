@@ -456,10 +456,12 @@ class AudioProcessor:
                         segment_metadata, reference_audio_path, audio_id
                     )
                     
+                    # Define expected path for both success and failure cases
+                    expected_cloned_path = cloned_dir / f"cloned_segment_{segment_index:03d}.wav"
+                    
                     if cloning_result.get("success"):
                         # Move cloned audio to expected location
                         cloned_audio_path = cloning_result["cloned_audio_path"]
-                        expected_cloned_path = cloned_dir / f"cloned_segment_{segment_index:03d}.wav"
                         
                         if Path(cloned_audio_path) != expected_cloned_path:
                             shutil.move(str(cloned_audio_path), str(expected_cloned_path))

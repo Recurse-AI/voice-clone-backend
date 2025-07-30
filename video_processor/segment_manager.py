@@ -432,19 +432,17 @@ class SegmentManager:
             
             # Validate timing
             if segment["end"] <= segment["start"]:
-                logger.warning(f"Invalid segment timing at index {i}, skipping invalid segment")
-                continue  # Skip invalid segments instead of creating 0.1s segments
+                logger.warning(f"Invalid segment timing at index {i}, adjusting")
+                segment["end"] = segment["start"] + 0.5  # Set minimum 0.5s instead of 0.1s
+                segment["duration"] = 0.5
             
             # Ensure minimum duration for ALL segments (not just speech)
             min_required_duration = 0.5  # Minimum 0.5 seconds for any segment
             if segment["duration"] < min_required_duration:
-                if segment["type"] == "gap" or segment["type"] == "silence":
-                    logger.info(f"Skipping too short {segment['type']} segment ({segment['duration']:.2f}s)")
-                    continue  # Skip very short gap/silence segments
-                else:
-                    # For speech segments, extend them to minimum duration
-                    segment["duration"] = min_required_duration
-                    segment["end"] = segment["start"] + min_required_duration
+                logger.info(f"Extending short {segment.get('type', 'unknown')} segment from {segment['duration']:.2f}s to {min_required_duration}s")
+                # Extend all short segments to minimum duration instead of skipping
+                segment["duration"] = min_required_duration
+                segment["end"] = segment["start"] + min_required_duration
             
             validated_segments.append(segment)
         

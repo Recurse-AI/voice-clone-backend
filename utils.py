@@ -297,12 +297,12 @@ def cleanup_temp_files(audio_id: str, audio_temp_path: Optional[str] = None,
         from video_processor import get_audio_processor
         audio_processor = get_audio_processor()
         
-        # Log cache statistics before cleanup
-        cache_stats = audio_processor.get_cache_stats()
-        logger.info(f"Cache stats before cleanup for {audio_id}: {cache_stats}")
-        
         # Clean up processor files and caches
-        audio_processor.cleanup_temp_files(audio_id)
+        try:
+            audio_processor.cleanup_temp_files(audio_id)
+            logger.info(f"Cleaned up processor files for {audio_id}")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup processor files: {str(e)}")
         
         # Clean up specific temp files
         temp_files_to_clean = []
