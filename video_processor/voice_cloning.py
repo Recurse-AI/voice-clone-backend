@@ -168,14 +168,13 @@ class FishSpeechService:
         warmup_request = ServeTTSRequest(
             text="Ready.",
             references=[],
-            max_new_tokens=512,
+            max_new_tokens=2048,
             format="wav"
         )
         
         list(self.inference_engine.inference(warmup_request))
     
-    def clone_voice_for_segment(self, segment_metadata: Dict[str, Any], 
-                               reference_audio_path: str, audio_id: str) -> Dict[str, Any]:
+    def clone_voice_for_segment(self, segment_metadata: Dict[str, Any]) -> Dict[str, Any]:
         """Clone voice for a specific segment using OpenAudio S1-mini"""
         try:
             # Ensure models are initialized
@@ -188,10 +187,15 @@ class FishSpeechService:
             # Get text to synthesize
             text_to_clone = segment_metadata.get("text", "")
             segment_type = segment_metadata.get("type", "speech")
+            reference_audio_path = segment_metadata.get("reference_audio_path")
             
-            # Skip if no text (likely silence segment)
+            # Validate required fields
+            if not reference_audio_path:
+                return {"success": False, "error": "Missing reference_audio_path in segment_metadata"}
+            
+            # Skip if no text (likely silent segment)
             if not text_to_clone.strip():
-                if segment_type in ["silence", "gap"]:
+                if segment_type in ["silent", "gap"]:
                     logger.info(f"Skipping {segment_type} segment with no text")
                     return {"success": False, "error": f"Skipping {segment_type} segment"}
                 else:
@@ -202,7 +206,7 @@ class FishSpeechService:
             
             # Prepare reference audio
             reference_audio_bytes = audio_to_bytes(reference_audio_path)
-            reference_text = segment_metadata.get("original_text", text_to_clone)
+            reference_text = segment_metadata.get("text", text_to_clone)  # Use same text as reference
             
             # Create reference
             references = [ServeReferenceAudio(
@@ -210,54 +214,47 @@ class FishSpeechService:
                 text=reference_text
             )]
             
-            # Smart text chunking for long texts
-            text_chunks = self._chunk_text_smart(cleaned_text, max_chars=280)
-            logger.info(f"Generating voice clone for segment {segment_metadata.get('segment_index', 'unknown')}")
-            logger.info(f"Text split into {len(text_chunks)} chunks: {[len(chunk) for chunk in text_chunks]}")
+            logger.info(f"Generating voice clone for segment {segment_metadata.get('index', 'unknown')}")
+            logger.info(f"Text length: {len(cleaned_text)} chars")
             
-            # TTS settings for reusability
-            tts_settings = {
-                "max_new_tokens": 4096,
-                "chunk_length": 300,
-                "top_p": 0.8,
-                "repetition_penalty": 1.1,
-                "temperature": 0.7,
-                "format": "wav",
-                "streaming": False,
-                "use_memory_cache": "on",
-                "seed": self._get_speaker_seed(segment_metadata.get("speaker", "A"))
-            }
+            # Simple TTS settings - no chunking needed with max_new_tokens=2048
+            tts_request = ServeTTSRequest(
+                text=cleaned_text,
+                references=references,
+                max_new_tokens=2048,
+                top_p=0.8,
+                repetition_penalty=1.1,
+                temperature=0.7,
+                format="wav",
+                streaming=False,
+                seed=self._get_speaker_seed(segment_metadata.get("speaker", "A"))
+            )
             
-            # Generate audio for each chunk
-            audio_chunks = []
-            sample_rate = 44100  # Default
+            # Generate audio directly - no chunking
+            logger.info("Generating audio with single request")
+            final_audio = None
+            sample_rate = 44100
             
-            for i, text_chunk in enumerate(text_chunks):
-                logger.info(f"Processing chunk {i+1}/{len(text_chunks)}: {len(text_chunk)} chars")
-                try:
-                    chunk_audio, sample_rate = self._generate_audio_for_chunk(
-                        text_chunk, references, tts_settings
-                    )
-                    audio_chunks.append(chunk_audio)
-                    logger.info(f"Chunk {i+1} audio generated: shape={chunk_audio.shape}")
+            try:
+                for chunk in self.inference_engine.inference(tts_request):
+                    if chunk.audio is not None:
+                        final_audio = np.frombuffer(chunk.audio, dtype=np.int16).astype(np.float32) / 32768.0
+                        sample_rate = chunk.sample_rate or 44100
+                        break
+                        
+                if final_audio is None:
+                    raise Exception("No audio generated")
                     
-                except Exception as e:
-                    logger.error(f"Failed to generate audio for chunk {i+1}: {str(e)}")
-                    return {"success": False, "error": f"Chunk {i+1} generation failed: {str(e)}"}
-            
-            # Merge all audio chunks
-            if len(audio_chunks) > 1:
-                logger.info(f"Merging {len(audio_chunks)} audio chunks...")
-                final_audio = self._merge_audio_chunks(audio_chunks, sample_rate)
-                logger.info(f"Final merged audio: shape={final_audio.shape}")
-            else:
-                final_audio = audio_chunks[0]
-                logger.info(f"Single chunk audio: shape={final_audio.shape}")
+                logger.info(f"Audio generated: shape={final_audio.shape}, sample_rate={sample_rate}")
+                
+            except Exception as e:
+                logger.error(f"Failed to generate audio: {str(e)}")
+                return {"success": False, "error": f"Audio generation failed: {str(e)}"}
             
             # Check if we got final audio
             if final_audio is None or len(final_audio) == 0:
                 logger.error("No final audio generated")
-                return {"success": False, "error": "No audio generated from chunks"}
+                return {"success": False, "error": "No audio generated"}
             
             # Convert to WAV bytes
             import io
@@ -268,10 +265,13 @@ class FishSpeechService:
             combined_audio = buffer.getvalue()
             logger.info(f"Generated WAV file: {len(combined_audio)} bytes, sample_rate={sample_rate}")
             
-            # Save cloned audio
-            segment_index = segment_metadata.get("segment_index", 1)
+            # Save cloned audio  
+            segment_index = segment_metadata.get("index", 1)
+            audio_id = segment_metadata.get("audio_id", "default")
+            output_dir = Path(f"segments/{audio_id}/cloned")
+            output_dir.mkdir(parents=True, exist_ok=True)
             output_filename = f"cloned_segment_{segment_index:03d}.wav"
-            output_path = Path(segment_metadata.get("audio_file", "")).parent / output_filename
+            output_path = output_dir / output_filename
             
             with open(output_path, 'wb') as f:
                 f.write(combined_audio)
@@ -293,6 +293,8 @@ class FishSpeechService:
                     "text_synthesized": cleaned_text,
                     "reference_used": reference_audio_path,
                     "model_used": "openaudio_s1_mini",
+                    "segment_index": segment_metadata.get("index"),
+                    "speaker": segment_metadata.get("speaker"),
                     "length_matched": True
                 }
                 
@@ -305,99 +307,9 @@ class FishSpeechService:
     
     def _prepare_text_for_tts(self, text: str) -> str:
         """Prepare text for OpenAudio S1-mini TTS"""
-        # OpenAudio S1-mini handles emotion markers like (happy), (sad), (sarcastic) etc.
-        # Just clean up any problematic characters
-        
-        # Remove excessive whitespace
-        text = ' '.join(text.split())
-        
-        # Ensure proper sentence endings
-        if text and not text.endswith(('.', '!', '?')):
-            text += '.'
-        
         return text
     
-    def _chunk_text_smart(self, text: str, max_chars: int = 280) -> list[str]:
-        """Smart text chunking with sentence boundary awareness"""
-        if len(text) <= max_chars:
-            return [text]
-        
-        chunks = []
-        current_chunk = ""
-        
-        # Split by sentences first
-        sentences = text.replace('!', '.').replace('?', '.').split('.')
-        sentences = [s.strip() + '.' for s in sentences if s.strip()]
-        
-        for sentence in sentences:
-            # If single sentence is too long, split by words
-            if len(sentence) > max_chars:
-                words = sentence.split()
-                word_chunk = ""
-                
-                for word in words:
-                    if len(word_chunk + " " + word) > max_chars and word_chunk:
-                        chunks.append(word_chunk.strip())
-                        word_chunk = word
-                    else:
-                        word_chunk = word_chunk + " " + word if word_chunk else word
-                
-                if word_chunk:
-                    current_chunk = word_chunk
-            else:
-                # Check if adding sentence exceeds limit
-                if len(current_chunk + " " + sentence) > max_chars and current_chunk:
-                    chunks.append(current_chunk.strip())
-                    current_chunk = sentence
-                else:
-                    current_chunk = current_chunk + " " + sentence if current_chunk else sentence
-        
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-        
-        return chunks
-    
-    def _generate_audio_for_chunk(self, text_chunk: str, references: list, 
-                                 tts_settings: dict) -> tuple[np.ndarray, int]:
-        """Generate audio for a single text chunk"""
-        from fish_speech.utils.schema import ServeTTSRequest
-        
-        # Create TTS request for chunk
-        tts_request = ServeTTSRequest(
-            text=text_chunk,
-            references=references,
-            reference_id=None,
-            **tts_settings
-        )
-        
-        # Generate audio for this chunk
-        for result in self.inference_engine.inference(tts_request):
-            if result.code == "final":
-                if result.audio is not None:
-                    sample_rate, audio_array = result.audio
-                    return audio_array, sample_rate
-                else:
-                    raise Exception("No audio generated for chunk")
-            elif result.code == "error":
-                error_msg = str(result.error) if result.error else "Unknown inference error"
-                raise Exception(f"Chunk inference failed: {error_msg}")
-        
-        raise Exception("No final result received for chunk")
-    
-    def _merge_audio_chunks(self, audio_chunks: list[np.ndarray], sample_rate: int) -> np.ndarray:
-        """Merge multiple audio chunks with small gaps"""
-        if len(audio_chunks) == 1:
-            return audio_chunks[0]
-        
-        # Small pause between chunks (100ms)
-        pause_samples = int(0.1 * sample_rate)
-        pause = np.zeros(pause_samples, dtype=audio_chunks[0].dtype)
-        
-        merged_audio = audio_chunks[0]
-        for audio_chunk in audio_chunks[1:]:
-            merged_audio = np.concatenate([merged_audio, pause, audio_chunk])
-        
-        return merged_audio
+
     
     def _get_speaker_seed(self, speaker_id: str) -> int:
         """Get consistent seed for speaker"""

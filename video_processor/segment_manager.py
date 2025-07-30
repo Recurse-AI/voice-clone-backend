@@ -1,1081 +1,337 @@
 """
-Segment Manager Module - Enhanced Smart Segmentation
-Handles multiple speakers, silent parts, optimal segment length, and maintains order
+Simple Segment Manager - AssemblyAI Sentence-based Segmentation
+Clean and neat implementation for sentence-wise audio cropping
+
+Usage Example:
+    # Initialize
+    segment_manager = SegmentManager()
+    
+    # Create segments from AssemblyAI
+    transcript_data = {
+        "transcript_id": "transcript_123",
+        "api_key": "your_assemblyai_key", 
+        "audio_duration": 120.5
+    }
+    segments = segment_manager.create_optimal_segments(transcript_data, target_language="Bengali")
+    
+    # Save segments with audio cropping
+    result = segment_manager.save_optimal_segments(segments, audio_array, sample_rate, "audio_123")
+    
+    # Use with voice cloning
+    speech_segments = result["speech_segments_for_cloning"]
+    voice_service = get_fish_speech_service()
+    for segment in speech_segments:
+        cloned_result = voice_service.clone_voice_for_segment(segment)
 """
 
 import json
 import logging
-import time
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
-
+from typing import Dict, Any, List
+import requests
 import numpy as np
 import soundfile as sf
-
-from utils import local_storage
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 
 class SegmentManager:
-    """Smart segment manager for optimal audio segmentation"""
+    """Simple segment manager using AssemblyAI sentences API"""
     
-    def __init__(self, transcription_service):
-        self.transcription_service = transcription_service
+    def __init__(self):
+        self.silent_threshold = 0.5  # 0.5s+ gaps treated as silent parts
         
-        # Enhanced segmentation parameters for better dubbing
-        self.min_segment_duration = 10.0    # Minimum 10 seconds for dubbing quality
-        self.max_segment_duration = 15.0    # Maximum segment length (seconds)
-        self.optimal_min_duration = 10.0    # Optimal minimum length (seconds) 
-        self.optimal_max_duration = 13.0    # Optimal maximum length (seconds)
-        self.min_silence_duration = 1.5     # Reduced silence threshold for better merging
-        self.speaker_switch_padding = 0.1    # Padding around speaker switches (seconds)
-        self.force_merge_threshold = 8.0    # Force merge segments shorter than this (seconds)
-    
-    def _create_compact_transcript_for_ai(self, utterances: List[Dict], total_duration: float) -> Dict:
-        """Create compact transcript data for OpenAI analysis (token-efficient)"""
-        # Extract only essential information to minimize tokens
-        compact_data = {
-            "total_duration": round(total_duration, 1),
-            "speaker_changes": [],
-            "content_blocks": []
-        }
-        
-        current_speaker = None
-        block_start = 0
-        block_text = ""
-        
-        for utterance in utterances:
-            speaker = utterance["speaker"]
-            start = round(utterance["start"], 1)
-            end = round(utterance["end"], 1)
-            text = utterance["text"][:100]  # Limit text length
-            
-            # Track speaker changes
-            if speaker != current_speaker:
-                if current_speaker is not None:
-                    # Save previous block
-                    compact_data["content_blocks"].append({
-                        "speaker": current_speaker,
-                        "start": block_start,
-                        "end": start,
-                        "duration": round(start - block_start, 1),
-                        "text": block_text[:150]  # Limit for tokens
-                    })
-                    compact_data["speaker_changes"].append({
-                        "time": start,
-                        "from": current_speaker,
-                        "to": speaker
-                    })
-                
-                current_speaker = speaker
-                block_start = start
-                block_text = text
-            else:
-                block_text += " " + text
-        
-        # Add final block
-        if current_speaker:
-            compact_data["content_blocks"].append({
-                "speaker": current_speaker,
-                "start": block_start,
-                "end": total_duration,
-                "duration": round(total_duration - block_start, 1),
-                "text": block_text[:150]
-            })
-        
-        return compact_data
-    
-    def _apply_ai_segment_optimization(self, segments: List[Dict], utterances: List[Dict], total_duration: float) -> List[Dict]:
-        """Use AI to optimize short segments by intelligent merging"""
+    def _fetch_sentences_from_assemblyai(self, transcript_id: str, api_key: str) -> List[Dict]:
+        """Fetch sentences from AssemblyAI API"""
         try:
-            import json
-            # Create compact segment data for AI analysis
-            segment_summary = []
-            for i, seg in enumerate(segments):
-                segment_summary.append({
-                    "index": i,
-                    "start": round(seg["start"], 1),
-                    "end": round(seg["end"], 1), 
-                    "duration": round(seg["duration"], 1),
-                    "speaker": seg["speaker"],
-                    "text": seg.get("text", "")[:80],  # Limit for tokens
-                    "type": seg.get("type", "speech")
-                })
+            url = f"https://api.assemblyai.com/v2/transcript/{transcript_id}/sentences"
+            headers = {"Authorization": api_key}
             
-            # Simple prompt following assembly AI format
-            prompt = f"""
-SEGMENT MERGE TASK
-
-Audio: {total_duration}s, {len(segments)} segments
-Target: 10-13s segments (currently some < 8s)
-
-SEGMENTS:
-{json.dumps(segment_summary, indent=1)}
-
-RULES:
-- ONLY merge segments with SAME SPEAKER
-- NO cross-speaker merging allowed
-- Merge adjacent short segments of same speaker
-- Keep all content intact
-
-JSON OUTPUT:
-{{
-  "merges": [
-    {{"indices": [0,1], "speaker": "A", "reason": "short_merge"}}
-  ]
-}}
-
-Max 200 tokens."""
-
-            import openai
-            from config import settings
+            response = requests.get(url, headers=headers)
+            response.raise_for_status()
             
-            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "Video editing expert. Optimize segments for dubbing."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=300,
-                temperature=0.2
-            )
-            
-            ai_result = json.loads(response.choices[0].message.content)
-            
-            # Apply simple merge recommendations  
-            optimized_segments = self._apply_simple_merges(segments, ai_result.get("merges", []))
-            logger.info(f"AI optimization: {len(segments)} -> {len(optimized_segments)} segments")
-            
-            return optimized_segments
+            data = response.json()
+            return data.get("sentences", [])
             
         except Exception as e:
-            logger.warning(f"AI segment optimization failed: {e}")
-            return None
+            logger.error(f"Failed to fetch sentences from AssemblyAI: {e}")
+            return []
     
-    def _apply_simple_merges(self, segments: List[Dict], merges: List[Dict]) -> List[Dict]:
-        """Apply simple merge recommendations from AI"""
-        if not merges:
-            return segments
-        
-        optimized = []
-        used_indices = set()
-        
-        # Apply merges
-        for merge in merges:
-            indices = merge.get("indices", [])
-            if not indices or any(i in used_indices for i in indices):
-                continue
-            
-            # Check if all segments have same speaker before merging
-            speakers_in_merge = [segments[i]["speaker"] for i in indices]
-            if len(set(speakers_in_merge)) > 1:
-                logger.warning(f"Skipping AI merge of indices {indices} - different speakers: {speakers_in_merge}")
-                continue
-            
-            # Merge segments - keep all text intact
-            merged_segment = segments[indices[0]].copy()
-            merged_segment["end"] = segments[indices[-1]]["end"]
-            merged_segment["duration"] = merged_segment["end"] - merged_segment["start"]
-            merged_segment["speaker"] = merge.get("speaker", merged_segment["speaker"])
-            
-            # Combine unique text content - avoid duplication
-            combined_texts = []
-            combined_utterances = []
-            seen_utterances = set()
-            
-            for i in indices:
-                segment_text = segments[i].get("text", "").strip()
-                if segment_text and segment_text not in combined_texts:
-                    combined_texts.append(segment_text)
-                
-                # Add unique utterances only
-                for utterance in segments[i].get("utterances", []):
-                    utterance_key = f"{utterance['start']}-{utterance['end']}-{utterance['text']}"
-                    if utterance_key not in seen_utterances:
-                        combined_utterances.append(utterance)
-                        seen_utterances.add(utterance_key)
-            
-            merged_segment["text"] = " ".join(combined_texts)  # Unique text only
-            merged_segment["utterances"] = combined_utterances
-            merged_segment["is_merged"] = True
-            merged_segment["merged_from"] = indices
-            merged_segment["ai_optimized"] = True
-            merged_segment["merge_reason"] = merge.get("reason", "duration_optimization")
-            
-            optimized.append(merged_segment)
-            used_indices.update(indices)
-        
-        # Add unmerged segments
-        for i, segment in enumerate(segments):
-            if i not in used_indices:
-                optimized.append(segment)
-        
-        # Sort by start time and reassign indices
-        optimized.sort(key=lambda x: x["start"])
-        for i, segment in enumerate(optimized):
-            segment["segment_index"] = i + 1
-            segment["segment_id"] = f"segment_{i+1:03d}"
-        
-        return optimized
-    
-    def _add_video_cropping_info(self, segments: List[Dict]) -> List[Dict]:
-        """Add video cropping information for each segment"""
-        enhanced_segments = []
-        
-        for segment in segments:
-            enhanced_segment = segment.copy()
-            
-            # Add video cropping metadata
-            enhanced_segment["video_info"] = {
-                "crop_start": segment["start"],
-                "crop_end": segment["end"],
-                "crop_duration": segment["duration"],
-                "video_fps": 30,  # Default FPS, can be updated from actual video
-                "crop_start_frame": int(segment["start"] * 30),
-                "crop_end_frame": int(segment["end"] * 30),
-                "crop_total_frames": int(segment["duration"] * 30)
-            }
-            
-            # Add timing recommendations for video editing
-            enhanced_segment["editing_notes"] = {
-                "recommended_fade_in": 0.1,  # seconds
-                "recommended_fade_out": 0.1,
-                "sync_tolerance": 0.05,  # Audio-video sync tolerance
-                "cut_type": "hard_cut" if segment.get("is_merged") else "natural_pause"
-            }
-            
-            enhanced_segments.append(enhanced_segment)
-        
-        return enhanced_segments
-    
-    def _get_ai_segmentation_strategy(self, compact_transcript: Dict) -> Dict:
-        """Get OpenAI recommendations for optimal segmentation and video cropping"""
-        try:
-            import json
-            import openai
-            from config import settings
-            
-            # Create token-efficient prompt
-            prompt = f"""
-SMART VIDEO SEGMENTATION TASK
-
-Analyze this {compact_transcript['total_duration']}s audio transcript for optimal dubbing segmentation.
-
-SPEAKER BLOCKS:
-{json.dumps(compact_transcript['content_blocks'], indent=1)}
-
-REQUIREMENTS:
-- Target: 9-11 second segments (ideal for dubbing)
-- Avoid cutting mid-sentence or mid-thought  
-- Consider speaker changes and natural pauses
-- Each segment needs clear start/end for video cropping
-
-PROVIDE:
-1. Optimal segment boundaries (timestamps)
-2. Video cropping points for each segment
-3. Speaker continuity recommendations
-
-FORMAT (JSON):
-{{
-  "segments": [
-    {{
-      "start": 0.0,
-      "end": 10.5,
-      "primary_speaker": "A",
-      "video_crop_start": 0.0,
-      "video_crop_end": 10.5,
-      "merge_reason": "natural thought completion",
-      "contains_speaker_change": false
-    }}
-  ],
-  "strategy": "merge short speaker segments, split at natural pauses"
-}}
-
-Keep response under 500 tokens."""
-            
-            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",  # Cost-efficient model
-                messages=[
-                    {"role": "system", "content": "You are a video editing expert specializing in dubbing segmentation."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=1024,
-                temperature=0.3
-            )
-            
-            return json.loads(response.choices[0].message.content)
-            
-        except Exception as e:
-            logger.warning(f"AI segmentation failed: {e}, falling back to rule-based")
-            return None
-        
-    def create_optimal_segments(self, transcript_data: Dict[str, Any], 
-                              target_language: str = "English", audio_id: str = None) -> List[Dict[str, Any]]:
-        """Create optimal segments from transcript data with smart segmentation"""
-        try:
-            logger.info("Starting smart segmentation process")
-            
-            # Store target language for translation
-            self._target_language = target_language
-            self._audio_id = audio_id
-            
-            utterances = transcript_data.get("utterances", [])
-            speakers = transcript_data.get("speakers", [])
-            total_duration = transcript_data.get("audio_duration", 0)
-            
-            if not utterances:
-                logger.warning("No utterances found, creating single segment")
-                fallback_segments = self._create_fallback_segments(total_duration, speakers)
-                return self._translate_segments_if_needed(fallback_segments, transcript_data, audio_id)
-            
-            # Step 1: Detect silent parts and speaker boundaries
-            timeline_events = self._create_timeline_events(utterances, total_duration)
-            
-            # Step 2: Create speaker segments with silence handling
-            speaker_segments = self._create_speaker_segments(timeline_events, total_duration)
-            
-            # Step 3: Optimize segment lengths (9-11s)
-            optimized_segments = self._optimize_segment_lengths(speaker_segments)
-            
-            # Step 4: Ensure no audio loss and maintain order
-            final_segments = self._ensure_complete_coverage(optimized_segments, total_duration)
-            
-            # Step 5: Add metadata and validate
-            validated_segments = self._validate_and_add_metadata(final_segments, utterances, speakers)
-            
-            # Step 6: Final cleanup - ensure no segments are shorter than minimum duration
-            cleaned_segments = self._final_cleanup_short_segments(validated_segments)
-            
-            # Step 6.5: AI-enhanced segment optimization (if segments are still too short)
-            if any(seg["duration"] < self.force_merge_threshold for seg in cleaned_segments):
-                logger.info("Applying AI-enhanced segment optimization for better dubbing")
-                ai_optimized_segments = self._apply_ai_segment_optimization(cleaned_segments, utterances, total_duration)
-                if ai_optimized_segments:
-                    cleaned_segments = ai_optimized_segments
-            
-            # Step 7: Ensure clean speaker boundaries (no overlaps)
-            boundary_cleaned_segments = self._ensure_speaker_boundaries(cleaned_segments)
-            logger.info(f"Speaker boundary enforcement completed: {len(boundary_cleaned_segments)} segments")
-            
-            # Step 8: Add video cropping information
-            enhanced_segments = self._add_video_cropping_info(boundary_cleaned_segments)
-            
-            # Step 9: Translate segments for dubbing
-            translated_segments = self._translate_segments_if_needed(
-                enhanced_segments, transcript_data, audio_id
-            )
-            
-            logger.info(f"Smart segmentation completed: {len(translated_segments)} segments created")
-            
-            return translated_segments
-            
-        except Exception as e:
-            logger.error(f"Smart segmentation failed: {str(e)}")
-            # Fallback to basic segmentation
-            fallback_segments = self._create_fallback_segments(
-                transcript_data.get("audio_duration", 0), 
-                transcript_data.get("speakers", [])
-            )
-            # Apply translation to fallback segments too
-            try:
-                return self._translate_segments_if_needed(fallback_segments, transcript_data, audio_id)
-            except:
-                return fallback_segments
-    
-    def _create_timeline_events(self, utterances: List[Dict[str, Any]], 
-                              total_duration: float) -> List[Dict[str, Any]]:
-        """Create timeline events from utterances to detect speakers and silences"""
-        events = []
-        
-        # Add start event
-        events.append({
-            "time": 0.0,
-            "type": "start",
-            "speaker": None
-        })
-        
-        # Process utterances
-        for utterance in utterances:
-            start_time = utterance["start"]
-            end_time = utterance["end"]
-            speaker = utterance["speaker"]
-            
-            # Add utterance start event
-            events.append({
-                "time": start_time,
-                "type": "utterance_start",
-                "speaker": speaker,
-                "utterance": utterance
-            })
-            
-            # Add utterance end event
-            events.append({
-                "time": end_time,
-                "type": "utterance_end",
-                "speaker": speaker,
-                "utterance": utterance
-            })
-        
-        # Add end event
-        events.append({
-            "time": total_duration,
-            "type": "end",
-            "speaker": None
-        })
-        
-        # Sort events by time
-        events.sort(key=lambda x: (x["time"], x["type"] == "utterance_start"))
-        
-        return events
-    
-    def _create_speaker_segments(self, timeline_events: List[Dict[str, Any]], 
-                               total_duration: float) -> List[Dict[str, Any]]:
-        """Create speaker segments with silence handling"""
+    def _create_sentence_segments(self, sentences: List[Dict], total_duration: float) -> List[Dict]:
+        """Create segments from sentences with silent parts handling and gap coverage"""
         segments = []
-        current_segment = None
-        last_utterance_end = 0.0
+        last_end_time = 0.0
         
-        for i, event in enumerate(timeline_events):
-            event_time = event["time"]
-            event_type = event["type"]
-            
-            # Check for silence gap before this event (minimum 2.5s)
-            if event_time > last_utterance_end + self.min_silence_duration:
-                silence_duration = event_time - last_utterance_end
-                
-                # Only create silence segment if >= 2.5s, otherwise merge with speech
-                if silence_duration >= self.min_silence_duration:
-                    silence_segment = {
-                        "start": last_utterance_end,
-                        "end": event_time,
-                        "duration": silence_duration,
-                        "speaker": "SILENCE",
-                        "type": "silence",
-                        "text": "",
-                        "utterances": [],
-                        "confidence": 1.0
-                    }
-                    segments.append(silence_segment)
-            
-            if event_type == "utterance_start":
-                speaker = event["speaker"]
-                utterance = event["utterance"]
-                
-                # Start new segment or continue existing one
-                if (current_segment is None or 
-                    current_segment["speaker"] != speaker or 
-                    event_time > current_segment["end"] + self.speaker_switch_padding):
-                    
-                    # Finish previous segment
-                    if current_segment:
-                        segments.append(current_segment)
-                    
-                    # Start new segment
-                    current_segment = {
-                        "start": utterance["start"],
-                        "end": utterance["end"],
-                        "duration": utterance["end"] - utterance["start"],
-                        "speaker": speaker,
-                        "type": "speech",
-                        "text": utterance["text"],
-                        "utterances": [utterance],
-                        "confidence": utterance["confidence"]
-                    }
-                else:
-                    # Extend existing segment
-                    current_segment["end"] = utterance["end"]
-                    current_segment["duration"] = current_segment["end"] - current_segment["start"]
-                    current_segment["text"] += " " + utterance["text"]
-                    current_segment["utterances"].append(utterance)
-                    current_segment["confidence"] = (current_segment["confidence"] + utterance["confidence"]) / 2
-                
-                last_utterance_end = max(last_utterance_end, utterance["end"])
-        
-        # Add final segment
-        if current_segment:
-            segments.append(current_segment)
-        
-        # Add final silence if >= 2.5s
-        if last_utterance_end < total_duration - self.min_silence_duration:
-            final_silence_duration = total_duration - last_utterance_end
-            if final_silence_duration >= self.min_silence_duration:
-                final_silence = {
-                    "start": last_utterance_end,
-                    "end": total_duration,
-                    "duration": final_silence_duration,
-                    "speaker": "SILENCE",
-                    "type": "silence", 
-                    "text": "",
-                    "utterances": [],
-                    "confidence": 1.0
-                }
-                segments.append(final_silence)
-        
-        return segments
-    
-    def _optimize_segment_lengths(self, speaker_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Optimize segment lengths to be between 9-11 seconds"""
-        optimized_segments = []
-        
-        for segment in speaker_segments:
-            duration = segment["duration"]
-            
-            # Skip silence segments or segments that are already optimal
-            if (segment["type"] == "silence" or 
-                (self.optimal_min_duration <= duration <= self.optimal_max_duration)):
-                optimized_segments.append(segment)
-                continue
-            
-            # Handle segments that are too short
-            if duration < self.min_segment_duration:
-                # Try to merge with adjacent segments or extend
-                optimized_segments.append(segment)  # Keep as is for now, merge later
-                continue
-            
-            # Handle segments that are too long - split them
-            if duration > self.max_segment_duration:
-                split_segments = self._split_long_segment(segment)
-                optimized_segments.extend(split_segments)
-            else:
-                optimized_segments.append(segment)
-        
-        # Second pass: merge short segments
-        return self._merge_short_segments(optimized_segments)
-    
-    def _split_long_segment(self, segment: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Split a long segment into optimal-sized chunks"""
-        if segment["type"] == "silence":
-            return [segment]  # Don't split silence
-        
-        total_duration = segment["duration"]
-        target_duration = self.optimal_max_duration
-        
-        # Calculate number of segments needed
-        num_segments = max(2, int(np.ceil(total_duration / target_duration)))
-        actual_segment_duration = total_duration / num_segments
-        
-        split_segments = []
-        utterances = segment["utterances"]
-        
-        for i in range(num_segments):
-            segment_start = segment["start"] + (i * actual_segment_duration)
-            segment_end = segment["start"] + ((i + 1) * actual_segment_duration)
-            
-            # Adjust last segment to exact end
-            if i == num_segments - 1:
-                segment_end = segment["end"]
-            
-            # Find utterances that belong primarily to this segment (no duplication)
-            segment_utterances = []
-            segment_text_parts = []
-            
-            for utterance in utterances:
-                utterance_start = utterance["start"]
-                utterance_end = utterance["end"]
-                utterance_center = (utterance_start + utterance_end) / 2
-                
-                # Assign utterance to segment if its center point falls within this segment
-                if segment_start <= utterance_center < segment_end:
-                    segment_utterances.append(utterance)
-                    segment_text_parts.append(utterance["text"])
-            
-            # Create segment
-            split_segment = {
-                "start": segment_start,
-                "end": segment_end,
-                "duration": segment_end - segment_start,
-                "speaker": segment["speaker"],
-                "type": segment["type"],
-                "text": " ".join(segment_text_parts) if segment_text_parts else f"[Part {i+1} of {num_segments}]",
-                "utterances": segment_utterances,
-                "confidence": segment["confidence"],
-                "is_split": True,
-                "split_index": i,
-                "total_splits": num_segments
+        # Handle gap from start if first sentence doesn't start at 0
+        if sentences and sentences[0]["start"] / 1000.0 > self.silent_threshold:
+            first_start = sentences[0]["start"] / 1000.0
+            initial_silent = {
+                "index": "initial_silent",
+                "start": 0.0,
+                "end": first_start,
+                "duration": first_start,
+                "text": "",
+                "speaker": "SILENT",
+                "confidence": 1.0,
+                "type": "silent",
+                "words": []
             }
+            segments.append(initial_silent)
+            last_end_time = first_start
+        
+        for i, sentence in enumerate(sentences):
+            start_ms = sentence["start"]
+            end_ms = sentence["end"]
+            text = sentence["text"]
+            confidence = sentence.get("confidence", 0.0)
+            speaker = sentence.get("speaker", "SPEAKER_00")
             
-            split_segments.append(split_segment)
-        
-        return split_segments
-    
-    def _merge_short_segments(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Merge short segments with adjacent segments"""
-        if not segments:
-            return segments
-        
-        merged_segments = []
-        i = 0
-        
-        while i < len(segments):
-            current_segment = segments[i].copy()
+            # Convert to seconds
+            start_sec = start_ms / 1000.0
+            end_sec = end_ms / 1000.0
+            duration = end_sec - start_sec
             
-            # Skip if segment is already optimal or is silence
-            if (current_segment["duration"] >= self.min_segment_duration or 
-                current_segment["type"] == "silence"):
-                merged_segments.append(current_segment)
-                i += 1
-                continue
-            
-            # Try to merge with next segment
-            merged = False
-            if i + 1 < len(segments):
-                next_segment = segments[i + 1]
-                
-                # Only merge if SAME SPEAKER - no cross-speaker merging
-                if (current_segment["speaker"] == next_segment["speaker"] and
-                    current_segment["duration"] + next_segment["duration"] <= self.max_segment_duration):
-                    
-                    # Merge segments
-                    merged_segment = {
-                        "start": current_segment["start"],
-                        "end": next_segment["end"],
-                        "duration": next_segment["end"] - current_segment["start"],
-                        "speaker": current_segment["speaker"] if current_segment["type"] != "silence" else next_segment["speaker"],
-                        "type": "speech" if (current_segment["type"] == "speech" or next_segment["type"] == "speech") else "silence",
-                        "text": self._combine_unique_text([current_segment['text'], next_segment['text']]),
-                        "utterances": current_segment["utterances"] + next_segment["utterances"],
-                        "confidence": (current_segment["confidence"] + next_segment["confidence"]) / 2,
-                        "is_merged": True
-                    }
-                    
-                    merged_segments.append(merged_segment)
-                    i += 2  # Skip next segment as it's merged
-                    merged = True
-            
-            if not merged:
-                # Keep as is
-                merged_segments.append(current_segment)
-                i += 1
-        
-        return merged_segments
-    
-    def _ensure_complete_coverage(self, segments: List[Dict[str, Any]], 
-                                 total_duration: float) -> List[Dict[str, Any]]:
-        """Ensure no audio loss and complete timeline coverage"""
-        if not segments:
-            return segments
-        
-        # Sort segments by start time
-        segments.sort(key=lambda x: x["start"])
-        
-        complete_segments = []
-        last_end = 0.0
-        
-        for segment in segments:
-            # Fill gap before segment if exists
-            if segment["start"] > last_end + 0.01:  # 10ms tolerance
-                gap_duration = segment["start"] - last_end
-                
-                # Only create separate gap segments if >= 2.5s (minimum segment duration)
-                if gap_duration >= self.min_segment_duration:
-                    gap_segment = {
-                        "start": last_end,
-                        "end": segment["start"],
-                        "duration": gap_duration,
-                        "speaker": "UNKNOWN",
-                        "type": "gap",
-                        "text": "",
-                        "utterances": [],
-                        "confidence": 0.5,
-                        "is_gap_fill": True
-                    }
-                    complete_segments.append(gap_segment)
-                else:
-                    # For small gaps, extend the previous segment to cover the gap
-                    if complete_segments:
-                        prev_segment = complete_segments[-1]
-                        prev_segment["end"] = segment["start"]
-                        prev_segment["duration"] = segment["start"] - prev_segment["start"]
-                        logger.info(f"Extended previous segment to cover {gap_duration:.2f}s gap (too small for separate segment)")
-                    # If no previous segment, extend current segment backward
-                    else:
-                        segment["start"] = last_end
-                        segment["duration"] = segment["end"] - last_end
-                        logger.info(f"Extended current segment backward to cover {gap_duration:.2f}s gap")
-            
-            complete_segments.append(segment)
-            last_end = segment["end"]
-        
-        # Fill final gap if exists
-        if last_end < total_duration - 0.01:
-            final_gap_duration = total_duration - last_end
-            
-            # Only create separate final gap if >= 2.5s
-            if final_gap_duration >= self.min_segment_duration:
-                final_gap = {
-                    "start": last_end,
-                    "end": total_duration,
-                    "duration": final_gap_duration,
-                    "speaker": "UNKNOWN",
-                    "type": "gap",
+            # Check for gap before this sentence
+            if start_sec > last_end_time + self.silent_threshold:
+                gap_duration = start_sec - last_end_time
+                silent_segment = {
+                    "index": f"gap_{i}",
+                    "start": last_end_time,
+                    "end": start_sec,
+                    "duration": gap_duration,
                     "text": "",
-                    "utterances": [],
-                    "confidence": 0.5,
-                    "is_gap_fill": True
+                    "speaker": "SILENT",
+                    "confidence": 1.0,
+                    "type": "silent",
+                    "words": []
                 }
-                complete_segments.append(final_gap)
-            else:
-                # For small final gaps, extend the last segment
-                if complete_segments:
-                    last_segment = complete_segments[-1]
-                    last_segment["end"] = total_duration
-                    last_segment["duration"] = total_duration - last_segment["start"]
-                    logger.info(f"Extended last segment to cover {final_gap_duration:.2f}s final gap (too small for separate segment)")
-        
-        return complete_segments
-    
-    def _validate_and_add_metadata(self, segments: List[Dict[str, Any]], 
-                                  utterances: List[Dict[str, Any]], 
-                                  speakers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Validate segments and add metadata"""
-        validated_segments = []
-        
-        for i, segment in enumerate(segments):
-            # Add segment index
-            segment["segment_index"] = i + 1
-            segment["segment_id"] = f"segment_{i+1:03d}"
+                segments.append(silent_segment)
             
-            # Add speaker metadata
-            speaker_id = segment["speaker"]
-            speaker_info = next((s for s in speakers if s["id"] == speaker_id), None)
-            
-            if speaker_info:
-                segment["speaker_label"] = speaker_info.get("label", f"Speaker {speaker_id}")
-                segment["speaker_confidence"] = speaker_info.get("confidence", segment.get("confidence", 0.9))
-            else:
-                segment["speaker_label"] = f"Speaker {speaker_id}"
-                segment["speaker_confidence"] = segment.get("confidence", 0.9)
-            
-            # Validate timing
-            if segment["end"] <= segment["start"]:
-                logger.warning(f"Invalid segment timing at index {i}, adjusting")
-                segment["end"] = segment["start"] + 0.5  # Set minimum 0.5s instead of 0.1s
-                segment["duration"] = 0.5
-            
-            # Ensure minimum duration - short segments should be merged in earlier stages
-            if segment["duration"] < self.min_segment_duration:
-                logger.warning(f"Found short {segment.get('type', 'unknown')} segment of {segment['duration']:.2f}s (should be merged with adjacent segments)")
-                # Mark for potential merging in post-processing
-                segment["needs_merging"] = True
-            
-            validated_segments.append(segment)
-        
-        return validated_segments
-    
-    def _create_fallback_segments(self, total_duration: float, 
-                                 speakers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Create fallback segments when smart segmentation fails"""
-        logger.warning("Creating fallback segments")
-        
-        segments = []
-        segment_duration = min(self.optimal_max_duration, max(self.min_segment_duration, total_duration / 10))
-        
-        num_segments = int(np.ceil(total_duration / segment_duration))
-        
-        for i in range(num_segments):
-            start_time = i * segment_duration
-            end_time = min((i + 1) * segment_duration, total_duration)
-            
-            # Use first speaker or create default
-            speaker = speakers[0] if speakers else {"id": "A", "label": "Speaker A"}
-            
+            # Add sentence segment
             segment = {
-                "start": start_time,
-                "end": end_time,
-                "duration": end_time - start_time,
-                "speaker": speaker["id"],
-                "speaker_label": speaker.get("label", f"Speaker {speaker['id']}"),
+                "index": i,
+                "start": start_sec,
+                "end": end_sec, 
+                "duration": duration,
+                "text": text,
+                "speaker": speaker,
+                "confidence": confidence,
                 "type": "speech",
-                "text": f"Segment {i+1}",
-                "utterances": [],
-                "confidence": 0.7,
-                "segment_index": i + 1,
-                "segment_id": f"segment_{i+1:03d}",
-                "is_fallback": True
+                "words": sentence.get("words", [])
             }
-            
             segments.append(segment)
+            last_end_time = end_sec
+        
+        # Handle gap at the end if needed
+        if last_end_time < total_duration - self.silent_threshold:
+            final_gap = total_duration - last_end_time
+            final_silent = {
+                "index": "final_silent",
+                "start": last_end_time,
+                "end": total_duration,
+                "duration": final_gap,
+                "text": "",
+                "speaker": "SILENT", 
+                "confidence": 1.0,
+                "type": "silent",
+                "words": []
+            }
+            segments.append(final_silent)
         
         return segments
     
-    def save_optimal_segments(self, segments: List[Dict[str, Any]], audio: np.ndarray, 
-                            sr: int, output_dir: Path, speakers: List[Dict[str, Any]], 
-                            target_language: str, detected_language: str, 
-                            original_audio_details: Optional[Dict] = None):
-        """Save optimally segmented audio with metadata"""
-        try:
-            logger.info(f"Saving {len(segments)} optimal segments to {output_dir}")
+    def _crop_audio_segments(self, segments: List[Dict], audio: np.ndarray, sample_rate: int) -> List[Dict]:
+        """Crop audio for each segment"""
+        processed_segments = []
+        
+        for segment in segments:
+            start_sec = segment["start"]
+            end_sec = segment["end"]
             
-            # Create directory structure
-            segments_dir = output_dir / "segments"
-            segments_dir.mkdir(parents=True, exist_ok=True)
+            # Convert to sample indices
+            start_sample = int(start_sec * sample_rate)
+            end_sample = int(end_sec * sample_rate)
             
-            segment_files = []
+            # Ensure bounds
+            start_sample = max(0, start_sample)
+            end_sample = min(len(audio), end_sample)
             
-            for segment in segments:
-                # Calculate sample indices
-                start_sample = int(segment["start"] * sr)
-                end_sample = int(segment["end"] * sr)
-                
-                # Extract audio segment
+            # Extract audio segment
+            if segment["type"] == "silent":
+                # Create silent audio
+                segment_length = end_sample - start_sample
+                segment_audio = np.zeros(segment_length, dtype=audio.dtype)
+            else:
+                # Extract actual audio
                 segment_audio = audio[start_sample:end_sample]
+            
+            # Add audio data to segment
+            segment_with_audio = segment.copy()
+            segment_with_audio["audio"] = segment_audio
+            segment_with_audio["sample_rate"] = sample_rate
+            
+            processed_segments.append(segment_with_audio)
+        
+        return processed_segments
+    
+    def _create_reference_audio_segments(self, segments: List[Dict], audio_id: str) -> List[Dict]:
+        """Create reference audio segments for voice cloning from original vocal audio"""
+        reference_segments = []
+        
+        for segment in segments:
+            if segment["type"] == "speech" and len(segment.get("audio", [])) > 0:
+                # Save reference audio file for voice cloning
+                ref_audio_dir = Path(f"segments/{audio_id}/reference")
+                ref_audio_dir.mkdir(parents=True, exist_ok=True)
+                ref_audio_path = ref_audio_dir / f"ref_segment_{segment['index']:03d}.wav"
                 
-                # Skip empty segments
-                if len(segment_audio) == 0:
-                    continue
+                # Save reference audio
+                sf.write(ref_audio_path, segment["audio"], segment["sample_rate"])
                 
-                # Create filenames
-                segment_index = segment["segment_index"]
-                segment_filename = f"segment_{segment_index:03d}.wav"
-                metadata_filename = f"segment_{segment_index:03d}_metadata.json"
-                
-                segment_path = segments_dir / segment_filename
-                metadata_path = segments_dir / metadata_filename
-                
-                # Save audio segment
-                sf.write(str(segment_path), segment_audio, sr)
-                
-                # Prepare metadata with translation info
-                metadata = {
-                    "segment_index": segment_index,
-                    "segment_id": segment["segment_id"],
-                    "start": segment["start"],
-                    "end": segment["end"],
+                # Create reference segment metadata for voice cloning
+                reference_segment = {
+                    "index": segment["index"],
+                    "audio_id": audio_id,
+                    "reference_audio_path": str(ref_audio_path),
+                    "sample_rate": segment["sample_rate"],
                     "duration": segment["duration"],
                     "speaker": segment["speaker"],
-                    "speaker_label": segment.get("speaker_label", f"Speaker {segment['speaker']}"),
-                    "text": segment["text"],  # This will be translated text if translation occurred
-                    "original_text": segment.get("original_text", segment["text"]),  # Original before translation
-                    "english_text": segment.get("english_text", segment["text"]),  # For compatibility
-                    "type": segment["type"],
-                    "confidence": segment["confidence"],
-                    "language_code": detected_language,
-                    "target_language": target_language,
-                    "audio_file": segment_filename,
-                    "sample_rate": sr,
-                    "channels": 1,
-                    "created_at": datetime.now().isoformat(),
-                    "original_audio": original_audio_details,
-                    "utterances": segment.get("utterances", []),
-                    "translation": segment.get("translation", {"translated": False}),
-                    "processing_flags": {
-                        "is_split": segment.get("is_split", False),
-                        "is_merged": segment.get("is_merged", False),
-                        "is_gap_fill": segment.get("is_gap_fill", False),
-                        "is_fallback": segment.get("is_fallback", False)
-                    }
+                    "text": segment["text"],
+                    "type": segment["type"]
                 }
-                
-                # Save metadata
-                with open(metadata_path, 'w', encoding='utf-8') as f:
-                    json.dump(metadata, f, indent=2, ensure_ascii=False)
-                
-                # Store locally as backup
-                self._store_segment_locally(segment_audio, metadata, segment_index, sr)
-                
-                segment_files.append({
-                    "audio_file": str(segment_path),
-                    "metadata_file": str(metadata_path),
-                    "segment": segment
-                })
+                reference_segments.append(reference_segment)
+        
+        return reference_segments
+    
+    def create_optimal_segments(self, transcript_data: Dict[str, Any], 
+                              target_language: str = "English", audio_id: str = None) -> List[Dict[str, Any]]:
+        """Create optimal segments using AssemblyAI sentences API"""
+        try:
+            logger.info("Starting AssemblyAI sentence-based segmentation")
             
-            # Save summary
-            summary = {
-                "total_segments": len(segments),
-                "total_duration": sum(s["duration"] for s in segments),
-                "speakers": speakers,
-                "target_language": target_language,
-                "detected_language": detected_language,
-                "segmentation_method": "smart_optimal",
-                "created_at": datetime.now().isoformat(),
-                "original_audio": original_audio_details,
-                "segment_files": segment_files
+            # Get transcript ID and API key from transcript_data
+            transcript_id = transcript_data.get("transcript_id")
+            api_key = transcript_data.get("api_key")
+            total_duration = transcript_data.get("audio_duration", 0)
+            
+            if not transcript_id or not api_key:
+                logger.error("Missing transcript_id or api_key")
+                return []
+            
+            # Fetch sentences from AssemblyAI
+            sentences = self._fetch_sentences_from_assemblyai(transcript_id, api_key)
+            
+            if not sentences:
+                logger.warning("No sentences found from AssemblyAI")
+                return []
+            
+            # Create segments from sentences
+            segments = self._create_sentence_segments(sentences, total_duration)
+            
+            logger.info(f"Created {len(segments)} segments from {len(sentences)} sentences")
+            
+            return segments
+            
+        except Exception as e:
+            logger.error(f"Sentence-based segmentation failed: {str(e)}")
+            return []
+    
+    def prepare_segments_for_voice_cloning(self, segments: List[Dict[str, Any]], 
+                                         target_language: str = "English") -> List[Dict[str, Any]]:
+        """Prepare speech segments for voice cloning by adding target language translation"""
+        speech_segments = []
+        
+        for segment in segments:
+            if segment["type"] == "speech" and segment.get("text", "").strip():
+                # Prepare segment metadata for voice cloning
+                cloning_segment = segment.copy()
+                cloning_segment["target_language"] = target_language
+                
+                # Add original text as reference text
+                cloning_segment["original_text"] = segment["text"]
+                
+                # TODO: Add translation logic here when translation service is ready
+                # For now, keep original text if target is English, otherwise mark for translation
+                if target_language.lower() == "english":
+                    cloning_segment["translated_text"] = segment["text"]
+                else:
+                    cloning_segment["translated_text"] = f"[TO_TRANSLATE:{target_language}] {segment['text']}"
+                
+                speech_segments.append(cloning_segment)
+        
+        return speech_segments
+    
+    def save_optimal_segments(self, segments: List[Dict[str, Any]], audio: np.ndarray,
+                            sample_rate: int, audio_id: str, 
+                            target_language: str = "English") -> Dict[str, Any]:
+        """Save cropped audio segments and create reference segments"""
+        try:
+            logger.info(f"Processing and saving {len(segments)} segments")
+            
+            # Crop audio for each segment
+            processed_segments = self._crop_audio_segments(segments, audio, sample_rate)
+            
+            # Create reference audio segments for voice cloning
+            reference_segments = self._create_reference_audio_segments(processed_segments, audio_id)
+            
+            # Prepare speech segments for voice cloning
+            speech_segments_for_cloning = self.prepare_segments_for_voice_cloning(reference_segments, target_language)
+            
+            # Save segments locally
+            saved_segments = []
+            for i, segment in enumerate(processed_segments):
+                if segment.get("audio") is not None:
+                    # Save segment audio
+                    segment_path = f"segments/{audio_id}/segment_{i:03d}.wav"
+                    
+                    # Ensure directory exists
+                    segment_dir = Path(f"segments/{audio_id}")
+                    segment_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    # Save audio file
+                    sf.write(segment_path, segment["audio"], sample_rate)
+                    
+                    # Create segment metadata
+                    segment_metadata = {
+                        "index": segment["index"],
+                        "start": segment["start"],
+                        "end": segment["end"], 
+                        "duration": segment["duration"],
+                        "text": segment["text"],
+                        "speaker": segment["speaker"],
+                        "confidence": segment.get("confidence", 0.0),
+                        "type": segment["type"],
+                        "audio_path": segment_path,
+                        "sample_rate": sample_rate
+                    }
+                    
+                    saved_segments.append(segment_metadata)
+            
+            # Save reference segments metadata
+            reference_metadata = {
+                "audio_id": audio_id,
+                "reference_segments": reference_segments,
+                "total_segments": len(saved_segments),
+                "target_language": target_language
             }
             
-            summary_path = output_dir / "segmentation_summary.json"
-            with open(summary_path, 'w', encoding='utf-8') as f:
-                json.dump(summary, f, indent=2, ensure_ascii=False)
+            # Store metadata
+            metadata_path = f"segments/{audio_id}/metadata.json"
+            with open(metadata_path, 'w') as f:
+                json.dump({
+                    "segments": saved_segments,
+                    "reference_data": reference_metadata
+                }, f, indent=2)
             
-            logger.info(f"Successfully saved {len(segment_files)} segments")
+            logger.info(f"Successfully saved {len(saved_segments)} segments")
+            
+            return {
+                "segments": saved_segments,
+                "reference_segments": reference_segments,
+                "speech_segments_for_cloning": speech_segments_for_cloning,
+                "metadata_path": metadata_path
+            }
             
         except Exception as e:
             logger.error(f"Failed to save segments: {str(e)}")
-            raise Exception(f"Segment saving failed: {str(e)}")
-    
-    def _store_segment_locally(self, segment_audio: np.ndarray, metadata: Dict[str, Any], 
-                              segment_index: int, sr: int):
-        """Store individual segment locally for backup - DISABLED to prevent duplicate storage"""
-        # NOTE: Duplicate storage disabled as segments are already stored in voice_cloning directory
-        pass
-    
-    def _translate_segments_if_needed(self, segments: List[Dict[str, Any]], 
-                                     transcript_data: Dict[str, Any], audio_id: str) -> List[Dict[str, Any]]:
-        """Translate segments if target language is different from detected language"""
-        try:
-            if not audio_id:
-                logger.warning("No audio_id provided, skipping translation")
-                return segments
-            
-            # Get language information
-            detected_language = transcript_data.get("language_code", "en")
-            target_language = getattr(self, '_target_language', "English")  # Set via method parameter
-            
-            # Use transcription service for translation
-            translated_segments = self.transcription_service.translate_segments_for_dubbing(
-                segments, target_language, detected_language, audio_id
-            )
-            
-            logger.info(f"Translation completed for {len(translated_segments)} segments")
-            return translated_segments
-            
-        except Exception as e:
-            logger.error(f"Translation failed: {str(e)}")
-            # Return original segments with error metadata
-            for segment in segments:
-                segment["translation"] = {
-                    "translated": False,
-                    "error": str(e),
-                    "status": "translation_failed"
-                }
-            return segments
-    
-    def _intelligent_shorten(self, audio: np.ndarray, sr: int, target_duration: float) -> np.ndarray:
-        """Simplified shortening - just trim to target duration"""
-        target_samples = int(target_duration * sr)
-        return audio[:target_samples]
-    
-    def _intelligent_lengthen(self, audio: np.ndarray, sr: int, target_duration: float) -> np.ndarray:
-        """Simplified lengthening - just add silence padding"""
-        target_samples = int(target_duration * sr)
-        padding_needed = target_samples - len(audio)
-        
-        if padding_needed <= 0:
-            return audio[:target_samples]
-        
-        # Add silence to the end
-        silence = np.zeros(padding_needed, dtype=audio.dtype)
-        return np.concatenate([audio, silence])
-
-    def _final_cleanup_short_segments(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Final aggressive cleanup to merge any remaining segments shorter than force_merge_threshold (8s)"""
-        if not segments:
-            return segments
-        
-        cleaned_segments = []
-        i = 0
-        
-        while i < len(segments):
-            current_segment = segments[i].copy()
-            
-            # If current segment is too short, try to merge with adjacent segment  
-            if current_segment["duration"] < self.force_merge_threshold:
-                logger.info(f"Final cleanup: merging short segment {current_segment.get('segment_index', i+1)} ({current_segment['duration']:.2f}s)")
-                
-                merged = False
-                
-                # Try to merge with next segment first
-                if i + 1 < len(segments):
-                    next_segment = segments[i + 1]
-                    combined_duration = current_segment["duration"] + next_segment["duration"]
-                    
-                    # Merge if SAME SPEAKER and combined duration is reasonable
-                    if (current_segment["speaker"] == next_segment["speaker"] and 
-                        combined_duration <= self.max_segment_duration):
-                        merged_segment = {
-                            "start": current_segment["start"],
-                            "end": next_segment["end"],
-                            "duration": combined_duration,
-                            "speaker": current_segment["speaker"] if current_segment["type"] == "speech" else next_segment["speaker"],
-                            "type": "speech" if (current_segment["type"] == "speech" or next_segment["type"] == "speech") else current_segment["type"],
-                            "text": self._combine_unique_text([current_segment.get('text', ''), next_segment.get('text', '')]),
-                            "utterances": current_segment.get("utterances", []) + next_segment.get("utterances", []),
-                            "confidence": (current_segment.get("confidence", 0.5) + next_segment.get("confidence", 0.5)) / 2,
-                            "is_merged": True,
-                            "merged_from": [current_segment.get("segment_index", i+1), next_segment.get("segment_index", i+2)],
-                            "segment_index": len(cleaned_segments) + 1,  # Temporary index, will be reassigned later
-                            "segment_id": f"segment_{len(cleaned_segments) + 1:03d}"
-                        }
-                        cleaned_segments.append(merged_segment)
-                        i += 2  # Skip both segments
-                        merged = True
-                
-                # If couldn't merge with next, try merging with previous
-                if not merged and cleaned_segments:
-                    prev_segment = cleaned_segments[-1]
-                    combined_duration = prev_segment["duration"] + current_segment["duration"]
-                    
-                    if (prev_segment["speaker"] == current_segment["speaker"] and 
-                        combined_duration <= self.max_segment_duration):
-                        # Update the previous segment to include current
-                        prev_segment["end"] = current_segment["end"]
-                        prev_segment["duration"] = combined_duration
-                        prev_segment["text"] = self._combine_unique_text([prev_segment.get('text', ''), current_segment.get('text', '')])
-                        prev_segment["utterances"] = prev_segment.get("utterances", []) + current_segment.get("utterances", [])
-                        prev_segment["is_merged"] = True
-                        if "merged_from" not in prev_segment:
-                            prev_segment["merged_from"] = [prev_segment.get("segment_index", len(cleaned_segments))]
-                        prev_segment["merged_from"].append(current_segment.get("segment_index", i+1))
-                        i += 1
-                        merged = True
-                
-                # If still couldn't merge, keep as is but log warning
-                if not merged:
-                    logger.warning(f"Could not merge short segment {current_segment.get('segment_index', i+1)} ({current_segment['duration']:.2f}s) - keeping as is")
-                    cleaned_segments.append(current_segment)
-                    i += 1
-            else:
-                # Segment is already good duration
-                cleaned_segments.append(current_segment)
-                i += 1
-        
-        logger.info(f"Final cleanup completed: {len(segments)} -> {len(cleaned_segments)} segments")
-        
-        # Re-assign segment indices after cleanup
-        for i, segment in enumerate(cleaned_segments):
-            segment["segment_index"] = i + 1
-            segment["segment_id"] = f"segment_{i+1:03d}"
-        
-        return cleaned_segments
-
-    def _combine_unique_text(self, texts: List[str]) -> str:
-        """Combine text parts avoiding duplication"""
-        unique_parts = []
-        for text in texts:
-            text = text.strip()
-            if text and text not in unique_parts:
-                unique_parts.append(text)
-        return " ".join(unique_parts)
-
-    def _ensure_speaker_boundaries(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Ensure clean speaker boundaries with no overlaps"""
-        if len(segments) <= 1:
-            return segments
-        
-        cleaned_segments = []
-        
-        for i, segment in enumerate(segments):
-            current_segment = segment.copy()
-            
-            # Check for overlap with next segment
-            if i + 1 < len(segments):
-                next_segment = segments[i + 1]
-                
-                # If different speakers and overlap exists, fix boundary
-                if (current_segment["speaker"] != next_segment["speaker"] and 
-                    current_segment["end"] > next_segment["start"]):
-                    
-                    # Split the time difference
-                    overlap_midpoint = (current_segment["end"] + next_segment["start"]) / 2
-                    current_segment["end"] = overlap_midpoint
-                    current_segment["duration"] = current_segment["end"] - current_segment["start"]
-                    
-                    logger.info(f"Fixed speaker boundary overlap between {current_segment['speaker']} and {next_segment['speaker']}")
-            
-            cleaned_segments.append(current_segment)
-        
-        return cleaned_segments
-
+            return {"segments": [], "reference_segments": [], "speech_segments_for_cloning": [], "metadata_path": None}
