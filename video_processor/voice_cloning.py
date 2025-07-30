@@ -31,6 +31,10 @@ class FishSpeechService:
         self.model_repo = "fishaudio/fish-speech-1.5" 
         self.model_path = "checkpoints/fish-speech-1.5"
         
+        # Alternative: Use openaudio-s1-mini (has known working config)
+        self.fallback_repo = "fishaudio/openaudio-s1-mini"
+        self.fallback_path = "checkpoints/openaudio-s1-mini"
+        
         # Initialize as None, will be loaded lazily
         self.inference_engine = None
         self.llama_queue = None
@@ -98,6 +102,22 @@ class FishSpeechService:
         else:
             logger.info("✅ Codec already exists")
         
+        # Download codec config if available
+        try:
+            config_file = "codec_config.yaml"
+            config_path = model_dir / config_file
+            if not config_path.exists():
+                hf_hub_download(
+                    repo_id=self.model_repo,
+                    filename=config_file,
+                    local_dir=str(model_dir),
+                    local_dir_use_symlinks=False,
+                    resume_download=True
+                )
+                logger.info(f"✅ Downloaded codec config: {config_file}")
+        except Exception:
+            logger.debug("No separate codec config available")
+        
         logger.info("✅ Models ready")
     
     def _initialize_models(self):
@@ -130,29 +150,76 @@ class FishSpeechService:
             logger.info("✅ Language model loaded")
             
             # Load Fish Speech decoder model (with error handling)
+            
+            # Debug: Show available configs
             try:
-                # Fish Speech 1.5 uses Firefly-GAN codec
+                import hydra
+                from hydra import compose, initialize_config_store
+                from omegaconf import OmegaConf
+                
+                # Try to find available configs
+                config_dir = "./fish-speech/fish_speech/configs"
+                if Path(config_dir).exists():
+                    configs = list(Path(config_dir).glob("*.yaml"))
+                    logger.info(f"🔍 Available configs: {[c.stem for c in configs]}")
+            except Exception:
+                logger.debug("Could not list available configs")
+            
+            try:
+                # Fish Speech 1.5 - Let it auto-detect config from checkpoint
                 self.decoder_model = load_decoder_model(
-                    config_name="firefly_gan_vq",  # Correct config for Fish Speech 1.5
+                    config_name=None,  # Auto-detect from codec checkpoint
                     checkpoint_path=f"{self.model_path}/codec.pth",
                     device=self.device,
                 )
-                logger.info("✅ Decoder model loaded")
+                logger.info("✅ Decoder model loaded (auto-config)")
             except Exception as e:
-                logger.warning(f"⚠️ Decoder loading failed: {e}")
-                # Try alternative codec configurations
-                try:
-                    logger.info("🔄 Trying alternative codec configuration...")
-                    self.decoder_model = load_decoder_model(
-                        config_name="dac_44khz_8kbps",  # Fallback to DAC
-                        checkpoint_path=f"{self.model_path}/codec.pth",
-                        device=self.device,
-                    )
-                    logger.info("✅ Decoder model loaded with fallback config")
-                except Exception as e2:
-                    logger.warning(f"⚠️ All decoder loading attempts failed: {e2}")
-                    logger.info("📝 Will run in semantic-only mode (no audio generation)")
-                    self.decoder_model = None
+                logger.warning(f"⚠️ Auto-config decoder loading failed: {e}")
+                
+                # Try known Fish Speech configs
+                config_attempts = [
+                    "firefly_gan_base",
+                    "modded_dac_vq", 
+                    "dac_44khz_8kbps",
+                    "firefly_gan_vq",
+                    "dac_44khz",
+                    "base"
+                ]
+                
+                self.decoder_model = None
+                for config_name in config_attempts:
+                    try:
+                        logger.info(f"🔄 Trying config: {config_name}")
+                        self.decoder_model = load_decoder_model(
+                            config_name=config_name,
+                            checkpoint_path=f"{self.model_path}/codec.pth",
+                            device=self.device,
+                        )
+                        logger.info(f"✅ Decoder model loaded with config: {config_name}")
+                        break
+                    except Exception as e_config:
+                        logger.debug(f"Config {config_name} failed: {e_config}")
+                        continue
+                
+                if not self.decoder_model:
+                    logger.warning("⚠️ All decoder loading attempts failed for Fish Speech 1.5")
+                    logger.info("🔄 Trying fallback to openaudio-s1-mini...")
+                    
+                    # Try openaudio-s1-mini as fallback
+                    try:
+                        fallback_codec = f"{self.fallback_path}/codec.pth"
+                        if Path(fallback_codec).exists():
+                            self.decoder_model = load_decoder_model(
+                                config_name="modded_dac_vq",  # Known working config for openaudio-s1-mini
+                                checkpoint_path=fallback_codec,
+                                device=self.device,
+                            )
+                            logger.info("✅ Decoder model loaded with openaudio-s1-mini fallback")
+                        else:
+                            logger.info("📝 Will run in semantic-only mode (no audio generation)")
+                    except Exception as e_fallback:
+                        logger.warning(f"⚠️ Fallback also failed: {e_fallback}")
+                        logger.info("📝 Will run in semantic-only mode (no audio generation)")
             
             # Initialize TTS inference engine (decoder optional)
             if self.decoder_model:
