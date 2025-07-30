@@ -703,7 +703,9 @@ class SegmentManager:
                             "utterances": current_segment.get("utterances", []) + next_segment.get("utterances", []),
                             "confidence": (current_segment.get("confidence", 0.5) + next_segment.get("confidence", 0.5)) / 2,
                             "is_merged": True,
-                            "merged_from": [current_segment.get("segment_index", i+1), next_segment.get("segment_index", i+2)]
+                            "merged_from": [current_segment.get("segment_index", i+1), next_segment.get("segment_index", i+2)],
+                            "segment_index": len(cleaned_segments) + 1,  # Temporary index, will be reassigned later
+                            "segment_id": f"segment_{len(cleaned_segments) + 1:03d}"
                         }
                         cleaned_segments.append(merged_segment)
                         i += 2  # Skip both segments
@@ -738,5 +740,11 @@ class SegmentManager:
                 i += 1
         
         logger.info(f"Final cleanup completed: {len(segments)} -> {len(cleaned_segments)} segments")
+        
+        # Re-assign segment indices after cleanup
+        for i, segment in enumerate(cleaned_segments):
+            segment["segment_index"] = i + 1
+            segment["segment_id"] = f"segment_{i+1:03d}"
+        
         return cleaned_segments
 
