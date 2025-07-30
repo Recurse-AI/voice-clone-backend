@@ -86,13 +86,22 @@ class AudioProcessor:
             detected_language = transcript_data.get('metadata', {}).get('language_code', 'en')
             logger.info(f"DEBUG: target_language='{target_language}', detected_language='{detected_language}'")
             
-            # Force translation for English target language
-            if target_language.lower() in ["english", "eng"] and detected_language != "en":
-                logger.info(f"🌍 Translating segments from {detected_language} to {target_language}")
-                segments = self.transcription_service.translate_segments_for_dubbing(
-                    segments, target_language, detected_language, audio_id
-                )
-                logger.info(f"✅ Translation completed for {len(segments)} segments")
+            # Check if text actually contains non-English characters (override wrong detection)
+            sample_text = " ".join([seg.get("text", "") for seg in segments[:3]])
+            has_non_english = any(ord(char) > 127 for char in sample_text)
+            logger.info(f"🔍 Sample text: {sample_text[:100]}...")
+            logger.info(f"🔍 Contains non-English characters: {has_non_english}")
+            
+            # Force translation for English target when text is non-English
+            if target_language.lower() in ["english", "eng"]:
+                if has_non_english:
+                    logger.info(f"🎯 FORCING TRANSLATION: Target is English but text contains non-English characters")
+                    segments = self.transcription_service.translate_segments_for_dubbing(
+                        segments, target_language, "hi", audio_id  # Override with Hindi
+                    )
+                    logger.info(f"✅ Translation completed for {len(segments)} segments")
+                else:
+                    logger.info(f"⏭️ Text already in English, no translation needed")
             elif target_language.lower() != "same" and detected_language != target_language.lower()[:2]:
                 logger.info(f"🌍 Translating segments from {detected_language} to {target_language}")
                 segments = self.transcription_service.translate_segments_for_dubbing(
@@ -482,6 +491,11 @@ class AudioProcessor:
                     # Ensure translated_text is available for voice cloning
                     if "translated_text" not in segment_metadata or not segment_metadata["translated_text"]:
                         segment_metadata["translated_text"] = segment.get("translated_text", segment.get("text", ""))
+                    
+                    # Log what text will be used for voice cloning
+                    logger.info(f"🎯 Segment {segment_index} - Text for cloning: {segment_metadata['translated_text'][:50]}...")
+                    if segment_metadata.get("text") != segment_metadata.get("translated_text"):
+                        logger.info(f"📝 Original text was: {segment_metadata.get('text', '')[:50]}...")
                     
                     # Use original vocal segment audio as reference (no separate reference folder needed)
                     original_audio_path = segments_dir / "segments" / f"segment_{segment_index:03d}.wav"

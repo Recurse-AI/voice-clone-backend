@@ -460,15 +460,15 @@ class TranscriptionService:
         target_script_instruction = language_output_map.get(target_language.lower(), f"{target_language} script only")
         
         prompt = f"""
-CRITICAL TRANSLATION TASK - ENGLISH OUTPUT REQUIRED
+CRITICAL ENGLISH TRANSLATION - NO HINDI ALLOWED
 
-Translate {len(requests)} segments from {detected_language} to ENGLISH.
+Translate {len(requests)} segments from Hindi/Non-English to PERFECT ENGLISH.
 
-MANDATORY REQUIREMENTS:
-1. OUTPUT LANGUAGE: ENGLISH ONLY - Use English alphabet and words only
-2. NO MIXING: Never mix Hindi/other scripts with English 
-3. COMPLETE TRANSLATION: Every segment must be translated to proper English
-4. NATURAL SPEECH: Translate for spoken dialogue, conversational English
+ABSOLUTE REQUIREMENTS - NO EXCEPTIONS:
+1. ENGLISH ONLY: Output must be 100% English alphabet (A-Z, a-z) and English words
+2. ZERO HINDI: Never include ANY Hindi, Devanagari, or non-English characters
+3. COMPLETE TRANSLATION: Transform every Hindi segment into natural English
+4. CONVERSATIONAL ENGLISH: Use natural spoken English, not formal translation
 5. TIMING MATCH: Keep similar syllable count and speaking duration ({sum(req['duration'] for req in requests):.1f}s total)
 6. EMOTIONAL PRESERVATION: Maintain speaker's tone, energy, and emotional intent
 

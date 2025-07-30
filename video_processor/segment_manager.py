@@ -294,14 +294,16 @@ class SegmentManager:
                     # Create individual segment metadata file (required by audio_reconstructor)
                     segment_metadata = {
                         "segment_index": i,
-                    "start": segment["start"],
-                    "end": segment["end"],
-                    "duration": segment["duration"],
+                        "index": i,  # Add index field for voice cloning
+                        "start": segment["start"],
+                        "end": segment["end"],
+                        "duration": segment["duration"],
                         "text": segment["text"],
-                    "speaker": segment["speaker"],
+                        "translated_text": segment.get("translated_text", segment["text"]),  # Include translated text
+                        "speaker": segment["speaker"],
                         "confidence": segment.get("confidence", 0.0),
-                    "type": segment["type"],
-                    "audio_file": segment_filename,
+                        "type": segment["type"],
+                        "audio_file": segment_filename,
                         "sample_rate": sample_rate
                     }
                     

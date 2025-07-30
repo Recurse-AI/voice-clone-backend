@@ -186,10 +186,15 @@ class FishSpeechService:
             
             # Get target language text to synthesize (translated text, not original)
             text_to_clone = segment_metadata.get("translated_text", "")
+            original_text = segment_metadata.get("text", "")
+            
             if not text_to_clone or text_to_clone.startswith("[TO_TRANSLATE:"):
                 # Fallback to original text if translation not available
-                text_to_clone = segment_metadata.get("text", "")
-                logger.warning(f"Using original text as translated text not available: {text_to_clone[:50]}...")
+                text_to_clone = original_text
+                logger.error(f"❌ TRANSLATION MISSING! Using original text: {text_to_clone[:50]}...")
+            else:
+                logger.info(f"✅ Using translated text: {text_to_clone[:50]}...")
+                logger.info(f"📝 Original was: {original_text[:50]}...")
             
             segment_type = segment_metadata.get("type", "speech")
             reference_audio_path = segment_metadata.get("reference_audio_path")
@@ -220,8 +225,9 @@ class FishSpeechService:
                 text=reference_text
             )]
             
-            logger.info(f"Generating voice clone for segment {segment_metadata.get('index', 'unknown')}")
-            logger.info(f"Text length: {len(cleaned_text)} chars")
+            logger.info(f"🎤 Generating voice clone for segment {segment_metadata.get('index', 'unknown')}")
+            logger.info(f"📝 Text for TTS: {cleaned_text}")
+            logger.info(f"📏 Text length: {len(cleaned_text)} chars")
             
             # Simple TTS settings - no chunking needed with max_new_tokens=2048
             tts_request = ServeTTSRequest(
