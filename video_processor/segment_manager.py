@@ -25,6 +25,7 @@ Usage Example:
 import json
 import logging
 from typing import Dict, Any, List
+from datetime import datetime
 import requests
 import numpy as np
 import soundfile as sf
@@ -112,9 +113,9 @@ class SegmentManager:
                 "end": end_sec, 
                 "duration": duration,
                 "text": text,
-                "speaker": speaker,
+                        "speaker": speaker,
                 "confidence": confidence,
-                "type": "speech",
+                        "type": "speech",
                 "words": sentence.get("words", [])
             }
             segments.append(segment)
@@ -126,9 +127,9 @@ class SegmentManager:
             final_silent = {
                 "index": "final_silent",
                 "start": last_end_time,
-                "end": total_duration,
+                    "end": total_duration,
                 "duration": final_gap,
-                "text": "",
+                    "text": "",
                 "speaker": "SILENT", 
                 "confidence": 1.0,
                 "type": "silent",
@@ -193,7 +194,7 @@ class SegmentManager:
                     "reference_audio_path": str(ref_audio_path),
                     "sample_rate": segment["sample_rate"],
                     "duration": segment["duration"],
-                    "speaker": segment["speaker"],
+                "speaker": segment["speaker"],
                     "text": segment["text"],
                     "type": segment["type"]
                 }
@@ -229,7 +230,7 @@ class SegmentManager:
             logger.info(f"Created {len(segments)} segments from {len(sentences)} sentences")
             
             return segments
-            
+        
         except Exception as e:
             logger.error(f"Sentence-based segmentation failed: {str(e)}")
             return []
@@ -282,33 +283,43 @@ class SegmentManager:
             # Prepare speech segments for voice cloning
             speech_segments_for_cloning = self.prepare_segments_for_voice_cloning(reference_segments, target_language)
             
-            # Save segments locally
+            # Create proper directory structure for audio_reconstructor
+            segments_dir = Path(f"segments/{audio_id}")
+            segments_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Create subdirectories  
+            segments_folder = segments_dir / "segments"
+            segments_folder.mkdir(exist_ok=True)
+            
+            # Save segments locally with compatible structure
             saved_segments = []
             for i, segment in enumerate(processed_segments):
                 if segment.get("audio") is not None:
-                    # Save segment audio
-                    segment_path = f"segments/{audio_id}/segment_{i:03d}.wav"
-                    
-                    # Ensure directory exists
-                    segment_dir = Path(f"segments/{audio_id}")
-                    segment_dir.mkdir(parents=True, exist_ok=True)
+                    # Save segment audio in segments/ subfolder
+                    segment_filename = f"segment_{i:03d}.wav"
+                    segment_path = segments_folder / segment_filename
                     
                     # Save audio file
                     sf.write(segment_path, segment["audio"], sample_rate)
                     
-                    # Create segment metadata
+                    # Create individual segment metadata file (required by audio_reconstructor)
                     segment_metadata = {
-                        "index": segment["index"],
-                        "start": segment["start"],
-                        "end": segment["end"], 
-                        "duration": segment["duration"],
+                        "segment_index": i,
+                    "start": segment["start"],
+                    "end": segment["end"],
+                    "duration": segment["duration"],
                         "text": segment["text"],
-                        "speaker": segment["speaker"],
+                    "speaker": segment["speaker"],
                         "confidence": segment.get("confidence", 0.0),
-                        "type": segment["type"],
-                        "audio_path": segment_path,
+                    "type": segment["type"],
+                    "audio_file": segment_filename,
                         "sample_rate": sample_rate
                     }
+                    
+                    # Save individual metadata file (required by audio_reconstructor)
+                    metadata_file = segments_folder / f"segment_{i:03d}_metadata.json"
+                    with open(metadata_file, 'w') as f:
+                        json.dump(segment_metadata, f, indent=2)
                     
                     saved_segments.append(segment_metadata)
             
@@ -322,8 +333,26 @@ class SegmentManager:
                 "speakers_data": speakers_data
             }
             
-            # Store metadata
-            metadata_path = f"segments/{audio_id}/metadata.json"
+            # Create segmentation_summary.json (required by audio_reconstructor)
+            total_duration = max([seg["end"] for seg in saved_segments]) if saved_segments else 0
+            segmentation_summary = {
+                "audio_id": audio_id,
+                "total_duration": total_duration,
+                "total_segments": len(saved_segments),
+                "speech_segments": len([s for s in saved_segments if s["type"] == "speech"]),
+                "silent_segments": len([s for s in saved_segments if s["type"] == "silent"]),
+                "speakers": speakers_data,
+                "target_language": target_language,
+                "detected_language": detected_language,
+                "created_at": datetime.now().isoformat()
+            }
+            
+            summary_path = segments_dir / "segmentation_summary.json"
+            with open(summary_path, 'w') as f:
+                json.dump(segmentation_summary, f, indent=2)
+            
+            # Store metadata (legacy compatibility)
+            metadata_path = segments_dir / "metadata.json"
             with open(metadata_path, 'w') as f:
                 json.dump({
                     "segments": saved_segments,
@@ -336,7 +365,9 @@ class SegmentManager:
                 "segments": saved_segments,
                 "reference_segments": reference_segments,
                 "speech_segments_for_cloning": speech_segments_for_cloning,
-                "metadata_path": metadata_path
+                "metadata_path": str(metadata_path),
+                "segmentation_summary_path": str(summary_path),
+                "segments_directory": str(segments_dir)
             }
             
         except Exception as e:

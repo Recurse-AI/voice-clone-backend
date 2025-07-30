@@ -91,21 +91,24 @@ class AudioProcessor:
             
             # Save segments
             detected_language = transcript_data.get('metadata', {}).get('language_code', 'en')
-            self.segment_manager.save_optimal_segments(
+            segment_result = self.segment_manager.save_optimal_segments(
                 segments, audio, sr, output_dir, 
                 transcript_data['speakers'], target_language, detected_language,
                 original_audio_details
             )
             
+            # Get segments directory for voice cloning and reconstruction
+            segments_directory = segment_result.get("segments_directory", str(output_dir))
+            
             # Voice cloning with Fish Speech
             cloning_result = self._perform_voice_cloning(
-                output_dir, audio_path, audio_id, segments
+                Path(segments_directory), audio_path, audio_id, segments
             )
             
             # Audio reconstruction - create complete dubbed track
             if cloning_result.get("success"):
                 reconstruction_result = self._perform_audio_reconstruction(
-                    output_dir, audio_id, False, None  # No instruments for vocal-only processing
+                    Path(segments_directory), audio_id, False, None  # No instruments for vocal-only processing
                 )
             else:
                 reconstruction_result = {"success": False, "error": "Voice cloning failed"}
