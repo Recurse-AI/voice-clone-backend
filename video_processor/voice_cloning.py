@@ -187,8 +187,15 @@ class FishSpeechService:
             
             # Get text to synthesize
             text_to_clone = segment_metadata.get("text", "")
+            segment_type = segment_metadata.get("type", "speech")
+            
+            # Skip if no text (likely silence segment)
             if not text_to_clone.strip():
-                return {"success": False, "error": "No text to synthesize"}
+                if segment_type in ["silence", "gap"]:
+                    logger.info(f"Skipping {segment_type} segment with no text")
+                    return {"success": False, "error": f"Skipping {segment_type} segment"}
+                else:
+                    return {"success": False, "error": "No text to synthesize"}
             
             # Clean text for TTS (Fish Speech handles emotion markers)
             cleaned_text = self._prepare_text_for_tts(text_to_clone)
@@ -232,22 +239,36 @@ class FishSpeechService:
             import io
             import soundfile as sf
             
-            # Collect all audio arrays with proper shape handling
+            # Handle Fish Speech audio chunks with proper type handling
             audio_arrays = []
             for chunk in audio_chunks:
+                chunk_audio = None
+                
+                # Handle different chunk types from Fish Speech
                 if hasattr(chunk, 'audio'):
                     chunk_audio = chunk.audio
+                elif isinstance(chunk, tuple) and len(chunk) > 0:
+                    # Fish Speech sometimes returns tuples - take first element
+                    chunk_audio = chunk[0]
+                elif isinstance(chunk, np.ndarray):
+                    chunk_audio = chunk
                 else:
                     chunk_audio = chunk
                 
-                # Ensure audio is numpy array and flatten if needed
+                # Process audio data
                 if isinstance(chunk_audio, np.ndarray):
                     # Handle different shapes - flatten to 1D
                     if chunk_audio.ndim > 1:
                         chunk_audio = chunk_audio.flatten()
                     audio_arrays.append(chunk_audio)
+                elif isinstance(chunk_audio, (list, tuple)):
+                    # Convert list/tuple to numpy array
+                    chunk_array = np.array(chunk_audio, dtype=np.float32)
+                    if chunk_array.ndim > 1:
+                        chunk_array = chunk_array.flatten()
+                    audio_arrays.append(chunk_array)
                 else:
-                    logger.warning(f"Unexpected chunk type: {type(chunk_audio)}")
+                    logger.warning(f"Skipping chunk with unsupported type: {type(chunk_audio)}")
             
             # Combine arrays safely
             if audio_arrays:

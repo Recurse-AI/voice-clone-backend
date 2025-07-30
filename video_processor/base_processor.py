@@ -583,6 +583,7 @@ class AudioProcessor:
                 return {
                     "success": True,
                     "dubbed_audio_path": reconstruction_result["output_path"],
+                    "final_audio_path": reconstruction_result["output_path"],  # Add missing key
                     "duration": reconstruction_result["duration"],
                     "stats": reconstruction_result.get("reconstruction_stats", {})
                 }
