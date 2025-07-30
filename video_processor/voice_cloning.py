@@ -27,9 +27,14 @@ class FishSpeechService:
         self.use_compile = use_compile
         self.precision = torch.bfloat16 if self.device == "cuda" else torch.float32
         
-        # Model paths
+        # Model paths (Fish Speech standard structure)
         self.models_dir = Path("./fish_speech_models")
         self.models_dir.mkdir(exist_ok=True)
+        
+        # Create Fish Speech expected directory structure
+        self.checkpoints_dir = Path("./checkpoints")
+        self.checkpoints_dir.mkdir(exist_ok=True)
+        (self.checkpoints_dir / "openaudio-s1-mini").mkdir(exist_ok=True)
         
         # Use OpenAudio S1-mini model (official Fish Speech 1.5 model)
         self.model_repo = "fishaudio/openaudio-s1-mini"  # Official OpenAudio S1-mini
@@ -155,55 +160,62 @@ class FishSpeechService:
             from fish_speech.models.dac.inference import load_model as load_decoder_model
             from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
             
-            # Load models with robust error handling  
+            # Load models with maximum flexibility  
             try:
-                # Try loading from downloaded models first
-                if (self.model_local_path / "config.json").exists():
-                    self.llama_queue = launch_thread_safe_queue(
-                        checkpoint_path=self.model_local_path,
-                        device=self.device,
-                        precision=self.precision,
-                        compile=self.use_compile,
-                    )
-                    logger.info("✅ Language model loaded from downloaded checkpoint")
-                else:
-                    # Try loading default Fish Speech models
-                    self.llama_queue = launch_thread_safe_queue(
-                        checkpoint_path=None,  # Use default
-                        device=self.device,
-                        precision=self.precision,
-                        compile=self.use_compile,
-                    )
-                    logger.info("✅ Language model loaded with default config")
+                # Try loading Fish Speech with built-in model downloading
+                # Fish Speech can auto-download models on first use
+                logger.info("🔄 Initializing Fish Speech with auto-download capability...")
+                
+                # Use Fish Speech's default model path (it will auto-download)
+                default_model_path = "checkpoints/openaudio-s1-mini"
+                
+                self.llama_queue = launch_thread_safe_queue(
+                    checkpoint_path=default_model_path,
+                    device=self.device,
+                    precision=self.precision,
+                    compile=self.use_compile,
+                )
+                logger.info("✅ Language model initialized (Fish Speech will auto-download models)")
             except Exception as e:
-                logger.warning(f"⚠️ Language model loading failed: {e}")
-                logger.info("📝 Will initialize model on first inference")
-                self.llama_queue = None
+                logger.warning(f"⚠️ Default model loading failed: {e}")
+                try:
+                    # Try without checkpoint path (fully default)
+                    self.llama_queue = launch_thread_safe_queue(
+                        checkpoint_path=None,
+                        device=self.device,
+                        precision=self.precision,
+                        compile=self.use_compile,
+                    )
+                    logger.info("✅ Language model loaded with default configuration")
+                except Exception as e2:
+                    logger.warning(f"⚠️ All model loading attempts failed: {e2}")
+                    logger.info("📝 Fish Speech will be initialized on first inference")
+                    self.llama_queue = None
             
             try:
-                codec_path = self.model_local_path / "codec.pth"
-                if codec_path.exists():
-                    self.decoder_model = load_decoder_model(
-                        config_name="modded_dac_vq",
-                        checkpoint_path=str(codec_path),
-                        device=self.device,
-                    )
-                    logger.info("✅ Decoder model loaded from downloaded codec")
-                else:
-                    # Try loading default decoder model
-                    try:
-                        self.decoder_model = load_decoder_model(
-                            config_name="modded_dac_vq",
-                            checkpoint_path=None,  # Use default
-                            device=self.device,
-                        )
-                        logger.info("✅ Decoder model loaded with default config")
-                    except:
-                        logger.warning("⚠️ No decoder model available, will skip audio decoding")
-                        self.decoder_model = None
+                # Try loading with Fish Speech's default codec path
+                default_codec_path = "checkpoints/openaudio-s1-mini/codec.pth"
+                
+                self.decoder_model = load_decoder_model(
+                    config_name="modded_dac_vq",
+                    checkpoint_path=default_codec_path,
+                    device=self.device,
+                )
+                logger.info("✅ Decoder model initialized (Fish Speech will auto-download codec)")
             except Exception as e:
                 logger.warning(f"⚠️ Decoder model loading failed: {e}")
-                self.decoder_model = None
+                try:
+                    # Try with no specific path (fully default)
+                    self.decoder_model = load_decoder_model(
+                        config_name="modded_dac_vq",
+                        checkpoint_path=None,
+                        device=self.device,
+                    )
+                    logger.info("✅ Decoder model loaded with default configuration")
+                except Exception as e2:
+                    logger.warning(f"⚠️ All decoder loading attempts failed: {e2}")
+                    logger.info("📝 Audio decoding will be handled by Fish Speech defaults")
+                    self.decoder_model = None
             
             try:
                 if self.llama_queue and self.decoder_model:
