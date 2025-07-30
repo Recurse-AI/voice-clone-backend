@@ -73,11 +73,18 @@ class FishSpeechService:
             "fishaudio/fish-speech-1"      # Earlier version
         ]
         
-        # OpenAudio S1-mini model files (based on official documentation)
+        # Try different possible model file names (comprehensive search)
         model_files = [
+            # Standard Fish Speech files
             "config.json", "model.pth", "codec.pth", 
             "special_tokens.json", "tokenizer.tiktoken",
-            "README.md", ".gitattributes"  # Additional available files
+            # Alternative naming conventions
+            "pytorch_model.bin", "model.safetensors", "config.yaml",
+            "decoder.pth", "encoder.pth", "checkpoint.pth",
+            # HuggingFace standard files
+            "modeling_code.py", "configuration.json", "generation_config.json",
+            # Available files (from download log)
+            "README.md", ".gitattributes"
         ]
         
         downloaded_files = 0

@@ -44,6 +44,8 @@ pyrootutils>=1.0.4
 resampy>=0.4.3
 zstandard>=0.22.0
 cachetools
+pytorch-lightning>=2.1.0
+lightning>=2.1.0
 
 # AssemblyAI for transcription
 assemblyai
