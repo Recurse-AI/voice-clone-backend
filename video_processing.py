@@ -62,7 +62,7 @@ def process_video_background(
             })
             
             from video_processor.file_handler import FileHandler
-            file_handler = FileHandler()
+            file_handler = FileHandler(temp_dir="./tmp/voice_cloning")
             download_result = file_handler.download_video(video_source, audio_id, original_filename)
             
             if not download_result["success"]:
@@ -397,7 +397,7 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     audio_processor = get_audio_processor()
     
     # Initialize file handler
-    file_handler = FileHandler()
+    file_handler = FileHandler(temp_dir="./tmp/voice_cloning")
     
     video_temp_path = None
     
