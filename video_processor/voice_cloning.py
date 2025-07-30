@@ -27,18 +27,9 @@ class FishSpeechService:
         self.use_compile = use_compile
         self.precision = torch.bfloat16 if self.device == "cuda" else torch.float32
         
-        # Model paths (Fish Speech standard structure)
-        self.models_dir = Path("./fish_speech_models")
-        self.models_dir.mkdir(exist_ok=True)
-        
-        # Create Fish Speech expected directory structure
-        self.checkpoints_dir = Path("./checkpoints")
-        self.checkpoints_dir.mkdir(exist_ok=True)
-        (self.checkpoints_dir / "openaudio-s1-mini").mkdir(exist_ok=True)
-        
-        # Use OpenAudio S1-mini model (official Fish Speech 1.5 model)
-        self.model_repo = "fishaudio/openaudio-s1-mini"  # Official OpenAudio S1-mini
-        self.model_local_path = self.models_dir / "openaudio-s1-mini"
+        # Model configuration
+        self.model_repo = "fishaudio/openaudio-s1-mini"
+        self.model_path = "checkpoints/openaudio-s1-mini"
         
         # Initialize as None, will be loaded lazily
         self.inference_engine = None
@@ -64,81 +55,26 @@ class FishSpeechService:
             )
     
     def _download_models(self):
-        """Download Fish Speech models with fallback options"""
-        logger.info("📥 Downloading Fish Speech models...")
+        """Download OpenAudio S1-mini models"""
+        logger.info("📥 Downloading OpenAudio S1-mini models...")
         
-        # Create model directory
-        self.model_local_path.mkdir(parents=True, exist_ok=True)
+        model_dir = Path(self.model_path)
+        model_dir.mkdir(parents=True, exist_ok=True)
         
-        # Try different model repositories (OpenAudio S1 series from Fish Audio)
-        model_repos = [
-            "fishaudio/openaudio-s1-mini", # Official OpenAudio S1-mini (0.5B parameters)
-            "fishaudio/fish-speech-1.5",   # Fish Speech 1.5 (backup)
-            "fishaudio/fish-speech-1.4",   # Previous stable version  
-            "fishaudio/fish-speech-1"      # Earlier version
-        ]
+        model_files = ["config.json", "model.pth", "codec.pth", "special_tokens.json", "tokenizer.tiktoken"]
         
-        # Try different possible model file names (comprehensive search)
-        model_files = [
-            # Standard Fish Speech files
-            "config.json", "model.pth", "codec.pth", 
-            "special_tokens.json", "tokenizer.tiktoken",
-            # Alternative naming conventions
-            "pytorch_model.bin", "model.safetensors", "config.yaml",
-            "decoder.pth", "encoder.pth", "checkpoint.pth",
-            # HuggingFace standard files
-            "modeling_code.py", "configuration.json", "generation_config.json",
-            # Available files (from download log)
-            "README.md", ".gitattributes"
-        ]
+        for file_name in model_files:
+            if not (model_dir / file_name).exists():
+                hf_hub_download(
+                    repo_id=self.model_repo,
+                    filename=file_name,
+                    local_dir=str(model_dir),
+                    local_dir_use_symlinks=False,
+                    resume_download=True
+                )
+                logger.info(f"✅ Downloaded {file_name}")
         
-        downloaded_files = 0
-        working_repo = None
-        
-        for repo in model_repos:
-            logger.info(f"🔍 Trying repository: {repo}")
-            repo_files = 0
-            
-            # Try to download any available files from this repo
-            for file_name in model_files:
-                local_file_path = self.model_local_path / file_name
-                if not local_file_path.exists():
-                    try:
-                        hf_hub_download(
-                            repo_id=repo,
-                            filename=file_name,
-                            local_dir=str(self.model_local_path),
-                            local_dir_use_symlinks=False,
-                            resume_download=True
-                        )
-                        repo_files += 1
-                        logger.info(f"✅ Downloaded {file_name} from {repo}")
-                    except Exception as e:
-                        logger.debug(f"📝 File {file_name} not available in {repo}: {e}")
-                        continue
-            
-            if repo_files > 0:
-                downloaded_files += repo_files
-                working_repo = repo
-                self.model_repo = repo
-                logger.info(f"✅ Downloaded {repo_files} files from {repo}")
-                break  # Use first working repo
-            else:
-                logger.warning(f"⚠️ No files available in repository: {repo}")
-                continue
-        
-        if downloaded_files > 0:
-            logger.info(f"✅ Successfully downloaded {downloaded_files} model files from {working_repo}")
-        else:
-            logger.warning("⚠️ No pre-trained models downloaded, Fish Speech will work with default models")
-            
-        # Always create status file to track download attempt
-        status_file = self.model_local_path / "download_status.txt"
-        with open(status_file, 'w') as f:
-            if downloaded_files > 0:
-                f.write(f"Downloaded {downloaded_files} files from {working_repo}")
-            else:
-                f.write("Fish Speech will use default models or download on demand")
+        logger.info("✅ Models ready")
     
     def _initialize_models(self):
         """Initialize Fish Speech models completely"""
@@ -160,92 +96,38 @@ class FishSpeechService:
             from fish_speech.models.dac.inference import load_model as load_decoder_model
             from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
             
-            # Load models with maximum flexibility  
-            try:
-                # Try loading Fish Speech with built-in model downloading
-                # Fish Speech can auto-download models on first use
-                logger.info("🔄 Initializing Fish Speech with auto-download capability...")
-                
-                # Use Fish Speech's default model path (it will auto-download)
-                default_model_path = "checkpoints/openaudio-s1-mini"
-                
-                self.llama_queue = launch_thread_safe_queue(
-                    checkpoint_path=default_model_path,
-                    device=self.device,
-                    precision=self.precision,
-                    compile=self.use_compile,
-                )
-                logger.info("✅ Language model initialized (Fish Speech will auto-download models)")
-            except Exception as e:
-                logger.warning(f"⚠️ Default model loading failed: {e}")
-                try:
-                    # Try without checkpoint path (fully default)
-                    self.llama_queue = launch_thread_safe_queue(
-                        checkpoint_path=None,
-                        device=self.device,
-                        precision=self.precision,
-                        compile=self.use_compile,
-                    )
-                    logger.info("✅ Language model loaded with default configuration")
-                except Exception as e2:
-                    logger.warning(f"⚠️ All model loading attempts failed: {e2}")
-                    logger.info("📝 Fish Speech will be initialized on first inference")
-                    self.llama_queue = None
+            # Load Fish Speech language model
+            self.llama_queue = launch_thread_safe_queue(
+                checkpoint_path=self.model_path,
+                device=self.device,
+                precision=self.precision,
+                compile=self.use_compile,
+            )
+            logger.info("✅ Language model loaded")
             
-            try:
-                # Try loading with Fish Speech's default codec path
-                default_codec_path = "checkpoints/openaudio-s1-mini/codec.pth"
-                
-                self.decoder_model = load_decoder_model(
-                    config_name="modded_dac_vq",
-                    checkpoint_path=default_codec_path,
-                    device=self.device,
-                )
-                logger.info("✅ Decoder model initialized (Fish Speech will auto-download codec)")
-            except Exception as e:
-                logger.warning(f"⚠️ Decoder model loading failed: {e}")
-                try:
-                    # Try with no specific path (fully default)
-                    self.decoder_model = load_decoder_model(
-                        config_name="modded_dac_vq",
-                        checkpoint_path=None,
-                        device=self.device,
-                    )
-                    logger.info("✅ Decoder model loaded with default configuration")
-                except Exception as e2:
-                    logger.warning(f"⚠️ All decoder loading attempts failed: {e2}")
-                    logger.info("📝 Audio decoding will be handled by Fish Speech defaults")
-                    self.decoder_model = None
+            # Load Fish Speech decoder model
+            self.decoder_model = load_decoder_model(
+                config_name="modded_dac_vq",
+                checkpoint_path=f"{self.model_path}/codec.pth",
+                device=self.device,
+            )
+            logger.info("✅ Decoder model loaded")
             
-            try:
-                if self.llama_queue and self.decoder_model:
-                    self.inference_engine = TTSInferenceEngine(
-                        llama_queue=self.llama_queue,
-                        decoder_model=self.decoder_model,
-                        compile=self.use_compile,
-                        precision=self.precision,
-                    )
-                    logger.info("✅ TTS inference engine initialized")
-                else:
-                    logger.info("📝 TTS engine will be initialized on first inference")
-                    self.inference_engine = None
-            except Exception as e:
-                logger.warning(f"⚠️ TTS engine initialization failed: {e}")
-                self.inference_engine = None
+            # Initialize TTS inference engine
+            self.inference_engine = TTSInferenceEngine(
+                llama_queue=self.llama_queue,
+                decoder_model=self.decoder_model,
+                compile=self.use_compile,
+                precision=self.precision,
+            )
+            logger.info("✅ TTS inference engine initialized")
             
-            # Warm up (only if models loaded successfully)
-            if self.inference_engine:
-                try:
-                    self._warmup_model()
-                    logger.info("✅ Model warmup completed")
-                except Exception as e:
-                    logger.warning(f"⚠️ Model warmup failed: {e}")
+            # Warm up model
+            self._warmup_model()
+            logger.info("✅ Model warmup completed")
             
             self._is_initialized = True
-            if self.inference_engine:
-                logger.info("✅ Fish Speech fully ready for voice cloning!")
-            else:
-                logger.info("⚠️ Fish Speech initialized in fallback mode - models will load on demand")
+            logger.info("✅ Fish Speech ready for voice cloning!")
     
     def _warmup_model(self):
         """Warm up model with simple inference"""
