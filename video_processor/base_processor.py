@@ -34,7 +34,7 @@ class AudioProcessor:
         
         # Initialize services
         self.transcription_service = TranscriptionService()
-        self.segment_manager = SegmentManager(self.transcription_service)
+        self.segment_manager = SegmentManager()
         self.audio_utils = AudioUtils()
         self.file_manager = FileManager()
         self.audio_reconstructor = AudioReconstructor(str(self.temp_dir))

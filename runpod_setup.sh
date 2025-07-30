@@ -226,3 +226,5 @@ nohup ./venv/bin/python main.py > ./logs/api.log 2>&1 &
 echo "⏳ Waiting for API to start..."
 
 echo "🎉 Setup complete! Your Voice Cloning API is ready!" 
+
+# git pull && pkill -f "python.*main.py" && nohup ./venv/bin/python main.py > ./logs/api.log 2>&1 &
