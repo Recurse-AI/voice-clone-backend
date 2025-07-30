@@ -98,9 +98,9 @@ class AudioReconstructor:
             silence_count = 0
             
             for metadata_file in metadata_files:
-                    with open(metadata_file, 'r', encoding='utf-8') as f:
-                        metadata = json.load(f)
-                    
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                
                 segment_data = {
                     "index": metadata["segment_index"],
                     "start": metadata["start"],
@@ -138,7 +138,7 @@ class AudioReconstructor:
                 "total_duration": summary.get("total_duration", 0)
             }
                     
-                except Exception as e:
+        except Exception as e:
             return {"success": False, "error": f"Timeline data extraction failed: {str(e)}"}
     
     def _reconstruct_vocal_track(self, segments_path: Path, segments: List[Dict[str, Any]], 
