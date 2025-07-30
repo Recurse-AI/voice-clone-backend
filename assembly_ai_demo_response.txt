@@ -1,147 +1,1364 @@
 {
-  "id": "3ad04176-df59-4b78-84c5-01b10bfdada6",
+  "id": "e6ff1a50-e4dc-4fec-94b4-c4932516eca3",
   "language_model": "assemblyai_default",
   "acoustic_model": "assemblyai_default",
   "language_code": "hi",
   "status": "completed",
-  "audio_url": "https://assemblyaiusercontent.com/playground/8b7911bc-dab4-465d-a07d-4e779e37ab5a.mp4",
-  "text": "इसकी वजह क्या थी? उनकी सक्सेस की एक्चुवल वजह क्या आती है आपके अकॉर्डिंग उसकी सक्सेस की एक्च्वल वजह थी, हार्डवर्क और 1 और चीज जो मुझे लगता है वो बहुत प्यार था, बहुत ज्यादा प्यार सोल था। जब 1 प्यार सोल कुछ करता है न तो उसका आपको लाइट दिखता है। जो भी एक्टिंग कर रहा है तुम एक्ट कर ही पाते हो। इतने सारे इमोशंस को डिपिक्ट कर ही पाते हो।",
+  "audio_url": "https://assemblyaiusercontent.com/playground/37c53ddf-f11d-4f84-9a77-6746b8c8e4e1.mp4",
+  "text": "ताइवान ले लेगा। उसके बाद चाइना फिर नहीं रुकेगा। ताइवान लेने के बाद. खत्म बेलगाम, घोड़ा. क्यूँकी वो सेमी सेमी. सिलिकॉन शील्ड को रोक के रखा है और दूसरा उसके बाद क्या है न की अब इसका इंटरनल खत्म हो जायेगा। चाइना का ताईवान लेने के बाद इंटरनल खत्म हो जाएगा, फिर वो केवल और केवल फोकस्ड हो जायेगा। एक्सटरनल और कुछ भी कर ले चाइना। अमेरिका ताइवान को बचाने के लिए एटमिक चाइना का तो कोई लिमिट नहीं, उसको तो हर हाल में चाइना ही चाहिए। वहा ले ले जाएगा वहाँ पर।",
   "words": [
     {
-      "text": "इसकी",
-      "start": 280,
-      "end": 460,
-      "confidence": 0.9774705,
+      "text": "ताइवान",
+      "start": 480,
+      "end": 760,
+      "confidence": 0.9288985,
       "speaker": "A"
     },
     {
-      "text": "वजह",
-      "start": 560,
-      "end": 740,
-      "confidence": 0.9972426,
+      "text": "ले",
+      "start": 800,
+      "end": 880,
+      "confidence": 0.8990752,
       "speaker": "A"
     },
-    ...skip
+    {
+      "text": "लेगा।",
+      "start": 920,
+      "end": 1060,
+      "confidence": 0.8474964,
+      "speaker": "A"
+    },
+    {
+      "text": "उसके",
+      "start": 1120,
+      "end": 1240,
+      "confidence": 0.7634948,
+      "speaker": "A"
+    },
+    {
+      "text": "बाद",
+      "start": 1260,
+      "end": 1320,
+      "confidence": 0.82687163,
+      "speaker": "A"
+    },
+    {
+      "text": "चाइना",
+      "start": 1400,
+      "end": 1580,
+      "confidence": 0.9817065,
+      "speaker": "A"
+    },
+    {
+      "text": "फिर",
+      "start": 1660,
+      "end": 1740,
+      "confidence": 0.89974624,
+      "speaker": "A"
+    },
+    {
+      "text": "नहीं",
+      "start": 1820,
+      "end": 1940,
+      "confidence": 0.89238834,
+      "speaker": "A"
+    },
+    {
+      "text": "रुकेगा।",
+      "start": 1960,
+      "end": 2240,
+      "confidence": 0.93948734,
+      "speaker": "A"
+    },
+    {
+      "text": "ताइवान",
+      "start": 3680,
+      "end": 3960,
+      "confidence": 0.96645945,
+      "speaker": "B"
+    },
+    {
+      "text": "लेने",
+      "start": 4019,
+      "end": 4160,
+      "confidence": 0.9720312,
+      "speaker": "B"
+    },
+    {
+      "text": "के",
+      "start": 4220,
+      "end": 4260,
+      "confidence": 0.90284956,
+      "speaker": "B"
+    },
+    {
+      "text": "बाद.",
+      "start": 4320,
+      "end": 4420,
+      "confidence": 0.8863467,
+      "speaker": "B"
+    },
+    {
+      "text": "खत्म",
+      "start": 4660,
+      "end": 4860,
+      "confidence": 0.89012986,
+      "speaker": "A"
+    },
+    {
+      "text": "बेलगाम,",
+      "start": 5000,
+      "end": 5420,
+      "confidence": 0.94421166,
+      "speaker": "A"
+    },
+    {
+      "text": "घोड़ा.",
+      "start": 5520,
+      "end": 5720,
+      "confidence": 0.90806544,
+      "speaker": "A"
+    },
+    {
+      "text": "क्यूँकी",
+      "start": 7060,
+      "end": 7240,
+      "confidence": 0.822915,
+      "speaker": "B"
+    },
+    {
+      "text": "वो",
+      "start": 7280,
+      "end": 7340,
+      "confidence": 0.68768954,
+      "speaker": "B"
+    },
+    {
+      "text": "सेमी",
+      "start": 7400,
+      "end": 7580,
+      "confidence": 0.8554576,
+      "speaker": "B"
+    },
+    {
+      "text": "सेमी.",
+      "start": 8119,
+      "end": 8400,
+      "confidence": 0.80649716,
+      "speaker": "B"
+    },
+    {
+      "text": "सिलिकॉन",
+      "start": 8820,
+      "end": 9160,
+      "confidence": 0.9021052,
+      "speaker": "A"
+    },
+    {
+      "text": "शील्ड",
+      "start": 9260,
+      "end": 9480,
+      "confidence": 0.88921696,
+      "speaker": "A"
+    },
+    {
+      "text": "को",
+      "start": 9640,
+      "end": 9700,
+      "confidence": 0.93391675,
+      "speaker": "A"
+    },
+    {
+      "text": "रोक",
+      "start": 9760,
+      "end": 9900,
+      "confidence": 0.9589535,
+      "speaker": "A"
+    },
+    {
+      "text": "के",
+      "start": 9960,
+      "end": 10020,
+      "confidence": 0.8773246,
+      "speaker": "A"
+    },
+    {
+      "text": "रखा",
+      "start": 10060,
+      "end": 10260,
+      "confidence": 0.92619735,
+      "speaker": "A"
+    },
+    {
+      "text": "है",
+      "start": 10300,
+      "end": 10360,
+      "confidence": 0.81863004,
+      "speaker": "A"
+    },
+    {
+      "text": "और",
+      "start": 10780,
+      "end": 10860,
+      "confidence": 0.79783905,
+      "speaker": "A"
+    },
+    {
+      "text": "दूसरा",
+      "start": 10920,
+      "end": 11120,
+      "confidence": 0.9248064,
+      "speaker": "A"
+    },
+    {
+      "text": "उसके",
+      "start": 11200,
+      "end": 11380,
+      "confidence": 0.9077199,
+      "speaker": "A"
+    },
+    {
+      "text": "बाद",
+      "start": 11440,
+      "end": 11540,
+      "confidence": 0.9450123,
+      "speaker": "A"
+    },
+    {
+      "text": "क्या",
+      "start": 11620,
+      "end": 11740,
+      "confidence": 0.90328044,
+      "speaker": "A"
+    },
+    {
+      "text": "है",
+      "start": 11780,
+      "end": 11820,
+      "confidence": 0.8288912,
+      "speaker": "A"
+    },
+    {
+      "text": "न",
+      "start": 11880,
+      "end": 11900,
+      "confidence": 0.91354424,
+      "speaker": "A"
+    },
+    {
+      "text": "की",
+      "start": 12020,
+      "end": 12080,
+      "confidence": 0.81605864,
+      "speaker": "A"
+    },
+    {
+      "text": "अब",
+      "start": 12680,
+      "end": 12800,
+      "confidence": 0.88305634,
+      "speaker": "A"
+    },
+    {
+      "text": "इसका",
+      "start": 12900,
+      "end": 13140,
+      "confidence": 0.95005816,
+      "speaker": "A"
+    },
+    {
+      "text": "इंटरनल",
+      "start": 13340,
+      "end": 13820,
+      "confidence": 0.92139345,
+      "speaker": "A"
+    },
+    {
+      "text": "खत्म",
+      "start": 14080,
+      "end": 14260,
+      "confidence": 0.88161963,
+      "speaker": "A"
+    },
+    {
+      "text": "हो",
+      "start": 14300,
+      "end": 14340,
+      "confidence": 0.7841394,
+      "speaker": "A"
+    },
+    {
+      "text": "जायेगा।",
+      "start": 14380,
+      "end": 14540,
+      "confidence": 0.8762658,
+      "speaker": "A"
+    },
+    {
+      "text": "चाइना",
+      "start": 14600,
+      "end": 14800,
+      "confidence": 0.9531636,
+      "speaker": "A"
+    },
+    {
+      "text": "का",
+      "start": 14880,
+      "end": 14920,
+      "confidence": 0.8601599,
+      "speaker": "A"
+    },
+    {
+      "text": "ताईवान",
+      "start": 15360,
+      "end": 15660,
+      "confidence": 0.94288766,
+      "speaker": "A"
+    },
+    {
+      "text": "लेने",
+      "start": 15700,
+      "end": 15860,
+      "confidence": 0.9242847,
+      "speaker": "A"
+    },
+    {
+      "text": "के",
+      "start": 15920,
+      "end": 15980,
+      "confidence": 0.90873617,
+      "speaker": "A"
+    },
+    {
+      "text": "बाद",
+      "start": 16020,
+      "end": 16121,
+      "confidence": 0.8462957,
+      "speaker": "A"
+    },
+    {
+      "text": "इंटरनल",
+      "start": 16180,
+      "end": 16520,
+      "confidence": 0.8486797,
+      "speaker": "A"
+    },
+    {
+      "text": "खत्म",
+      "start": 16600,
+      "end": 16780,
+      "confidence": 0.93178666,
+      "speaker": "A"
+    },
+    {
+      "text": "हो",
+      "start": 16840,
+      "end": 16880,
+      "confidence": 0.81134284,
+      "speaker": "A"
+    },
+    {
+      "text": "जाएगा,",
+      "start": 16920,
+      "end": 17120,
+      "confidence": 0.77126276,
+      "speaker": "A"
+    },
+    {
+      "text": "फिर",
+      "start": 17780,
+      "end": 17900,
+      "confidence": 0.7536273,
+      "speaker": "A"
+    },
+    {
+      "text": "वो",
+      "start": 17940,
+      "end": 18000,
+      "confidence": 0.68844587,
+      "speaker": "A"
+    },
+    {
+      "text": "केवल",
+      "start": 18300,
+      "end": 18640,
+      "confidence": 0.97943103,
+      "speaker": "A"
+    },
+    {
+      "text": "और",
+      "start": 18700,
+      "end": 18760,
+      "confidence": 0.7847657,
+      "speaker": "A"
+    },
+    {
+      "text": "केवल",
+      "start": 18840,
+      "end": 19000,
+      "confidence": 0.92171377,
+      "speaker": "A"
+    },
+    {
+      "text": "फोकस्ड",
+      "start": 19140,
+      "end": 19520,
+      "confidence": 0.97336787,
+      "speaker": "A"
+    },
+    {
+      "text": "हो",
+      "start": 19560,
+      "end": 19600,
+      "confidence": 0.9207871,
+      "speaker": "A"
+    },
+    {
+      "text": "जायेगा।",
+      "start": 19640,
+      "end": 19820,
+      "confidence": 0.8223196,
+      "speaker": "A"
+    },
+    {
+      "text": "एक्सटरनल",
+      "start": 19880,
+      "end": 20340,
+      "confidence": 0.9053207,
+      "speaker": "A"
+    },
+    {
+      "text": "और",
+      "start": 21180,
+      "end": 21260,
+      "confidence": 0.87601674,
+      "speaker": "A"
+    },
+    {
+      "text": "कुछ",
+      "start": 21380,
+      "end": 21500,
+      "confidence": 0.95078284,
+      "speaker": "A"
+    },
+    {
+      "text": "भी",
+      "start": 21580,
+      "end": 21640,
+      "confidence": 0.7927119,
+      "speaker": "A"
+    },
+    {
+      "text": "कर",
+      "start": 21720,
+      "end": 21820,
+      "confidence": 0.9094933,
+      "speaker": "A"
+    },
+    {
+      "text": "ले",
+      "start": 21900,
+      "end": 21960,
+      "confidence": 0.891723,
+      "speaker": "A"
+    },
+    {
+      "text": "चाइना।",
+      "start": 22080,
+      "end": 22340,
+      "confidence": 0.9771906,
+      "speaker": "A"
+    },
+    {
+      "text": "अमेरिका",
+      "start": 22760,
+      "end": 23080,
+      "confidence": 0.92843556,
+      "speaker": "A"
+    },
+    {
+      "text": "ताइवान",
+      "start": 23180,
+      "end": 23500,
+      "confidence": 0.94702494,
+      "speaker": "A"
+    },
+    {
+      "text": "को",
+      "start": 23560,
+      "end": 23620,
+      "confidence": 0.92369884,
+      "speaker": "A"
+    },
+    {
+      "text": "बचाने",
+      "start": 23680,
+      "end": 23920,
+      "confidence": 0.9206218,
+      "speaker": "A"
+    },
+    {
+      "text": "के",
+      "start": 23960,
+      "end": 24020,
+      "confidence": 0.9516592,
+      "speaker": "A"
+    },
+    {
+      "text": "लिए",
+      "start": 24040,
+      "end": 24140,
+      "confidence": 0.93098575,
+      "speaker": "A"
+    },
+    {
+      "text": "एटमिक",
+      "start": 24200,
+      "end": 24500,
+      "confidence": 0.9385939,
+      "speaker": "A"
+    },
+    {
+      "text": "चाइना",
+      "start": 26482,
+      "end": 26744,
+      "confidence": 0.9903126,
+      "speaker": "A"
+    },
+    {
+      "text": "का",
+      "start": 26823,
+      "end": 26864,
+      "confidence": 0.9945859,
+      "speaker": "A"
+    },
+    {
+      "text": "तो",
+      "start": 26923,
+      "end": 26985,
+      "confidence": 0.99679184,
+      "speaker": "A"
+    },
+    {
+      "text": "कोई",
+      "start": 27044,
+      "end": 27145,
+      "confidence": 0.9342308,
+      "speaker": "A"
+    },
+    {
+      "text": "लिमिट",
+      "start": 27224,
+      "end": 27426,
+      "confidence": 0.97843456,
+      "speaker": "A"
+    },
+    {
+      "text": "नहीं,",
+      "start": 27505,
+      "end": 27606,
+      "confidence": 0.8892478,
+      "speaker": "A"
+    },
+    {
+      "text": "उसको",
+      "start": 27706,
+      "end": 27907,
+      "confidence": 0.98687994,
+      "speaker": "A"
+    },
+    {
+      "text": "तो",
+      "start": 27967,
+      "end": 28008,
+      "confidence": 0.9733511,
+      "speaker": "A"
+    },
+    {
+      "text": "हर",
+      "start": 28107,
+      "end": 28208,
+      "confidence": 0.996702,
+      "speaker": "A"
+    },
+    {
+      "text": "हाल",
+      "start": 28268,
+      "end": 28369,
+      "confidence": 0.989126,
+      "speaker": "A"
+    },
+    {
+      "text": "में",
+      "start": 28428,
+      "end": 28489,
+      "confidence": 0.9521117,
+      "speaker": "A"
+    },
+    {
+      "text": "चाइना",
+      "start": 28669,
+      "end": 28850,
+      "confidence": 0.9158456,
+      "speaker": "A"
+    },
     {
       "text": "ही",
-      "start": 28160,
-      "end": 28220,
-      "confidence": 0.8947241,
+      "start": 28990,
+      "end": 29031,
+      "confidence": 0.92708856,
       "speaker": "A"
     },
     {
-      "text": "पाते",
-      "start": 28320,
-      "end": 28560,
-      "confidence": 0.99842006,
+      "text": "चाहिए।",
+      "start": 29090,
+      "end": 29272,
+      "confidence": 0.96764576,
       "speaker": "A"
     },
     {
-      "text": "हो।",
-      "start": 28600,
-      "end": 28640,
-      "confidence": 0.8963935,
+      "text": "वहा",
+      "start": 29371,
+      "end": 29492,
+      "confidence": 0.8877165,
+      "speaker": "A"
+    },
+    {
+      "text": "ले",
+      "start": 30314,
+      "end": 30375,
+      "confidence": 0.94057864,
+      "speaker": "A"
+    },
+    {
+      "text": "ले",
+      "start": 30735,
+      "end": 30796,
+      "confidence": 0.97860545,
+      "speaker": "A"
+    },
+    {
+      "text": "जाएगा",
+      "start": 30956,
+      "end": 31178,
+      "confidence": 0.93612885,
+      "speaker": "A"
+    },
+    {
+      "text": "वहाँ",
+      "start": 31237,
+      "end": 31358,
+      "confidence": 0.90187746,
+      "speaker": "A"
+    },
+    {
+      "text": "पर।",
+      "start": 31417,
+      "end": 31499,
+      "confidence": 0.8899858,
       "speaker": "A"
     }
   ],
   "utterances": [
     {
       "speaker": "A",
-      "text": "इसकी वजह क्या थी? उनकी सक्सेस की एक्चुवल वजह क्या आती है आपके अकॉर्डिंग उसकी सक्सेस की एक्च्वल वजह थी, हार्डवर्क और 1 और चीज जो मुझे लगता है वो बहुत प्यार था, बहुत ज्यादा प्यार सोल था। जब 1 प्यार सोल कुछ करता है न तो उसका आपको लाइट दिखता है। जो भी एक्टिंग कर रहा है तुम एक्ट कर ही पाते हो। इतने सारे इमोशंस को डिपिक्ट कर ही पाते हो।",
-      "confidence": 0.95746714,
-      "start": 280,
-      "end": 28640,
+      "text": "ताइवान ले लेगा। उसके बाद चाइना फिर नहीं रुकेगा।",
+      "confidence": 0.8865739,
+      "start": 480,
+      "end": 2240,
       "words": [
         {
-          "text": "इसकी",
-          "start": 280,
-          "end": 460,
-          "confidence": 0.9774705,
+          "text": "ताइवान",
+          "start": 480,
+          "end": 760,
+          "confidence": 0.9288985,
           "speaker": "A"
         },
         {
-          "text": "वजह",
-          "start": 560,
-          "end": 740,
-          "confidence": 0.9972426,
-          "speaker": "A"
-        },
-        {
-          "text": "क्या",
+          "text": "ले",
           "start": 800,
-          "end": 920,
-          "confidence": 0.9111507,
+          "end": 880,
+          "confidence": 0.8990752,
           "speaker": "A"
         },
         {
-          "text": "थी?",
-          "start": 1000,
+          "text": "लेगा।",
+          "start": 920,
           "end": 1060,
-          "confidence": 0.8887841,
+          "confidence": 0.8474964,
           "speaker": "A"
         },
         {
-          "text": "उनकी",
-          "start": 1760,
-          "end": 1960,
-          "confidence": 0.90997285,
-          "speaker": "A"
-        },
-        ...skip
-        {
-          "text": "कर",
-          "start": 24120,
-          "end": 24220,
-          "confidence": 0.91207874,
+          "text": "उसके",
+          "start": 1120,
+          "end": 1240,
+          "confidence": 0.7634948,
           "speaker": "A"
         },
         {
-          "text": "रहा",
-          "start": 24280,
-          "end": 24360,
-          "confidence": 0.85377276,
+          "text": "बाद",
+          "start": 1260,
+          "end": 1320,
+          "confidence": 0.82687163,
+          "speaker": "A"
+        },
+        {
+          "text": "चाइना",
+          "start": 1400,
+          "end": 1580,
+          "confidence": 0.9817065,
+          "speaker": "A"
+        },
+        {
+          "text": "फिर",
+          "start": 1660,
+          "end": 1740,
+          "confidence": 0.89974624,
+          "speaker": "A"
+        },
+        {
+          "text": "नहीं",
+          "start": 1820,
+          "end": 1940,
+          "confidence": 0.89238834,
+          "speaker": "A"
+        },
+        {
+          "text": "रुकेगा।",
+          "start": 1960,
+          "end": 2240,
+          "confidence": 0.93948734,
+          "speaker": "A"
+        }
+      ]
+    },
+    {
+      "speaker": "B",
+      "text": "ताइवान लेने के बाद.",
+      "confidence": 0.9319217,
+      "start": 3680,
+      "end": 4420,
+      "words": [
+        {
+          "text": "ताइवान",
+          "start": 3680,
+          "end": 3960,
+          "confidence": 0.96645945,
+          "speaker": "B"
+        },
+        {
+          "text": "लेने",
+          "start": 4019,
+          "end": 4160,
+          "confidence": 0.9720312,
+          "speaker": "B"
+        },
+        {
+          "text": "के",
+          "start": 4220,
+          "end": 4260,
+          "confidence": 0.90284956,
+          "speaker": "B"
+        },
+        {
+          "text": "बाद.",
+          "start": 4320,
+          "end": 4420,
+          "confidence": 0.8863467,
+          "speaker": "B"
+        }
+      ]
+    },
+    {
+      "speaker": "A",
+      "text": "खत्म बेलगाम, घोड़ा.",
+      "confidence": 0.91413563,
+      "start": 4660,
+      "end": 5720,
+      "words": [
+        {
+          "text": "खत्म",
+          "start": 4660,
+          "end": 4860,
+          "confidence": 0.89012986,
+          "speaker": "A"
+        },
+        {
+          "text": "बेलगाम,",
+          "start": 5000,
+          "end": 5420,
+          "confidence": 0.94421166,
+          "speaker": "A"
+        },
+        {
+          "text": "घोड़ा.",
+          "start": 5520,
+          "end": 5720,
+          "confidence": 0.90806544,
+          "speaker": "A"
+        }
+      ]
+    },
+    {
+      "speaker": "B",
+      "text": "क्यूँकी वो सेमी सेमी.",
+      "confidence": 0.7931398,
+      "start": 7060,
+      "end": 8400,
+      "words": [
+        {
+          "text": "क्यूँकी",
+          "start": 7060,
+          "end": 7240,
+          "confidence": 0.822915,
+          "speaker": "B"
+        },
+        {
+          "text": "वो",
+          "start": 7280,
+          "end": 7340,
+          "confidence": 0.68768954,
+          "speaker": "B"
+        },
+        {
+          "text": "सेमी",
+          "start": 7400,
+          "end": 7580,
+          "confidence": 0.8554576,
+          "speaker": "B"
+        },
+        {
+          "text": "सेमी.",
+          "start": 8119,
+          "end": 8400,
+          "confidence": 0.80649716,
+          "speaker": "B"
+        }
+      ]
+    },
+    {
+      "speaker": "A",
+      "text": "सिलिकॉन शील्ड को रोक के रखा है और दूसरा उसके बाद क्या है न की अब इसका इंटरनल खत्म हो जायेगा। चाइना का ताईवान लेने के बाद इंटरनल खत्म हो जाएगा, फिर वो केवल और केवल फोकस्ड हो जायेगा। एक्सटरनल और कुछ भी कर ले चाइना। अमेरिका ताइवान को बचाने के लिए एटमिक चाइना का तो कोई लिमिट नहीं, उसको तो हर हाल में चाइना ही चाहिए। वहा ले ले जाएगा वहाँ पर।",
+      "confidence": 0.9062273,
+      "start": 8820,
+      "end": 31499,
+      "words": [
+        {
+          "text": "सिलिकॉन",
+          "start": 8820,
+          "end": 9160,
+          "confidence": 0.9021052,
+          "speaker": "A"
+        },
+        {
+          "text": "शील्ड",
+          "start": 9260,
+          "end": 9480,
+          "confidence": 0.88921696,
+          "speaker": "A"
+        },
+        {
+          "text": "को",
+          "start": 9640,
+          "end": 9700,
+          "confidence": 0.93391675,
+          "speaker": "A"
+        },
+        {
+          "text": "रोक",
+          "start": 9760,
+          "end": 9900,
+          "confidence": 0.9589535,
+          "speaker": "A"
+        },
+        {
+          "text": "के",
+          "start": 9960,
+          "end": 10020,
+          "confidence": 0.8773246,
+          "speaker": "A"
+        },
+        {
+          "text": "रखा",
+          "start": 10060,
+          "end": 10260,
+          "confidence": 0.92619735,
           "speaker": "A"
         },
         {
           "text": "है",
-          "start": 24420,
-          "end": 24460,
-          "confidence": 0.845117,
+          "start": 10300,
+          "end": 10360,
+          "confidence": 0.81863004,
           "speaker": "A"
         },
         {
-          "text": "तुम",
-          "start": 25000,
-          "end": 25120,
-          "confidence": 0.9735141,
+          "text": "और",
+          "start": 10780,
+          "end": 10860,
+          "confidence": 0.79783905,
+          "speaker": "A"
+        },
+        {
+          "text": "दूसरा",
+          "start": 10920,
+          "end": 11120,
+          "confidence": 0.9248064,
+          "speaker": "A"
+        },
+        {
+          "text": "उसके",
+          "start": 11200,
+          "end": 11380,
+          "confidence": 0.9077199,
+          "speaker": "A"
+        },
+        {
+          "text": "बाद",
+          "start": 11440,
+          "end": 11540,
+          "confidence": 0.9450123,
+          "speaker": "A"
+        },
+        {
+          "text": "क्या",
+          "start": 11620,
+          "end": 11740,
+          "confidence": 0.90328044,
+          "speaker": "A"
+        },
+        {
+          "text": "है",
+          "start": 11780,
+          "end": 11820,
+          "confidence": 0.8288912,
+          "speaker": "A"
+        },
+        {
+          "text": "न",
+          "start": 11880,
+          "end": 11900,
+          "confidence": 0.91354424,
+          "speaker": "A"
+        },
+        {
+          "text": "की",
+          "start": 12020,
+          "end": 12080,
+          "confidence": 0.81605864,
+          "speaker": "A"
+        },
+        {
+          "text": "अब",
+          "start": 12680,
+          "end": 12800,
+          "confidence": 0.88305634,
+          "speaker": "A"
+        },
+        {
+          "text": "इसका",
+          "start": 12900,
+          "end": 13140,
+          "confidence": 0.95005816,
+          "speaker": "A"
+        },
+        {
+          "text": "इंटरनल",
+          "start": 13340,
+          "end": 13820,
+          "confidence": 0.92139345,
+          "speaker": "A"
+        },
+        {
+          "text": "खत्म",
+          "start": 14080,
+          "end": 14260,
+          "confidence": 0.88161963,
+          "speaker": "A"
+        },
+        {
+          "text": "हो",
+          "start": 14300,
+          "end": 14340,
+          "confidence": 0.7841394,
+          "speaker": "A"
+        },
+        {
+          "text": "जायेगा।",
+          "start": 14380,
+          "end": 14540,
+          "confidence": 0.8762658,
+          "speaker": "A"
+        },
+        {
+          "text": "चाइना",
+          "start": 14600,
+          "end": 14800,
+          "confidence": 0.9531636,
+          "speaker": "A"
+        },
+        {
+          "text": "का",
+          "start": 14880,
+          "end": 14920,
+          "confidence": 0.8601599,
+          "speaker": "A"
+        },
+        {
+          "text": "ताईवान",
+          "start": 15360,
+          "end": 15660,
+          "confidence": 0.94288766,
+          "speaker": "A"
+        },
+        {
+          "text": "लेने",
+          "start": 15700,
+          "end": 15860,
+          "confidence": 0.9242847,
+          "speaker": "A"
+        },
+        {
+          "text": "के",
+          "start": 15920,
+          "end": 15980,
+          "confidence": 0.90873617,
+          "speaker": "A"
+        },
+        {
+          "text": "बाद",
+          "start": 16020,
+          "end": 16121,
+          "confidence": 0.8462957,
+          "speaker": "A"
+        },
+        {
+          "text": "इंटरनल",
+          "start": 16180,
+          "end": 16520,
+          "confidence": 0.8486797,
+          "speaker": "A"
+        },
+        {
+          "text": "खत्म",
+          "start": 16600,
+          "end": 16780,
+          "confidence": 0.93178666,
+          "speaker": "A"
+        },
+        {
+          "text": "हो",
+          "start": 16840,
+          "end": 16880,
+          "confidence": 0.81134284,
+          "speaker": "A"
+        },
+        {
+          "text": "जाएगा,",
+          "start": 16920,
+          "end": 17120,
+          "confidence": 0.77126276,
+          "speaker": "A"
+        },
+        {
+          "text": "फिर",
+          "start": 17780,
+          "end": 17900,
+          "confidence": 0.7536273,
+          "speaker": "A"
+        },
+        {
+          "text": "वो",
+          "start": 17940,
+          "end": 18000,
+          "confidence": 0.68844587,
+          "speaker": "A"
+        },
+        {
+          "text": "केवल",
+          "start": 18300,
+          "end": 18640,
+          "confidence": 0.97943103,
+          "speaker": "A"
+        },
+        {
+          "text": "और",
+          "start": 18700,
+          "end": 18760,
+          "confidence": 0.7847657,
+          "speaker": "A"
+        },
+        {
+          "text": "केवल",
+          "start": 18840,
+          "end": 19000,
+          "confidence": 0.92171377,
+          "speaker": "A"
+        },
+        {
+          "text": "फोकस्ड",
+          "start": 19140,
+          "end": 19520,
+          "confidence": 0.97336787,
+          "speaker": "A"
+        },
+        {
+          "text": "हो",
+          "start": 19560,
+          "end": 19600,
+          "confidence": 0.9207871,
+          "speaker": "A"
+        },
+        {
+          "text": "जायेगा।",
+          "start": 19640,
+          "end": 19820,
+          "confidence": 0.8223196,
+          "speaker": "A"
+        },
+        {
+          "text": "एक्सटरनल",
+          "start": 19880,
+          "end": 20340,
+          "confidence": 0.9053207,
+          "speaker": "A"
+        },
+        {
+          "text": "और",
+          "start": 21180,
+          "end": 21260,
+          "confidence": 0.87601674,
+          "speaker": "A"
+        },
+        {
+          "text": "कुछ",
+          "start": 21380,
+          "end": 21500,
+          "confidence": 0.95078284,
+          "speaker": "A"
+        },
+        {
+          "text": "भी",
+          "start": 21580,
+          "end": 21640,
+          "confidence": 0.7927119,
+          "speaker": "A"
+        },
+        {
+          "text": "कर",
+          "start": 21720,
+          "end": 21820,
+          "confidence": 0.9094933,
+          "speaker": "A"
+        },
+        {
+          "text": "ले",
+          "start": 21900,
+          "end": 21960,
+          "confidence": 0.891723,
+          "speaker": "A"
+        },
+        {
+          "text": "चाइना।",
+          "start": 22080,
+          "end": 22340,
+          "confidence": 0.9771906,
+          "speaker": "A"
+        },
+        {
+          "text": "अमेरिका",
+          "start": 22760,
+          "end": 23080,
+          "confidence": 0.92843556,
+          "speaker": "A"
+        },
+        {
+          "text": "ताइवान",
+          "start": 23180,
+          "end": 23500,
+          "confidence": 0.94702494,
+          "speaker": "A"
+        },
+        {
+          "text": "को",
+          "start": 23560,
+          "end": 23620,
+          "confidence": 0.92369884,
+          "speaker": "A"
+        },
+        {
+          "text": "बचाने",
+          "start": 23680,
+          "end": 23920,
+          "confidence": 0.9206218,
+          "speaker": "A"
+        },
+        {
+          "text": "के",
+          "start": 23960,
+          "end": 24020,
+          "confidence": 0.9516592,
+          "speaker": "A"
+        },
+        {
+          "text": "लिए",
+          "start": 24040,
+          "end": 24140,
+          "confidence": 0.93098575,
+          "speaker": "A"
+        },
+        {
+          "text": "एटमिक",
+          "start": 24200,
+          "end": 24500,
+          "confidence": 0.9385939,
+          "speaker": "A"
+        },
+        {
+          "text": "चाइना",
+          "start": 26482,
+          "end": 26744,
+          "confidence": 0.9903126,
+          "speaker": "A"
+        },
+        {
+          "text": "का",
+          "start": 26823,
+          "end": 26864,
+          "confidence": 0.9945859,
+          "speaker": "A"
+        },
+        {
+          "text": "तो",
+          "start": 26923,
+          "end": 26985,
+          "confidence": 0.99679184,
+          "speaker": "A"
+        },
+        {
+          "text": "कोई",
+          "start": 27044,
+          "end": 27145,
+          "confidence": 0.9342308,
+          "speaker": "A"
+        },
+        {
+          "text": "लिमिट",
+          "start": 27224,
+          "end": 27426,
+          "confidence": 0.97843456,
+          "speaker": "A"
+        },
+        {
+          "text": "नहीं,",
+          "start": 27505,
+          "end": 27606,
+          "confidence": 0.8892478,
+          "speaker": "A"
+        },
+        {
+          "text": "उसको",
+          "start": 27706,
+          "end": 27907,
+          "confidence": 0.98687994,
+          "speaker": "A"
+        },
+        {
+          "text": "तो",
+          "start": 27967,
+          "end": 28008,
+          "confidence": 0.9733511,
+          "speaker": "A"
+        },
+        {
+          "text": "हर",
+          "start": 28107,
+          "end": 28208,
+          "confidence": 0.996702,
+          "speaker": "A"
+        },
+        {
+          "text": "हाल",
+          "start": 28268,
+          "end": 28369,
+          "confidence": 0.989126,
+          "speaker": "A"
+        },
+        {
+          "text": "में",
+          "start": 28428,
+          "end": 28489,
+          "confidence": 0.9521117,
+          "speaker": "A"
+        },
+        {
+          "text": "चाइना",
+          "start": 28669,
+          "end": 28850,
+          "confidence": 0.9158456,
           "speaker": "A"
         },
         {
           "text": "ही",
-          "start": 28160,
-          "end": 28220,
-          "confidence": 0.8947241,
+          "start": 28990,
+          "end": 29031,
+          "confidence": 0.92708856,
           "speaker": "A"
         },
         {
-          "text": "पाते",
-          "start": 28320,
-          "end": 28560,
-          "confidence": 0.99842006,
+          "text": "चाहिए।",
+          "start": 29090,
+          "end": 29272,
+          "confidence": 0.96764576,
           "speaker": "A"
         },
         {
-          "text": "हो।",
-          "start": 28600,
-          "end": 28640,
-          "confidence": 0.8963935,
+          "text": "वहा",
+          "start": 29371,
+          "end": 29492,
+          "confidence": 0.8877165,
+          "speaker": "A"
+        },
+        {
+          "text": "ले",
+          "start": 30314,
+          "end": 30375,
+          "confidence": 0.94057864,
+          "speaker": "A"
+        },
+        {
+          "text": "ले",
+          "start": 30735,
+          "end": 30796,
+          "confidence": 0.97860545,
+          "speaker": "A"
+        },
+        {
+          "text": "जाएगा",
+          "start": 30956,
+          "end": 31178,
+          "confidence": 0.93612885,
+          "speaker": "A"
+        },
+        {
+          "text": "वहाँ",
+          "start": 31237,
+          "end": 31358,
+          "confidence": 0.90187746,
+          "speaker": "A"
+        },
+        {
+          "text": "पर।",
+          "start": 31417,
+          "end": 31499,
+          "confidence": 0.8899858,
           "speaker": "A"
         }
       ]
     }
   ],
-  "confidence": 0.95746714,
-  "audio_duration": 29,
+  "confidence": 0.9008216,
+  "audio_duration": 32,
   "punctuate": true,
   "format_text": true,
   "dual_channel": false,
@@ -181,7 +1398,7 @@
   },
   "language_detection": true,
   "language_confidence_threshold": 0.1,
-  "language_confidence": 0.9935,
+  "language_confidence": 0.9963,
   "custom_spelling": null,
   "throttled": false,
   "auto_chapters": false,

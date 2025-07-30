@@ -225,7 +225,7 @@ class FishSpeechService:
                 "format": "wav",
                 "streaming": False,
                 "use_memory_cache": "on",
-                "seed": None
+                "seed": self._get_speaker_seed(segment_metadata.get("speaker", "A"))
             }
             
             # Generate audio for each chunk

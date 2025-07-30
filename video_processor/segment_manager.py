@@ -25,13 +25,13 @@ class SegmentManager:
         self.transcription_service = transcription_service
         
         # Enhanced segmentation parameters for better dubbing
-        self.min_segment_duration = 7.0     # Increased minimum for dubbing quality
-        self.max_segment_duration = 12.0    # Maximum segment length (seconds)
-        self.optimal_min_duration = 9.0     # Optimal minimum length (seconds) 
-        self.optimal_max_duration = 11.0    # Optimal maximum length (seconds)
+        self.min_segment_duration = 10.0    # Minimum 10 seconds for dubbing quality
+        self.max_segment_duration = 15.0    # Maximum segment length (seconds)
+        self.optimal_min_duration = 10.0    # Optimal minimum length (seconds) 
+        self.optimal_max_duration = 13.0    # Optimal maximum length (seconds)
         self.min_silence_duration = 1.5     # Reduced silence threshold for better merging
         self.speaker_switch_padding = 0.1    # Padding around speaker switches (seconds)
-        self.force_merge_threshold = 5.0    # Force merge segments shorter than this (seconds)
+        self.force_merge_threshold = 8.0    # Force merge segments shorter than this (seconds)
     
     def _create_compact_transcript_for_ai(self, utterances: List[Dict], total_duration: float) -> Dict:
         """Create compact transcript data for OpenAI analysis (token-efficient)"""
@@ -104,36 +104,30 @@ class SegmentManager:
                     "type": seg.get("type", "speech")
                 })
             
-            # Short prompt for efficiency
+            # Simple prompt following assembly AI format
             prompt = f"""
-SEGMENT OPTIMIZATION TASK
+SEGMENT MERGE TASK
 
-Current segments ({len(segments)} total, {total_duration}s audio):
+Audio: {total_duration}s, {len(segments)} segments
+Target: 10-13s segments (currently some < 8s)
+
+SEGMENTS:
 {json.dumps(segment_summary, indent=1)}
 
-PROBLEM: Some segments < 5s (too short for dubbing)
-TARGET: Merge to create 9-11s segments
-
 RULES:
-- Merge adjacent segments of same speaker when possible
-- Merge different speakers only if natural conversation flow
-- Maintain speech content integrity
-- Avoid cutting mid-sentence
+- Merge adjacent short segments
+- Same speaker = easy merge
+- Different speakers = only if natural flow
+- Keep content intact
 
-OUTPUT (JSON):
+JSON OUTPUT:
 {{
-  "optimized_segments": [
-    {{
-      "merge_indices": [0, 1],
-      "new_start": 0.0,
-      "new_end": 10.5,
-      "primary_speaker": "A",
-      "merge_reason": "same speaker continuation"
-    }}
+  "merges": [
+    {{"indices": [0,1], "speaker": "A", "reason": "short_merge"}}
   ]
 }}
 
-Max 300 tokens response."""
+Max 200 tokens."""
 
             import openai
             from config import settings
@@ -151,8 +145,8 @@ Max 300 tokens response."""
             
             ai_result = json.loads(response.choices[0].message.content)
             
-            # Apply AI recommendations
-            optimized_segments = self._apply_merge_recommendations(segments, ai_result.get("optimized_segments", []))
+            # Apply simple merge recommendations  
+            optimized_segments = self._apply_simple_merges(segments, ai_result.get("merges", []))
             logger.info(f"AI optimization: {len(segments)} -> {len(optimized_segments)} segments")
             
             return optimized_segments
@@ -161,37 +155,40 @@ Max 300 tokens response."""
             logger.warning(f"AI segment optimization failed: {e}")
             return None
     
-    def _apply_merge_recommendations(self, segments: List[Dict], merge_recommendations: List[Dict]) -> List[Dict]:
-        """Apply AI merge recommendations to create optimized segments"""
-        if not merge_recommendations:
+    def _apply_simple_merges(self, segments: List[Dict], merges: List[Dict]) -> List[Dict]:
+        """Apply simple merge recommendations from AI"""
+        if not merges:
             return segments
         
         optimized = []
         used_indices = set()
         
         # Apply merges
-        for merge in merge_recommendations:
-            indices = merge.get("merge_indices", [])
+        for merge in merges:
+            indices = merge.get("indices", [])
             if not indices or any(i in used_indices for i in indices):
                 continue
             
-            # Merge segments
+            # Merge segments - keep all text intact
             merged_segment = segments[indices[0]].copy()
-            merged_segment["end"] = merge.get("new_end", segments[indices[-1]]["end"])
+            merged_segment["end"] = segments[indices[-1]]["end"]
             merged_segment["duration"] = merged_segment["end"] - merged_segment["start"]
-            merged_segment["speaker"] = merge.get("primary_speaker", merged_segment["speaker"])
+            merged_segment["speaker"] = merge.get("speaker", merged_segment["speaker"])
             
-            # Combine text
-            combined_text = " ".join([segments[i].get("text", "") for i in indices])
-            merged_segment["text"] = combined_text
-            merged_segment["utterances"] = []
+            # Preserve ALL text content - no truncation
+            combined_texts = []
+            combined_utterances = []
             for i in indices:
-                merged_segment["utterances"].extend(segments[i].get("utterances", []))
+                if segments[i].get("text", "").strip():
+                    combined_texts.append(segments[i]["text"].strip())
+                combined_utterances.extend(segments[i].get("utterances", []))
             
+            merged_segment["text"] = " ".join(combined_texts)  # Keep all text
+            merged_segment["utterances"] = combined_utterances
             merged_segment["is_merged"] = True
             merged_segment["merged_from"] = indices
             merged_segment["ai_optimized"] = True
-            merged_segment["merge_reason"] = merge.get("merge_reason", "AI optimization")
+            merged_segment["merge_reason"] = merge.get("reason", "duration_optimization")
             
             optimized.append(merged_segment)
             used_indices.update(indices)
@@ -949,7 +946,7 @@ Keep response under 500 tokens."""
         return np.concatenate([audio, silence])
 
     def _final_cleanup_short_segments(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Final aggressive cleanup to merge any remaining segments shorter than force_merge_threshold (5s)"""
+        """Final aggressive cleanup to merge any remaining segments shorter than force_merge_threshold (8s)"""
         if not segments:
             return segments
         

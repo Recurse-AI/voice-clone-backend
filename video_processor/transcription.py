@@ -624,39 +624,32 @@ MANDATORY: Every translated text must be in proper {target_language} using {scri
         return script_detected == expected_script
     
     def _optimize_timing_for_tts(self, text: str, target_duration: float) -> str:
-        """Optimize text timing for Fish Speech TTS to match target duration"""
+        """Simple space-based timing optimization for TTS"""
         if not text or target_duration <= 0:
             return text
         
-        # Estimate current speaking time (rough calculation)
-        # Average speaking rate: ~150 words per minute = 2.5 words/second
+        # Simple word count estimation: ~2 words/second average speech
         words = text.strip().split()
-        estimated_time = len(words) / 2.5
+        estimated_time = len(words) / 2.0
         
-        # If translation is significantly shorter than target, add timing controls
-        if estimated_time < target_duration * 0.7:  # If less than 70% of target duration
-            duration_gap = target_duration - estimated_time
-            
-            # Add strategic spacing and pauses
+        # If text is shorter than target, add strategic spaces for timing
+        if estimated_time < target_duration * 0.8:  # If less than 80% of target
             optimized_text = text
             
-            # Add extra spaces between sentences
+            # Add extra spaces between words for timing control
+            optimized_text = optimized_text.replace(' ', '  ')  # Double spaces
+            
+            # Add longer pauses at sentence boundaries
             optimized_text = optimized_text.replace('. ', '.   ')
             optimized_text = optimized_text.replace('? ', '?   ')
             optimized_text = optimized_text.replace('! ', '!   ')
+            optimized_text = optimized_text.replace(', ', ',  ')
             
-            # Add ellipses for longer pauses if still short
-            if duration_gap > 2.0:  # If gap is more than 2 seconds
-                # Add ellipses at natural break points
-                optimized_text = optimized_text.replace(',', '...,')
-                optimized_text = optimized_text.replace(' and ', '... and ')
-                optimized_text = optimized_text.replace(' but ', '... but ')
-            
-            # Add final spacing if needed
-            if duration_gap > 1.0:
+            # Add trailing spaces if still short
+            if estimated_time < target_duration * 0.6:
                 optimized_text = optimized_text + "   "
             
-            logger.info(f"Timing optimized: {estimated_time:.1f}s -> target {target_duration:.1f}s")
+            logger.info(f"Space timing applied: {estimated_time:.1f}s -> target {target_duration:.1f}s")
             return optimized_text
         
         return text
