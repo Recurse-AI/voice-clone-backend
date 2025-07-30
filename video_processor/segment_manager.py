@@ -115,10 +115,10 @@ SEGMENTS:
 {json.dumps(segment_summary, indent=1)}
 
 RULES:
-- Merge adjacent short segments
-- Same speaker = easy merge
-- Different speakers = only if natural flow
-- Keep content intact
+- ONLY merge segments with SAME SPEAKER
+- NO cross-speaker merging allowed
+- Merge adjacent short segments of same speaker
+- Keep all content intact
 
 JSON OUTPUT:
 {{
@@ -167,6 +167,12 @@ Max 200 tokens."""
         for merge in merges:
             indices = merge.get("indices", [])
             if not indices or any(i in used_indices for i in indices):
+                continue
+            
+            # Check if all segments have same speaker before merging
+            speakers_in_merge = [segments[i]["speaker"] for i in indices]
+            if len(set(speakers_in_merge)) > 1:
+                logger.warning(f"Skipping AI merge of indices {indices} - different speakers: {speakers_in_merge}")
                 continue
             
             # Merge segments - keep all text intact
@@ -351,10 +357,14 @@ Keep response under 500 tokens."""
                 if ai_optimized_segments:
                     cleaned_segments = ai_optimized_segments
             
-            # Step 7: Add video cropping information
-            enhanced_segments = self._add_video_cropping_info(cleaned_segments)
+            # Step 7: Ensure clean speaker boundaries (no overlaps)
+            boundary_cleaned_segments = self._ensure_speaker_boundaries(cleaned_segments)
+            logger.info(f"Speaker boundary enforcement completed: {len(boundary_cleaned_segments)} segments")
             
-            # Step 8: Translate segments for dubbing
+            # Step 8: Add video cropping information
+            enhanced_segments = self._add_video_cropping_info(boundary_cleaned_segments)
+            
+            # Step 9: Translate segments for dubbing
             translated_segments = self._translate_segments_if_needed(
                 enhanced_segments, transcript_data, audio_id
             )
@@ -615,8 +625,8 @@ Keep response under 500 tokens."""
             if i + 1 < len(segments):
                 next_segment = segments[i + 1]
                 
-                # Can merge if same speaker or if total duration is reasonable
-                if (current_segment["speaker"] == next_segment["speaker"] or
+                # Only merge if SAME SPEAKER - no cross-speaker merging
+                if (current_segment["speaker"] == next_segment["speaker"] and
                     current_segment["duration"] + next_segment["duration"] <= self.max_segment_duration):
                     
                     # Merge segments
@@ -972,8 +982,9 @@ Keep response under 500 tokens."""
                     next_segment = segments[i + 1]
                     combined_duration = current_segment["duration"] + next_segment["duration"]
                     
-                    # Merge if combined duration is reasonable
-                    if combined_duration <= self.max_segment_duration:
+                    # Merge if SAME SPEAKER and combined duration is reasonable
+                    if (current_segment["speaker"] == next_segment["speaker"] and 
+                        combined_duration <= self.max_segment_duration):
                         merged_segment = {
                             "start": current_segment["start"],
                             "end": next_segment["end"],
@@ -997,7 +1008,8 @@ Keep response under 500 tokens."""
                     prev_segment = cleaned_segments[-1]
                     combined_duration = prev_segment["duration"] + current_segment["duration"]
                     
-                    if combined_duration <= self.max_segment_duration:
+                    if (prev_segment["speaker"] == current_segment["speaker"] and 
+                        combined_duration <= self.max_segment_duration):
                         # Update the previous segment to include current
                         prev_segment["end"] = current_segment["end"]
                         prev_segment["duration"] = combined_duration
@@ -1037,4 +1049,33 @@ Keep response under 500 tokens."""
             if text and text not in unique_parts:
                 unique_parts.append(text)
         return " ".join(unique_parts)
+
+    def _ensure_speaker_boundaries(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Ensure clean speaker boundaries with no overlaps"""
+        if len(segments) <= 1:
+            return segments
+        
+        cleaned_segments = []
+        
+        for i, segment in enumerate(segments):
+            current_segment = segment.copy()
+            
+            # Check for overlap with next segment
+            if i + 1 < len(segments):
+                next_segment = segments[i + 1]
+                
+                # If different speakers and overlap exists, fix boundary
+                if (current_segment["speaker"] != next_segment["speaker"] and 
+                    current_segment["end"] > next_segment["start"]):
+                    
+                    # Split the time difference
+                    overlap_midpoint = (current_segment["end"] + next_segment["start"]) / 2
+                    current_segment["end"] = overlap_midpoint
+                    current_segment["duration"] = current_segment["end"] - current_segment["start"]
+                    
+                    logger.info(f"Fixed speaker boundary overlap between {current_segment['speaker']} and {next_segment['speaker']}")
+            
+            cleaned_segments.append(current_segment)
+        
+        return cleaned_segments
 
