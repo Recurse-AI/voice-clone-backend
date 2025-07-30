@@ -344,7 +344,7 @@ def process_video_background(
                 "runpod_separation": True
             },
             "processing_stats": audio_processor.get_processing_stats(processing_result["segments_dir"]),
-            "reconstruction_results": reconstruction_result,
+            "reconstruction_results": processing_result.get("audio_reconstruction", {}),
             "video_generated": video_result is not None and video_result["success"],
             "subtitles_generated": generate_subtitles and video_result is not None and video_result.get("subtitle_count", 0) > 0,
             "separation_used": True
@@ -516,12 +516,15 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         # Keep local file for now - don't cleanup immediately
         logger.info(f"Keeping local file for potential reuse: {final_audio_path}")
         
+        # Get stats from processing result 
+        audio_reconstruction = processing_result.get("audio_reconstruction", {})
+        
         return {
             "success": True,
             "audio_id": audio_id,
             "download_url": final_audio_url,
-            "duration": reconstruction_result.get("duration", 0),
-            "stats": reconstruction_result.get("reconstruction_stats", {})
+            "duration": audio_reconstruction.get("duration", 0),
+            "stats": audio_reconstruction.get("reconstruction_stats", {})
         }
         
     except Exception as e:
