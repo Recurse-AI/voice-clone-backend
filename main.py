@@ -300,6 +300,11 @@ async def get_status(audio_id: str):
     """Get processing status for a specific audio ID"""
     try:
         status = status_manager.get_status(audio_id)
+        
+        # If completed, the download_url from R2 is already in details
+        if status.get("status") == "completed" and "download_url" in status.get("details", {}):
+            status["download_url"] = status["details"]["download_url"]
+            
         return status
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
