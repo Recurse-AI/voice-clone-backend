@@ -618,6 +618,16 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         status_manager.update_status(audio_id, ProcessingStatus.UPLOADING, 90)
         
         try:
+            # Verify final audio path exists before upload
+            if not final_audio_path or not os.path.exists(final_audio_path):
+                logger.error(f"Final audio path missing or deleted: {final_audio_path}")
+                # Try to use the video result's audio path if available
+                if video_result and "final_audio_path" in video_result:
+                    final_audio_path = video_result["final_audio_path"]
+                    logger.info(f"Using video result audio path: {final_audio_path}")
+                else:
+                    return {"success": False, "error": "Final audio file not found for upload"}
+            
             r2_segments_result = r2_storage.upload_audio_segments(audio_id, processing_result["segments_dir"])
             r2_final_result = r2_storage.upload_final_audio(audio_id, final_audio_path)
             

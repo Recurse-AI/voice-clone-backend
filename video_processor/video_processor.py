@@ -190,13 +190,15 @@ class VideoProcessor:
                 str(output_path)
             ])
             
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)  # 5 minute timeout
             
             if result.returncode == 0:
                 return {"success": True}
             else:
                 return {"success": False, "error": f"FFmpeg error: {result.stderr}"}
                 
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "FFmpeg timed out after 5 minutes"}
         except Exception as e:
             return {"success": False, "error": str(e)}
     
@@ -265,7 +267,8 @@ class VideoProcessor:
                     "video_path": str(output_path),
                     "subtitle_path": str(subtitle_path),
                     "subtitle_count": len(subtitle_data),
-                    "has_subtitles": True
+                    "has_subtitles": True,
+                    "final_audio_path": str(final_audio_path)  # Return the actual audio path used
                 }
             else:
                 return {
@@ -309,7 +312,8 @@ class VideoProcessor:
                     "video_path": str(output_path),
                     "subtitle_path": str(subtitle_path) if subtitle_path else None,
                     "subtitle_count": subtitle_count,
-                    "has_subtitles": False
+                    "has_subtitles": False,
+                    "final_audio_path": str(final_audio_path)  # Return the actual audio path used
                 }
             else:
                 return {
