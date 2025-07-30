@@ -101,8 +101,8 @@ def process_video_background(
         except Exception:
             pass
         
-        # Process audio segments with language parameters
-        processing_result = audio_processor.process_audio_segments(
+        # Process video with separation (handles video files properly)
+        processing_result = audio_processor.process_video_with_separation(
             video_temp_path, 
             audio_id,
             target_language=target_language,
@@ -431,9 +431,9 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         if queue_request.status != VideoQueueStatus.PROCESSING:
             return {"success": False, "error": "Request was cancelled or timed out"}
         
-        # Process audio segments - SIMPLIFIED
+        # Process video with separation - SIMPLIFIED
         logger.info(f"Processing audio segments for {audio_id}")
-        processing_result = audio_processor.process_audio_segments(
+        processing_result = audio_processor.process_video_with_separation(
             video_temp_path, 
             audio_id,
             target_language=target_language
