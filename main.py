@@ -42,8 +42,33 @@ async def lifespan(app: FastAPI):
     # Create temp directory
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
     
+    # Initialize Fish Speech models on startup
+    logger.info("🚀 Downloading and initializing Fish Speech models...")
+    try:
+        from video_processor.voice_cloning import get_fish_speech_service
+        
+        # Get Fish Speech service and force complete initialization
+        fish_service = get_fish_speech_service()
+        fish_service._initialize_models()
+        
+        logger.info("✅ Fish Speech OpenAudio S1 model ready for voice cloning!")
+        
+    except Exception as e:
+        logger.error(f"❌ Fish Speech initialization failed: {str(e)}")
+        raise e  # Exit if models can't load
+    
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     yield
+    
+    # Cleanup on shutdown
+    logger.info("🔄 Shutting down API...")
+    try:
+        from video_processor.voice_cloning import get_fish_speech_service
+        fish_service = get_fish_speech_service()
+        fish_service.cleanup()
+        logger.info("✅ Fish Speech service cleaned up")
+    except:
+        pass
 
 # Initialize FastAPI app
 app = FastAPI(

@@ -49,169 +49,111 @@ class FishSpeechService:
         logger.info(f"FishSpeechService initialized with device: {self.device}")
     
     def _ensure_fish_speech_available(self):
-        """Ensure Fish Speech is available and clone if needed"""
-        try:
-            fish_speech_dir = Path("./fish-speech")
+        """Clone Fish Speech if needed"""
+        fish_speech_dir = Path("./fish-speech")
+        
+        if not fish_speech_dir.exists():
+            import subprocess
+            result = subprocess.run([
+                "git", "clone", "https://github.com/fishaudio/fish-speech.git"
+            ], capture_output=True, text=True)
             
-            if not fish_speech_dir.exists():
-                logger.info("Fish Speech not found, cloning repository...")
-                import subprocess
-                result = subprocess.run([
-                    "git", "clone", "https://github.com/fishaudio/fish-speech.git"
-                ], capture_output=True, text=True)
-                
-                if result.returncode != 0:
-                    raise Exception(f"Failed to clone Fish Speech: {result.stderr}")
-                
-                logger.info("Fish Speech repository cloned successfully")
-            
-            # Add to Python path
-            import sys
-            if str(fish_speech_dir) not in sys.path:
-                sys.path.insert(0, str(fish_speech_dir))
-            
-            # Set project root for pyrootutils
-            os.environ["FISH_SPEECH_ROOT"] = str(fish_speech_dir)
-            
-        except Exception as e:
-            logger.error(f"Failed to setup Fish Speech: {str(e)}")
-            raise
+            if result.returncode != 0:
+                raise Exception(f"Git clone failed: {result.stderr}")
+        
+        # Add to Python path
+        import sys
+        if str(fish_speech_dir) not in sys.path:
+            sys.path.insert(0, str(fish_speech_dir))
     
     def _download_models(self):
         """Download Fish Speech models automatically"""
-        try:
-            logger.info("Downloading Fish Speech models (this may take a while)...")
+        model_files = [
+            "model.pth", "codec.pth", "config.json", 
+            "special_tokens.json", "tokenizer.tiktoken"
+        ]
+        
+        self.model_local_path.mkdir(parents=True, exist_ok=True)
+        
+        for file_name in model_files:
+            local_file_path = self.model_local_path / file_name
             
-            # Files to download for full S1 model
-            model_files = [
-                "model.pth",
-                "codec.pth", 
-                "config.json",
-                "special_tokens.json",
-                "tokenizer.tiktoken",
-                ".gitattributes",
-                "README.md"
-            ]
-            
-            self.model_local_path.mkdir(parents=True, exist_ok=True)
-            
-            for file_name in model_files:
-                local_file_path = self.model_local_path / file_name
-                
-                if not local_file_path.exists():
-                    logger.info(f"Downloading {file_name}...")
-                    
-                    downloaded_path = hf_hub_download(
-                        repo_id=self.model_repo,
-                        filename=file_name,
-                        local_dir=str(self.model_local_path),
-                        local_dir_use_symlinks=False,
-                        resume_download=True
-                    )
-                    
-                    logger.info(f"Downloaded {file_name}")
-                else:
-                    logger.info(f"{file_name} already exists, skipping")
-            
-            logger.info("All Fish Speech models downloaded successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to download models: {str(e)}")
-            raise
+            if not local_file_path.exists():
+                hf_hub_download(
+                    repo_id=self.model_repo,
+                    filename=file_name,
+                    local_dir=str(self.model_local_path),
+                    local_dir_use_symlinks=False,
+                    resume_download=True
+                )
     
     def _initialize_models(self):
-        """Initialize Fish Speech models"""
+        """Initialize Fish Speech models completely"""
         with self._model_lock:
             if self._is_initialized:
                 return
             
-            try:
-                logger.info("Initializing Fish Speech models...")
-                
-                # Ensure Fish Speech is available
-                self._ensure_fish_speech_available()
-                
-                # Download models
-                self._download_models()
-                
-                # Import Fish Speech modules
-                import pyrootutils
-                fish_speech_root = Path("./fish-speech")
-                pyrootutils.setup_root(str(fish_speech_root / "__init__.py"), indicator=".project-root", pythonpath=True)
-                
-                from fish_speech.inference_engine import TTSInferenceEngine
-                from fish_speech.models.dac.inference import load_model as load_decoder_model
-                from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
-                
-                # Load Llama model
-                logger.info("Loading Llama model...")
-                self.llama_queue = launch_thread_safe_queue(
-                    checkpoint_path=self.model_local_path,
-                    device=self.device,
-                    precision=self.precision,
-                    compile=self.use_compile,
-                )
-                
-                # Load decoder model
-                logger.info("Loading VQ-GAN decoder model...")
-                self.decoder_model = load_decoder_model(
-                    config_name="modded_dac_vq",
-                    checkpoint_path=str(self.model_local_path / "codec.pth"),
-                    device=self.device,
-                )
-                
-                # Create inference engine
-                logger.info("Creating TTS inference engine...")
-                self.inference_engine = TTSInferenceEngine(
-                    llama_queue=self.llama_queue,
-                    decoder_model=self.decoder_model,
-                    compile=self.use_compile,
-                    precision=self.precision,
-                )
-                
-                # Warm up the model
-                logger.info("Warming up Fish Speech model...")
-                self._warmup_model()
-                
-                self._is_initialized = True
-                logger.info("Fish Speech models initialized successfully")
-                
-            except Exception as e:
-                logger.error(f"Failed to initialize Fish Speech models: {str(e)}")
-                raise
-    
-    def _warmup_model(self):
-        """Warm up the model to avoid first-time latency"""
-        try:
-            from fish_speech.utils.schema import ServeTTSRequest
+            logger.info("🔄 Cloning Fish Speech repository...")
+            self._ensure_fish_speech_available()
             
-            # Dry run with simple text
-            warmup_request = ServeTTSRequest(
-                text="Hello world.",
-                references=[],
-                reference_id=None,
-                max_new_tokens=1024,
-                chunk_length=200,
-                top_p=0.7,
-                repetition_penalty=1.5,
-                temperature=0.7,
-                format="wav",
+            logger.info("📥 Downloading OpenAudio S1 models...")
+            self._download_models()
+            
+            logger.info("🚀 Loading Fish Speech models...")
+            
+            # Import Fish Speech modules
+            import pyrootutils
+            fish_speech_root = Path("./fish-speech")
+            pyrootutils.setup_root(str(fish_speech_root / "__init__.py"), indicator=".project-root", pythonpath=True)
+            
+            from fish_speech.inference_engine import TTSInferenceEngine
+            from fish_speech.models.dac.inference import load_model as load_decoder_model
+            from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
+            
+            # Load models
+            self.llama_queue = launch_thread_safe_queue(
+                checkpoint_path=self.model_local_path,
+                device=self.device,
+                precision=self.precision,
+                compile=self.use_compile,
             )
             
-            # Run inference to warm up
-            list(self.inference_engine.inference(warmup_request))
-            logger.info("Model warmup completed")
+            self.decoder_model = load_decoder_model(
+                config_name="modded_dac_vq",
+                checkpoint_path=str(self.model_local_path / "codec.pth"),
+                device=self.device,
+            )
             
-        except Exception as e:
-            logger.warning(f"Model warmup failed: {str(e)}")
+            self.inference_engine = TTSInferenceEngine(
+                llama_queue=self.llama_queue,
+                decoder_model=self.decoder_model,
+                compile=self.use_compile,
+                precision=self.precision,
+            )
+            
+            # Warm up
+            self._warmup_model()
+            
+            self._is_initialized = True
+            logger.info("✅ Fish Speech ready for voice cloning!")
+    
+    def _warmup_model(self):
+        """Warm up model with simple inference"""
+        from fish_speech.utils.schema import ServeTTSRequest
+        
+        warmup_request = ServeTTSRequest(
+            text="Ready.",
+            references=[],
+            max_new_tokens=512,
+            format="wav"
+        )
+        
+        list(self.inference_engine.inference(warmup_request))
     
     def clone_voice_for_segment(self, segment_metadata: Dict[str, Any], 
                                reference_audio_path: str, audio_id: str) -> Dict[str, Any]:
         """Clone voice for a specific segment using Fish Speech"""
         try:
-            # Ensure models are initialized
-            if not self._is_initialized:
-                self._initialize_models()
             
             from fish_speech.utils.schema import ServeTTSRequest, ServeReferenceAudio
             from fish_speech.utils.file import audio_to_bytes
@@ -311,24 +253,7 @@ class FishSpeechService:
         seed_base = hash(speaker_id) % 1000000
         return abs(seed_base)
     
-    def get_model_info(self) -> Dict[str, Any]:
-        """Get Fish Speech model information"""
-        return {
-            "model_name": "OpenAudio S1 (Fish Speech)",
-            "model_size": "4B parameters",
-            "device": self.device,
-            "precision": str(self.precision),
-            "compile_enabled": self.use_compile,
-            "local_path": str(self.model_local_path),
-            "initialized": self._is_initialized,
-            "features": [
-                "Zero-shot voice cloning",
-                "Multilingual TTS",
-                "Emotion markers support",
-                "High quality synthesis",
-                "Cross-lingual support"
-            ]
-        }
+
     
     def cleanup(self):
         """Clean up resources"""
@@ -366,6 +291,7 @@ def get_fish_speech_service(device: str = "cuda") -> FishSpeechService:
         return _fish_speech_service
 
 
+
 def set_seed(seed: int):
     """Set random seed for reproducible results"""
     torch.manual_seed(seed)
@@ -374,13 +300,4 @@ def set_seed(seed: int):
     np.random.seed(seed)
 
 
-# Legacy compatibility
-class VoiceCloningService:
-    """Legacy wrapper for compatibility"""
-    
-    def __init__(self):
-        self.fish_service = get_fish_speech_service()
-    
-    def clone_voice(self, *args, **kwargs):
-        """Legacy clone voice method"""
-        return self.fish_service.clone_voice_for_segment(*args, **kwargs)
+

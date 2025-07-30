@@ -362,7 +362,7 @@ class AudioProcessor:
         try:
             logger.info(f"Starting voice cloning for {len(segments)} segments")
             
-            # Get Fish Speech service
+            # Get Fish Speech service (prefer app state, fallback to global)
             from .voice_cloning import get_fish_speech_service
             fish_service = get_fish_speech_service()
             
