@@ -445,6 +445,10 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         # Get reconstruction result
         reconstruction_result = processing_result.get("audio_reconstruction", {"success": False, "error": "No reconstruction result from base processor"})
         
+        # Debug: log processing result keys
+        logger.info(f"Processing result keys: {list(processing_result.keys())}")
+        logger.info(f"Reconstruction result keys: {list(reconstruction_result.keys()) if isinstance(reconstruction_result, dict) else 'Not a dict'}")
+        
         if not reconstruction_result["success"]:
             return {"success": False, "error": f"Audio reconstruction failed: {reconstruction_result['error']}"}
         
@@ -452,9 +456,20 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             "message": "Audio reconstruction completed"
         })
         
-        # Get the output path directly - NO FALLBACK
+        # Get the output path from audio_reconstruction - NO FALLBACK
         final_audio_path = reconstruction_result.get("output_path")
+        
+        # If not found, try getting from final_dubbed_audio
+        if not final_audio_path:
+            final_dubbed_audio = processing_result.get("final_dubbed_audio", {})
+            final_audio_path = final_dubbed_audio.get("output_path")
+        
         logger.info(f"Got reconstruction output path: {final_audio_path}")
+        
+        # Ensure we have a valid path
+        if not final_audio_path:
+            logger.error("Final audio path is None - cannot upload to R2")
+            return {"success": False, "error": "Audio reconstruction failed - no output file found"}
         
         # Upload to R2
         status_manager.update_status(audio_id, ProcessingStatus.UPLOADING, 90, {
