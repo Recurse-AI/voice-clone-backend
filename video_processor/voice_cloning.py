@@ -165,61 +165,114 @@ class FishSpeechService:
             except Exception:
                 logger.debug("Could not list available configs")
             
+            # Debug checkpoint structure first
+            checkpoint_path = f"{self.model_path}/codec.pth"
+            try:
+                checkpoint = torch.load(checkpoint_path, map_location="cpu")
+                logger.info(f"🔍 Checkpoint keys: {list(checkpoint.keys())}")
+                
+                # Check if it's a state_dict or full checkpoint
+                if "state_dict" in checkpoint:
+                    logger.info("📋 Found state_dict key in checkpoint")
+                elif "model" in checkpoint:
+                    logger.info("📋 Found model key in checkpoint")
+                else:
+                    logger.info("📋 Direct state_dict format detected")
+                    
+            except Exception as e:
+                logger.warning(f"⚠️ Could not inspect checkpoint: {e}")
+            
             try:
                 # Fish Speech 1.5 - Let it auto-detect config from checkpoint
                 self.decoder_model = load_decoder_model(
                     config_name=None,  # Auto-detect from codec checkpoint
-                    checkpoint_path=f"{self.model_path}/codec.pth",
+                    checkpoint_path=checkpoint_path,
                     device=self.device,
                 )
                 logger.info("✅ Decoder model loaded (auto-config)")
             except Exception as e:
                 logger.warning(f"⚠️ Auto-config decoder loading failed: {e}")
                 
-                # Try known Fish Speech configs
-                config_attempts = [
-                    "firefly_gan_base",
-                    "modded_dac_vq", 
-                    "dac_44khz_8kbps",
-                    "firefly_gan_vq",
-                    "dac_44khz",
-                    "base"
-                ]
-                
-                self.decoder_model = None
-                for config_name in config_attempts:
-                    try:
-                        logger.info(f"🔄 Trying config: {config_name}")
-                        self.decoder_model = load_decoder_model(
-                            config_name=config_name,
-                            checkpoint_path=f"{self.model_path}/codec.pth",
-                            device=self.device,
-                        )
-                        logger.info(f"✅ Decoder model loaded with config: {config_name}")
-                        break
-                    except Exception as e_config:
-                        logger.debug(f"Config {config_name} failed: {e_config}")
-                        continue
-                
-                if not self.decoder_model:
-                    logger.warning("⚠️ All decoder loading attempts failed for Fish Speech 1.5")
-                    logger.info("🔄 Trying fallback to openaudio-s1-mini...")
+                # Try to manually handle different checkpoint formats
+                try:
+                    logger.info("🔄 Trying manual checkpoint handling...")
                     
-                    # Try openaudio-s1-mini as fallback
-                    try:
-                        fallback_codec = f"{self.fallback_path}/codec.pth"
-                        if Path(fallback_codec).exists():
+                    # Load checkpoint and extract state_dict if needed
+                    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+                    
+                    # Create temporary corrected checkpoint
+                    corrected_path = f"{self.model_path}/codec_corrected.pth"
+                    
+                    if isinstance(checkpoint, dict):
+                        if "state_dict" in checkpoint:
+                            # Extract state_dict
+                            torch.save(checkpoint["state_dict"], corrected_path)
+                            logger.info("✅ Extracted state_dict from checkpoint")
+                        elif "model" in checkpoint:
+                            # Extract model
+                            torch.save(checkpoint["model"], corrected_path)
+                            logger.info("✅ Extracted model from checkpoint")
+                        else:
+                            # Assume it's already a state_dict but add load_state_dict wrapper
+                            corrected_checkpoint = {"load_state_dict": checkpoint}
+                            torch.save(corrected_checkpoint, corrected_path)
+                            logger.info("✅ Wrapped checkpoint with load_state_dict")
+                    
+                    # Try loading with corrected checkpoint
+                    self.decoder_model = load_decoder_model(
+                        config_name="modded_dac_vq",  # Known working config
+                        checkpoint_path=corrected_path,
+                        device=self.device,
+                    )
+                    logger.info("✅ Decoder model loaded with corrected checkpoint")
+                    
+                except Exception as e_manual:
+                    logger.warning(f"⚠️ Manual checkpoint handling failed: {e_manual}")
+                    
+                    # Try known Fish Speech configs as fallback
+                    config_attempts = [
+                        "modded_dac_vq", 
+                        "firefly_gan_base",
+                        "dac_44khz_8kbps",
+                        "firefly_gan_vq",
+                        "dac_44khz",
+                        "base"
+                    ]
+                    
+                    self.decoder_model = None
+                    for config_name in config_attempts:
+                        try:
+                            logger.info(f"🔄 Trying config: {config_name}")
                             self.decoder_model = load_decoder_model(
-                                config_name="modded_dac_vq",  # Known working config for openaudio-s1-mini
-                                checkpoint_path=fallback_codec,
+                                config_name=config_name,
+                                checkpoint_path=checkpoint_path,
                                 device=self.device,
                             )
-                            logger.info("✅ Decoder model loaded with openaudio-s1-mini fallback")
-                        else:
+                            logger.info(f"✅ Decoder model loaded with config: {config_name}")
+                            break
+                        except Exception as e_config:
+                            logger.debug(f"Config {config_name} failed: {e_config}")
+                            continue
+                    
+                    if not self.decoder_model:
+                        logger.warning("⚠️ All decoder loading attempts failed for Fish Speech 1.5")
+                        logger.info("🔄 Trying fallback to openaudio-s1-mini...")
+                        
+                        # Try openaudio-s1-mini as fallback
+                        try:
+                            fallback_codec = f"{self.fallback_path}/codec.pth"
+                            if Path(fallback_codec).exists():
+                                self.decoder_model = load_decoder_model(
+                                    config_name="modded_dac_vq",  # Known working config for openaudio-s1-mini
+                                    checkpoint_path=fallback_codec,
+                                    device=self.device,
+                                )
+                                logger.info("✅ Decoder model loaded with openaudio-s1-mini fallback")
+                            else:
+                                logger.info("📝 Will run in semantic-only mode (no audio generation)")
+                        except Exception as e_fallback:
+                            logger.warning(f"⚠️ Fallback also failed: {e_fallback}")
                             logger.info("📝 Will run in semantic-only mode (no audio generation)")
-                    except Exception as e_fallback:
-                        logger.warning(f"⚠️ Fallback also failed: {e_fallback}")
-                        logger.info("📝 Will run in semantic-only mode (no audio generation)")
             
             # Initialize TTS inference engine (decoder optional)
             if self.decoder_model:
