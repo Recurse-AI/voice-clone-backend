@@ -120,26 +120,35 @@ class FishSpeechService:
             )
             logger.info("✅ Language model loaded")
             
-            # Load Fish Speech decoder model
-            self.decoder_model = load_decoder_model(
-                config_name="modded_dac_vq",
-                checkpoint_path=f"{self.model_path}/codec.pth",
-                device=self.device,
-            )
-            logger.info("✅ Decoder model loaded")
+            # Load Fish Speech decoder model (with error handling)
+            try:
+                self.decoder_model = load_decoder_model(
+                    config_name=None,  # Auto-detect from codec file
+                    checkpoint_path=f"{self.model_path}/codec.pth",
+                    device=self.device,
+                )
+                logger.info("✅ Decoder model loaded")
+            except Exception as e:
+                logger.warning(f"⚠️ Decoder loading failed: {e}")
+                logger.info("📝 Will run in semantic-only mode (no audio generation)")
+                self.decoder_model = None
             
-            # Initialize TTS inference engine
-            self.inference_engine = TTSInferenceEngine(
-                llama_queue=self.llama_queue,
-                decoder_model=self.decoder_model,
-                compile=self.use_compile,
-                precision=self.precision,
-            )
-            logger.info("✅ TTS inference engine initialized")
-            
-            # Warm up model
-            self._warmup_model()
-            logger.info("✅ Model warmup completed")
+            # Initialize TTS inference engine (decoder optional)
+            if self.decoder_model:
+                self.inference_engine = TTSInferenceEngine(
+                    llama_queue=self.llama_queue,
+                    decoder_model=self.decoder_model,
+                    compile=self.use_compile,
+                    precision=self.precision,
+                )
+                logger.info("✅ TTS inference engine initialized")
+                
+                # Warm up model
+                self._warmup_model()
+                logger.info("✅ Model warmup completed")
+            else:
+                logger.info("📝 TTS engine initialized in semantic-only mode")
+                self.inference_engine = None
             
             self._is_initialized = True
             logger.info("✅ Fish Speech 1.5 ready!")
