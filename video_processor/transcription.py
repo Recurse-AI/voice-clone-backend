@@ -1,397 +1,614 @@
 """
-Transcription and Text Processing Module - Simplified
+Transcription and Text Processing Module - Enhanced with Speaker Diarization
 """
 
+import json
+import logging
 import re
 import time
-from typing import Dict, Any, List, Optional
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Tuple
+
 import assemblyai as aai
+import requests
 from openai import OpenAI
+
 from config import settings
-import threading
-import logging
+from utils import local_storage
 
 logger = logging.getLogger(__name__)
 
 class TranscriptionService:
-    """Simplified transcription service with parallel processing"""
+    """Enhanced transcription service with speaker diarization"""
     
     def __init__(self):
         self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
         aai.settings.api_key = settings.ASSEMBLYAI_API_KEY
-        self.translation_cache = {}  # Cache for translations
-        self.cache_lock = threading.Lock()  # Thread-safe cache access
+        
+        # AssemblyAI configuration for optimal transcription
+        self.transcription_config = {
+            "speaker_labels": True,           # Enable speaker diarization
+            "language_detection": True,       # Auto-detect language
+            "punctuate": True,               # Add punctuation
+            "format_text": True,             # Format text properly
+            "dual_channel": False,           # Single channel processing
+            "filter_profanity": False,       # Keep original content
+            "word_boost": [],                # No word boosting
+            "boost_param": None,             # No boost parameters
+            "auto_highlights": False,        # Disable highlights
+            "content_safety": False,         # Disable content safety
+            "iab_categories": False,         # Disable categorization
+            "speech_threshold": 0.1,         # Detect low volume speech
+            "disfluencies": True,            # Include uh, um, etc.
+            "language_confidence_threshold": 0.1
+        }
     
-    def transcribe_audio(self, audio_path: str, language_code: Optional[str] = None, 
-                        speakers_expected: Optional[int] = None, audio_id: Optional[str] = None,
-                        original_duration: Optional[float] = None) -> Dict[str, Any]:
-        """Transcribe audio using AssemblyAI"""
+    def transcribe_audio(self, audio_path: str, language_code: Optional[str], 
+                        speakers_expected: Optional[int], audio_id: str, 
+                        original_duration: float) -> Dict[str, Any]:
+        """Transcribe audio with speaker diarization using AssemblyAI"""
         try:
-            logger.info(f"Starting transcription for audio: {audio_path}")
-            start_time = time.time()
+            logger.info(f"Starting AssemblyAI transcription for {audio_id}")
             
-            config_params = {
-                "speaker_labels": True,
-                "punctuate": True,
-                "format_text": True,
-                "speech_model": aai.SpeechModel.universal,
-                "boost_param": "high"  # Increase accuracy for common words
-            }
+            # Store audio locally for backup
+            local_audio_path = self._store_audio_locally(audio_path, audio_id)
             
-            if language_code and language_code.strip():
-                config_params["language_code"] = language_code.strip()
-            else:
-                config_params["language_detection"] = True
+            # Prepare transcription config
+            config = self.transcription_config.copy()
             
-            if speakers_expected and 1 <= speakers_expected <= 10:
-                config_params["speakers_expected"] = speakers_expected
+            # Set language if specified
+            if language_code:
+                config["language_code"] = language_code
+                config["language_detection"] = False
             
-            config = aai.TranscriptionConfig(**config_params)
+            # Set expected speakers if specified
+            if speakers_expected and speakers_expected > 1:
+                config["speakers_expected"] = min(speakers_expected, 10)  # Max 10 speakers
+            
+            # Upload audio file to AssemblyAI
             transcriber = aai.Transcriber()
-            transcript = transcriber.transcribe(audio_path, config=config)
+            transcript = transcriber.transcribe(audio_path, config=aai.TranscriptionConfig(**config))
             
-            if transcript.status == "error":
+            # Wait for completion with progress tracking
+            start_time = time.time()
+            while transcript.status in [aai.TranscriptStatus.queued, aai.TranscriptStatus.processing]:
+                elapsed = time.time() - start_time
+                if elapsed > 600:  # 10 minute timeout
+                    raise Exception("Transcription timeout - took longer than 10 minutes")
+                
+                # Update progress
+                self._update_transcription_progress(audio_id, elapsed)
+                time.sleep(5)  # Check every 5 seconds
+                transcript = transcriber.get_transcript(transcript.id)
+            
+            if transcript.status == aai.TranscriptStatus.error:
                 raise Exception(f"Transcription failed: {transcript.error}")
             
-            transcription_time = time.time() - start_time
-            logger.info(f"Transcription completed in {transcription_time:.2f} seconds")
+            if transcript.status != aai.TranscriptStatus.completed:
+                raise Exception(f"Unexpected transcription status: {transcript.status}")
             
-            # Store complete AssemblyAI response as JSON metadata
-            if audio_id:
-                self._save_assemblyai_response(transcript, audio_id)
+            # Process the response
+            transcription_result = self._process_assemblyai_response(
+                transcript, audio_id, original_duration
+            )
             
-            words = self._extract_words(transcript)
-            speakers = self._extract_speakers(words)
-            final_language_code = self._get_language_code(transcript, language_code)
+            # Save transcription results locally
+            self._save_transcription_locally(transcription_result, audio_id)
             
-            # Calculate transcribed duration
-            transcribed_duration = words[-1]['end'] / 1000 if words else 0
+            logger.info(f"Transcription completed for {audio_id} - {len(transcription_result['speakers'])} speakers detected")
             
-            return {
-                "text": transcript.text,
-                "words": words,
-                "speakers": speakers,
-                "duration": transcribed_duration,  # Duration of transcribed content only
-                "audio_duration": original_duration or transcribed_duration,  # Full original audio duration
-                "metadata": {
-                    "language_code": final_language_code,
-                    "speakers_expected": speakers_expected,
-                    "detected_speakers": len(speakers),
-                    "transcript_id": transcript.id,
-                    "transcription_time": transcription_time,
-                    "transcribed_duration": transcribed_duration,
-                    "original_duration": original_duration
-                }
-            }
+            return transcription_result
             
         except Exception as e:
-            raise Exception(f"Transcription failed: {str(e)}")
-
-    def _save_assemblyai_response(self, transcript, audio_id: str):
-        """Save complete AssemblyAI response as JSON metadata in segments directory"""
+            logger.error(f"Transcription failed for {audio_id}: {str(e)}")
+            raise Exception(f"Transcription service error: {str(e)}")
+    
+    def _store_audio_locally(self, audio_path: str, audio_id: str) -> str:
+        """Store audio file locally for backup"""
         try:
-            import json
-            from pathlib import Path
-            from config import settings
+            with open(audio_path, 'rb') as f:
+                audio_content = f.read()
             
-            # Create path to segments metadata directory
-            temp_dir = Path(settings.TEMP_DIR)
-            segments_dir = temp_dir / f"segments_{audio_id}"
-            metadata_dir = segments_dir / "metadata"
-            metadata_dir.mkdir(parents=True, exist_ok=True)
+            # Store using local storage system
+            filename = f"{audio_id}_vocal_for_transcription.wav"
+            local_result = local_storage.store_audio(audio_id, audio_content, filename)
             
-            assemblyai_file = metadata_dir / "assemblyai_response.json"
-            
-            # Direct conversion to dict using json_response if available
-            if hasattr(transcript, 'json_response'):
-                response_data = transcript.json_response
+            if local_result.get("success"):
+                return local_result["local_path"]
             else:
-                # Fallback: convert transcript attributes to dict
-                response_data = transcript.__dict__
-            
-            with open(assemblyai_file, 'w', encoding='utf-8') as f:
-                json.dump(response_data, f, ensure_ascii=False, indent=2)
+                logger.warning(f"Failed to store audio locally: {local_result.get('error')}")
+                return audio_path
                 
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to store audio locally: {str(e)}")
+            return audio_path
+    
+    def _update_transcription_progress(self, audio_id: str, elapsed: float):
+        """Update transcription progress"""
+        try:
+            from status_manager import status_manager, ProcessingStatus
+            
+            # Calculate progress based on elapsed time (estimate 3-5 minutes for transcription)
+            estimated_duration = 240  # 4 minutes estimate
+            progress_percent = min(int((elapsed / estimated_duration) * 20), 20)  # Max 20% for transcription
+            base_progress = 30  # Starting from 30%
+            
+            status_manager.update_status(
+                audio_id, 
+                ProcessingStatus.PROCESSING, 
+                progress=base_progress + progress_percent,
+                details={"message": f"Transcribing audio... ({int(elapsed)}s elapsed)"}
+            )
+        except:
             pass
-
-    def _extract_words(self, transcript) -> List[Dict[str, Any]]:
-        """Extract words from transcript"""
-        words = []
+    
+    def _process_assemblyai_response(self, transcript, audio_id: str, 
+                                   original_duration: float) -> Dict[str, Any]:
+        """Process AssemblyAI response and extract speaker information"""
         
-        if hasattr(transcript, 'words') and transcript.words:
-            for word in transcript.words:
-                word_data = {
-                    "text": getattr(word, 'text', '').strip(),
-                    "start": getattr(word, 'start', 0),
-                    "end": getattr(word, 'end', 0),
-                    "speaker": self._get_word_speaker(word),
-                    "confidence": getattr(word, 'confidence', 0.5)
+        # Get basic transcript info
+        language_code = getattr(transcript, 'language_code', 'en')
+        confidence = getattr(transcript, 'confidence', 0.9)
+        
+        # Extract speakers from utterances
+        speakers = {}
+        utterances_data = []
+        
+        if hasattr(transcript, 'utterances') and transcript.utterances:
+            for utterance in transcript.utterances:
+                speaker_id = utterance.speaker
+                
+                # Initialize speaker if not seen before
+                if speaker_id not in speakers:
+                    speakers[speaker_id] = {
+                        "id": speaker_id,
+                        "label": f"Speaker {speaker_id}",
+                        "total_duration": 0,
+                        "segments_count": 0,
+                        "confidence": 0
+                    }
+                
+                # Process utterance
+                utterance_data = {
+                    "speaker": speaker_id,
+                    "text": utterance.text,
+                    "start": utterance.start / 1000.0,  # Convert ms to seconds
+                    "end": utterance.end / 1000.0,
+                    "confidence": utterance.confidence,
+                    "words": []
                 }
                 
-                if word_data["text"]:
-                    words.append(word_data)
-        
-        elif hasattr(transcript, 'utterances') and transcript.utterances:
-            for utterance in transcript.utterances:
-                utterance_speaker = getattr(utterance, 'speaker', 'A')
-                utterance_start = getattr(utterance, 'start', 0)
-                utterance_end = getattr(utterance, 'end', 5000)
-                utterance_text = getattr(utterance, 'text', '')
-                
+                # Process words within utterance
                 if hasattr(utterance, 'words') and utterance.words:
                     for word in utterance.words:
                         word_data = {
-                            "text": getattr(word, 'text', '').strip(),
-                            "start": getattr(word, 'start', utterance_start),
-                            "end": getattr(word, 'end', utterance_start + 500),
-                            "speaker": getattr(word, 'speaker', utterance_speaker),
-                            "confidence": getattr(word, 'confidence', 0.5)
+                            "text": word.text,
+                            "start": word.start / 1000.0,
+                            "end": word.end / 1000.0,
+                            "confidence": word.confidence,
+                            "speaker": word.speaker if hasattr(word, 'speaker') else speaker_id
                         }
-                        
-                        if word_data["text"]:
-                            words.append(word_data)
-                else:
-                    word_list = utterance_text.split()
-                    if word_list:
-                        word_duration = (utterance_end - utterance_start) / len(word_list)
-                        
-                        for i, word_text in enumerate(word_list):
-                            word_start = utterance_start + (i * word_duration)
-                            word_end = word_start + word_duration
-                            
-                            words.append({
-                                "text": word_text.strip(),
-                                "start": int(word_start),
-                                "end": int(word_end),
-                                "speaker": utterance_speaker,
-                                "confidence": 0.5
-                            })
-        
-        return words
-
-    def _get_word_speaker(self, word) -> str:
-        """Get speaker from word"""
-        speaker = getattr(word, 'speaker', None)
-        if speaker is None or speaker == "null":
-            return "A"
-        return str(speaker)
-
-    def _extract_speakers(self, words: List[Dict[str, Any]]) -> List[str]:
-        """Extract unique speakers from words"""
-        if not words:
-            return ["A"]
-        
-        speakers = set()
-        for word in words:
-            speaker = word.get('speaker', 'A')
-            if speaker and speaker != "null":
-                speakers.add(str(speaker))
-        
-        if not speakers:
-            speakers.add("A")
-        
-        return sorted(list(speakers))
-
-    def _get_language_code(self, transcript, language_code: Optional[str]) -> str:
-        """Get final language code"""
-        if language_code and language_code.strip():
-            return language_code.strip()
-        
-        try:
-            return transcript.json_response.get("language_code", "")
-        except:
-            return ""
-    
-    def _preprocess_multispeaker_text(self, text: str, words_data: List[Dict]) -> str:
-        """Pre-process text to add speaker indicators for better OpenAI handling"""
-        if not words_data:
-            return text
-        
-        # Group words by speaker in chronological order
-        processed_parts = []
-        current_speaker = None
-        current_words = []
-        
-        for word_data in words_data:
-            word_text = word_data.get('text', '').strip()
-            word_speaker = word_data.get('speaker', 'A')
-            
-            if word_text:
-                if current_speaker != word_speaker:
-                    # Speaker change - save previous group
-                    if current_words:
-                        processed_parts.append({
-                            'speaker': current_speaker,
-                            'text': ' '.join(current_words)
-                        })
-                        current_words = []
-                    current_speaker = word_speaker
+                        utterance_data["words"].append(word_data)
                 
-                current_words.append(word_text)
-        
-        # Add final group
-        if current_words:
-            processed_parts.append({
-                'speaker': current_speaker,
-                'text': ' '.join(current_words)
-            })
-        
-        # Create speaker-marked text
-        marked_text = ""
-        for part in processed_parts:
-            speaker_num = ord(part['speaker']) - ord('A') + 1
-            marked_text += f"<SPEAKER{speaker_num}> {part['text']} "
-        
-        return marked_text.strip()
-    
-    def format_dialogue_text(self, text: str, speaker_data, words_data: List[Dict] = None) -> str:
-        """Enhanced translation to English with clean formatting and consistent reference text"""
-        try:
-            # Handle speaker data format
-            if isinstance(speaker_data, str):
-                speaker = speaker_data
-                is_multi_speaker = False
-                speakers_in_segment = [speaker]
-                primary_speaker = speaker
-            else:
-                is_multi_speaker = speaker_data.get('is_multi_speaker', False)
-                speakers_in_segment = speaker_data.get('speakers', ['A'])
-                primary_speaker = speaker_data.get('primary_speaker', 'A')
-                speaker = primary_speaker
-            
-            clean_text = text
-            # Check cache first
-            with self.cache_lock:
-                cache_key = f"{clean_text.strip()}_{is_multi_speaker}_v4_reference_match"
-                if cache_key in self.translation_cache:
-                    return self.translation_cache[cache_key]
-            
-            # Enhanced translation with reference code style formatting
-            try:
-                if len(speakers_in_segment) > 1:
-                    # Multi-speaker format following reference patterns
-                    processed_text = self._preprocess_multispeaker_text(clean_text, words_data) if words_data else clean_text
-                    
-                    prompt = f"""Translate to natural English with clean speaker tags for voice cloning.
-
-TEXT: {processed_text}
-
-RULES:
-- Always start with [S1] tag at the beginning
-- Use [S2], [S3] etc. for different speakers
-- Put EACH speaker on a NEW LINE - very important
-- Keep lines natural and clear for voice synthesis
-- Natural conversational English
-- Lines should follow natural speech patterns
-- Maintain speaker consistency throughout
-- Try to keep the text as close to the original as possible
-- Don't make any line too long - break into multiple lines
-
-EXAMPLE OUTPUT:
-[S1] I will take care of all the cookies in a minute.
-[S2] Just gather all the information you want about the cookies.
-
-OUTPUT (English with clean speaker tags, each speaker on new line):"""
-                else:
-                    # Single speaker format following reference patterns
-                    prompt = f"""Translate to natural English for voice cloning synthesis.
-
-TEXT: {clean_text}
-
-RULES:
-- Start with [S1] tag only at beginning
-- NO additional speaker tags needed
-- Keep lines natural for voice synthesis
-- Natural conversational English
-- Lines should follow natural speech patterns
-- Maintain consistency for voice cloning
-- Keep the original meaning and emotion
-- Try to keep the text as close to the original as possible
-- Don't make any line too long - break into multiple lines
-
-EXAMPLE OUTPUT:
-[S1] Hello this is an example of natural speech
-that flows well for voice synthesis
-
-OUTPUT (English with [S1] tag, proper line breaks):"""
+                utterances_data.append(utterance_data)
                 
-                response = self.openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[
-                        {"role": "system", "content": "Translate with clean formatting optimized for voice cloning. Use proper line breaks. Each speaker should be on a new line. Don't put everything on one single line."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=300,
-                    temperature=0.1,
-                    timeout=45
+                # Update speaker stats
+                duration = utterance_data["end"] - utterance_data["start"]
+                speakers[speaker_id]["total_duration"] += duration
+                speakers[speaker_id]["segments_count"] += 1
+                speakers[speaker_id]["confidence"] = max(
+                    speakers[speaker_id]["confidence"], 
+                    utterance_data["confidence"]
                 )
+        
+        # If no utterances with speakers, fall back to words
+        if not utterances_data and hasattr(transcript, 'words') and transcript.words:
+            logger.info("No utterances found, processing words directly")
+            
+            # Group words by speaker
+            current_speaker = None
+            current_utterance = None
+            
+            for word in transcript.words:
+                word_speaker = getattr(word, 'speaker', 'A')
                 
-                if response and response.choices:
-                    formatted_text = response.choices[0].message.content.strip()
+                if word_speaker != current_speaker:
+                    # Save previous utterance
+                    if current_utterance:
+                        utterances_data.append(current_utterance)
+                        duration = current_utterance["end"] - current_utterance["start"]
+                        speakers[current_speaker]["total_duration"] += duration
+                        speakers[current_speaker]["segments_count"] += 1
                     
-                    with self.cache_lock:
-                        self.translation_cache[cache_key] = formatted_text
-                    return formatted_text
-                
-                raise ValueError("No valid OpenAI response")
-                
-            except Exception as openai_error:
-                logger.warning(f"OpenAI formatting failed: {openai_error}")
-                raise ValueError(f"OpenAI formatting failed: {openai_error}")
+                    # Start new utterance
+                    current_speaker = word_speaker
+                    if current_speaker not in speakers:
+                        speakers[current_speaker] = {
+                            "id": current_speaker,
+                            "label": f"Speaker {current_speaker}",
+                            "total_duration": 0,
+                            "segments_count": 0,
+                            "confidence": 0
+                        }
+                    
+                    current_utterance = {
+                        "speaker": current_speaker,
+                        "text": word.text,
+                        "start": word.start / 1000.0,
+                        "end": word.end / 1000.0,
+                        "confidence": word.confidence,
+                        "words": [{
+                            "text": word.text,
+                            "start": word.start / 1000.0,
+                            "end": word.end / 1000.0,
+                            "confidence": word.confidence,
+                            "speaker": word_speaker
+                        }]
+                    }
+                else:
+                    # Continue current utterance
+                    current_utterance["text"] += " " + word.text
+                    current_utterance["end"] = word.end / 1000.0
+                    current_utterance["confidence"] = (current_utterance["confidence"] + word.confidence) / 2
+                    current_utterance["words"].append({
+                        "text": word.text,
+                        "start": word.start / 1000.0,
+                        "end": word.end / 1000.0,
+                        "confidence": word.confidence,
+                        "speaker": word_speaker
+                    })
+            
+            # Save last utterance
+            if current_utterance:
+                utterances_data.append(current_utterance)
+                duration = current_utterance["end"] - current_utterance["start"]
+                speakers[current_speaker]["total_duration"] += duration
+                speakers[current_speaker]["segments_count"] += 1
+        
+        # Ensure we have at least one speaker
+        if not speakers:
+            speakers["A"] = {
+                "id": "A",
+                "label": "Speaker A",
+                "total_duration": original_duration,
+                "segments_count": 1,
+                "confidence": confidence
+            }
+            
+            # Create basic utterance if none exist
+            if not utterances_data:
+                utterances_data = [{
+                    "speaker": "A",
+                    "text": transcript.text or "",
+                    "start": 0.0,
+                    "end": original_duration,
+                    "confidence": confidence,
+                    "words": []
+                }]
+        
+        return {
+            "transcript_id": transcript.id,
+            "text": transcript.text,
+            "language_code": language_code,
+            "confidence": confidence,
+            "audio_duration": original_duration,
+            "speakers": list(speakers.values()),
+            "utterances": utterances_data,
+            "metadata": {
+                "language_code": language_code,
+                "confidence": confidence,
+                "processing_time": datetime.now().isoformat(),
+                "total_speakers": len(speakers),
+                "total_utterances": len(utterances_data)
+            }
+        }
+    
+    def _save_transcription_locally(self, transcription_result: Dict[str, Any], audio_id: str):
+        """Save transcription results locally for backup"""
+        try:
+            # Save as JSON
+            transcription_json = json.dumps(transcription_result, indent=2, ensure_ascii=False)
+            
+            local_result = local_storage.store_text(
+                audio_id, 
+                transcription_json.encode('utf-8'), 
+                f"{audio_id}_transcription.json"
+            )
+            
+            if local_result.get("success"):
+                logger.info(f"Transcription saved locally: {local_result['local_path']}")
+            else:
+                logger.warning(f"Failed to save transcription locally: {local_result.get('error')}")
                 
         except Exception as e:
-            raise ValueError(f"Enhanced text formatting failed for speaker {speaker}: {str(e)}")
+            logger.warning(f"Failed to save transcription locally: {str(e)}")
     
-    def format_dialogue_batch(self, text_list: List[str], speaker_data: List, words_data_list: List[List[Dict]] = None) -> List[str]:
-        """Simplified batch dialogue processing"""
-        if not text_list:
-            return []
-        
-        # Simplified speaker data handling
-        if not speaker_data:
-            speaker_data = ['A'] * len(text_list)
-        
-        # Ensure speaker_data matches text_list length
-        if len(speaker_data) != len(text_list):
-            logger.warning(f"Speaker data length mismatch, using default speakers")
-            speaker_data = ['A'] * len(text_list)
-        
-        # Ensure words_data_list has same length
-        if words_data_list is None:
-            words_data_list = [None] * len(text_list)
-        elif len(words_data_list) != len(text_list):
-            words_data_list = [None] * len(text_list)
-        
-        # Process each text with simplified logic
-        results = []
-        for i, (text, speaker, words_data) in enumerate(zip(text_list, speaker_data, words_data_list)):
-            try:
-                # Create simple speaker data format
-                simple_speaker_data = {
-                    'speakers': [speaker] if isinstance(speaker, str) else speaker.get('speakers', [speaker]),
-                    'is_multi_speaker': False,
-                    'primary_speaker': speaker if isinstance(speaker, str) else speaker.get('primary_speaker', 'A')
-                }
+    def translate_segments_for_dubbing(self, segments: List[Dict[str, Any]], 
+                                      target_language: str, detected_language: str,
+                                      audio_id: str) -> List[Dict[str, Any]]:
+        """Translate segments using OpenAI with dubbing-optimized prompts"""
+        try:
+            logger.info(f"Starting OpenAI translation for {len(segments)} segments to {target_language}")
+            
+            # Skip translation if already in target language
+            if self._is_same_language(detected_language, target_language):
+                logger.info(f"Detected language ({detected_language}) matches target ({target_language}), skipping translation")
+                return self._add_translation_metadata(segments, target_language, "skipped_same_language")
+            
+            translated_segments = []
+            batch_size = 5  # Process segments in batches
+            
+            for i in range(0, len(segments), batch_size):
+                batch = segments[i:i+batch_size]
                 
-                formatted_text = self.format_dialogue_text(text, simple_speaker_data, words_data)
-                results.append(formatted_text)
+                # Update progress
+                progress = int((i / len(segments)) * 100)
+                self._update_translation_progress(audio_id, progress, f"Translating batch {i//batch_size + 1}")
                 
-            except Exception as e:
-                logger.error(f"Failed to format text {i+1}: {str(e)}")
-                results.append(text)  # Use original text as fallback
+                # Translate batch
+                translated_batch = self._translate_segment_batch(batch, target_language, detected_language)
+                translated_segments.extend(translated_batch)
+                
+                # Small delay to avoid rate limiting
+                time.sleep(0.5)
+            
+            logger.info(f"Translation completed for {len(translated_segments)} segments")
+            return translated_segments
+            
+        except Exception as e:
+            logger.error(f"Translation failed for {audio_id}: {str(e)}")
+            # Return original segments with error metadata
+            return self._add_translation_metadata(segments, target_language, f"translation_failed: {str(e)}")
+    
+    def _translate_segment_batch(self, segments: List[Dict[str, Any]], 
+                                target_language: str, detected_language: str) -> List[Dict[str, Any]]:
+        """Translate a batch of segments using OpenAI"""
+        try:
+            # Prepare batch for translation
+            translation_requests = []
+            for segment in segments:
+                if segment.get("type") == "speech" and segment.get("text", "").strip():
+                    translation_requests.append({
+                        "segment_id": segment.get("segment_id", "unknown"),
+                        "original_text": segment["text"].strip(),
+                        "speaker": segment.get("speaker", "unknown"),
+                        "duration": segment.get("duration", 0),
+                        "segment_index": segment.get("segment_index", 0)
+                    })
+            
+            if not translation_requests:
+                return segments
+            
+            # Create dubbing-optimized prompt
+            prompt = self._create_dubbing_translation_prompt(
+                translation_requests, target_language, detected_language
+            )
+            
+            # Call OpenAI
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o",  # Use latest model for best quality
+                messages=[
+                    {"role": "system", "content": self._get_translation_system_prompt(target_language)},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,  # Lower temperature for consistent translation
+                max_tokens=4000,
+                response_format={"type": "json_object"}
+            )
+            
+            # Parse response
+            translation_result = json.loads(response.choices[0].message.content)
+            
+            # Apply translations to segments
+            return self._apply_translations_to_segments(segments, translation_result)
+            
+        except Exception as e:
+            logger.error(f"Batch translation failed: {str(e)}")
+            return self._add_translation_metadata(segments, target_language, f"batch_translation_failed: {str(e)}")
+    
+    def _create_dubbing_translation_prompt(self, requests: List[Dict[str, Any]], 
+                                          target_language: str, detected_language: str) -> str:
+        """Create optimized prompt for dubbing translation"""
         
-        return results
+        # Build context for better translation
+        context_info = []
+        for req in requests:
+            context_info.append({
+                "id": req["segment_id"],
+                "text": req["original_text"],
+                "speaker": req["speaker"],
+                "duration": f"{req['duration']:.1f}s"
+            })
+        
+        prompt = f"""
+DUBBING TRANSLATION TASK
+
+You are a professional dubbing translator specializing in video content translation from {detected_language} to {target_language}.
+
+CRITICAL REQUIREMENTS FOR DUBBING:
+1. NATURAL SPEECH: Translate for spoken dialogue, not written text
+2. TIMING MATCH: Keep similar syllable count and speech rhythm 
+3. EMOTIONAL PRESERVATION: Maintain the speaker's emotional tone and intent
+4. CULTURAL ADAPTATION: Use culturally appropriate expressions
+5. LIP-SYNC FRIENDLY: Consider mouth movements and speech patterns
+6. CONVERSATIONAL STYLE: Use natural, spoken language (contractions, informal speech)
+
+FISH SPEECH TTS OPTIMIZATION:
+- Use clear, pronounceable text
+- Add emotional markers when appropriate: (happy), (excited), (sad), (serious), (casual), etc.
+- Use natural pauses with commas and periods
+- Avoid complex punctuation that might confuse TTS
+- Keep sentences conversational and flowing
+
+SEGMENTS TO TRANSLATE:
+{json.dumps(context_info, indent=2, ensure_ascii=False)}
+
+INSTRUCTIONS:
+1. Translate each segment preserving the speaker's personality and emotion
+2. Match the approximate speaking duration (consider syllable count)
+3. Use natural, conversational {target_language} 
+4. Add appropriate emotion markers for Fish Speech TTS
+5. Maintain speaker consistency across segments
+6. Consider the video dubbing context (speakers might be characters, presenters, etc.)
+
+RESPONSE FORMAT (JSON):
+{{
+  "translations": [
+    {{
+      "segment_id": "segment_001",
+      "original_text": "original text",
+      "translated_text": "translated text with (emotion) markers",
+      "emotion_detected": "happy/sad/neutral/excited/etc",
+      "translation_notes": "brief note about translation choices",
+      "syllable_match": "similar/shorter/longer"
+    }}
+  ],
+  "translation_summary": {{
+    "source_language": "{detected_language}",
+    "target_language": "{target_language}",
+    "total_segments": {len(requests)},
+    "translation_approach": "description of overall approach"
+  }}
+}}
+"""
+        return prompt
+    
+    def _get_translation_system_prompt(self, target_language: str) -> str:
+        """Get system prompt for translation"""
+        return f"""You are an expert dubbing translator with extensive experience in video localization and voice-over work. 
+
+Your specializations:
+- Video dubbing and voice-over translation
+- Cross-cultural communication
+- Natural speech patterns in {target_language}
+- Text-to-Speech optimization
+- Emotional tone preservation
+
+You understand that dubbing translation requires:
+- Natural spoken language (not literary translation)
+- Timing and rhythm consideration
+- Cultural context adaptation
+- Emotional authenticity
+- Technical TTS optimization
+
+Always provide translations that sound natural when spoken aloud and work well with AI voice cloning technology."""
+    
+    def _apply_translations_to_segments(self, segments: List[Dict[str, Any]], 
+                                       translation_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Apply translations to segments"""
+        try:
+            translations_map = {}
+            for translation in translation_result.get("translations", []):
+                segment_id = translation.get("segment_id")
+                if segment_id:
+                    translations_map[segment_id] = translation
+            
+            translated_segments = []
+            for segment in segments:
+                segment_copy = segment.copy()
+                segment_id = segment.get("segment_id")
+                
+                if segment_id in translations_map:
+                    translation = translations_map[segment_id]
+                    
+                    # Add translation fields
+                    segment_copy["original_text"] = segment.get("text", "")
+                    segment_copy["text"] = translation.get("translated_text", segment.get("text", ""))
+                    segment_copy["english_text"] = translation.get("translated_text", segment.get("text", ""))
+                    
+                    # Add translation metadata
+                    segment_copy["translation"] = {
+                        "translated": True,
+                        "emotion_detected": translation.get("emotion_detected", "neutral"),
+                        "translation_notes": translation.get("translation_notes", ""),
+                        "syllable_match": translation.get("syllable_match", "similar"),
+                        "translation_quality": "openai_gpt4o"
+                    }
+                else:
+                    # No translation found, keep original
+                    segment_copy["translation"] = {
+                        "translated": False,
+                        "reason": "no_translation_needed_or_failed"
+                    }
+                
+                translated_segments.append(segment_copy)
+            
+            return translated_segments
+            
+        except Exception as e:
+            logger.error(f"Failed to apply translations: {str(e)}")
+            return self._add_translation_metadata(segments, "unknown", f"apply_translation_failed: {str(e)}")
+    
+    def _add_translation_metadata(self, segments: List[Dict[str, Any]], 
+                                 target_language: str, status: str) -> List[Dict[str, Any]]:
+        """Add translation metadata to segments"""
+        for segment in segments:
+            segment["translation"] = {
+                "translated": False,
+                "status": status,
+                "target_language": target_language,
+                "original_text": segment.get("text", ""),
+                "english_text": segment.get("text", "")  # Fallback to original
+            }
+        return segments
+    
+    def _is_same_language(self, detected: str, target: str) -> bool:
+        """Check if detected and target languages are the same"""
+        # Normalize language codes
+        detected_norm = detected.lower().strip()
+        target_norm = target.lower().strip()
+        
+        # Direct match
+        if detected_norm == target_norm:
+            return True
+        
+        # Common variations
+        language_mapping = {
+            "english": ["en", "eng", "english"],
+            "hindi": ["hi", "hin", "hindi"],
+            "bengali": ["bn", "ben", "bengali", "bangla"],
+            "spanish": ["es", "spa", "spanish"],
+            "french": ["fr", "fra", "french"],
+            "german": ["de", "deu", "german"],
+            "chinese": ["zh", "chi", "chinese", "mandarin"],
+            "japanese": ["ja", "jpn", "japanese"],
+            "korean": ["ko", "kor", "korean"],
+            "arabic": ["ar", "ara", "arabic"]
+        }
+        
+        for lang_group in language_mapping.values():
+            if detected_norm in lang_group and target_norm in lang_group:
+                return True
+        
+        return False
+    
+    def _update_translation_progress(self, audio_id: str, progress: int, message: str):
+        """Update translation progress"""
+        try:
+            from status_manager import status_manager, ProcessingStatus
+            
+            # Translation is part of processing phase (50-70%)
+            base_progress = 50
+            translation_progress = int((progress / 100) * 20)  # 20% allocation for translation
+            total_progress = base_progress + translation_progress
+            
+            status_manager.update_status(
+                audio_id, 
+                ProcessingStatus.PROCESSING, 
+                progress=total_progress,
+                details={"message": message}
+            )
+        except:
+            pass
     
     def _clean_text(self, text: str) -> str:
+        """Clean text for processing"""
         # Remove quotes and extra whitespace
         text = re.sub(r'^["\s]*', '', text).strip()
         text = re.sub(r'["\s]*$', '', text)
-
-        # Clean up multiple spaces and normalize formatting
+        
+        # Clean up multiple spaces
         text = re.sub(r'\s+', ' ', text)
         
-        # Remove extra spaces at the beginning and end
-        text = text.strip()
-
-        return text
+        return text.strip()

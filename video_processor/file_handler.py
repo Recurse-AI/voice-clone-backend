@@ -5,12 +5,13 @@ Handles video file downloads and uploads with progress tracking.
 Responsible for the first 10% of processing progress.
 """
 
+import logging
 import os
-import requests
 import urllib.parse
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
-import logging
+
+import requests
 
 from utils import local_storage
 

@@ -1,22 +1,17 @@
 """
 Video Processing Module
 
-Handles video processing with voice-cloned audio replacement.
+Handles video processing with audio replacement.
 """
 
-import os
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-import soundfile as sf
-import numpy as np
 
-try:
-    from moviepy.editor import VideoFileClip, AudioFileClip, CompositeAudioClip
-    MOVIEPY_AVAILABLE = True
-except ImportError:
-    MOVIEPY_AVAILABLE = False
+import numpy as np
+import soundfile as sf
 
 
 class VideoProcessor:
@@ -43,13 +38,7 @@ class VideoProcessor:
                 with open(json_file, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 
-                if not data.get('segment_index'):
-                    continue
-                
-                if not data.get('start') and data.get('start') != 0:
-                    continue
-                
-                if not data.get('end'):
+                if not data.get('segment_index') or not data.get('start') and data.get('start') != 0 or not data.get('end'):
                     continue
                 
                 cloned_audio_exists = False
@@ -134,14 +123,13 @@ class VideoProcessor:
             
             last = resolved[-1]
             
+            # Simple overlap resolution
             if current['start'] < last['end']:
-                if current['start'] >= last['start']:
-                    last['end'] = current['start']
-                    if last['end'] - last['start'] < 0.5:
-                        resolved.pop()
-                resolved.append(current)
-            else:
-                resolved.append(current)
+                last['end'] = current['start']
+                if last['end'] - last['start'] < 0.5:
+                    resolved.pop()
+            
+            resolved.append(current)
         
         return resolved
     
@@ -178,19 +166,19 @@ class VideoProcessor:
             ]
             
             if subtitle_path and subtitle_path.exists():
-                # Use high-quality settings when adding subtitles (similar to export_video)
+                # High-quality settings when adding subtitles
                 cmd.extend([
                     '-vf', f"subtitles='{subtitle_path}':force_style='Fontname=Arial-Bold,Fontsize={self.subtitle_font_size},Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV={self.subtitle_margin_bottom}'",
                     '-c:v', 'libx264',
-                    '-preset', 'medium',  # Better quality than default
-                    '-b:v', '5000k',     # High bitrate for good quality
+                    '-preset', 'medium',
+                    '-b:v', '5000k',
                 ])
             else:
-                # When no subtitles, still re-encode with high quality to ensure consistency
+                # High quality without subtitles
                 cmd.extend([
                     '-c:v', 'libx264',
                     '-preset', 'medium',
-                    '-b:v', '5000k',     # Same high bitrate for consistency
+                    '-b:v', '5000k',
                 ])
             
             cmd.extend([
@@ -300,7 +288,7 @@ class VideoProcessor:
             else:
                 final_audio_path = Path(audio_path)
             
-            # Always create subtitle file even when not attaching to video
+            # Create subtitle file even when not attaching to video
             subtitle_path = None
             subtitle_count = 0
             if segments_dir:
@@ -312,7 +300,7 @@ class VideoProcessor:
             
             output_path = self.temp_dir / f"video_no_subtitles_{audio_id}.mp4"
             
-            # Create video without attaching subtitles (subtitle_path=None)
+            # Create video without attaching subtitles
             result = self._create_video_ffmpeg(video_path, str(final_audio_path), None, output_path)
             
             if result["success"]:

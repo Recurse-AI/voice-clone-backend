@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     # API Configuration
     API_TITLE: str = "Voice Cloning API"
     API_VERSION: str = "1.0.0"
-    API_DESCRIPTION: str = "Production Voice Cloning API with Dia Model"
+    API_DESCRIPTION: str = "Production Voice Cloning API"
     
     # Server Configuration
     HOST: str = "0.0.0.0"
@@ -28,25 +28,6 @@ class Settings(BaseSettings):
     LOCAL_STORAGE_DIR: str = os.getenv('LOCAL_STORAGE_DIR', './tmp/local_storage')
     LOCAL_STORAGE_RETENTION_HOURS: int = int(os.getenv('LOCAL_STORAGE_RETENTION_HOURS', '1'))
     
-    # Dia Model Configuration
-    DIA_MODEL_REPO: str = "nari-labs/Dia-1.6B-0626"
-    DIA_DEVICE: str = "cuda" if (os.getenv("CUDA_AVAILABLE") and torch.cuda.is_available()) else "cpu"
-    DIA_COMPUTE_DTYPE: str = "float16"  # float16 for CUDA, float32 for CPU
-    DIA_USE_TORCH_COMPILE: bool = False
-    DIA_VERBOSE: bool = False
-    
-    # Enhanced Dia Generation Parameters (Colab optimized)
-    # These provide better control and consistency for voice cloning
-    DIA_ENHANCED_MAX_TOKENS: int = 3072  # ~36 seconds (Colab optimal)
-    DIA_ENHANCED_CFG_SCALE: float = 3.0  # Better adherence balance (Colab optimal)
-    DIA_ENHANCED_TEMPERATURE: float = 1.8  # Optimal randomness (Reference code optimal)
-    DIA_ENHANCED_TOP_P: float = 0.95  # Nucleus sampling (Colab optimal)
-    DIA_ENHANCED_CFG_FILTER_TOP_K: int = 45  # CFG filtering (Colab optimal)
-    DIA_ENHANCED_SPEED_FACTOR: float = 1.0  # Audio speed adjustment (Slower, more natural speech)
-    DIA_ENHANCED_USE_TORCH_COMPILE: bool = False  # Keep False for stability like reference
-    
-
-    
     # R2 Bucket Configuration
     R2_ACCESS_KEY_ID: str = os.getenv("R2_ACCESS_KEY_ID", "")
     R2_SECRET_ACCESS_KEY: str = os.getenv("R2_SECRET_ACCESS_KEY", "")
@@ -55,8 +36,6 @@ class Settings(BaseSettings):
     R2_REGION: str = os.getenv("R2_REGION", "auto")
     R2_BASE_PATH: str = "voice-cloning"
     R2_PUBLIC_URL: str = os.getenv("R2_PUBLIC_URL", "")
-    
-
     
     # MongoDB Configuration
     MONGODB_URI: str = os.getenv("MONGODB_URI", "")

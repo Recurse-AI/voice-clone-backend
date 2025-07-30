@@ -6,8 +6,10 @@ Handles vocal and instrument separation using RunPod API.
 
 import os
 import time
-import requests
 from typing import Dict, Any, Optional
+
+import requests
+
 from config import settings
 
 

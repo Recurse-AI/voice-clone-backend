@@ -22,8 +22,18 @@ tokenizers
 accelerate
 openai
 
-# Dia Model - Install latest transformers and dia
-git+https://github.com/nari-labs/dia.git
+# Fish Speech TTS
+pyrootutils
+loguru
+huggingface_hub
+einx
+tiktoken
+msgpack
+ormsgpack
+gradio
+kui
+pyaudio
+pydub
 
 # AssemblyAI for transcription
 assemblyai

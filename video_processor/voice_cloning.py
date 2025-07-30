@@ -1,600 +1,386 @@
 """
-Voice Cloning Module - Enhanced with Advanced Parameter Controls
+Fish Speech Voice Cloning Service - Maximum Quality TTS
+Auto-downloads models and provides voice cloning functionality
 """
 
-import torch
-import numpy as np
-import random
 import os
-import gc
 import json
-import soundfile as sf
-from typing import Optional, Dict, Any, List
-from pathlib import Path
-from dia.model import Dia
-from config import settings
 import logging
+import threading
 import time
+from pathlib import Path
+from typing import Dict, Any, List, Optional, Union
+import tempfile
+import shutil
+
+import torch
+import soundfile as sf
+import numpy as np
+from huggingface_hub import hf_hub_download
+
+from config import settings
 
 logger = logging.getLogger(__name__)
 
+
+class FishSpeechService:
+    """Fish Speech TTS service with auto model download and voice cloning"""
+    
+    def __init__(self, device: str = "cuda", use_compile: bool = True):
+        self.device = device if torch.cuda.is_available() else "cpu"
+        self.use_compile = use_compile
+        self.precision = torch.bfloat16 if self.device == "cuda" else torch.float32
+        
+        # Model paths
+        self.models_dir = Path("./fish_speech_models")
+        self.models_dir.mkdir(exist_ok=True)
+        
+        # Use full S1 model for maximum quality (not mini)
+        self.model_repo = "fishaudio/openaudio-s1"  # Full model, not mini
+        self.model_local_path = self.models_dir / "openaudio-s1"
+        
+        # Initialize as None, will be loaded lazily
+        self.inference_engine = None
+        self.llama_queue = None
+        self.decoder_model = None
+        self._model_lock = threading.Lock()
+        self._is_initialized = False
+        
+        logger.info(f"FishSpeechService initialized with device: {self.device}")
+    
+    def _ensure_fish_speech_available(self):
+        """Ensure Fish Speech is available and clone if needed"""
+        try:
+            fish_speech_dir = Path("./fish-speech")
+            
+            if not fish_speech_dir.exists():
+                logger.info("Fish Speech not found, cloning repository...")
+                import subprocess
+                result = subprocess.run([
+                    "git", "clone", "https://github.com/fishaudio/fish-speech.git"
+                ], capture_output=True, text=True)
+                
+                if result.returncode != 0:
+                    raise Exception(f"Failed to clone Fish Speech: {result.stderr}")
+                
+                logger.info("Fish Speech repository cloned successfully")
+            
+            # Add to Python path
+            import sys
+            if str(fish_speech_dir) not in sys.path:
+                sys.path.insert(0, str(fish_speech_dir))
+            
+            # Set project root for pyrootutils
+            os.environ["FISH_SPEECH_ROOT"] = str(fish_speech_dir)
+            
+        except Exception as e:
+            logger.error(f"Failed to setup Fish Speech: {str(e)}")
+            raise
+    
+    def _download_models(self):
+        """Download Fish Speech models automatically"""
+        try:
+            logger.info("Downloading Fish Speech models (this may take a while)...")
+            
+            # Files to download for full S1 model
+            model_files = [
+                "model.pth",
+                "codec.pth", 
+                "config.json",
+                "special_tokens.json",
+                "tokenizer.tiktoken",
+                ".gitattributes",
+                "README.md"
+            ]
+            
+            self.model_local_path.mkdir(parents=True, exist_ok=True)
+            
+            for file_name in model_files:
+                local_file_path = self.model_local_path / file_name
+                
+                if not local_file_path.exists():
+                    logger.info(f"Downloading {file_name}...")
+                    
+                    downloaded_path = hf_hub_download(
+                        repo_id=self.model_repo,
+                        filename=file_name,
+                        local_dir=str(self.model_local_path),
+                        local_dir_use_symlinks=False,
+                        resume_download=True
+                    )
+                    
+                    logger.info(f"Downloaded {file_name}")
+                else:
+                    logger.info(f"{file_name} already exists, skipping")
+            
+            logger.info("All Fish Speech models downloaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to download models: {str(e)}")
+            raise
+    
+    def _initialize_models(self):
+        """Initialize Fish Speech models"""
+        with self._model_lock:
+            if self._is_initialized:
+                return
+            
+            try:
+                logger.info("Initializing Fish Speech models...")
+                
+                # Ensure Fish Speech is available
+                self._ensure_fish_speech_available()
+                
+                # Download models
+                self._download_models()
+                
+                # Import Fish Speech modules
+                import pyrootutils
+                fish_speech_root = Path("./fish-speech")
+                pyrootutils.setup_root(str(fish_speech_root / "__init__.py"), indicator=".project-root", pythonpath=True)
+                
+                from fish_speech.inference_engine import TTSInferenceEngine
+                from fish_speech.models.dac.inference import load_model as load_decoder_model
+                from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
+                
+                # Load Llama model
+                logger.info("Loading Llama model...")
+                self.llama_queue = launch_thread_safe_queue(
+                    checkpoint_path=self.model_local_path,
+                    device=self.device,
+                    precision=self.precision,
+                    compile=self.use_compile,
+                )
+                
+                # Load decoder model
+                logger.info("Loading VQ-GAN decoder model...")
+                self.decoder_model = load_decoder_model(
+                    config_name="modded_dac_vq",
+                    checkpoint_path=str(self.model_local_path / "codec.pth"),
+                    device=self.device,
+                )
+                
+                # Create inference engine
+                logger.info("Creating TTS inference engine...")
+                self.inference_engine = TTSInferenceEngine(
+                    llama_queue=self.llama_queue,
+                    decoder_model=self.decoder_model,
+                    compile=self.use_compile,
+                    precision=self.precision,
+                )
+                
+                # Warm up the model
+                logger.info("Warming up Fish Speech model...")
+                self._warmup_model()
+                
+                self._is_initialized = True
+                logger.info("Fish Speech models initialized successfully")
+                
+            except Exception as e:
+                logger.error(f"Failed to initialize Fish Speech models: {str(e)}")
+                raise
+    
+    def _warmup_model(self):
+        """Warm up the model to avoid first-time latency"""
+        try:
+            from fish_speech.utils.schema import ServeTTSRequest
+            
+            # Dry run with simple text
+            warmup_request = ServeTTSRequest(
+                text="Hello world.",
+                references=[],
+                reference_id=None,
+                max_new_tokens=1024,
+                chunk_length=200,
+                top_p=0.7,
+                repetition_penalty=1.5,
+                temperature=0.7,
+                format="wav",
+            )
+            
+            # Run inference to warm up
+            list(self.inference_engine.inference(warmup_request))
+            logger.info("Model warmup completed")
+            
+        except Exception as e:
+            logger.warning(f"Model warmup failed: {str(e)}")
+    
+    def clone_voice_for_segment(self, segment_metadata: Dict[str, Any], 
+                               reference_audio_path: str, audio_id: str) -> Dict[str, Any]:
+        """Clone voice for a specific segment using Fish Speech"""
+        try:
+            # Ensure models are initialized
+            if not self._is_initialized:
+                self._initialize_models()
+            
+            from fish_speech.utils.schema import ServeTTSRequest, ServeReferenceAudio
+            from fish_speech.utils.file import audio_to_bytes
+            
+            # Get text to synthesize
+            text_to_clone = segment_metadata.get("text", "")
+            if not text_to_clone.strip():
+                return {"success": False, "error": "No text to synthesize"}
+            
+            # Clean text for TTS (Fish Speech handles emotion markers)
+            cleaned_text = self._prepare_text_for_tts(text_to_clone)
+            
+            # Prepare reference audio
+            reference_audio_bytes = audio_to_bytes(reference_audio_path)
+            reference_text = segment_metadata.get("original_text", text_to_clone)
+            
+            # Create reference
+            references = [ServeReferenceAudio(
+                audio=reference_audio_bytes,
+                text=reference_text
+            )]
+            
+            # Create TTS request with optimal settings for voice cloning
+            tts_request = ServeTTSRequest(
+                text=cleaned_text,
+                references=references,
+                reference_id=None,
+                max_new_tokens=2048,  # Higher for longer segments
+                chunk_length=300,
+                top_p=0.8,            # Optimal for voice cloning
+                repetition_penalty=1.1,
+                temperature=0.7,      # Balanced creativity/consistency
+                format="wav",
+                streaming=False,
+                use_memory_cache="on",
+                seed=self._get_speaker_seed(segment_metadata.get("speaker", "A"))
+            )
+            
+            # Generate audio
+            logger.info(f"Generating voice clone for segment {segment_metadata.get('segment_index', 'unknown')}")
+            
+            audio_chunks = list(self.inference_engine.inference(tts_request))
+            
+            if not audio_chunks:
+                return {"success": False, "error": "No audio generated"}
+            
+            # Combine audio chunks
+            combined_audio = b''.join(audio_chunks)
+            
+            # Save cloned audio
+            segment_index = segment_metadata.get("segment_index", 1)
+            output_filename = f"cloned_segment_{segment_index:03d}.wav"
+            output_path = Path(segment_metadata.get("audio_file", "")).parent / output_filename
+            
+            with open(output_path, 'wb') as f:
+                f.write(combined_audio)
+            
+            # Verify audio file
+            try:
+                audio_data, sample_rate = sf.read(str(output_path))
+                duration = len(audio_data) / sample_rate
+                
+                return {
+                    "success": True,
+                    "cloned_audio_path": str(output_path),
+                    "duration": duration,
+                    "sample_rate": sample_rate,
+                    "text_synthesized": cleaned_text,
+                    "reference_used": reference_audio_path,
+                    "model_used": "fish_speech_openaudio_s1"
+                }
+                
+            except Exception as e:
+                return {"success": False, "error": f"Generated audio verification failed: {str(e)}"}
+                
+        except Exception as e:
+            logger.error(f"Voice cloning failed for segment: {str(e)}")
+            return {"success": False, "error": str(e)}
+    
+    def _prepare_text_for_tts(self, text: str) -> str:
+        """Prepare text for Fish Speech TTS"""
+        # Fish Speech already handles emotion markers like (happy), (sad) etc.
+        # Just clean up any problematic characters
+        
+        # Remove excessive whitespace
+        text = ' '.join(text.split())
+        
+        # Ensure proper sentence endings
+        if text and not text.endswith(('.', '!', '?')):
+            text += '.'
+        
+        return text
+    
+    def _get_speaker_seed(self, speaker_id: str) -> int:
+        """Get consistent seed for speaker"""
+        # Create consistent seed based on speaker ID for voice consistency
+        seed_base = hash(speaker_id) % 1000000
+        return abs(seed_base)
+    
+    def get_model_info(self) -> Dict[str, Any]:
+        """Get Fish Speech model information"""
+        return {
+            "model_name": "OpenAudio S1 (Fish Speech)",
+            "model_size": "4B parameters",
+            "device": self.device,
+            "precision": str(self.precision),
+            "compile_enabled": self.use_compile,
+            "local_path": str(self.model_local_path),
+            "initialized": self._is_initialized,
+            "features": [
+                "Zero-shot voice cloning",
+                "Multilingual TTS",
+                "Emotion markers support",
+                "High quality synthesis",
+                "Cross-lingual support"
+            ]
+        }
+    
+    def cleanup(self):
+        """Clean up resources"""
+        try:
+            if self.inference_engine:
+                del self.inference_engine
+            if self.llama_queue:
+                del self.llama_queue  
+            if self.decoder_model:
+                del self.decoder_model
+            
+            # Clear CUDA cache if using GPU
+            if self.device == "cuda" and torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
+            logger.info("Fish Speech service cleaned up")
+            
+        except Exception as e:
+            logger.error(f"Cleanup error: {str(e)}")
+
+
+# Global instance - will be initialized when first used
+_fish_speech_service = None
+_service_lock = threading.Lock()
+
+
+def get_fish_speech_service(device: str = "cuda") -> FishSpeechService:
+    """Get or create Fish Speech service instance"""
+    global _fish_speech_service
+    
+    with _service_lock:
+        if _fish_speech_service is None:
+            _fish_speech_service = FishSpeechService(device=device)
+        
+        return _fish_speech_service
+
+
 def set_seed(seed: int):
-    """Set random seed for reproducibility - Enhanced version from Colab"""
-    random.seed(seed)
-    np.random.seed(seed)
+    """Set random seed for reproducible results"""
     torch.manual_seed(seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
-    # Ensure deterministic behavior for cuDNN
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    np.random.seed(seed)
 
 
+# Legacy compatibility
 class VoiceCloningService:
-    """Enhanced voice cloning service with advanced parameter controls"""
+    """Legacy wrapper for compatibility"""
     
-    def __init__(self, segment_manager=None):
-        self.dia_model = None
-        self.device = settings.DIA_DEVICE
-        self.sample_rate = 44100
-        self.segment_manager = segment_manager
-        
-        # Enhanced default parameters (can be overridden)
-        self.default_params = {
-            'max_tokens': settings.DIA_ENHANCED_MAX_TOKENS,     # Use config values
-            'cfg_scale': settings.DIA_ENHANCED_CFG_SCALE,       # Use config values
-            'temperature': settings.DIA_ENHANCED_TEMPERATURE,   # Use config values  
-            'top_p': settings.DIA_ENHANCED_TOP_P,               # Use config values
-            'cfg_filter_top_k': settings.DIA_ENHANCED_CFG_FILTER_TOP_K,  # Use config values
-            'speed_factor': settings.DIA_ENHANCED_SPEED_FACTOR,     # Use config values
-            'use_torch_compile': settings.DIA_ENHANCED_USE_TORCH_COMPILE,  # Use config values
-            'verbose': False
-        }
-        
-        if not segment_manager:
-            logger.warning("VoiceCloningService initialized without segment_manager - some features may not work properly")
+    def __init__(self):
+        self.fish_service = get_fish_speech_service()
     
-    def load_dia_model(self, repo_id: str = None, compute_dtype: str = None) -> bool:
-        """Load Dia model with enhanced configuration"""
-        try:
-            repo_id = repo_id or settings.DIA_MODEL_REPO
-            compute_dtype = compute_dtype or (settings.DIA_COMPUTE_DTYPE if self.device == "cuda" else "float32")
-            logger.info(f"Loading Dia model from repo: {repo_id}, Device: {self.device}, Compute dtype: {compute_dtype}")
-            
-            self.dia_model = Dia.from_pretrained(repo_id, compute_dtype=compute_dtype)
-            logger.info("Dia model loaded successfully")
-            return True
-        except Exception as e:
-            logger.error(f"Error loading Dia model: {e}")
-            raise Exception(f"Error loading Dia model: {e}")
-        
-    def is_model_loaded(self) -> bool:
-        """Check if Dia model is loaded"""
-        return self.dia_model is not None
-    
-    def clone_voice_segments(self, segments: List[Dict], 
-                           # Enhanced parameter controls from Colab
-                           max_tokens: int = None,
-                           cfg_scale: float = None, 
-                           temperature: float = None,
-                           top_p: float = None,
-                           cfg_filter_top_k: int = None,
-                           speed_factor: float = None,
-                           seed: Optional[int] = None, 
-                           use_torch_compile: bool = None,
-                           audio_id: Optional[str] = None) -> Dict[str, Any]:
-        """Enhanced voice cloning with advanced parameter controls"""
-        if not self.is_model_loaded():
-            return {"success": False, "error": "Dia model not loaded"}
-        
-        if not self.segment_manager:
-            return {"success": False, "error": "Segment manager not available"}
-        
-        if not segments:
-            return {"success": False, "error": "No segments provided"}
-        
-        # Use provided parameters or fall back to defaults
-        params = {
-            'max_tokens': max_tokens or self.default_params['max_tokens'],
-            'cfg_scale': cfg_scale or self.default_params['cfg_scale'],
-            'temperature': temperature or self.default_params['temperature'],
-            'top_p': top_p or self.default_params['top_p'],
-            'cfg_filter_top_k': cfg_filter_top_k or self.default_params['cfg_filter_top_k'],
-            'speed_factor': speed_factor or self.default_params['speed_factor'],
-            'use_torch_compile': use_torch_compile if use_torch_compile is not None else self.default_params['use_torch_compile']
-        }
-        
-        logger.info(f"Starting enhanced voice cloning for {len(segments)} segments")
-        logger.info(f"Parameters: CFG={params['cfg_scale']}, Temp={params['temperature']}, TopP={params['top_p']}, Speed={params['speed_factor']}")
-        
-        # Update status if audio_id provided
-        if audio_id:
-            try:
-                from status_manager import status_manager
-                from status_manager import ProcessingStatus
-                status_manager.update_status(
-                    audio_id, 
-                    ProcessingStatus.PROCESSING, 
-                    progress=60, 
-                    details={"message": f"Processing voice cloning: 0/{len(segments)} segments completed"}
-                )
-            except:
-                pass
-        
-        try:
-            cloning_start_time = time.time()
-            cloned_segments = []
-            
-            # Enhanced seed handling for consistency
-            base_seed = seed if seed is not None else random.randint(1, 1000000)
-            speaker_seeds = {}
-            
-            # Set global seed at start for overall consistency
-            if seed is not None:
-                set_seed(seed)
-                logger.info(f"Using global seed: {seed} for voice consistency")
-            
-            # Process each segment with enhanced error handling
-            for i, segment in enumerate(segments):
-                try:
-                    # Extract segment information
-                    segment_speaker = segment.get('speaker', 'A')
-                    segment_duration = segment.get('duration', 10.0)
-                    english_text = segment.get('english_text', '').strip()
-                    
-                    logger.info(f"Processing segment {i+1}/{len(segments)}: {segment_duration:.2f}s, Speaker: {segment_speaker}")
-                    
-                    # Handle empty or silence segments
-                    if not english_text or english_text in ['[SILENCE]', '']:
-                        logger.info(f"Creating silence for segment {i+1} ({segment_duration:.2f}s)")
-                        
-                        # Create silence with proper duration
-                        silence_samples = int(segment_duration * self.sample_rate)
-                        silence_audio = np.zeros(silence_samples, dtype=np.float32)
-                        
-                        # Save silence audio
-                        self._save_single_cloned_segment(silence_audio, i+1, audio_id)
-                        
-                        cloned_segments.append({
-                            "success": True,
-                            "original_data": {
-                                "segment_index": segment.get('segment_index', i+1),
-                                "speaker": segment_speaker,
-                                "duration": segment_duration,
-                                "original_text": segment.get('original_text', ''),
-                                "english_text": ""
-                            },
-                            "duration": float(segment_duration),
-                            "speaker": str(segment_speaker),
-                            "segment_index": int(segment.get('segment_index', i+1)),
-                            "voice_params": {"type": "silence"}
-                        })
-                        continue
-                    
-                    audio_path = segment.get('audio_path')
-                    if not audio_path or not os.path.exists(audio_path):
-                        logger.warning(f"Audio file missing for segment {i+1} - creating silence placeholder")
-                        
-                        # Create silence placeholder for missing audio
-                        silence_samples = int(segment_duration * self.sample_rate)
-                        silence_audio = np.zeros(silence_samples, dtype=np.float32)
-                        self._save_single_cloned_segment(silence_audio, i+1, audio_id)
-                        
-                        cloned_segments.append({
-                            "success": True,
-                            "original_data": {
-                                "segment_index": segment.get('segment_index', i+1),
-                                "speaker": segment_speaker,
-                                "duration": segment_duration,
-                                "original_text": segment.get('original_text', ''),
-                                "english_text": english_text
-                            },
-                            "duration": float(segment_duration),
-                            "speaker": str(segment_speaker),
-                            "segment_index": int(segment.get('segment_index', i+1)),
-                            "voice_params": {"type": "silence_placeholder"}
-                        })
-                        continue
-                    
-                    # Set consistent seed per speaker (important for Dia voice consistency)
-                    speaker = segment.get('speaker', 'A')
-                    if speaker not in speaker_seeds:
-                        speaker_seeds[speaker] = base_seed + (ord(speaker) - ord('A')) * 1000
-                    
-                    # Apply speaker-specific seed if no global seed was set
-                    if seed is None:
-                        set_seed(speaker_seeds[speaker])
-                        logger.info(f"Using speaker-specific seed {speaker_seeds[speaker]} for speaker {speaker}")
-                    
-                    logger.info(f"Processing segment {i+1}/{len(segments)} (Speaker {speaker})")
-                    
-                    # Update progress
-                    if audio_id:
-                        try:
-                            from status_manager import status_manager
-                            from status_manager import ProcessingStatus
-                            progress = 60 + int((i / len(segments)) * 30)
-                            status_manager.update_status(
-                                audio_id, 
-                                ProcessingStatus.PROCESSING, 
-                                progress=progress,
-                                details={"message": f"Processing voice cloning: segment {i+1}/{len(segments)} (Speaker {speaker})"}
-                            )
-                        except:
-                            pass
-                    
-                    try:
-                        # Generate audio with enhanced parameters
-                        cloned_audio = self._generate_single_segment_enhanced(
-                            english_text, 
-                            audio_path, 
-                            english_text, # Pass English text for both reference and generation
-                            params
-                        )
-                        
-                        if cloned_audio is None:
-                            logger.warning(f"Audio generation failed for segment {i+1} - creating silence placeholder")
-                            
-                            # Create silence placeholder for failed generation
-                            silence_samples = int(segment_duration * self.sample_rate)
-                            silence_audio = np.zeros(silence_samples, dtype=np.float32)
-                            self._save_single_cloned_segment(silence_audio, i+1, audio_id)
-                            
-                            cloned_segments.append({
-                                "success": True,
-                                "original_data": {
-                                    "segment_index": segment.get('segment_index', i+1),
-                                    "speaker": speaker,
-                                    "duration": segment_duration,
-                                    "original_text": segment.get('original_text', ''),
-                                    "english_text": english_text
-                                },
-                                "duration": float(segment_duration),
-                                "speaker": str(speaker),
-                                "segment_index": int(segment.get('segment_index', i+1)),
-                                "voice_params": {"type": "failed_generation_placeholder"}
-                            })
-                            continue
-                        
-                        # Apply speed factor adjustment (enhanced from Colab)
-                        if params['speed_factor'] != 1.0:
-                            cloned_audio = self._apply_speed_factor(cloned_audio, params['speed_factor'])
-                        
-                        # Ensure proper duration
-                        cloned_audio = self._ensure_proper_duration(cloned_audio, segment_duration)
-                        
-                        # Save audio immediately
-                        self._save_single_cloned_segment(cloned_audio, i+1, audio_id)
-                        
-                        logger.info(f"Successfully generated enhanced speech for segment {i+1}")
-                        
-                        cloned_segments.append({
-                            "success": True,
-                            "original_data": {
-                                "segment_index": segment.get('segment_index', i+1),
-                                "speaker": speaker,
-                                "duration": segment.get('duration', 10.0),
-                                "original_text": segment.get('original_text', ''),
-                                "english_text": english_text
-                            },
-                            "duration": float(segment.get('duration', 10.0)),
-                            "speaker": str(speaker),
-                            "segment_index": int(segment.get('segment_index', i+1)),
-                            "voice_params": params.copy()  # Store the parameters used
-                        })
-                        
-                    except Exception as generation_error:
-                        logger.error(f"Error generating audio for segment {i+1}: {generation_error}")
-                        
-                        # Create silence placeholder for any generation error
-                        logger.info(f"Creating silence placeholder for failed segment {i+1}")
-                        silence_samples = int(segment_duration * self.sample_rate)
-                        silence_audio = np.zeros(silence_samples, dtype=np.float32)
-                        self._save_single_cloned_segment(silence_audio, i+1, audio_id)
-                        
-                        cloned_segments.append({
-                            "success": True,
-                            "original_data": {
-                                "segment_index": segment.get('segment_index', i+1),
-                                "speaker": segment_speaker,
-                                "duration": segment_duration,
-                                "original_text": segment.get('original_text', ''),
-                                "english_text": english_text
-                            },
-                            "duration": float(segment_duration),
-                            "speaker": str(segment_speaker),
-                            "segment_index": int(segment.get('segment_index', i+1)),
-                            "voice_params": {"type": "error_placeholder"}
-                        })
-                        continue
-                    
-                    self._cleanup_memory()
-                
-                except Exception as segment_error:
-                    logger.error(f"Critical error processing segment {i+1}: {segment_error}")
-                    
-                    # Ensure we never skip a segment - always create placeholder
-                    segment_duration = segment.get('duration', 10.0)
-                    logger.info(f"Creating silence placeholder for critically failed segment {i+1}")
-                    
-                    silence_samples = int(segment_duration * self.sample_rate)
-                    silence_audio = np.zeros(silence_samples, dtype=np.float32)
-                    self._save_single_cloned_segment(silence_audio, i+1, audio_id)
-                    
-                    cloned_segments.append({
-                        "success": True,
-                        "original_data": {
-                            "segment_index": segment.get('segment_index', i+1),
-                            "speaker": segment.get('speaker', 'A'),
-                            "duration": segment_duration,
-                            "original_text": segment.get('original_text', ''),
-                            "english_text": segment.get('english_text', '')
-                        },
-                        "duration": float(segment_duration),
-                        "speaker": str(segment.get('speaker', 'A')),
-                        "segment_index": int(segment.get('segment_index', i+1)),
-                        "voice_params": {"type": "critical_error_placeholder"}
-                    })
-                    continue
-            
-            cloning_duration = time.time() - cloning_start_time
-            logger.info(f"Enhanced cloning completed in {cloning_duration:.2f} seconds")
-            logger.info(f"Used parameters: {params}")
-            logger.info(f"Processed {len(cloned_segments)} segments")
-            
-            # Verify we have all segments
-            if len(cloned_segments) != len(segments):
-                logger.warning(f"Segment count mismatch: expected {len(segments)}, got {len(cloned_segments)}")
-            
-            # Save summary
-            if cloned_segments:
-                self._save_cloned_segments_unified(cloned_segments, audio_id, params)
-            
-            return {
-                "success": True,
-                "cloned_segments": cloned_segments,
-                "total_segments": len(segments),
-                "successful_clones": len(cloned_segments),
-                "seed_used": base_seed,
-                "speaker_seeds": speaker_seeds,
-                "cloning_duration": cloning_duration,
-                "parameters_used": params
-            }
-            
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-        finally:
-            self._cleanup_memory()
-    
-    def _generate_single_segment_enhanced(self, text: str, reference_audio_path: str, 
-                                        reference_text: str, params: Dict) -> Optional[np.ndarray]:
-        """Generate single segment with enhanced parameters following reference code patterns"""
-        if not self.dia_model:
-            logger.error("Dia model not loaded")
-            return None
-        
-        try:
-            # Use reference text as the audio prompt text (same as original for consistency)
-            # This matches the reference code pattern where both texts should be the same
-            if reference_text and reference_text.strip():
-                # Combine reference text with current text following reference pattern
-                combined_text = reference_text.strip() + "\n" + text.strip()
-                generation_text = combined_text.strip()
-            else:
-                generation_text = text.strip()
-            
-            logger.info(f"Generating with reference audio and combined text")
-            logger.info(f"Generation text: {generation_text[:100]}...")
-            
-            # Use enhanced parameters matching reference code defaults
-            max_tokens = params.get('max_tokens', settings.DIA_ENHANCED_MAX_TOKENS)
-            cfg_scale = params.get('cfg_scale', settings.DIA_ENHANCED_CFG_SCALE)
-            temperature = params.get('temperature', settings.DIA_ENHANCED_TEMPERATURE)
-            top_p = params.get('top_p', settings.DIA_ENHANCED_TOP_P)
-            cfg_filter_top_k = params.get('cfg_filter_top_k', settings.DIA_ENHANCED_CFG_FILTER_TOP_K)
-            use_torch_compile = params.get('use_torch_compile', settings.DIA_ENHANCED_USE_TORCH_COMPILE)
-            
-            logger.info(f"Using parameters: max_tokens={max_tokens}, cfg_scale={cfg_scale}, temp={temperature}, top_p={top_p}, cfg_filter_top_k={cfg_filter_top_k}")
-            
-            # Generate with torch.inference_mode() like reference code
-            with torch.inference_mode():
-                generated_audio = self.dia_model.generate(
-                    text=generation_text,
-                    audio_prompt=reference_audio_path,  # Use reference audio like in reference code
-                    max_tokens=max_tokens,
-                    cfg_scale=cfg_scale,
-                    temperature=temperature,
-                    top_p=top_p,
-                    cfg_filter_top_k=cfg_filter_top_k,
-                    use_torch_compile=use_torch_compile,
-                    verbose=False  # Keep quiet for production
-                )
-            
-            if generated_audio is not None and len(generated_audio) > 0:
-                # Apply speed factor if specified (following reference code pattern)
-                speed_factor = params.get('speed_factor', 1.0)
-                if speed_factor != 1.0:
-                    generated_audio = self._apply_speed_factor(generated_audio, speed_factor)
-                
-                logger.info(f"Successfully generated audio: {generated_audio.shape} samples")
-                return generated_audio
-            else:
-                logger.warning("Generated audio is empty or None")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error in enhanced generation: {str(e)}")
-            return None
-    
-    def _apply_speed_factor(self, audio: np.ndarray, speed_factor: float) -> np.ndarray:
-        """Apply speed factor adjustment (from Colab implementation)"""
-        try:
-            if speed_factor == 1.0:
-                return audio
-            
-            # Calculate new length based on speed factor
-            new_length = int(len(audio) / speed_factor)
-            
-            # Use linear interpolation to adjust speed
-            indices = np.linspace(0, len(audio) - 1, new_length)
-            adjusted_audio = np.interp(indices, np.arange(len(audio)), audio)
-            
-            logger.debug(f"Applied speed factor {speed_factor}: {len(audio)} → {len(adjusted_audio)} samples")
-            return adjusted_audio.astype(audio.dtype)
-            
-        except Exception as e:
-            logger.error(f"Speed factor adjustment failed: {e}")
-            return audio
-    
-    def _ensure_proper_duration(self, audio: np.ndarray, target_duration: float) -> np.ndarray:
-        """Ensure generated audio matches target duration using intelligent padding/trimming"""
-        if audio is None or len(audio) == 0:
-            # Create silence for the full duration
-            logger.warning(f"No audio provided, creating {target_duration:.2f}s of silence")
-            return np.zeros(int(target_duration * self.sample_rate), dtype=np.float32)
-        
-        current_duration = len(audio) / self.sample_rate
-        logger.info(f"Audio duration adjustment: current={current_duration:.3f}s, target={target_duration:.3f}s")
-        
-        # If durations are very close (within 100ms), return as is
-        if abs(current_duration - target_duration) <= 0.1:
-            return audio
-        
-        target_samples = int(target_duration * self.sample_rate)
-        
-        if current_duration > target_duration:
-            # Audio is too long - trim it
-            logger.info(f"Trimming audio from {current_duration:.3f}s to {target_duration:.3f}s")
-            return audio[:target_samples]
-        else:
-            # Audio is too short - pad with silence
-            padding_needed = target_samples - len(audio)
-            logger.info(f"Padding audio with {padding_needed/self.sample_rate:.3f}s of silence")
-            
-            # Add silence to the end to match target duration
-            silence_padding = np.zeros(padding_needed, dtype=audio.dtype)
-            padded_audio = np.concatenate([audio, silence_padding])
-            
-            return padded_audio
-    
-    def _adjust_audio_length(self, audio: np.ndarray, target_duration: float, 
-                           use_speed_adjustment: bool = True) -> np.ndarray:
-        """Legacy method for backward compatibility with main.py"""
-        return self._ensure_proper_duration(audio, target_duration)
-    
-    def _save_single_cloned_segment(self, audio_data: np.ndarray, segment_index: int, audio_id: str):
-        """Save a single cloned segment audio file."""
-        try:
-            # Get base segments directory
-            temp_dir = Path(settings.TEMP_DIR)
-            segments_base_dir = temp_dir / f"segments_{audio_id}"
-            cloned_dir = segments_base_dir / "cloned"
-            cloned_dir.mkdir(parents=True, exist_ok=True)
-            
-            # Save cloned audio file
-            cloned_filename = f"cloned_segment_{segment_index:03d}.wav"
-            cloned_path = cloned_dir / cloned_filename
-            sf.write(str(cloned_path), audio_data, self.sample_rate)
-            
-            # Update metadata with cloned path
-            segments_dir = segments_base_dir / "segments"
-            metadata_file = segments_dir / f"segment_{segment_index:03d}_metadata.json"
-            
-            if metadata_file.exists():
-                with open(metadata_file, 'r', encoding='utf-8') as f:
-                    metadata = json.load(f)
-                
-                metadata['cloned_audio_path'] = str(cloned_path)
-                metadata['cloned_audio_file'] = cloned_filename
-                metadata['cloning_completed'] = True
-                
-                with open(metadata_file, 'w', encoding='utf-8') as f:
-                    json.dump(metadata, f, ensure_ascii=False, indent=2)
-                
-                logger.debug(f"Saved cloned segment: {cloned_filename}")
-            else:
-                logger.warning(f"Metadata file not found: {metadata_file}")
-                
-        except Exception as e:
-            logger.error(f"Error saving single cloned segment {segment_index}: {e}")
-    
-    def _save_cloned_segments_unified(self, cloned_segments: List[Dict], audio_id: str, params: Dict):
-        """Save enhanced cloning summary with parameters"""
-        try:
-            logger.info(f"Saved {len(cloned_segments)} cloned segments with enhanced parameters")
-            
-            temp_dir = Path(settings.TEMP_DIR)
-            segments_base_dir = temp_dir / f"segments_{audio_id}"
-            metadata_dir = segments_base_dir / "metadata"
-            metadata_dir.mkdir(parents=True, exist_ok=True)
-            
-            summary = {
-                "cloning_summary": {
-                    "total_segments": len(cloned_segments),
-                    "successful_clones": len([s for s in cloned_segments if s.get('success', False)]),
-                    "parameters_used": params,  # Store the enhanced parameters
-                    "segments": [
-                        {
-                            "segment_index": s.get('segment_index', 0),
-                            "speaker": s.get('speaker', 'A'),
-                            "duration": s.get('duration', 0.0),
-                            "success": s.get('success', False)
-                        }
-                        for s in cloned_segments
-                    ]
-                }
-            }
-            
-            summary_file = metadata_dir / "cloning_summary.json"
-            with open(summary_file, 'w', encoding='utf-8') as f:
-                json.dump(summary, f, ensure_ascii=False, indent=2)
-                
-        except Exception as e:
-            logger.error(f"Error creating enhanced cloning summary: {e}")
-    
-    def _cleanup_memory(self):
-        """Clean up GPU memory"""
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-        gc.collect()
-    
-    def clear_cache(self):
-        """Clear any cached data"""
-        self._cleanup_memory()
-    
-    # Enhanced parameter validation (from Colab)
-    def validate_parameters(self, **kwargs) -> Dict[str, Any]:
-        """Validate and sanitize parameters based on Colab ranges"""
-        validated = {}
-        
-        # Validate max_tokens (860-12000)
-        max_tokens = kwargs.get('max_tokens', self.default_params['max_tokens'])
-        validated['max_tokens'] = max(860, min(12000, int(max_tokens)))
-        
-        # Validate cfg_scale (1.0-15.0)
-        cfg_scale = kwargs.get('cfg_scale', self.default_params['cfg_scale'])
-        validated['cfg_scale'] = max(1.0, min(15.0, float(cfg_scale)))
-        
-        # Validate temperature (0.5-2.0)
-        temperature = kwargs.get('temperature', self.default_params['temperature'])
-        validated['temperature'] = max(0.5, min(2.0, float(temperature)))
-        
-        # Validate top_p (0.5-1.0)
-        top_p = kwargs.get('top_p', self.default_params['top_p'])
-        validated['top_p'] = max(0.5, min(1.0, float(top_p)))
-        
-        # Validate cfg_filter_top_k (15-100)
-        cfg_filter_top_k = kwargs.get('cfg_filter_top_k', self.default_params['cfg_filter_top_k'])
-        validated['cfg_filter_top_k'] = max(15, min(100, int(cfg_filter_top_k)))
-        
-        # Validate speed_factor (0.5-1.5)
-        speed_factor = kwargs.get('speed_factor', self.default_params['speed_factor'])
-        validated['speed_factor'] = max(0.5, min(1.5, float(speed_factor)))
-        
-        # Boolean parameters
-        validated['use_torch_compile'] = kwargs.get('use_torch_compile', self.default_params['use_torch_compile'])
-        validated['verbose'] = kwargs.get('verbose', self.default_params['verbose'])
-        
-        return validated 
+    def clone_voice(self, *args, **kwargs):
+        """Legacy clone voice method"""
+        return self.fish_service.clone_voice_for_segment(*args, **kwargs)

@@ -63,6 +63,84 @@ class LocalStorageManager:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
+    def store_audio(self, file_id: str, audio_content: bytes, filename: str) -> Dict[str, Any]:
+        """Store audio file locally and return path info"""
+        try:
+            # Sanitize filename
+            import re
+            safe_filename = re.sub(r'[\'"`<>:|*?\\]', '', filename)
+            safe_filename = safe_filename.strip()
+            if not safe_filename:
+                safe_filename = "audio.wav"
+            
+            audio_dir = self.storage_dir / file_id
+            audio_dir.mkdir(exist_ok=True)
+            
+            audio_path = audio_dir / safe_filename
+            with open(audio_path, 'wb') as f:
+                f.write(audio_content)
+            
+            # Store metadata
+            metadata = {
+                "file_id": file_id,
+                "filename": safe_filename,
+                "path": str(audio_path),
+                "type": "audio",
+                "stored_at": datetime.now().isoformat(),
+                "size": len(audio_content),
+                "expires_at": (datetime.now() + timedelta(hours=self.retention_hours)).isoformat()
+            }
+            
+            self._update_metadata(f"{file_id}_audio_{safe_filename}", metadata)
+            
+            return {
+                "success": True,
+                "local_path": str(audio_path),
+                "file_id": file_id,
+                "expires_at": metadata["expires_at"]
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
+    def store_text(self, file_id: str, text_content: bytes, filename: str) -> Dict[str, Any]:
+        """Store text file locally and return path info"""
+        try:
+            # Sanitize filename
+            import re
+            safe_filename = re.sub(r'[\'"`<>:|*?\\]', '', filename)
+            safe_filename = safe_filename.strip()
+            if not safe_filename:
+                safe_filename = "text.txt"
+            
+            text_dir = self.storage_dir / file_id
+            text_dir.mkdir(exist_ok=True)
+            
+            text_path = text_dir / safe_filename
+            with open(text_path, 'wb') as f:
+                f.write(text_content)
+            
+            # Store metadata
+            metadata = {
+                "file_id": file_id,
+                "filename": safe_filename,
+                "path": str(text_path),
+                "type": "text",
+                "stored_at": datetime.now().isoformat(),
+                "size": len(text_content),
+                "expires_at": (datetime.now() + timedelta(hours=self.retention_hours)).isoformat()
+            }
+            
+            self._update_metadata(f"{file_id}_text_{safe_filename}", metadata)
+            
+            return {
+                "success": True,
+                "local_path": str(text_path),
+                "file_id": file_id,
+                "expires_at": metadata["expires_at"]
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+    
     def get_video_path(self, file_id: str) -> Optional[str]:
         """Get local video path if exists and not expired"""
         try:

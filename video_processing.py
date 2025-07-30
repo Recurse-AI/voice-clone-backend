@@ -16,9 +16,6 @@ logger = logging.getLogger(__name__)
 def process_video_background(
     video_source: str, audio_id: str, include_instruments: bool,
     generate_subtitles: bool, 
-    # Enhanced Dia Parameters
-    max_tokens: int, cfg_scale: float, temperature: float, top_p: float,
-    cfg_filter_top_k: int, speed_factor: float, use_torch_compile: bool,
     target_language: str, language_code: Optional[str], speakers_expected: Optional[int], is_file_upload: bool,
     audio_processor=None, original_filename: Optional[str] = None, original_source_url: Optional[str] = None
 ):
@@ -188,33 +185,22 @@ def process_video_background(
             "detected_speakers": processing_result.get("detected_speakers", len(processing_result.get("speakers", [])))
         }
         
-        # Clone voices with enhanced parameters
-        from status_manager import ProcessingStatus
+        # Voice cloning is disabled - just process segments
         status_manager.update_status(
             audio_id, 
             ProcessingStatus.PROCESSING, 
             progress=60, 
-            details={"message": "Starting enhanced voice cloning process..."}
+            details={"message": "Audio processing completed, reconstructing final audio..."}
         )
         
-        cloning_result = audio_processor.clone_voice_segments(
-            segments_dir=processing_result["segments_dir"],
-            audio_id=audio_id,
-            max_tokens=max_tokens,
-            cfg_scale=cfg_scale,
-            temperature=temperature,
-            top_p=top_p,
-            cfg_filter_top_k=cfg_filter_top_k,
-            speed_factor=speed_factor,
-            seed=settings.DEFAULT_SEED,
-            use_torch_compile=use_torch_compile
-        )
-        
-        if not cloning_result["success"]:
-            status_manager.fail_processing(audio_id, f"Voice cloning failed: {cloning_result.get('error', 'Unknown error')}")
-            return
-        
-        audio_processor.voice_cloning_service.clear_cache()
+        # Skip voice cloning and proceed to reconstruction
+        cloning_result = {
+            "success": True,
+            "successful_clones": 0,
+            "total_segments": 0,
+            "seed_used": settings.DEFAULT_SEED,
+            "seeds_used": {}
+        }
         
         # Update status after voice cloning completion
         from status_manager import ProcessingStatus
@@ -361,22 +347,20 @@ def process_video_background(
             },
             "processing_details": {
                 "original_audio": original_audio_details,
-                "cloning_parameters": {
-                    "temperature": temperature,
-                    "cfg_scale": cfg_scale,
-                    "top_p": top_p,
-                    "seed_used": cloning_result.get("seed_used", settings.DEFAULT_SEED),
-                    "seeds_used": cloning_result.get("seeds_used", {})
+                "audio_processing_info": {
+                    "processing_completed": True,
+                    "segments_processed": cloning_result.get("total_segments", 0),
+                    "seed_used": cloning_result.get("seed_used", settings.DEFAULT_SEED)
                 },
                 "features_used": {
                     "vocal_separation": True,
-                    "voice_cloning": True,
+                    "audio_processing": True,
                     "subtitle_generation": generate_subtitles,
                     "instrument_mixing": include_instruments
                 },
                 "processing_timeline": {
                     "transcription_source": "AssemblyAI",
-                    "voice_cloning_model": "Dia",
+                    "audio_processing_model": "Disabled",
                     "separation_service": "RunPod"
                 }
             },
@@ -401,9 +385,9 @@ def process_video_background(
             "original_audio": original_audio_details,
             "seeds_used": cloning_result.get("seeds_used", {}),
             "parameters": {
-                "temperature": temperature,
-                "cfg_scale": cfg_scale,
-                "top_p": top_p,
+                "temperature": 1.8,
+                "cfg_scale": 3.0,
+                "top_p": 0.95,
                 "target_language": target_language,
                 "include_instruments": include_instruments,
                 "generate_subtitles": generate_subtitles,
@@ -413,7 +397,6 @@ def process_video_background(
                 "runpod_separation": True
             },
             "processing_stats": audio_processor.get_processing_stats(processing_result["segments_dir"]),
-            "cloning_results": cloning_result,
             "reconstruction_results": reconstruction_result,
             "video_generated": video_result is not None and video_result["success"],
             "subtitles_generated": generate_subtitles and video_result is not None and video_result.get("subtitle_count", 0) > 0,
@@ -457,17 +440,9 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
     is_file_upload = queue_request.is_file_upload
     parameters = queue_request.parameters
     
-    # Extract enhanced parameters
+    # Extract parameters
     include_instruments = parameters.get("include_instruments", True)
     generate_subtitles = parameters.get("generate_subtitles", True)
-    # Enhanced Dia Parameters with Colab defaults
-    max_tokens = parameters.get("max_tokens", settings.DIA_ENHANCED_MAX_TOKENS)
-    cfg_scale = parameters.get("cfg_scale", settings.DIA_ENHANCED_CFG_SCALE)
-    temperature = parameters.get("temperature", settings.DIA_ENHANCED_TEMPERATURE)
-    top_p = parameters.get("top_p", settings.DIA_ENHANCED_TOP_P)
-    cfg_filter_top_k = parameters.get("cfg_filter_top_k", settings.DIA_ENHANCED_CFG_FILTER_TOP_K)
-    speed_factor = parameters.get("speed_factor", settings.DIA_ENHANCED_SPEED_FACTOR)
-    use_torch_compile = parameters.get("use_torch_compile", settings.DIA_ENHANCED_USE_TORCH_COMPILE)
     target_language = parameters.get("target_language", "English")
     language_code = parameters.get("language_code")
     speakers_expected = parameters.get("speakers_expected", 1)
@@ -568,32 +543,22 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         if queue_request.status != VideoQueueStatus.PROCESSING:
             return {"success": False, "error": "Request was cancelled or timed out"}
         
-        # Clone voices with enhanced parameters
-        from status_manager import ProcessingStatus
+        # Voice cloning is disabled - just process segments
         status_manager.update_status(
             audio_id, 
             ProcessingStatus.PROCESSING, 
             progress=60, 
-            details={"message": "Starting enhanced voice cloning process..."}
+            details={"message": "Audio processing completed, reconstructing final audio..."}
         )
         
-        cloning_result = audio_processor.clone_voice_segments(
-            segments_dir=processing_result["segments_dir"],
-            audio_id=audio_id,
-            max_tokens=max_tokens,
-            cfg_scale=cfg_scale,
-            temperature=temperature,
-            top_p=top_p,
-            cfg_filter_top_k=cfg_filter_top_k,
-            speed_factor=speed_factor,
-            seed=settings.DEFAULT_SEED,
-            use_torch_compile=use_torch_compile
-        )
-        
-        if not cloning_result["success"]:
-            return {"success": False, "error": f"Voice cloning failed: {cloning_result.get('error', 'Unknown error')}"}
-        
-        audio_processor.voice_cloning_service.clear_cache()
+        # Skip voice cloning and proceed to reconstruction
+        cloning_result = {
+            "success": True,
+            "successful_clones": 0,
+            "total_segments": 0,
+            "seed_used": settings.DEFAULT_SEED,
+            "seeds_used": {}
+        }
         
         # Check if still processing
         if queue_request.status != VideoQueueStatus.PROCESSING:
@@ -757,22 +722,20 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             },
             "processing_details": {
                 "original_audio": original_audio_details,
-                "cloning_parameters": {
-                    "temperature": temperature,
-                    "cfg_scale": cfg_scale,
-                    "top_p": top_p,
-                    "seed_used": cloning_result.get("seed_used", settings.DEFAULT_SEED),
-                    "seeds_used": cloning_result.get("seeds_used", {})
+                "audio_processing_info": {
+                    "processing_completed": True,
+                    "segments_processed": cloning_result.get("total_segments", 0),
+                    "seed_used": cloning_result.get("seed_used", settings.DEFAULT_SEED)
                 },
                 "features_used": {
                     "vocal_separation": True,
-                    "voice_cloning": True,
+                    "audio_processing": True,
                     "subtitle_generation": generate_subtitles,
                     "instrument_mixing": include_instruments
                 },
                 "processing_timeline": {
                     "transcription_source": "AssemblyAI",
-                    "voice_cloning_model": "Dia",
+                    "audio_processing_model": "Disabled",
                     "separation_service": "RunPod"
                 }
             },
@@ -800,9 +763,9 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             "original_audio": original_audio_details,
             "seeds_used": cloning_result.get("seeds_used", {}),
             "parameters": {
-                "temperature": temperature,
-                "cfg_scale": cfg_scale,
-                "top_p": top_p,
+                "temperature": 1.8,
+                "cfg_scale": 3.0,
+                "top_p": 0.95,
                 "target_language": target_language,
                 "include_instruments": include_instruments,
                 "generate_subtitles": generate_subtitles,
@@ -812,7 +775,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
                 "runpod_separation": True
             },
             "processing_stats": audio_processor.get_processing_stats(processing_result["segments_dir"]),
-            "cloning_results": cloning_result,
             "reconstruction_results": reconstruction_result,
             "video_generated": video_result is not None and video_result["success"],
             "subtitles_generated": generate_subtitles and video_result is not None and video_result.get("subtitle_count", 0) > 0,

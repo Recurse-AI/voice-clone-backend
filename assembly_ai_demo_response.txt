@@ -1,0 +1,208 @@
+{
+  "id": "3ad04176-df59-4b78-84c5-01b10bfdada6",
+  "language_model": "assemblyai_default",
+  "acoustic_model": "assemblyai_default",
+  "language_code": "hi",
+  "status": "completed",
+  "audio_url": "https://assemblyaiusercontent.com/playground/8b7911bc-dab4-465d-a07d-4e779e37ab5a.mp4",
+  "text": "इसकी वजह क्या थी? उनकी सक्सेस की एक्चुवल वजह क्या आती है आपके अकॉर्डिंग उसकी सक्सेस की एक्च्वल वजह थी, हार्डवर्क और 1 और चीज जो मुझे लगता है वो बहुत प्यार था, बहुत ज्यादा प्यार सोल था। जब 1 प्यार सोल कुछ करता है न तो उसका आपको लाइट दिखता है। जो भी एक्टिंग कर रहा है तुम एक्ट कर ही पाते हो। इतने सारे इमोशंस को डिपिक्ट कर ही पाते हो।",
+  "words": [
+    {
+      "text": "इसकी",
+      "start": 280,
+      "end": 460,
+      "confidence": 0.9774705,
+      "speaker": "A"
+    },
+    {
+      "text": "वजह",
+      "start": 560,
+      "end": 740,
+      "confidence": 0.9972426,
+      "speaker": "A"
+    },
+    ...skip
+    {
+      "text": "ही",
+      "start": 28160,
+      "end": 28220,
+      "confidence": 0.8947241,
+      "speaker": "A"
+    },
+    {
+      "text": "पाते",
+      "start": 28320,
+      "end": 28560,
+      "confidence": 0.99842006,
+      "speaker": "A"
+    },
+    {
+      "text": "हो।",
+      "start": 28600,
+      "end": 28640,
+      "confidence": 0.8963935,
+      "speaker": "A"
+    }
+  ],
+  "utterances": [
+    {
+      "speaker": "A",
+      "text": "इसकी वजह क्या थी? उनकी सक्सेस की एक्चुवल वजह क्या आती है आपके अकॉर्डिंग उसकी सक्सेस की एक्च्वल वजह थी, हार्डवर्क और 1 और चीज जो मुझे लगता है वो बहुत प्यार था, बहुत ज्यादा प्यार सोल था। जब 1 प्यार सोल कुछ करता है न तो उसका आपको लाइट दिखता है। जो भी एक्टिंग कर रहा है तुम एक्ट कर ही पाते हो। इतने सारे इमोशंस को डिपिक्ट कर ही पाते हो।",
+      "confidence": 0.95746714,
+      "start": 280,
+      "end": 28640,
+      "words": [
+        {
+          "text": "इसकी",
+          "start": 280,
+          "end": 460,
+          "confidence": 0.9774705,
+          "speaker": "A"
+        },
+        {
+          "text": "वजह",
+          "start": 560,
+          "end": 740,
+          "confidence": 0.9972426,
+          "speaker": "A"
+        },
+        {
+          "text": "क्या",
+          "start": 800,
+          "end": 920,
+          "confidence": 0.9111507,
+          "speaker": "A"
+        },
+        {
+          "text": "थी?",
+          "start": 1000,
+          "end": 1060,
+          "confidence": 0.8887841,
+          "speaker": "A"
+        },
+        {
+          "text": "उनकी",
+          "start": 1760,
+          "end": 1960,
+          "confidence": 0.90997285,
+          "speaker": "A"
+        },
+        ...skip
+        {
+          "text": "कर",
+          "start": 24120,
+          "end": 24220,
+          "confidence": 0.91207874,
+          "speaker": "A"
+        },
+        {
+          "text": "रहा",
+          "start": 24280,
+          "end": 24360,
+          "confidence": 0.85377276,
+          "speaker": "A"
+        },
+        {
+          "text": "है",
+          "start": 24420,
+          "end": 24460,
+          "confidence": 0.845117,
+          "speaker": "A"
+        },
+        {
+          "text": "तुम",
+          "start": 25000,
+          "end": 25120,
+          "confidence": 0.9735141,
+          "speaker": "A"
+        },
+        {
+          "text": "ही",
+          "start": 28160,
+          "end": 28220,
+          "confidence": 0.8947241,
+          "speaker": "A"
+        },
+        {
+          "text": "पाते",
+          "start": 28320,
+          "end": 28560,
+          "confidence": 0.99842006,
+          "speaker": "A"
+        },
+        {
+          "text": "हो।",
+          "start": 28600,
+          "end": 28640,
+          "confidence": 0.8963935,
+          "speaker": "A"
+        }
+      ]
+    }
+  ],
+  "confidence": 0.95746714,
+  "audio_duration": 29,
+  "punctuate": true,
+  "format_text": true,
+  "dual_channel": false,
+  "webhook_url": null,
+  "webhook_status_code": null,
+  "webhook_auth": false,
+  "webhook_auth_header_name": null,
+  "speed_boost": false,
+  "auto_highlights_result": null,
+  "auto_highlights": false,
+  "audio_start_from": null,
+  "audio_end_at": null,
+  "word_boost": [],
+  "boost_param": null,
+  "prompt": null,
+  "keyterms_prompt": [],
+  "filter_profanity": false,
+  "redact_pii": false,
+  "redact_pii_audio": false,
+  "redact_pii_audio_quality": null,
+  "redact_pii_audio_options": null,
+  "redact_pii_policies": null,
+  "redact_pii_sub": null,
+  "speaker_labels": true,
+  "speaker_options": null,
+  "content_safety": false,
+  "iab_categories": false,
+  "content_safety_labels": {
+    "status": "unavailable",
+    "results": [],
+    "summary": {}
+  },
+  "iab_categories_result": {
+    "status": "unavailable",
+    "results": [],
+    "summary": {}
+  },
+  "language_detection": true,
+  "language_confidence_threshold": 0.1,
+  "language_confidence": 0.9935,
+  "custom_spelling": null,
+  "throttled": false,
+  "auto_chapters": false,
+  "summarization": false,
+  "summary_type": null,
+  "summary_model": null,
+  "custom_topics": false,
+  "topics": [],
+  "speech_threshold": 0.1,
+  "speech_model": "universal",
+  "chapters": null,
+  "disfluencies": false,
+  "entity_detection": false,
+  "sentiment_analysis": false,
+  "sentiment_analysis_results": null,
+  "entities": null,
+  "speakers_expected": null,
+  "summary": null,
+  "custom_topics_results": null,
+  "is_deleted": null,
+  "multichannel": null,
+  "project_id": 42866,
+  "token_id": 42866
+}

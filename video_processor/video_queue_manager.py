@@ -2,21 +2,18 @@
 Video Queue Manager
 
 Manages video processing queue with timeout enforcement and status tracking.
-Similar to RunPod queue but for video processing operations.
 """
 
-import time
-import threading
-import uuid
-from enum import Enum
-from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
-from threading import Lock, Thread
 import logging
+import threading
+import time
+import uuid
+from datetime import datetime, timedelta
+from enum import Enum
+from threading import Lock, Thread
+from typing import Dict, Any, Optional, List
 
 logger = logging.getLogger(__name__)
-
-
 
 
 class VideoQueueStatus(Enum):
@@ -30,13 +27,7 @@ class VideoQueueStatus(Enum):
 
 
 class VideoQueueRequest:
-    """Individual video processing request
-    
-    request_id: Unique identifier for tracking this specific processing request
-                Used for queue management, cancellation, and debugging
-    audio_id:   User-facing identifier for the audio/video being processed
-                Used for status checking and file organization
-    """
+    """Individual video processing request"""
     
     def __init__(self, request_id: str, video_source: str, audio_id: str, 
                  is_file_upload: bool, parameters: Dict[str, Any]):
@@ -55,7 +46,7 @@ class VideoQueueRequest:
         self.result = None
         self.queue_position = 0
         
-        # 30 minutes timeout from when processing starts
+        # 30 minutes timeout
         self.timeout_seconds = 30 * 60
 
 
@@ -70,7 +61,7 @@ class VideoQueueManager:
         self._lock = Lock()
         self._processing_threads: Dict[str, Thread] = {}
         
-        # Cleanup policy - keep completed requests for 30 minutes
+        # Keep completed requests for 30 minutes
         self.completed_retention_seconds = 30 * 60
         
         # Start cleanup thread
@@ -79,70 +70,8 @@ class VideoQueueManager:
         
         logger.info(f"VideoQueueManager initialized with max_concurrent={max_concurrent}")
     
-    def _start_timeout_monitor(self):
-        """Start the timeout monitoring thread"""
-        def monitor_timeouts():
-            while not self._shutdown:
-                try:
-                    self._check_timeouts()
-                    time.sleep(30)  # Check every 30 seconds
-                except Exception as e:
-                    logger.error(f"Timeout monitor error: {e}")
-        
-        self._timeout_monitor_thread = Thread(target=monitor_timeouts, daemon=True)
-        self._timeout_monitor_thread.start()
-    
-    def _check_timeouts(self):
-        """Check for timed out requests and mark them as failed"""
-        current_time = datetime.now()
-        timeout_requests = []
-        
-        with self._lock:
-            for request_id in self.processing.copy():
-                request = self.requests.get(request_id)
-                if request and request.started_at:
-                    elapsed = (current_time - request.started_at).total_seconds()
-                    if elapsed > request.timeout_seconds:
-                        timeout_requests.append(request_id)
-        
-        # Handle timeouts outside of lock to avoid deadlock
-        for request_id in timeout_requests:
-            self._handle_timeout(request_id)
-    
-    def _handle_timeout(self, request_id: str):
-        """Handle a timed out request"""
-        with self._lock:
-            request = self.requests.get(request_id)
-            if request and request.status == VideoQueueStatus.PROCESSING:
-                request.status = VideoQueueStatus.TIMEOUT
-                request.error = "Processing timed out after 30 minutes"
-                request.completed_at = datetime.now()
-                
-                # Remove from processing
-                if request_id in self.processing:
-                    self.processing.remove(request_id)
-                
-                # Stop the processing thread if it exists
-                if request_id in self._processing_threads:
-                    # Thread will check status and exit gracefully
-                    del self._processing_threads[request_id]
-                
-                logger.warning(f"Request {request_id} timed out after 30 minutes")
-                
-                # Update status manager
-                from status_manager import status_manager
-                status_manager.fail_processing(
-                    request.audio_id, 
-                    "Processing timed out after 30 minutes - automatically cancelled"
-                )
-                
-                # Start next queued request
-                self._start_next_request()
-    
     def _periodic_cleanup(self):
-        """Periodically clean up old completed requests"""
-        import time
-        
+        """Periodically clean up old completed requests"""        
         while True:
             try:
                 time.sleep(300)  # Check every 5 minutes
@@ -170,7 +99,6 @@ class VideoQueueManager:
                     logger.info(f"Cleaning up old completed request: {request_id}")
                     del self.requests[request_id]
                     
-                # Also clean up any lingering thread references
                 if request_id in self._processing_threads:
                     del self._processing_threads[request_id]
         
@@ -250,7 +178,12 @@ class VideoQueueManager:
             if request.status != VideoQueueStatus.PROCESSING:
                 return
             
-
+            # Check for timeout
+            if request.started_at:
+                elapsed = (datetime.now() - request.started_at).total_seconds()
+                if elapsed > request.timeout_seconds:
+                    self._handle_timeout(request_id)
+                    return
             
             # Process the video
             result = process_video_with_queue(request)
@@ -304,6 +237,34 @@ class VideoQueueManager:
                         del self._processing_threads[request_id]
                     
                     self._start_next_request()
+
+    def _handle_timeout(self, request_id: str):
+        """Handle a timed out request"""
+        with self._lock:
+            request = self.requests.get(request_id)
+            if request and request.status == VideoQueueStatus.PROCESSING:
+                request.status = VideoQueueStatus.TIMEOUT
+                request.error = "Processing timed out after 30 minutes"
+                request.completed_at = datetime.now()
+                
+                # Remove from processing
+                if request_id in self.processing:
+                    self.processing.remove(request_id)
+                
+                if request_id in self._processing_threads:
+                    del self._processing_threads[request_id]
+                
+                logger.warning(f"Request {request_id} timed out after 30 minutes")
+                
+                # Update status manager
+                from status_manager import status_manager
+                status_manager.fail_processing(
+                    request.audio_id, 
+                    "Processing timed out after 30 minutes - automatically cancelled"
+                )
+                
+                # Start next queued request
+                self._start_next_request()
     
     def get_request_status(self, request_id: str) -> Optional[Dict[str, Any]]:
         """Get status of a specific request"""
@@ -322,33 +283,8 @@ class VideoQueueManager:
                 "started_at": request.started_at.isoformat() if request.started_at else None,
                 "completed_at": request.completed_at.isoformat() if request.completed_at else None,
                 "error": request.error,
-                "result": request.result,
-                "estimated_time": self._estimate_remaining_time(request),
-                "timeout_in": self._get_timeout_remaining(request)
+                "result": request.result
             }
-    
-    def _estimate_remaining_time(self, request: VideoQueueRequest) -> Optional[str]:
-        """Estimate remaining time for a request"""
-        if request.status == VideoQueueStatus.COMPLETED:
-            return None
-        elif request.status == VideoQueueStatus.PROCESSING:
-            return "Processing - up to 30 minutes"
-        elif request.status == VideoQueueStatus.PENDING:
-            # Estimate based on queue position
-            avg_processing_time = 15  # minutes
-            estimated_minutes = request.queue_position * avg_processing_time
-            return f"~{estimated_minutes} minutes (queue position: {request.queue_position})"
-        else:
-            return None
-    
-    def _get_timeout_remaining(self, request: VideoQueueRequest) -> Optional[int]:
-        """Get remaining seconds before timeout"""
-        if request.status != VideoQueueStatus.PROCESSING or not request.started_at:
-            return None
-        
-        elapsed = (datetime.now() - request.started_at).total_seconds()
-        remaining = request.timeout_seconds - elapsed
-        return max(0, int(remaining))
     
     def cancel_request(self, request_id: str) -> bool:
         """Cancel a pending or processing request"""
@@ -373,7 +309,6 @@ class VideoQueueManager:
             
             if request_id in self.processing:
                 self.processing.remove(request_id)
-                # Processing thread will check status and exit
                 
             if request_id in self._processing_threads:
                 del self._processing_threads[request_id]
@@ -405,98 +340,6 @@ class VideoQueueManager:
                 "max_concurrent": self.max_concurrent,
                 "queue_length": len(self.queue)
             }
-    
-    def get_health_status(self) -> Dict[str, Any]:
-        """Get health status of the queue system"""
-        with self._lock:
-            current_time = datetime.now()
-            
-            # Count requests by status
-            status_counts = {status.value: 0 for status in VideoQueueStatus}
-            stuck_requests = []
-            
-            for request_id, request in self.requests.items():
-                status_counts[request.status.value] += 1
-                
-                # Check for stuck requests (processing for too long)
-                if request.status == VideoQueueStatus.PROCESSING and request.started_at:
-                    processing_time = (current_time - request.started_at).total_seconds()
-                    if processing_time > request.timeout_seconds:
-                        stuck_requests.append({
-                            "request_id": request_id,
-                            "audio_id": request.audio_id,
-                            "processing_time_seconds": processing_time,
-                            "timeout_seconds": request.timeout_seconds
-                        })
-            
-            # Calculate queue health metrics
-            queue_health = {
-                "total_requests": len(self.requests),
-                "queue_size": len(self.queue),
-                "processing_count": len(self.processing),
-                "max_concurrent": self.max_concurrent,
-                "status_counts": status_counts,
-                "stuck_requests": stuck_requests,
-                "threads_active": len(self._processing_threads),
-                "retention_policy_seconds": self.completed_retention_seconds,
-                "is_healthy": len(stuck_requests) == 0 and len(self.processing) <= self.max_concurrent
-            }
-            
-            return queue_health
-    
-    def force_cleanup_stuck_requests(self) -> int:
-        """Force cleanup of stuck requests and return count of cleaned up requests"""
-        cleaned_count = 0
-        current_time = datetime.now()
-        
-        with self._lock:
-            stuck_request_ids = []
-            
-            for request_id, request in self.requests.items():
-                if request.status == VideoQueueStatus.PROCESSING and request.started_at:
-                    processing_time = (current_time - request.started_at).total_seconds()
-                    if processing_time > request.timeout_seconds:
-                        stuck_request_ids.append(request_id)
-            
-            # Clean up stuck requests
-            for request_id in stuck_request_ids:
-                logger.warning(f"Force cleaning up stuck request: {request_id}")
-                request = self.requests[request_id]
-                request.status = VideoQueueStatus.TIMEOUT
-                request.completed_at = current_time
-                request.error = "Force terminated due to timeout"
-                
-                # Remove from processing list
-                if request_id in self.processing:
-                    self.processing.remove(request_id)
-                
-                # Clean up thread reference
-                if request_id in self._processing_threads:
-                    del self._processing_threads[request_id]
-                
-                cleaned_count += 1
-                
-                # Update status manager
-                try:
-                    from status_manager import status_manager
-                    status_manager.force_terminate_process(request.audio_id, "Force terminated due to timeout")
-                except Exception as e:
-                    logger.error(f"Error updating status manager for stuck request {request_id}: {e}")
-            
-            # Start next requests if slots are available
-            if cleaned_count > 0:
-                for _ in range(min(cleaned_count, len(self.queue))):
-                    self._start_next_request()
-        
-        if cleaned_count > 0:
-            logger.info(f"Force cleaned up {cleaned_count} stuck requests")
-        
-        return cleaned_count
-
-    def shutdown(self):
-        """Shutdown the queue manager"""
-        self._shutdown = True
-        logger.info("VideoQueueManager shutdown initiated")
 
 
 # Global instance
