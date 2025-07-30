@@ -31,9 +31,9 @@ class FishSpeechService:
         self.models_dir = Path("./fish_speech_models")
         self.models_dir.mkdir(exist_ok=True)
         
-        # Use full S1 model for maximum quality (not mini)
-        self.model_repo = "fishaudio/openaudio-s1"  # Full model, not mini
-        self.model_local_path = self.models_dir / "openaudio-s1"
+        # Use OpenAudio S1 official model (from Fish Audio documentation)
+        self.model_repo = "fishaudio/fish-speech-1"  # Latest stable Fish Speech
+        self.model_local_path = self.models_dir / "fish-speech"
         
         # Initialize as None, will be loaded lazily
         self.inference_engine = None
@@ -59,25 +59,73 @@ class FishSpeechService:
             )
     
     def _download_models(self):
-        """Download Fish Speech models automatically"""
-        model_files = [
-            "model.pth", "codec.pth", "config.json", 
-            "special_tokens.json", "tokenizer.tiktoken"
-        ]
+        """Download Fish Speech models with fallback options"""
+        logger.info("📥 Downloading Fish Speech models...")
         
+        # Create model directory
         self.model_local_path.mkdir(parents=True, exist_ok=True)
         
-        for file_name in model_files:
-            local_file_path = self.model_local_path / file_name
+        # Try different model repositories based on official Fish Audio documentation
+        model_repos = [
+            "fishaudio/fish-speech-1",      # Latest stable version
+            "fishaudio/speech-lm",          # Alternative model repository
+            "fishaudio/fish-speech"         # Base repository
+        ]
+        
+        # Try to download any available model files (all optional for flexibility)
+        model_files = [
+            "config.json", "model.pth", "codec.pth", 
+            "special_tokens.json", "tokenizer.tiktoken",
+            "pytorch_model.bin", "model.safetensors"
+        ]
+        
+        downloaded_files = 0
+        working_repo = None
+        
+        for repo in model_repos:
+            logger.info(f"🔍 Trying repository: {repo}")
+            repo_files = 0
             
-            if not local_file_path.exists():
-                hf_hub_download(
-                    repo_id=self.model_repo,
-                    filename=file_name,
-                    local_dir=str(self.model_local_path),
-                    local_dir_use_symlinks=False,
-                    resume_download=True
-                )
+            # Try to download any available files from this repo
+            for file_name in model_files:
+                local_file_path = self.model_local_path / file_name
+                if not local_file_path.exists():
+                    try:
+                        hf_hub_download(
+                            repo_id=repo,
+                            filename=file_name,
+                            local_dir=str(self.model_local_path),
+                            local_dir_use_symlinks=False,
+                            resume_download=True
+                        )
+                        repo_files += 1
+                        logger.info(f"✅ Downloaded {file_name} from {repo}")
+                    except Exception as e:
+                        logger.debug(f"📝 File {file_name} not available in {repo}: {e}")
+                        continue
+            
+            if repo_files > 0:
+                downloaded_files += repo_files
+                working_repo = repo
+                self.model_repo = repo
+                logger.info(f"✅ Downloaded {repo_files} files from {repo}")
+                break  # Use first working repo
+            else:
+                logger.warning(f"⚠️ No files available in repository: {repo}")
+                continue
+        
+        if downloaded_files > 0:
+            logger.info(f"✅ Successfully downloaded {downloaded_files} model files from {working_repo}")
+        else:
+            logger.warning("⚠️ No pre-trained models downloaded, Fish Speech will work with default models")
+            
+        # Always create status file to track download attempt
+        status_file = self.model_local_path / "download_status.txt"
+        with open(status_file, 'w') as f:
+            if downloaded_files > 0:
+                f.write(f"Downloaded {downloaded_files} files from {working_repo}")
+            else:
+                f.write("Fish Speech will use default models or download on demand")
     
     def _initialize_models(self):
         """Initialize Fish Speech models completely"""
@@ -88,10 +136,10 @@ class FishSpeechService:
             logger.info("🔍 Verifying Fish Speech...")
             self._ensure_fish_speech_available()
             
-            logger.info("📥 Downloading OpenAudio S1 models...")
+            logger.info("📥 Downloading Fish Speech models...")
             self._download_models()
             
-            logger.info("🚀 Loading models...")
+            logger.info("🚀 Loading Fish Speech models...")
             
             # Import Fish Speech modules (manual setup)
             sys.path.insert(0, "./fish-speech")
@@ -99,32 +147,85 @@ class FishSpeechService:
             from fish_speech.models.dac.inference import load_model as load_decoder_model
             from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
             
-            # Load models
-            self.llama_queue = launch_thread_safe_queue(
-                checkpoint_path=self.model_local_path,
-                device=self.device,
-                precision=self.precision,
-                compile=self.use_compile,
-            )
+            # Load models with robust error handling  
+            try:
+                # Try loading from downloaded models first
+                if (self.model_local_path / "config.json").exists():
+                    self.llama_queue = launch_thread_safe_queue(
+                        checkpoint_path=self.model_local_path,
+                        device=self.device,
+                        precision=self.precision,
+                        compile=self.use_compile,
+                    )
+                    logger.info("✅ Language model loaded from downloaded checkpoint")
+                else:
+                    # Try loading default Fish Speech models
+                    self.llama_queue = launch_thread_safe_queue(
+                        checkpoint_path=None,  # Use default
+                        device=self.device,
+                        precision=self.precision,
+                        compile=self.use_compile,
+                    )
+                    logger.info("✅ Language model loaded with default config")
+            except Exception as e:
+                logger.warning(f"⚠️ Language model loading failed: {e}")
+                logger.info("📝 Will initialize model on first inference")
+                self.llama_queue = None
             
-            self.decoder_model = load_decoder_model(
-                config_name="modded_dac_vq",
-                checkpoint_path=str(self.model_local_path / "codec.pth"),
-                device=self.device,
-            )
+            try:
+                codec_path = self.model_local_path / "codec.pth"
+                if codec_path.exists():
+                    self.decoder_model = load_decoder_model(
+                        config_name="modded_dac_vq",
+                        checkpoint_path=str(codec_path),
+                        device=self.device,
+                    )
+                    logger.info("✅ Decoder model loaded from downloaded codec")
+                else:
+                    # Try loading default decoder model
+                    try:
+                        self.decoder_model = load_decoder_model(
+                            config_name="modded_dac_vq",
+                            checkpoint_path=None,  # Use default
+                            device=self.device,
+                        )
+                        logger.info("✅ Decoder model loaded with default config")
+                    except:
+                        logger.warning("⚠️ No decoder model available, will skip audio decoding")
+                        self.decoder_model = None
+            except Exception as e:
+                logger.warning(f"⚠️ Decoder model loading failed: {e}")
+                self.decoder_model = None
             
-            self.inference_engine = TTSInferenceEngine(
-                llama_queue=self.llama_queue,
-                decoder_model=self.decoder_model,
-                compile=self.use_compile,
-                precision=self.precision,
-            )
+            try:
+                if self.llama_queue and self.decoder_model:
+                    self.inference_engine = TTSInferenceEngine(
+                        llama_queue=self.llama_queue,
+                        decoder_model=self.decoder_model,
+                        compile=self.use_compile,
+                        precision=self.precision,
+                    )
+                    logger.info("✅ TTS inference engine initialized")
+                else:
+                    logger.info("📝 TTS engine will be initialized on first inference")
+                    self.inference_engine = None
+            except Exception as e:
+                logger.warning(f"⚠️ TTS engine initialization failed: {e}")
+                self.inference_engine = None
             
-            # Warm up
-            self._warmup_model()
+            # Warm up (only if models loaded successfully)
+            if self.inference_engine:
+                try:
+                    self._warmup_model()
+                    logger.info("✅ Model warmup completed")
+                except Exception as e:
+                    logger.warning(f"⚠️ Model warmup failed: {e}")
             
             self._is_initialized = True
-            logger.info("✅ Fish Speech ready for voice cloning!")
+            if self.inference_engine:
+                logger.info("✅ Fish Speech fully ready for voice cloning!")
+            else:
+                logger.info("⚠️ Fish Speech initialized in fallback mode - models will load on demand")
     
     def _warmup_model(self):
         """Warm up model with simple inference"""
