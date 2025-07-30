@@ -25,7 +25,7 @@ class SegmentManager:
         self.transcription_service = transcription_service
         
         # Segmentation parameters
-        self.min_segment_duration = 3.0    # Minimum segment length (seconds)
+        self.min_segment_duration = 2.5    # Minimum segment length (seconds) - user requirement
         self.max_segment_duration = 11.0   # Maximum segment length (seconds)
         self.optimal_min_duration = 9.0    # Optimal minimum length (seconds)
         self.optimal_max_duration = 11.0   # Optimal maximum length (seconds)
@@ -66,9 +66,12 @@ class SegmentManager:
             # Step 5: Add metadata and validate
             validated_segments = self._validate_and_add_metadata(final_segments, utterances, speakers)
             
-            # Step 6: Translate segments for dubbing
+            # Step 6: Final cleanup - ensure no segments are shorter than minimum duration
+            cleaned_segments = self._final_cleanup_short_segments(validated_segments)
+            
+            # Step 7: Translate segments for dubbing
             translated_segments = self._translate_segments_if_needed(
-                validated_segments, transcript_data, audio_id
+                cleaned_segments, transcript_data, audio_id
             )
             
             logger.info(f"Smart segmentation completed: {len(translated_segments)} segments created")
@@ -376,7 +379,8 @@ class SegmentManager:
             if segment["start"] > last_end + 0.01:  # 10ms tolerance
                 gap_duration = segment["start"] - last_end
                 
-                if gap_duration >= 0.1:  # Only fill gaps >= 100ms
+                # Only create separate gap segments if >= 2.5s (minimum segment duration)
+                if gap_duration >= self.min_segment_duration:
                     gap_segment = {
                         "start": last_end,
                         "end": segment["start"],
@@ -389,24 +393,47 @@ class SegmentManager:
                         "is_gap_fill": True
                     }
                     complete_segments.append(gap_segment)
+                else:
+                    # For small gaps, extend the previous segment to cover the gap
+                    if complete_segments:
+                        prev_segment = complete_segments[-1]
+                        prev_segment["end"] = segment["start"]
+                        prev_segment["duration"] = segment["start"] - prev_segment["start"]
+                        logger.info(f"Extended previous segment to cover {gap_duration:.2f}s gap (too small for separate segment)")
+                    # If no previous segment, extend current segment backward
+                    else:
+                        segment["start"] = last_end
+                        segment["duration"] = segment["end"] - last_end
+                        logger.info(f"Extended current segment backward to cover {gap_duration:.2f}s gap")
             
             complete_segments.append(segment)
             last_end = segment["end"]
         
         # Fill final gap if exists
         if last_end < total_duration - 0.01:
-            final_gap = {
-                "start": last_end,
-                "end": total_duration,
-                "duration": total_duration - last_end,
-                "speaker": "UNKNOWN",
-                "type": "gap",
-                "text": "",
-                "utterances": [],
-                "confidence": 0.5,
-                "is_gap_fill": True
-            }
-            complete_segments.append(final_gap)
+            final_gap_duration = total_duration - last_end
+            
+            # Only create separate final gap if >= 2.5s
+            if final_gap_duration >= self.min_segment_duration:
+                final_gap = {
+                    "start": last_end,
+                    "end": total_duration,
+                    "duration": final_gap_duration,
+                    "speaker": "UNKNOWN",
+                    "type": "gap",
+                    "text": "",
+                    "utterances": [],
+                    "confidence": 0.5,
+                    "is_gap_fill": True
+                }
+                complete_segments.append(final_gap)
+            else:
+                # For small final gaps, extend the last segment
+                if complete_segments:
+                    last_segment = complete_segments[-1]
+                    last_segment["end"] = total_duration
+                    last_segment["duration"] = total_duration - last_segment["start"]
+                    logger.info(f"Extended last segment to cover {final_gap_duration:.2f}s final gap (too small for separate segment)")
         
         return complete_segments
     
@@ -438,13 +465,11 @@ class SegmentManager:
                 segment["end"] = segment["start"] + 0.5  # Set minimum 0.5s instead of 0.1s
                 segment["duration"] = 0.5
             
-            # Ensure minimum duration for ALL segments (not just speech)
-            min_required_duration = 0.5  # Minimum 0.5 seconds for any segment
-            if segment["duration"] < min_required_duration:
-                logger.info(f"Extending short {segment.get('type', 'unknown')} segment from {segment['duration']:.2f}s to {min_required_duration}s")
-                # Extend all short segments to minimum duration instead of skipping
-                segment["duration"] = min_required_duration
-                segment["end"] = segment["start"] + min_required_duration
+            # Ensure minimum duration - short segments should be merged in earlier stages
+            if segment["duration"] < self.min_segment_duration:
+                logger.warning(f"Found short {segment.get('type', 'unknown')} segment of {segment['duration']:.2f}s (should be merged with adjacent segments)")
+                # Mark for potential merging in post-processing
+                segment["needs_merging"] = True
             
             validated_segments.append(segment)
         
@@ -643,4 +668,75 @@ class SegmentManager:
         # Add silence to the end
         silence = np.zeros(padding_needed, dtype=audio.dtype)
         return np.concatenate([audio, silence])
+
+    def _final_cleanup_short_segments(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Final aggressive cleanup to merge any remaining segments shorter than 2.5s"""
+        if not segments:
+            return segments
+        
+        cleaned_segments = []
+        i = 0
+        
+        while i < len(segments):
+            current_segment = segments[i].copy()
+            
+            # If current segment is too short, try to merge with adjacent segment
+            if current_segment["duration"] < self.min_segment_duration:
+                logger.info(f"Final cleanup: merging short segment {current_segment.get('segment_index', i+1)} ({current_segment['duration']:.2f}s)")
+                
+                merged = False
+                
+                # Try to merge with next segment first
+                if i + 1 < len(segments):
+                    next_segment = segments[i + 1]
+                    combined_duration = current_segment["duration"] + next_segment["duration"]
+                    
+                    # Merge if combined duration is reasonable
+                    if combined_duration <= self.max_segment_duration:
+                        merged_segment = {
+                            "start": current_segment["start"],
+                            "end": next_segment["end"],
+                            "duration": combined_duration,
+                            "speaker": current_segment["speaker"] if current_segment["type"] == "speech" else next_segment["speaker"],
+                            "type": "speech" if (current_segment["type"] == "speech" or next_segment["type"] == "speech") else current_segment["type"],
+                            "text": f"{current_segment.get('text', '')} {next_segment.get('text', '')}".strip(),
+                            "utterances": current_segment.get("utterances", []) + next_segment.get("utterances", []),
+                            "confidence": (current_segment.get("confidence", 0.5) + next_segment.get("confidence", 0.5)) / 2,
+                            "is_merged": True,
+                            "merged_from": [current_segment.get("segment_index", i+1), next_segment.get("segment_index", i+2)]
+                        }
+                        cleaned_segments.append(merged_segment)
+                        i += 2  # Skip both segments
+                        merged = True
+                
+                # If couldn't merge with next, try merging with previous
+                if not merged and cleaned_segments:
+                    prev_segment = cleaned_segments[-1]
+                    combined_duration = prev_segment["duration"] + current_segment["duration"]
+                    
+                    if combined_duration <= self.max_segment_duration:
+                        # Update the previous segment to include current
+                        prev_segment["end"] = current_segment["end"]
+                        prev_segment["duration"] = combined_duration
+                        prev_segment["text"] = f"{prev_segment.get('text', '')} {current_segment.get('text', '')}".strip()
+                        prev_segment["utterances"] = prev_segment.get("utterances", []) + current_segment.get("utterances", [])
+                        prev_segment["is_merged"] = True
+                        if "merged_from" not in prev_segment:
+                            prev_segment["merged_from"] = [prev_segment.get("segment_index", len(cleaned_segments))]
+                        prev_segment["merged_from"].append(current_segment.get("segment_index", i+1))
+                        i += 1
+                        merged = True
+                
+                # If still couldn't merge, keep as is but log warning
+                if not merged:
+                    logger.warning(f"Could not merge short segment {current_segment.get('segment_index', i+1)} ({current_segment['duration']:.2f}s) - keeping as is")
+                    cleaned_segments.append(current_segment)
+                    i += 1
+            else:
+                # Segment is already good duration
+                cleaned_segments.append(current_segment)
+                i += 1
+        
+        logger.info(f"Final cleanup completed: {len(segments)} -> {len(cleaned_segments)} segments")
+        return cleaned_segments
 

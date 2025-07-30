@@ -229,88 +229,44 @@ class FishSpeechService:
             # Generate audio
             logger.info(f"Generating voice clone for segment {segment_metadata.get('segment_index', 'unknown')}")
             
-            audio_chunks = list(self.inference_engine.inference(tts_request))
+            # Process Fish Speech inference results properly
+            final_audio = None
+            sample_rate = 44100  # Default sample rate
             
-            if not audio_chunks:
-                return {"success": False, "error": "No audio generated"}
+            for result in self.inference_engine.inference(tts_request):
+                logger.info(f"Received inference result: code={result.code}")
+                
+                if result.code == "final":
+                    # Extract audio from final result - it's a tuple (sample_rate, audio_array)
+                    if result.audio is not None:
+                        sample_rate, audio_array = result.audio
+                        final_audio = audio_array
+                        logger.info(f"Final audio extracted: sample_rate={sample_rate}, shape={audio_array.shape}")
+                        break
+                    else:
+                        logger.error("Final result has no audio data")
+                        return {"success": False, "error": "Final result contains no audio"}
+                
+                elif result.code == "error":
+                    error_msg = str(result.error) if result.error else "Unknown inference error"
+                    logger.error(f"Inference error: {error_msg}")
+                    return {"success": False, "error": f"Inference failed: {error_msg}"}
+                
+                # Skip "header" and "segment" codes for non-streaming mode
             
-            # Handle Fish Speech audio chunks properly
-            import numpy as np
+            # Check if we got final audio
+            if final_audio is None:
+                logger.error("No final audio generated from inference")
+                return {"success": False, "error": "No audio generated - no final result received"}
+            
+            # Convert to WAV bytes
             import io
             import soundfile as sf
             
-            # Debug: Log chunk details
-            logger.info(f"Processing {len(audio_chunks)} chunks from Fish Speech")
-            for i, chunk in enumerate(audio_chunks[:2]):  # Log first 2 chunks
-                logger.info(f"Chunk {i}: type={type(chunk)}")
-                if isinstance(chunk, tuple):
-                    logger.info(f"  Tuple length: {len(chunk)}")
-                    for j, item in enumerate(chunk):
-                        logger.info(f"    Item {j}: type={type(item)}, shape={getattr(item, 'shape', 'N/A')}")
-                elif hasattr(chunk, 'shape'):
-                    logger.info(f"  Shape: {chunk.shape}")
-            
-            # Handle Fish Speech inference results properly
-            audio_arrays = []
-            for i, chunk in enumerate(audio_chunks):
-                try:
-                    chunk_audio = None
-                    
-                    # Fish Speech inference returns InferenceResult or tuples
-                    if isinstance(chunk, tuple) and len(chunk) >= 2:
-                        # Fish Speech typically returns (audio_array, sr) or (audio, metadata)
-                        chunk_audio = chunk[0]  # First element is usually audio
-                        logger.info(f"Extracted audio from tuple: {type(chunk_audio)}, shape={getattr(chunk_audio, 'shape', 'N/A')}")
-                    elif hasattr(chunk, 'audio'):
-                        chunk_audio = chunk.audio
-                    elif isinstance(chunk, np.ndarray):
-                        chunk_audio = chunk
-                    else:
-                        chunk_audio = chunk
-                    
-                    # Convert to numpy array and validate
-                    if isinstance(chunk_audio, np.ndarray):
-                        if chunk_audio.size > 0:  # Check if array has data
-                            # Flatten if multi-dimensional
-                            if chunk_audio.ndim > 1:
-                                chunk_audio = chunk_audio.flatten()
-                            audio_arrays.append(chunk_audio)
-                            logger.info(f"Added chunk {i}: shape={chunk_audio.shape}, size={chunk_audio.size}")
-                        else:
-                            logger.warning(f"Skipping empty array in chunk {i}")
-                    elif chunk_audio is not None:
-                        # Try to convert other types to numpy
-                        try:
-                            chunk_array = np.array(chunk_audio, dtype=np.float32)
-                            if chunk_array.size > 0:
-                                if chunk_array.ndim > 1:
-                                    chunk_array = chunk_array.flatten()
-                                audio_arrays.append(chunk_array)
-                                logger.info(f"Converted chunk {i} to numpy: shape={chunk_array.shape}")
-                            else:
-                                logger.warning(f"Converted chunk {i} is empty")
-                        except Exception as e:
-                            logger.warning(f"Failed to convert chunk {i} to numpy: {e}")
-                    else:
-                        logger.warning(f"Chunk {i} is None or invalid")
-                        
-                except Exception as e:
-                    logger.error(f"Error processing chunk {i}: {e}")
-            
-            # Combine arrays
-            if audio_arrays:
-                logger.info(f"Combining {len(audio_arrays)} audio arrays")
-                combined_audio_array = np.concatenate(audio_arrays)
-                logger.info(f"Combined audio shape: {combined_audio_array.shape}, duration: {len(combined_audio_array)/44100:.2f}s")
-                
-                # Convert to WAV bytes
-                buffer = io.BytesIO()
-                sf.write(buffer, combined_audio_array, 44100, format='WAV')
-                combined_audio = buffer.getvalue()
-                logger.info(f"Generated WAV file: {len(combined_audio)} bytes")
-            else:
-                logger.error("No audio arrays to combine - all chunks were invalid")
-                return {"success": False, "error": "No valid audio data found in inference results"}
+            buffer = io.BytesIO()
+            sf.write(buffer, final_audio, sample_rate, format='WAV')
+            combined_audio = buffer.getvalue()
+            logger.info(f"Generated WAV file: {len(combined_audio)} bytes, sample_rate={sample_rate}")
             
             # Save cloned audio
             segment_index = segment_metadata.get("segment_index", 1)
@@ -323,10 +279,10 @@ class FishSpeechService:
             # Process and match audio length
             try:
                 target_duration = segment_metadata.get("duration", 1.0)
-                matched_audio_path = self._match_audio_length(output_path, target_duration)
+                matched_audio_path = self._match_audio_length(output_path, target_duration, sample_rate)
                 
-                audio_data, sample_rate = sf.read(str(matched_audio_path))
-                final_duration = len(audio_data) / sample_rate
+                audio_data, actual_sample_rate = sf.read(str(matched_audio_path))
+                final_duration = len(audio_data) / actual_sample_rate
                 
                 return {
                     "success": True,
@@ -367,18 +323,18 @@ class FishSpeechService:
         seed_base = hash(speaker_id) % 1000000
         return abs(seed_base)
     
-    def _match_audio_length(self, audio_path: Path, target_duration: float) -> Path:
+    def _match_audio_length(self, audio_path: Path, target_duration: float, expected_sample_rate: int = 44100) -> Path:
         """Match cloned audio length to exact reference duration"""
         try:
             # Load cloned audio
-            audio_data, sample_rate = sf.read(str(audio_path))
-            current_duration = len(audio_data) / sample_rate
+            audio_data, actual_sample_rate = sf.read(str(audio_path))
+            current_duration = len(audio_data) / actual_sample_rate
             
             # If already correct length (within 50ms tolerance), return as is
             if abs(current_duration - target_duration) <= 0.05:
                 return audio_path
             
-            target_samples = int(target_duration * sample_rate)
+            target_samples = int(target_duration * actual_sample_rate)
             
             # Crop if too long
             if len(audio_data) > target_samples:
@@ -395,7 +351,7 @@ class FishSpeechService:
             
             # Save matched audio
             matched_path = audio_path.parent / f"matched_{audio_path.name}"
-            sf.write(str(matched_path), matched_audio, sample_rate)
+            sf.write(str(matched_path), matched_audio, actual_sample_rate)
             
             # Replace original with matched
             audio_path.unlink()  # Delete original
