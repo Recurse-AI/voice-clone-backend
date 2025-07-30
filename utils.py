@@ -299,7 +299,10 @@ def cleanup_temp_files(audio_id: str, audio_temp_path: Optional[str] = None,
         
         # Clean up processor files and caches
         try:
-            audio_processor.cleanup_temp_files(audio_id)
+            # Use file_manager directly instead of audio_processor
+            from video_processor.file_manager import FileManager
+            file_manager = FileManager(temp_dir="./tmp/voice_cloning")
+            file_manager.cleanup_temp_files(audio_id)
             logger.info(f"Cleaned up processor files for {audio_id}")
         except Exception as e:
             logger.warning(f"Failed to cleanup processor files: {str(e)}")

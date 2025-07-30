@@ -227,23 +227,29 @@ class FishSpeechService:
             if not audio_chunks:
                 return {"success": False, "error": "No audio generated"}
             
-            # Combine audio chunks - handle InferenceResult objects
-            try:
-                # Extract bytes from InferenceResult objects
-                audio_bytes_list = []
-                for chunk in audio_chunks:
-                    if hasattr(chunk, 'audio_bytes'):
-                        audio_bytes_list.append(chunk.audio_bytes)
-                    elif isinstance(chunk, bytes):
-                        audio_bytes_list.append(chunk)
-                    else:
-                        # Convert chunk to bytes if it's something else
-                        audio_bytes_list.append(bytes(chunk))
-                
-                combined_audio = b''.join(audio_bytes_list)
-            except Exception as e:
-                logger.error(f"Failed to combine audio chunks: {str(e)}")
-                return {"success": False, "error": f"Audio combination failed: {str(e)}"}
+            # Simple direct approach - Fish Speech returns audio directly
+            import numpy as np
+            import io
+            import soundfile as sf
+            
+            # Collect all audio data from inference results
+            audio_arrays = []
+            for chunk in audio_chunks:
+                # Fish Speech InferenceResult typically contains audio as numpy array
+                if hasattr(chunk, 'audio'):
+                    audio_arrays.append(chunk.audio)
+                else:
+                    # Fallback: assume chunk itself is audio data
+                    audio_arrays.append(chunk)
+            
+            # Combine arrays and convert to WAV bytes
+            if audio_arrays:
+                combined_audio_array = np.concatenate(audio_arrays, axis=0)
+                buffer = io.BytesIO()
+                sf.write(buffer, combined_audio_array, 44100, format='WAV')
+                combined_audio = buffer.getvalue()
+            else:
+                return {"success": False, "error": "No audio data in chunks"}
             
             # Save cloned audio
             segment_index = segment_metadata.get("segment_index", 1)
