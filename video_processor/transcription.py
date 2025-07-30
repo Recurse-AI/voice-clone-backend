@@ -330,7 +330,8 @@ class TranscriptionService:
                                       audio_id: str) -> List[Dict[str, Any]]:
         """Translate segments using OpenAI with dubbing-optimized prompts"""
         try:
-            logger.info(f"Starting OpenAI translation for {len(segments)} segments to {target_language}")
+            logger.info(f"🌍 Starting OpenAI translation for {len(segments)} segments to {target_language}")
+            logger.info(f"🔍 Original text samples: {[seg.get('text', '')[:50] for seg in segments[:3]]}")
             
             # Override AssemblyAI language detection with script-based detection
             combined_text = " ".join([segment.get("text", "") for segment in segments])
@@ -341,8 +342,11 @@ class TranscriptionService:
                 logger.info(f"Script analysis detected {script_detected_language}, overriding AssemblyAI detection ({detected_language})")
                 detected_language = script_detected_language
             
+            # Force translation if target is English (never skip for English)
+            if target_language.lower() in ["english", "eng"]:
+                logger.info(f"🎯 Target is English - forcing translation from {detected_language}")
             # Skip translation if already in target language
-            if self._is_same_language(detected_language, target_language):
+            elif self._is_same_language(detected_language, target_language):
                 logger.info(f"Detected language ({detected_language}) matches target ({target_language}), skipping translation")
                 return self._add_translation_metadata(segments, target_language, "skipped_same_language")
             
@@ -363,7 +367,8 @@ class TranscriptionService:
                 # Small delay to avoid rate limiting
                 time.sleep(0.5)
             
-            logger.info(f"Translation completed for {len(translated_segments)} segments")
+            logger.info(f"✅ Translation completed for {len(translated_segments)} segments")
+            logger.info(f"📝 Translated text samples: {[seg.get('translated_text', '')[:50] for seg in translated_segments[:3]]}")
             return translated_segments
             
         except Exception as e:
@@ -455,21 +460,21 @@ class TranscriptionService:
         target_script_instruction = language_output_map.get(target_language.lower(), f"{target_language} script only")
         
         prompt = f"""
-SIMPLE TRANSLATION TASK
+CRITICAL TRANSLATION TASK - ENGLISH OUTPUT REQUIRED
 
-Translate {len(requests)} segments from {detected_language} to {target_language}.
+Translate {len(requests)} segments from {detected_language} to ENGLISH.
 
-CRITICAL DUBBING REQUIREMENTS:
-1. OUTPUT SCRIPT: Use {target_script_instruction} - NO mixing of scripts or languages
-2. NATURAL SPEECH: Translate for spoken dialogue, not written text  
-3. TIMING MATCH: Keep similar syllable count and speaking duration ({sum(req['duration'] for req in requests):.1f}s total)
-4. EMOTIONAL PRESERVATION: Maintain speaker's tone, energy, and emotional intent
-5. CULTURAL ADAPTATION: Use culturally natural expressions for {target_language} speakers
-6. CONVERSATIONAL STYLE: Use natural, spoken language (contractions, informal speech)
+MANDATORY REQUIREMENTS:
+1. OUTPUT LANGUAGE: ENGLISH ONLY - Use English alphabet and words only
+2. NO MIXING: Never mix Hindi/other scripts with English 
+3. COMPLETE TRANSLATION: Every segment must be translated to proper English
+4. NATURAL SPEECH: Translate for spoken dialogue, conversational English
+5. TIMING MATCH: Keep similar syllable count and speaking duration ({sum(req['duration'] for req in requests):.1f}s total)
+6. EMOTIONAL PRESERVATION: Maintain speaker's tone, energy, and emotional intent
 
-FISH SPEECH TTS OPTIMIZATION & TIMING CONTROL:
-- Use clear, pronounceable {target_language} text
-- Add emotional markers when appropriate: (happy), (excited), (sad), (serious), (casual), (confident), etc.
+ENGLISH TEXT OPTIMIZATION FOR TTS:
+- Use clear, pronounceable English text only
+- Add emotional markers when appropriate: (happy), (excited), (sad), (serious), (casual), (confident)
 - Use natural pauses with commas and periods for timing control
 - Add strategic extra spaces "        " at sentence endings for duration matching
 - Use ellipses "..." for longer pauses when needed
@@ -479,12 +484,13 @@ FISH SPEECH TTS OPTIMIZATION & TIMING CONTROL:
 SEGMENTS TO TRANSLATE:
 {json.dumps(context_info, indent=2, ensure_ascii=False)}
 
-RULES:
-1. Each segment gets unique translation (no duplicates)
-2. Use {target_script_instruction} only
+CRITICAL RULES:
+1. Each segment gets unique ENGLISH translation (no duplicates)
+2. Use ENGLISH ALPHABET AND WORDS ONLY - No Hindi, Devanagari, or other scripts
 3. Add extra spaces for timing: "word  word" 
-4. Keep it natural and conversational
-5. MUST BE IN {target_language} LANGUAGE ONLY, NO MIXING OF LANGUAGES OR SCRIPTS
+4. Keep it natural and conversational English
+5. MUST BE IN ENGLISH LANGUAGE ONLY, NO MIXING OF LANGUAGES OR SCRIPTS
+6. NEVER output Hindi, Arabic, Chinese, or any non-English text
 
 JSON OUTPUT:
 {{
@@ -527,14 +533,17 @@ Max 1000 tokens.
         
         script_req = script_requirements.get(target_language.lower(), f"{target_language} script only")
         
-        return f"""You are a professional translator.
+        return f"""You are a professional translator specializing in {target_language}.
 
-REQUIREMENTS:
-- Translate to {target_language} using {script_req}
+CRITICAL TRANSLATION REQUIREMENTS:
+- MUST translate to {target_language} using {script_req}
+- OUTPUT ONLY {target_language} text - NO Hindi, Arabic, Chinese, or other languages
 - Each segment must have unique, different text (no duplicates)
 - Add extra spaces between words for timing control
 - Keep translations natural and conversational
-- No mixing of languages or scripts
+- NEVER mix languages or scripts
+- Your are a professional translator, so you will not make any mistakes.
+- If target is English, use ONLY English alphabet (A-Z, a-z) and English words
 
 Focus on accuracy and uniqueness for each segment."""
     

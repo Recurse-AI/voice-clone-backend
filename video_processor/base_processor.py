@@ -84,12 +84,23 @@ class AudioProcessor:
             
             # Translate segments for target language if needed
             detected_language = transcript_data.get('metadata', {}).get('language_code', 'en')
-            if target_language.lower() != "same" and detected_language != target_language.lower()[:2]:
-                logger.info(f"Translating segments from {detected_language} to {target_language}")
+            logger.info(f"DEBUG: target_language='{target_language}', detected_language='{detected_language}'")
+            
+            # Force translation for English target language
+            if target_language.lower() in ["english", "eng"] and detected_language != "en":
+                logger.info(f"🌍 Translating segments from {detected_language} to {target_language}")
                 segments = self.transcription_service.translate_segments_for_dubbing(
                     segments, target_language, detected_language, audio_id
                 )
-                logger.info(f"Translation completed for {len(segments)} segments")
+                logger.info(f"✅ Translation completed for {len(segments)} segments")
+            elif target_language.lower() != "same" and detected_language != target_language.lower()[:2]:
+                logger.info(f"🌍 Translating segments from {detected_language} to {target_language}")
+                segments = self.transcription_service.translate_segments_for_dubbing(
+                    segments, target_language, detected_language, audio_id
+                )
+                logger.info(f"✅ Translation completed for {len(segments)} segments")
+            else:
+                logger.info(f"⏭️ Skipping translation: target='{target_language}', detected='{detected_language}'")
             
             # Create output directory
             output_dir = self.temp_dir / f"segments_{audio_id}"
@@ -439,11 +450,17 @@ class AudioProcessor:
                     except:
                         pass
                     
-                    # Skip silent segments for voice cloning (keep for reconstruction)
+                    # Skip truly silent segments (no text content)
                     segment_type = segment.get("type", "speech")
-                    if segment_type == "silent":
+                    segment_text = segment.get("text", "").strip()
+                    
+                    if segment_type in ["silent", "gap"] and not segment_text:
                         cloning_stats["skipped_segments"] += 1
                         logger.info(f"Skipping silent segment {segment.get('index', i)} for voice cloning")
+                        continue
+                    elif not segment_text:
+                        cloning_stats["skipped_segments"] += 1
+                        logger.info(f"Skipping segment {segment.get('index', i)} - no text content")
                         continue
                     
                     # Get segment metadata file - use index field from segment_manager 
@@ -461,6 +478,10 @@ class AudioProcessor:
                     
                     # Add required fields for voice cloning
                     segment_metadata["audio_id"] = audio_id
+                    
+                    # Ensure translated_text is available for voice cloning
+                    if "translated_text" not in segment_metadata or not segment_metadata["translated_text"]:
+                        segment_metadata["translated_text"] = segment.get("translated_text", segment.get("text", ""))
                     
                     # Use original vocal segment audio as reference (no separate reference folder needed)
                     original_audio_path = segments_dir / "segments" / f"segment_{segment_index:03d}.wav"

@@ -48,8 +48,9 @@ class SegmentManager:
             
             response = requests.get(url, headers=headers)
             response.raise_for_status()
-            
+            logger.info(f"Fetched sentences from AssemblyAI: {response.json()}")
             data = response.json()
+            logger.info(f"Fetched sentences from AssemblyAI: {data}")
             return data.get("sentences", [])
             
         except Exception as e:
@@ -215,7 +216,7 @@ class SegmentManager:
     
     def prepare_segments_for_voice_cloning(self, segments: List[Dict[str, Any]], 
                                          target_language: str = "English") -> List[Dict[str, Any]]:
-        """Prepare speech segments for voice cloning by adding target language translation"""
+        """Prepare speech segments for voice cloning with proper translation fields"""
         speech_segments = []
         
         for segment in segments:
@@ -224,12 +225,21 @@ class SegmentManager:
                 cloning_segment = segment.copy()
                 cloning_segment["target_language"] = target_language
                 
+                # Add segment_id for translation service
+                cloning_segment["segment_id"] = f"segment_{segment['index']:03d}"
+                
                 # Add original text as reference text
                 cloning_segment["original_text"] = segment["text"]
                 
-                # TODO: Add translation logic here when translation service is ready
-                # For now, keep original text if target is English, otherwise mark for translation
-                if target_language.lower() == "english":
+                # Add fields required by translation service
+                cloning_segment["speaker"] = segment.get("speaker", "SPEAKER_00")
+                cloning_segment["duration"] = segment.get("duration", 0)
+                cloning_segment["segment_index"] = segment.get("index", 0)
+                
+                # Mark for translation - translation will be done in base_processor
+                if target_language.lower() in ["english", "eng"]:
+                    cloning_segment["translation_needed"] = True
+                    # Default to original text, will be replaced by translation
                     cloning_segment["translated_text"] = segment["text"]
                 else:
                     cloning_segment["translated_text"] = f"[TO_TRANSLATE:{target_language}] {segment['text']}"
