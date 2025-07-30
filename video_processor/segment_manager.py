@@ -24,13 +24,282 @@ class SegmentManager:
     def __init__(self, transcription_service):
         self.transcription_service = transcription_service
         
-        # Segmentation parameters
-        self.min_segment_duration = 2.5    # Minimum segment length (seconds) - user requirement
-        self.max_segment_duration = 11.0   # Maximum segment length (seconds)
-        self.optimal_min_duration = 9.0    # Optimal minimum length (seconds)
-        self.optimal_max_duration = 11.0   # Optimal maximum length (seconds)
-        self.min_silence_duration = 2.5    # Minimum silence to keep as separate segment (seconds)
-        self.speaker_switch_padding = 0.1   # Padding around speaker switches (seconds)
+        # Enhanced segmentation parameters for better dubbing
+        self.min_segment_duration = 7.0     # Increased minimum for dubbing quality
+        self.max_segment_duration = 12.0    # Maximum segment length (seconds)
+        self.optimal_min_duration = 9.0     # Optimal minimum length (seconds) 
+        self.optimal_max_duration = 11.0    # Optimal maximum length (seconds)
+        self.min_silence_duration = 1.5     # Reduced silence threshold for better merging
+        self.speaker_switch_padding = 0.1    # Padding around speaker switches (seconds)
+        self.force_merge_threshold = 5.0    # Force merge segments shorter than this (seconds)
+    
+    def _create_compact_transcript_for_ai(self, utterances: List[Dict], total_duration: float) -> Dict:
+        """Create compact transcript data for OpenAI analysis (token-efficient)"""
+        # Extract only essential information to minimize tokens
+        compact_data = {
+            "total_duration": round(total_duration, 1),
+            "speaker_changes": [],
+            "content_blocks": []
+        }
+        
+        current_speaker = None
+        block_start = 0
+        block_text = ""
+        
+        for utterance in utterances:
+            speaker = utterance["speaker"]
+            start = round(utterance["start"], 1)
+            end = round(utterance["end"], 1)
+            text = utterance["text"][:100]  # Limit text length
+            
+            # Track speaker changes
+            if speaker != current_speaker:
+                if current_speaker is not None:
+                    # Save previous block
+                    compact_data["content_blocks"].append({
+                        "speaker": current_speaker,
+                        "start": block_start,
+                        "end": start,
+                        "duration": round(start - block_start, 1),
+                        "text": block_text[:150]  # Limit for tokens
+                    })
+                    compact_data["speaker_changes"].append({
+                        "time": start,
+                        "from": current_speaker,
+                        "to": speaker
+                    })
+                
+                current_speaker = speaker
+                block_start = start
+                block_text = text
+            else:
+                block_text += " " + text
+        
+        # Add final block
+        if current_speaker:
+            compact_data["content_blocks"].append({
+                "speaker": current_speaker,
+                "start": block_start,
+                "end": total_duration,
+                "duration": round(total_duration - block_start, 1),
+                "text": block_text[:150]
+            })
+        
+        return compact_data
+    
+    def _apply_ai_segment_optimization(self, segments: List[Dict], utterances: List[Dict], total_duration: float) -> List[Dict]:
+        """Use AI to optimize short segments by intelligent merging"""
+        try:
+            import json
+            # Create compact segment data for AI analysis
+            segment_summary = []
+            for i, seg in enumerate(segments):
+                segment_summary.append({
+                    "index": i,
+                    "start": round(seg["start"], 1),
+                    "end": round(seg["end"], 1), 
+                    "duration": round(seg["duration"], 1),
+                    "speaker": seg["speaker"],
+                    "text": seg.get("text", "")[:80],  # Limit for tokens
+                    "type": seg.get("type", "speech")
+                })
+            
+            # Short prompt for efficiency
+            prompt = f"""
+SEGMENT OPTIMIZATION TASK
+
+Current segments ({len(segments)} total, {total_duration}s audio):
+{json.dumps(segment_summary, indent=1)}
+
+PROBLEM: Some segments < 5s (too short for dubbing)
+TARGET: Merge to create 9-11s segments
+
+RULES:
+- Merge adjacent segments of same speaker when possible
+- Merge different speakers only if natural conversation flow
+- Maintain speech content integrity
+- Avoid cutting mid-sentence
+
+OUTPUT (JSON):
+{{
+  "optimized_segments": [
+    {{
+      "merge_indices": [0, 1],
+      "new_start": 0.0,
+      "new_end": 10.5,
+      "primary_speaker": "A",
+      "merge_reason": "same speaker continuation"
+    }}
+  ]
+}}
+
+Max 300 tokens response."""
+
+            import openai
+            from config import settings
+            
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "Video editing expert. Optimize segments for dubbing."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=300,
+                temperature=0.2
+            )
+            
+            ai_result = json.loads(response.choices[0].message.content)
+            
+            # Apply AI recommendations
+            optimized_segments = self._apply_merge_recommendations(segments, ai_result.get("optimized_segments", []))
+            logger.info(f"AI optimization: {len(segments)} -> {len(optimized_segments)} segments")
+            
+            return optimized_segments
+            
+        except Exception as e:
+            logger.warning(f"AI segment optimization failed: {e}")
+            return None
+    
+    def _apply_merge_recommendations(self, segments: List[Dict], merge_recommendations: List[Dict]) -> List[Dict]:
+        """Apply AI merge recommendations to create optimized segments"""
+        if not merge_recommendations:
+            return segments
+        
+        optimized = []
+        used_indices = set()
+        
+        # Apply merges
+        for merge in merge_recommendations:
+            indices = merge.get("merge_indices", [])
+            if not indices or any(i in used_indices for i in indices):
+                continue
+            
+            # Merge segments
+            merged_segment = segments[indices[0]].copy()
+            merged_segment["end"] = merge.get("new_end", segments[indices[-1]]["end"])
+            merged_segment["duration"] = merged_segment["end"] - merged_segment["start"]
+            merged_segment["speaker"] = merge.get("primary_speaker", merged_segment["speaker"])
+            
+            # Combine text
+            combined_text = " ".join([segments[i].get("text", "") for i in indices])
+            merged_segment["text"] = combined_text
+            merged_segment["utterances"] = []
+            for i in indices:
+                merged_segment["utterances"].extend(segments[i].get("utterances", []))
+            
+            merged_segment["is_merged"] = True
+            merged_segment["merged_from"] = indices
+            merged_segment["ai_optimized"] = True
+            merged_segment["merge_reason"] = merge.get("merge_reason", "AI optimization")
+            
+            optimized.append(merged_segment)
+            used_indices.update(indices)
+        
+        # Add unmerged segments
+        for i, segment in enumerate(segments):
+            if i not in used_indices:
+                optimized.append(segment)
+        
+        # Sort by start time and reassign indices
+        optimized.sort(key=lambda x: x["start"])
+        for i, segment in enumerate(optimized):
+            segment["segment_index"] = i + 1
+            segment["segment_id"] = f"segment_{i+1:03d}"
+        
+        return optimized
+    
+    def _add_video_cropping_info(self, segments: List[Dict]) -> List[Dict]:
+        """Add video cropping information for each segment"""
+        enhanced_segments = []
+        
+        for segment in segments:
+            enhanced_segment = segment.copy()
+            
+            # Add video cropping metadata
+            enhanced_segment["video_info"] = {
+                "crop_start": segment["start"],
+                "crop_end": segment["end"],
+                "crop_duration": segment["duration"],
+                "video_fps": 30,  # Default FPS, can be updated from actual video
+                "crop_start_frame": int(segment["start"] * 30),
+                "crop_end_frame": int(segment["end"] * 30),
+                "crop_total_frames": int(segment["duration"] * 30)
+            }
+            
+            # Add timing recommendations for video editing
+            enhanced_segment["editing_notes"] = {
+                "recommended_fade_in": 0.1,  # seconds
+                "recommended_fade_out": 0.1,
+                "sync_tolerance": 0.05,  # Audio-video sync tolerance
+                "cut_type": "hard_cut" if segment.get("is_merged") else "natural_pause"
+            }
+            
+            enhanced_segments.append(enhanced_segment)
+        
+        return enhanced_segments
+    
+    def _get_ai_segmentation_strategy(self, compact_transcript: Dict) -> Dict:
+        """Get OpenAI recommendations for optimal segmentation and video cropping"""
+        try:
+            import json
+            import openai
+            from config import settings
+            
+            # Create token-efficient prompt
+            prompt = f"""
+SMART VIDEO SEGMENTATION TASK
+
+Analyze this {compact_transcript['total_duration']}s audio transcript for optimal dubbing segmentation.
+
+SPEAKER BLOCKS:
+{json.dumps(compact_transcript['content_blocks'], indent=1)}
+
+REQUIREMENTS:
+- Target: 9-11 second segments (ideal for dubbing)
+- Avoid cutting mid-sentence or mid-thought  
+- Consider speaker changes and natural pauses
+- Each segment needs clear start/end for video cropping
+
+PROVIDE:
+1. Optimal segment boundaries (timestamps)
+2. Video cropping points for each segment
+3. Speaker continuity recommendations
+
+FORMAT (JSON):
+{{
+  "segments": [
+    {{
+      "start": 0.0,
+      "end": 10.5,
+      "primary_speaker": "A",
+      "video_crop_start": 0.0,
+      "video_crop_end": 10.5,
+      "merge_reason": "natural thought completion",
+      "contains_speaker_change": false
+    }}
+  ],
+  "strategy": "merge short speaker segments, split at natural pauses"
+}}
+
+Keep response under 500 tokens."""
+            
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",  # Cost-efficient model
+                messages=[
+                    {"role": "system", "content": "You are a video editing expert specializing in dubbing segmentation."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=1024,
+                temperature=0.3
+            )
+            
+            return json.loads(response.choices[0].message.content)
+            
+        except Exception as e:
+            logger.warning(f"AI segmentation failed: {e}, falling back to rule-based")
+            return None
         
     def create_optimal_segments(self, transcript_data: Dict[str, Any], 
                               target_language: str = "English", audio_id: str = None) -> List[Dict[str, Any]]:
@@ -69,9 +338,19 @@ class SegmentManager:
             # Step 6: Final cleanup - ensure no segments are shorter than minimum duration
             cleaned_segments = self._final_cleanup_short_segments(validated_segments)
             
-            # Step 7: Translate segments for dubbing
+            # Step 6.5: AI-enhanced segment optimization (if segments are still too short)
+            if any(seg["duration"] < self.force_merge_threshold for seg in cleaned_segments):
+                logger.info("Applying AI-enhanced segment optimization for better dubbing")
+                ai_optimized_segments = self._apply_ai_segment_optimization(cleaned_segments, utterances, total_duration)
+                if ai_optimized_segments:
+                    cleaned_segments = ai_optimized_segments
+            
+            # Step 7: Add video cropping information
+            enhanced_segments = self._add_video_cropping_info(cleaned_segments)
+            
+            # Step 8: Translate segments for dubbing
             translated_segments = self._translate_segments_if_needed(
-                cleaned_segments, transcript_data, audio_id
+                enhanced_segments, transcript_data, audio_id
             )
             
             logger.info(f"Smart segmentation completed: {len(translated_segments)} segments created")
@@ -670,7 +949,7 @@ class SegmentManager:
         return np.concatenate([audio, silence])
 
     def _final_cleanup_short_segments(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Final aggressive cleanup to merge any remaining segments shorter than 2.5s"""
+        """Final aggressive cleanup to merge any remaining segments shorter than force_merge_threshold (5s)"""
         if not segments:
             return segments
         
@@ -680,8 +959,8 @@ class SegmentManager:
         while i < len(segments):
             current_segment = segments[i].copy()
             
-            # If current segment is too short, try to merge with adjacent segment
-            if current_segment["duration"] < self.min_segment_duration:
+            # If current segment is too short, try to merge with adjacent segment  
+            if current_segment["duration"] < self.force_merge_threshold:
                 logger.info(f"Final cleanup: merging short segment {current_segment.get('segment_index', i+1)} ({current_segment['duration']:.2f}s)")
                 
                 merged = False

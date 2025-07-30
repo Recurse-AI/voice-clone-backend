@@ -210,54 +210,54 @@ class FishSpeechService:
                 text=reference_text
             )]
             
-            # Create TTS request with optimal settings for voice cloning
-            tts_request = ServeTTSRequest(
-                text=cleaned_text,
-                references=references,
-                reference_id=None,
-                max_new_tokens=2048,  # Higher for longer segments
-                chunk_length=300,
-                top_p=0.8,            # Optimal for voice cloning
-                repetition_penalty=1.1,
-                temperature=0.7,      # Balanced creativity/consistency
-                format="wav",
-                streaming=False,
-                use_memory_cache="on",
-                seed=self._get_speaker_seed(segment_metadata.get("speaker", "A"))
-            )
-            
-            # Generate audio
+            # Smart text chunking for long texts
+            text_chunks = self._chunk_text_smart(cleaned_text, max_chars=280)
             logger.info(f"Generating voice clone for segment {segment_metadata.get('segment_index', 'unknown')}")
+            logger.info(f"Text split into {len(text_chunks)} chunks: {[len(chunk) for chunk in text_chunks]}")
             
-            # Process Fish Speech inference results properly
-            final_audio = None
-            sample_rate = 44100  # Default sample rate
+            # TTS settings for reusability
+            tts_settings = {
+                "max_new_tokens": 4096,
+                "chunk_length": 300,
+                "top_p": 0.8,
+                "repetition_penalty": 1.1,
+                "temperature": 0.7,
+                "format": "wav",
+                "streaming": False,
+                "use_memory_cache": "on",
+                "seed": None
+            }
             
-            for result in self.inference_engine.inference(tts_request):
-                logger.info(f"Received inference result: code={result.code}")
-                
-                if result.code == "final":
-                    # Extract audio from final result - it's a tuple (sample_rate, audio_array)
-                    if result.audio is not None:
-                        sample_rate, audio_array = result.audio
-                        final_audio = audio_array
-                        logger.info(f"Final audio extracted: sample_rate={sample_rate}, shape={audio_array.shape}")
-                        break
-                    else:
-                        logger.error("Final result has no audio data")
-                        return {"success": False, "error": "Final result contains no audio"}
-                
-                elif result.code == "error":
-                    error_msg = str(result.error) if result.error else "Unknown inference error"
-                    logger.error(f"Inference error: {error_msg}")
-                    return {"success": False, "error": f"Inference failed: {error_msg}"}
-                
-                # Skip "header" and "segment" codes for non-streaming mode
+            # Generate audio for each chunk
+            audio_chunks = []
+            sample_rate = 44100  # Default
+            
+            for i, text_chunk in enumerate(text_chunks):
+                logger.info(f"Processing chunk {i+1}/{len(text_chunks)}: {len(text_chunk)} chars")
+                try:
+                    chunk_audio, sample_rate = self._generate_audio_for_chunk(
+                        text_chunk, references, tts_settings
+                    )
+                    audio_chunks.append(chunk_audio)
+                    logger.info(f"Chunk {i+1} audio generated: shape={chunk_audio.shape}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to generate audio for chunk {i+1}: {str(e)}")
+                    return {"success": False, "error": f"Chunk {i+1} generation failed: {str(e)}"}
+            
+            # Merge all audio chunks
+            if len(audio_chunks) > 1:
+                logger.info(f"Merging {len(audio_chunks)} audio chunks...")
+                final_audio = self._merge_audio_chunks(audio_chunks, sample_rate)
+                logger.info(f"Final merged audio: shape={final_audio.shape}")
+            else:
+                final_audio = audio_chunks[0]
+                logger.info(f"Single chunk audio: shape={final_audio.shape}")
             
             # Check if we got final audio
-            if final_audio is None:
-                logger.error("No final audio generated from inference")
-                return {"success": False, "error": "No audio generated - no final result received"}
+            if final_audio is None or len(final_audio) == 0:
+                logger.error("No final audio generated")
+                return {"success": False, "error": "No audio generated from chunks"}
             
             # Convert to WAV bytes
             import io
@@ -316,6 +316,88 @@ class FishSpeechService:
             text += '.'
         
         return text
+    
+    def _chunk_text_smart(self, text: str, max_chars: int = 280) -> list[str]:
+        """Smart text chunking with sentence boundary awareness"""
+        if len(text) <= max_chars:
+            return [text]
+        
+        chunks = []
+        current_chunk = ""
+        
+        # Split by sentences first
+        sentences = text.replace('!', '.').replace('?', '.').split('.')
+        sentences = [s.strip() + '.' for s in sentences if s.strip()]
+        
+        for sentence in sentences:
+            # If single sentence is too long, split by words
+            if len(sentence) > max_chars:
+                words = sentence.split()
+                word_chunk = ""
+                
+                for word in words:
+                    if len(word_chunk + " " + word) > max_chars and word_chunk:
+                        chunks.append(word_chunk.strip())
+                        word_chunk = word
+                    else:
+                        word_chunk = word_chunk + " " + word if word_chunk else word
+                
+                if word_chunk:
+                    current_chunk = word_chunk
+            else:
+                # Check if adding sentence exceeds limit
+                if len(current_chunk + " " + sentence) > max_chars and current_chunk:
+                    chunks.append(current_chunk.strip())
+                    current_chunk = sentence
+                else:
+                    current_chunk = current_chunk + " " + sentence if current_chunk else sentence
+        
+        if current_chunk:
+            chunks.append(current_chunk.strip())
+        
+        return chunks
+    
+    def _generate_audio_for_chunk(self, text_chunk: str, references: list, 
+                                 tts_settings: dict) -> tuple[np.ndarray, int]:
+        """Generate audio for a single text chunk"""
+        from fish_speech.utils.schema import ServeTTSRequest
+        
+        # Create TTS request for chunk
+        tts_request = ServeTTSRequest(
+            text=text_chunk,
+            references=references,
+            reference_id=None,
+            **tts_settings
+        )
+        
+        # Generate audio for this chunk
+        for result in self.inference_engine.inference(tts_request):
+            if result.code == "final":
+                if result.audio is not None:
+                    sample_rate, audio_array = result.audio
+                    return audio_array, sample_rate
+                else:
+                    raise Exception("No audio generated for chunk")
+            elif result.code == "error":
+                error_msg = str(result.error) if result.error else "Unknown inference error"
+                raise Exception(f"Chunk inference failed: {error_msg}")
+        
+        raise Exception("No final result received for chunk")
+    
+    def _merge_audio_chunks(self, audio_chunks: list[np.ndarray], sample_rate: int) -> np.ndarray:
+        """Merge multiple audio chunks with small gaps"""
+        if len(audio_chunks) == 1:
+            return audio_chunks[0]
+        
+        # Small pause between chunks (100ms)
+        pause_samples = int(0.1 * sample_rate)
+        pause = np.zeros(pause_samples, dtype=audio_chunks[0].dtype)
+        
+        merged_audio = audio_chunks[0]
+        for audio_chunk in audio_chunks[1:]:
+            merged_audio = np.concatenate([merged_audio, pause, audio_chunk])
+        
+        return merged_audio
     
     def _get_speaker_seed(self, speaker_id: str) -> int:
         """Get consistent seed for speaker"""
