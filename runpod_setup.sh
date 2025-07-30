@@ -152,6 +152,30 @@ except Exception as e:
     print('Continuing anyway...')
 " || echo "⚠️  Fish Speech verification had issues, but continuing..."
 
+# Setup Hugging Face authentication and model downloads
+echo "🔑 Setting up Hugging Face authentication..."
+if [ ! -z "${HF_TOKEN}" ]; then
+    echo "✅ HF_TOKEN found, logging in..."
+    pip install huggingface_hub || { echo "❌ Failed to install huggingface_hub"; exit 1; }
+    
+    # Login to Hugging Face
+    echo "${HF_TOKEN}" | huggingface-cli login --token "${HF_TOKEN}" --add-to-git-credential || {
+        echo "⚠️ HF login failed, continuing without authentication"
+    }
+    
+    # Download OpenAudio S1-mini models
+    echo "📥 Downloading OpenAudio S1-mini models..."
+    mkdir -p checkpoints
+    
+    if huggingface-cli download fishaudio/openaudio-s1-mini --local-dir checkpoints/openaudio-s1-mini; then
+        echo "✅ OpenAudio S1-mini models downloaded successfully"
+    else
+        echo "⚠️ Model download failed, will download during runtime"
+    fi
+else
+    echo "⚠️ HF_TOKEN not provided, models will be downloaded during runtime if needed"
+fi
+
 # Create .env file
 echo "⚙️  Creating configuration..."
 cat > .env << EOF
@@ -161,6 +185,9 @@ PORT=8000
 CUDA_AVAILABLE=true
 TEMP_DIR=./tmp/voice_cloning
 LOGS_DIR=./logs
+
+# Hugging Face Authentication
+HF_TOKEN=${HF_TOKEN}
 
 # R2 Storage
 R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}

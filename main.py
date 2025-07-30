@@ -51,7 +51,7 @@ async def lifespan(app: FastAPI):
         fish_service = get_fish_speech_service()
         fish_service._initialize_models()
         
-        logger.info("✅ Fish Speech OpenAudio S1 ready for voice cloning!")
+        logger.info("✅ OpenAudio S1-mini ready for voice cloning!")
         
     except Exception as e:
         logger.error(f"❌ Fish Speech initialization failed: {str(e)}")

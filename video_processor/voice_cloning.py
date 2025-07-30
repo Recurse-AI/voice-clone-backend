@@ -1,11 +1,28 @@
 """
-Fish Speech Voice Cloning Service - Clean GitHub Installation
-Auto-downloads models and provides high-quality voice cloning
+OpenAudio S1-mini Voice Cloning Service - Production Ready
+=========================================================
+
+Features:
+- Auto-downloads OpenAudio S1-mini models with HF token authentication
+- High-quality voice cloning with advanced emotional control
+- GPU-optimized inference with torch.compile support
+- Clean, simple architecture with no fallback complexity
+- 20+ emotional markers support (angry, sad, excited, sarcastic, etc.)
+
+Usage:
+- Models download automatically with HF_TOKEN from environment
+- Uses only OpenAudio S1-mini (best quality/performance ratio)
+- Simple, direct model loading without complex fallbacks
+- Provides detailed logging for debugging
+
+Author: Voice Cloning API Team
+Version: 3.0 (S1-mini Only)
 """
 
 import logging
 import sys
 import threading
+import os
 from pathlib import Path
 from typing import Dict, Any
 
@@ -20,20 +37,16 @@ logger = logging.getLogger(__name__)
 
 
 class FishSpeechService:
-    """Fish Speech 1.5 voice cloning service"""
+    """OpenAudio S1-mini voice cloning service"""
     
     def __init__(self, device: str = "cuda", use_compile: bool = True):
         self.device = device if torch.cuda.is_available() else "cpu"
         self.use_compile = use_compile
         self.precision = torch.bfloat16 if self.device == "cuda" else torch.float32
         
-        # Model configuration - Fish Speech 1.5 (public access)
-        self.model_repo = "fishaudio/fish-speech-1.5" 
-        self.model_path = "checkpoints/fish-speech-1.5"
-        
-        # Alternative: Use openaudio-s1-mini (has known working config)
-        self.fallback_repo = "fishaudio/openaudio-s1-mini"
-        self.fallback_path = "checkpoints/openaudio-s1-mini"
+        # Model configuration - OpenAudio S1-mini only
+        self.model_repo = "fishaudio/openaudio-s1-mini" 
+        self.model_path = "checkpoints/openaudio-s1-mini"
         
         # Initialize as None, will be loaded lazily
         self.inference_engine = None
@@ -42,83 +55,57 @@ class FishSpeechService:
         self._model_lock = threading.Lock()
         self._is_initialized = False
         
-        logger.info(f"Fish Speech 1.5 service initialized with device: {self.device}")
+        logger.info(f"OpenAudio S1-mini service initialized with device: {self.device}")
     
     def _ensure_fish_speech_available(self):
-        """Verify Fish Speech is ready (setup done by runpod_setup.sh)"""
+        """Verify Fish Speech framework is ready (setup done by runpod_setup.sh)"""
         try:
-            # Fish Speech should be setup by runpod_setup.sh
+            # Fish Speech framework should be setup by runpod_setup.sh
             sys.path.insert(0, "./fish-speech")
             from fish_speech.models.text2semantic.llama import BaseTransformer
-            logger.debug("Fish Speech ready")
+            logger.debug("Fish Speech framework ready")
             return True
         except ImportError:
             raise Exception(
-                "Fish Speech not found. Make sure to run ./runpod_setup.sh first "
+                "Fish Speech framework not found. Make sure to run ./runpod_setup.sh first "
                 "to setup the complete environment including Fish Speech."
             )
     
     def _download_models(self):
-        """Download Fish Speech 1.5 models"""
-        logger.info("📥 Downloading Fish Speech 1.5 models...")
+        """Download OpenAudio S1-mini models with HF token authentication"""
+        logger.info("📥 Downloading OpenAudio S1-mini models...")
         
         model_dir = Path(self.model_path)
         model_dir.mkdir(parents=True, exist_ok=True)
         
-        # Fish Speech 1.5 files
-        model_files = ["config.json", "model.pth", "special_tokens.json", "tokenizer.tiktoken"]
+        # Get HF token from environment
+        hf_token = os.getenv('HF_TOKEN')
+        download_kwargs = {
+            "repo_id": self.model_repo,
+            "local_dir": str(model_dir),
+            "local_dir_use_symlinks": False,
+            "resume_download": True
+        }
+        
+        if hf_token:
+            download_kwargs["token"] = hf_token
+            logger.info("🔑 Using HF token for authentication")
+        else:
+            logger.info("⚠️ No HF token found, downloading without authentication")
+        
+        # OpenAudio S1-mini files
+        model_files = ["config.json", "model.pth", "special_tokens.json", "tokenizer.tiktoken", "codec.pth"]
         
         for file_name in model_files:
             if not (model_dir / file_name).exists():
-                hf_hub_download(
-                    repo_id=self.model_repo,
-                    filename=file_name,
-                    local_dir=str(model_dir),
-                    local_dir_use_symlinks=False,
-                    resume_download=True
-                )
-                logger.info(f"✅ Downloaded {file_name}")
+                try:
+                    hf_hub_download(filename=file_name, **download_kwargs)
+                    logger.info(f"✅ Downloaded {file_name}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to download {file_name}: {e}")
+                    raise Exception(f"Required model file {file_name} could not be downloaded: {e}")
         
-        # Download Firefly-GAN codec for Fish Speech 1.5
-        codec_file = "firefly-gan-vq-fsq-8x1024-21hz-generator.pth"
-        codec_path = model_dir / "codec.pth"
-        
-        if not codec_path.exists():
-            logger.info(f"📥 Downloading codec: {codec_file}")
-            hf_hub_download(
-                repo_id=self.model_repo,
-                filename=codec_file,
-                local_dir=str(model_dir),
-                local_dir_use_symlinks=False,
-                resume_download=True
-            )
-            # Rename to codec.pth for compatibility
-            original_codec_path = model_dir / codec_file
-            if original_codec_path.exists():
-                original_codec_path.rename(codec_path)
-                logger.info(f"✅ Downloaded and renamed codec: {codec_file}")
-            else:
-                logger.error(f"❌ Failed to download codec file: {codec_file}")
-        else:
-            logger.info("✅ Codec already exists")
-        
-        # Download codec config if available
-        try:
-            config_file = "codec_config.yaml"
-            config_path = model_dir / config_file
-            if not config_path.exists():
-                hf_hub_download(
-                    repo_id=self.model_repo,
-                    filename=config_file,
-                    local_dir=str(model_dir),
-                    local_dir_use_symlinks=False,
-                    resume_download=True
-                )
-                logger.info(f"✅ Downloaded codec config: {config_file}")
-        except Exception:
-            logger.debug("No separate codec config available")
-        
-        logger.info("✅ Models ready")
+        logger.info("✅ OpenAudio S1-mini models ready")
     
     def _initialize_models(self):
         """Initialize Fish Speech models completely"""
@@ -149,150 +136,31 @@ class FishSpeechService:
             )
             logger.info("✅ Language model loaded")
             
-            # Load Fish Speech decoder model (with error handling)
-            
-            # Debug: Show available configs
-            try:
-                import hydra
-                from hydra import compose, initialize_config_store
-                from omegaconf import OmegaConf
-                
-                # Try to find available configs
-                config_dir = "./fish-speech/fish_speech/configs"
-                if Path(config_dir).exists():
-                    configs = list(Path(config_dir).glob("*.yaml"))
-                    logger.info(f"🔍 Available configs: {[c.stem for c in configs]}")
-            except Exception:
-                logger.debug("Could not list available configs")
-            
-            # Debug checkpoint structure first
+            # Load OpenAudio S1-mini decoder model
             checkpoint_path = f"{self.model_path}/codec.pth"
-            try:
-                checkpoint = torch.load(checkpoint_path, map_location="cpu")
-                logger.info(f"🔍 Checkpoint keys: {list(checkpoint.keys())}")
-                
-                # Check if it's a state_dict or full checkpoint
-                if "state_dict" in checkpoint:
-                    logger.info("📋 Found state_dict key in checkpoint")
-                elif "model" in checkpoint:
-                    logger.info("📋 Found model key in checkpoint")
-                else:
-                    logger.info("📋 Direct state_dict format detected")
-                    
-            except Exception as e:
-                logger.warning(f"⚠️ Could not inspect checkpoint: {e}")
             
-            try:
-                # Fish Speech 1.5 - Let it auto-detect config from checkpoint
-                self.decoder_model = load_decoder_model(
-                    config_name=None,  # Auto-detect from codec checkpoint
-                    checkpoint_path=checkpoint_path,
-                    device=self.device,
-                )
-                logger.info("✅ Decoder model loaded (auto-config)")
-            except Exception as e:
-                logger.warning(f"⚠️ Auto-config decoder loading failed: {e}")
-                
-                # Try to manually handle different checkpoint formats
-                try:
-                    logger.info("🔄 Trying manual checkpoint handling...")
-                    
-                    # Load checkpoint and extract state_dict if needed
-                    checkpoint = torch.load(checkpoint_path, map_location="cpu")
-                    
-                    # Create temporary corrected checkpoint
-                    corrected_path = f"{self.model_path}/codec_corrected.pth"
-                    
-                    if isinstance(checkpoint, dict):
-                        if "state_dict" in checkpoint:
-                            # Extract state_dict
-                            torch.save(checkpoint["state_dict"], corrected_path)
-                            logger.info("✅ Extracted state_dict from checkpoint")
-                        elif "model" in checkpoint:
-                            # Extract model
-                            torch.save(checkpoint["model"], corrected_path)
-                            logger.info("✅ Extracted model from checkpoint")
-                        else:
-                            # Assume it's already a state_dict but add load_state_dict wrapper
-                            corrected_checkpoint = {"load_state_dict": checkpoint}
-                            torch.save(corrected_checkpoint, corrected_path)
-                            logger.info("✅ Wrapped checkpoint with load_state_dict")
-                    
-                    # Try loading with corrected checkpoint
-                    self.decoder_model = load_decoder_model(
-                        config_name="modded_dac_vq",  # Known working config
-                        checkpoint_path=corrected_path,
-                        device=self.device,
-                    )
-                    logger.info("✅ Decoder model loaded with corrected checkpoint")
-                    
-                except Exception as e_manual:
-                    logger.warning(f"⚠️ Manual checkpoint handling failed: {e_manual}")
-                    
-                    # Try known Fish Speech configs as fallback
-                    config_attempts = [
-                        "modded_dac_vq", 
-                        "firefly_gan_base",
-                        "dac_44khz_8kbps",
-                        "firefly_gan_vq",
-                        "dac_44khz",
-                        "base"
-                    ]
-                    
-                    self.decoder_model = None
-                    for config_name in config_attempts:
-                        try:
-                            logger.info(f"🔄 Trying config: {config_name}")
-                            self.decoder_model = load_decoder_model(
-                                config_name=config_name,
-                                checkpoint_path=checkpoint_path,
-                                device=self.device,
-                            )
-                            logger.info(f"✅ Decoder model loaded with config: {config_name}")
-                            break
-                        except Exception as e_config:
-                            logger.debug(f"Config {config_name} failed: {e_config}")
-                            continue
-                    
-                    if not self.decoder_model:
-                        logger.warning("⚠️ All decoder loading attempts failed for Fish Speech 1.5")
-                        logger.info("🔄 Trying fallback to openaudio-s1-mini...")
-                        
-                        # Try openaudio-s1-mini as fallback
-                        try:
-                            fallback_codec = f"{self.fallback_path}/codec.pth"
-                            if Path(fallback_codec).exists():
-                                self.decoder_model = load_decoder_model(
-                                    config_name="modded_dac_vq",  # Known working config for openaudio-s1-mini
-                                    checkpoint_path=fallback_codec,
-                                    device=self.device,
-                                )
-                                logger.info("✅ Decoder model loaded with openaudio-s1-mini fallback")
-                            else:
-                                logger.info("📝 Will run in semantic-only mode (no audio generation)")
-                        except Exception as e_fallback:
-                            logger.warning(f"⚠️ Fallback also failed: {e_fallback}")
-                            logger.info("📝 Will run in semantic-only mode (no audio generation)")
+            self.decoder_model = load_decoder_model(
+                config_name="modded_dac_vq",  # S1-mini uses modded_dac_vq config
+                checkpoint_path=checkpoint_path,
+                device=self.device,
+            )
+            logger.info("✅ OpenAudio S1-mini decoder model loaded")
             
-            # Initialize TTS inference engine (decoder optional)
-            if self.decoder_model:
-                self.inference_engine = TTSInferenceEngine(
-                    llama_queue=self.llama_queue,
-                    decoder_model=self.decoder_model,
-                    compile=self.use_compile,
-                    precision=self.precision,
-                )
-                logger.info("✅ TTS inference engine initialized")
-                
-                # Warm up model
-                self._warmup_model()
-                logger.info("✅ Model warmup completed")
-            else:
-                logger.info("📝 TTS engine initialized in semantic-only mode")
-                self.inference_engine = None
+            # Initialize TTS inference engine
+            self.inference_engine = TTSInferenceEngine(
+                llama_queue=self.llama_queue,
+                decoder_model=self.decoder_model,
+                compile=self.use_compile,
+                precision=self.precision,
+            )
+            logger.info("✅ TTS inference engine initialized")
+            
+            # Warm up model
+            self._warmup_model()
+            logger.info("✅ Model warmup completed")
             
             self._is_initialized = True
-            logger.info("✅ Fish Speech 1.5 ready!")
+            logger.info("✅ OpenAudio S1-mini ready!")
     
     def _warmup_model(self):
         """Warm up model with simple inference"""
@@ -309,15 +177,11 @@ class FishSpeechService:
     
     def clone_voice_for_segment(self, segment_metadata: Dict[str, Any], 
                                reference_audio_path: str, audio_id: str) -> Dict[str, Any]:
-        """Clone voice for a specific segment using Fish Speech"""
+        """Clone voice for a specific segment using OpenAudio S1-mini"""
         try:
             # Ensure models are initialized
             if not self._is_initialized:
                 self._initialize_models()
-            
-            # Check if we have a working inference engine
-            if not self.inference_engine:
-                return {"success": False, "error": "TTS engine not available (semantic-only mode)"}
             
             from fish_speech.utils.schema import ServeTTSRequest, ServeReferenceAudio
             from fish_speech.utils.file import audio_to_bytes
@@ -391,7 +255,7 @@ class FishSpeechService:
                     "sample_rate": sample_rate,
                     "text_synthesized": cleaned_text,
                     "reference_used": reference_audio_path,
-                    "model_used": "fish_speech_openaudio_s1",
+                    "model_used": "openaudio_s1_mini",
                     "length_matched": True
                 }
                 
@@ -403,8 +267,8 @@ class FishSpeechService:
             return {"success": False, "error": str(e)}
     
     def _prepare_text_for_tts(self, text: str) -> str:
-        """Prepare text for Fish Speech TTS"""
-        # Fish Speech already handles emotion markers like (happy), (sad) etc.
+        """Prepare text for OpenAudio S1-mini TTS"""
+        # OpenAudio S1-mini handles emotion markers like (happy), (sad), (sarcastic) etc.
         # Just clean up any problematic characters
         
         # Remove excessive whitespace
@@ -476,36 +340,36 @@ class FishSpeechService:
             if self.device == "cuda" and torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 
-            logger.info("Fish Speech service cleaned up")
+            logger.info("OpenAudio S1-mini service cleaned up")
             
         except Exception as e:
             logger.error(f"Cleanup error: {str(e)}")
 
 
 # Global instance - will be initialized when first used
-_fish_speech_service = None
+_s1_mini_service = None
 _service_lock = threading.Lock()
 
 
 def get_fish_speech_service(device: str = "cuda") -> FishSpeechService:
-    """Get or create Fish Speech service instance"""
-    global _fish_speech_service
+    """Get or create OpenAudio S1-mini service instance"""
+    global _s1_mini_service
     
     with _service_lock:
-        if _fish_speech_service is None:
-            _fish_speech_service = FishSpeechService(device=device)
+        if _s1_mini_service is None:
+            _s1_mini_service = FishSpeechService(device=device)
         
-        return _fish_speech_service
+        return _s1_mini_service
 
 
 def initialize_fish_speech_service(device: str = "cuda") -> bool:
-    """Initialize Fish Speech service and return success status"""
+    """Initialize OpenAudio S1-mini service and return success status"""
     try:
         service = get_fish_speech_service(device)
         service._initialize_models()
         return service._is_initialized and service.inference_engine is not None
     except Exception as e:
-        logger.error(f"Failed to initialize Fish Speech service: {e}")
+        logger.error(f"Failed to initialize OpenAudio S1-mini service: {e}")
         return False
 
 
