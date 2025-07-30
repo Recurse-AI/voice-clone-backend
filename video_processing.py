@@ -209,31 +209,18 @@ def process_video_background(
             audio_id, 
             ProcessingStatus.PROCESSING, 
             progress=90, 
-            details={"message": "Voice cloning completed, reconstructing final audio..."}
+            details={"message": "Voice cloning completed, using reconstruction result..."}
         )
         
-        # Reconstruct audio
-        if include_instruments:
-            reconstruction_result = audio_processor.reconstruct_final_audio(
-                processing_result["segments_dir"],
-                audio_id,
-                include_instruments=True,
-                instruments_path=separated_instruments_path
-            )
-        else:
-            reconstruction_result = audio_processor.reconstruct_final_audio(
-                processing_result["segments_dir"],
-                audio_id,
-                include_instruments=False,
-                instruments_path=None
-            )
+        # Use reconstruction result from base processor (no duplicate reconstruction needed)
+        reconstruction_result = processing_result.get("audio_reconstruction", {"success": False, "error": "No reconstruction result from base processor"})
         
         if not reconstruction_result["success"]:
             status_manager.fail_processing(audio_id, f"Audio reconstruction failed: {reconstruction_result['error']}")
             return
         
         status_manager.set_progress(audio_id, 80)
-        final_audio_path = reconstruction_result["final_audio_path"]
+        final_audio_path = reconstruction_result.get("final_audio_path") or reconstruction_result.get("output_path")
         
         # Create video
         video_result = None
@@ -572,30 +559,17 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             audio_id, 
             ProcessingStatus.PROCESSING, 
             progress=90, 
-            details={"message": "Voice cloning completed, reconstructing final audio..."}
+            details={"message": "Voice cloning completed, using reconstruction result..."}
         )
         
-        # Reconstruct audio
-        if include_instruments:
-            reconstruction_result = audio_processor.reconstruct_final_audio(
-                processing_result["segments_dir"],
-                audio_id,
-                include_instruments=True,
-                instruments_path=separated_instruments_path
-            )
-        else:
-            reconstruction_result = audio_processor.reconstruct_final_audio(
-                processing_result["segments_dir"],
-                audio_id,
-                include_instruments=False,
-                instruments_path=None
-            )
+        # Use reconstruction result from base processor (no duplicate reconstruction needed)
+        reconstruction_result = processing_result.get("audio_reconstruction", {"success": False, "error": "No reconstruction result from base processor"})
         
         if not reconstruction_result["success"]:
             return {"success": False, "error": f"Audio reconstruction failed: {reconstruction_result['error']}"}
         
         status_manager.set_progress(audio_id, 80)
-        final_audio_path = reconstruction_result["final_audio_path"]
+        final_audio_path = reconstruction_result.get("final_audio_path") or reconstruction_result.get("output_path")
         
         # Check if still processing
         if queue_request.status != VideoQueueStatus.PROCESSING:

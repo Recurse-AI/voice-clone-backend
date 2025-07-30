@@ -238,8 +238,19 @@ class FishSpeechService:
             try:
                 for chunk in self.inference_engine.inference(tts_request):
                     if chunk.audio is not None:
-                        final_audio = np.frombuffer(chunk.audio, dtype=np.int16).astype(np.float32) / 32768.0
-                        sample_rate = chunk.sample_rate or 44100
+                        # Handle different audio formats from fish speech inference
+                        if isinstance(chunk.audio, tuple):
+                            # Fish speech returns (sample_rate, audio_data) tuple
+                            chunk_sample_rate, audio_data = chunk.audio
+                            sample_rate = chunk_sample_rate or 44100
+                            if isinstance(audio_data, np.ndarray):
+                                final_audio = audio_data.astype(np.float32)
+                            else:
+                                final_audio = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+                        else:
+                            # Direct audio bytes
+                            final_audio = np.frombuffer(chunk.audio, dtype=np.int16).astype(np.float32) / 32768.0
+                            sample_rate = chunk.sample_rate or 44100
                         break
                         
                 if final_audio is None:
