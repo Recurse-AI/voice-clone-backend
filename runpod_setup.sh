@@ -116,7 +116,7 @@ fi
 
 # Install Fish Speech dependencies (comprehensive list)
 echo "📦 Installing Fish Speech dependencies..."
-pip install torch torchaudio transformers accelerate librosa matplotlib fire hydra-core wandb vector-quantize-pytorch natsort silero-vad loralib einops omegaconf tensorboard gradio pescador || {
+pip install torch torchaudio transformers accelerate librosa matplotlib fire hydra-core wandb vector-quantize-pytorch natsort silero-vad loralib einops omegaconf tensorboard gradio pescador descript-audiotools descript-audio-codec audiotools pyrootutils resampy zstandard cachetools || {
     echo "⚠️  Some Fish Speech dependencies failed, continuing..."
 }
 
