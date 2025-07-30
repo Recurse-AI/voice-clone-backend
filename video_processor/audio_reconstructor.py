@@ -23,7 +23,7 @@ class AudioReconstructor:
         self.temp_dir = Path(temp_dir)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.sample_rate = 44100
-        
+    
     def reconstruct_final_audio(self, segments_dir: str, audio_id: str, 
                                include_instruments: bool = False,
                                instruments_path: Optional[str] = None) -> Dict[str, Any]:
@@ -98,9 +98,9 @@ class AudioReconstructor:
             silence_count = 0
             
             for metadata_file in metadata_files:
-                with open(metadata_file, 'r', encoding='utf-8') as f:
-                    metadata = json.load(f)
-                
+                    with open(metadata_file, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                    
                 segment_data = {
                     "index": metadata["segment_index"],
                     "start": metadata["start"],
@@ -137,8 +137,8 @@ class AudioReconstructor:
                 "silence_segments": silence_count,
                 "total_duration": summary.get("total_duration", 0)
             }
-            
-        except Exception as e:
+                    
+                except Exception as e:
             return {"success": False, "error": f"Timeline data extraction failed: {str(e)}"}
     
     def _reconstruct_vocal_track(self, segments_path: Path, segments: List[Dict[str, Any]], 

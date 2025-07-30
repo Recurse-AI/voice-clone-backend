@@ -77,7 +77,10 @@ class FishSpeechService:
         
         # Download Firefly-GAN codec for Fish Speech 1.5
         codec_file = "firefly-gan-vq-fsq-8x1024-21hz-generator.pth"
-        if not (model_dir / "codec.pth").exists():
+        codec_path = model_dir / "codec.pth"
+        
+        if not codec_path.exists():
+            logger.info(f"📥 Downloading codec: {codec_file}")
             hf_hub_download(
                 repo_id=self.model_repo,
                 filename=codec_file,
@@ -86,8 +89,14 @@ class FishSpeechService:
                 resume_download=True
             )
             # Rename to codec.pth for compatibility
-            (model_dir / codec_file).rename(model_dir / "codec.pth")
-            logger.info(f"✅ Downloaded and renamed codec: {codec_file}")
+            original_codec_path = model_dir / codec_file
+            if original_codec_path.exists():
+                original_codec_path.rename(codec_path)
+                logger.info(f"✅ Downloaded and renamed codec: {codec_file}")
+            else:
+                logger.error(f"❌ Failed to download codec file: {codec_file}")
+        else:
+            logger.info("✅ Codec already exists")
         
         logger.info("✅ Models ready")
     
@@ -122,16 +131,28 @@ class FishSpeechService:
             
             # Load Fish Speech decoder model (with error handling)
             try:
+                # Fish Speech 1.5 uses Firefly-GAN codec
                 self.decoder_model = load_decoder_model(
-                    config_name=None,  # Auto-detect from codec file
+                    config_name="firefly_gan_vq",  # Correct config for Fish Speech 1.5
                     checkpoint_path=f"{self.model_path}/codec.pth",
                     device=self.device,
                 )
                 logger.info("✅ Decoder model loaded")
             except Exception as e:
                 logger.warning(f"⚠️ Decoder loading failed: {e}")
-                logger.info("📝 Will run in semantic-only mode (no audio generation)")
-                self.decoder_model = None
+                # Try alternative codec configurations
+                try:
+                    logger.info("🔄 Trying alternative codec configuration...")
+                    self.decoder_model = load_decoder_model(
+                        config_name="dac_44khz_8kbps",  # Fallback to DAC
+                        checkpoint_path=f"{self.model_path}/codec.pth",
+                        device=self.device,
+                    )
+                    logger.info("✅ Decoder model loaded with fallback config")
+                except Exception as e2:
+                    logger.warning(f"⚠️ All decoder loading attempts failed: {e2}")
+                    logger.info("📝 Will run in semantic-only mode (no audio generation)")
+                    self.decoder_model = None
             
             # Initialize TTS inference engine (decoder optional)
             if self.decoder_model:
@@ -170,6 +191,13 @@ class FishSpeechService:
                                reference_audio_path: str, audio_id: str) -> Dict[str, Any]:
         """Clone voice for a specific segment using Fish Speech"""
         try:
+            # Ensure models are initialized
+            if not self._is_initialized:
+                self._initialize_models()
+            
+            # Check if we have a working inference engine
+            if not self.inference_engine:
+                return {"success": False, "error": "TTS engine not available (semantic-only mode)"}
             
             from fish_speech.utils.schema import ServeTTSRequest, ServeReferenceAudio
             from fish_speech.utils.file import audio_to_bytes
@@ -348,6 +376,17 @@ def get_fish_speech_service(device: str = "cuda") -> FishSpeechService:
             _fish_speech_service = FishSpeechService(device=device)
         
         return _fish_speech_service
+
+
+def initialize_fish_speech_service(device: str = "cuda") -> bool:
+    """Initialize Fish Speech service and return success status"""
+    try:
+        service = get_fish_speech_service(device)
+        service._initialize_models()
+        return service._is_initialized and service.inference_engine is not None
+    except Exception as e:
+        logger.error(f"Failed to initialize Fish Speech service: {e}")
+        return False
 
 
 
