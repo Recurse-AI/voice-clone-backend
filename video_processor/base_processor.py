@@ -102,6 +102,14 @@ class AudioProcessor:
                 output_dir, audio_path, audio_id, segments
             )
             
+            # Audio reconstruction - create complete dubbed track
+            if cloning_result.get("success"):
+                reconstruction_result = self._perform_audio_reconstruction(
+                    output_dir, audio_id, False, None  # No instruments for vocal-only processing
+                )
+            else:
+                reconstruction_result = {"success": False, "error": "Voice cloning failed"}
+            
             return {
                 "success": True,
                 "segments_dir": str(output_dir),
@@ -112,7 +120,8 @@ class AudioProcessor:
                 "language_code": language_code,
                 "detected_speakers": len(transcript_data['speakers']),
                 "speakers_expected": speakers_expected,
-                "voice_cloning": cloning_result
+                "voice_cloning": cloning_result,
+                "audio_reconstruction": reconstruction_result
             }
             
         except Exception as e:
@@ -250,6 +259,18 @@ class AudioProcessor:
             if not segment_result.get("success", True):
                 return {"success": False, "error": f"Audio segmentation failed: {segment_result.get('error', 'Unknown error')}"}
             
+            # Get cloning and reconstruction results
+            voice_cloning = segment_result.get("voice_cloning", {})
+            audio_reconstruction = segment_result.get("audio_reconstruction", {})
+            
+            # If voice cloning succeeded, perform final reconstruction with instruments
+            if voice_cloning.get("success") and audio_reconstruction.get("success"):
+                final_reconstruction = self._perform_audio_reconstruction(
+                    Path(segment_result["segments_dir"]), audio_id, True, str(instrument_path)
+                )
+            else:
+                final_reconstruction = audio_reconstruction
+            
             return {
                 "success": True,
                 "segments_dir": segment_result["segments_dir"],
@@ -259,7 +280,10 @@ class AudioProcessor:
                 "speakers": segment_result["speakers"],
                 "total_segments": segment_result["total_segments"],
                 "total_duration": segment_result["total_duration"],
-                "detected_speakers": segment_result.get("detected_speakers", len(segment_result.get("speakers", [])))
+                "detected_speakers": segment_result.get("detected_speakers", len(segment_result.get("speakers", []))),
+                "voice_cloning": voice_cloning,
+                "audio_reconstruction": audio_reconstruction,
+                "final_dubbed_audio": final_reconstruction
             }
             
         except Exception as e:
@@ -506,3 +530,71 @@ class AudioProcessor:
             
         except Exception as e:
             logger.error(f"Failed to create fallback audio: {str(e)}")
+    
+    def _perform_audio_reconstruction(self, segments_dir: Path, audio_id: str, 
+                                    include_instruments: bool = False, 
+                                    instruments_path: Optional[str] = None) -> Dict[str, Any]:
+        """Perform complete audio reconstruction from cloned segments"""
+        try:
+            logger.info(f"🎵 Starting audio reconstruction for {audio_id}")
+            
+            # Update progress
+            try:
+                from status_manager import status_manager, ProcessingStatus
+                status_manager.update_status(
+                    audio_id, 
+                    ProcessingStatus.PROCESSING, 
+                    progress=85, 
+                    details={"message": "Reconstructing dubbed audio from cloned segments..."}
+                )
+            except:
+                pass
+            
+            # Perform reconstruction
+            reconstruction_result = self.audio_reconstructor.reconstruct_final_audio(
+                str(segments_dir), audio_id, include_instruments, instruments_path
+            )
+            
+            if reconstruction_result.get("success"):
+                # Update progress to completion
+                try:
+                    stats = reconstruction_result.get("reconstruction_stats", {})
+                    cloned_segments = stats.get("cloned_segments", 0)
+                    total_segments = stats.get("speech_segments", 0)
+                    
+                    status_manager.update_status(
+                        audio_id, 
+                        ProcessingStatus.PROCESSING, 
+                        progress=95,
+                        details={
+                            "message": f"Audio reconstruction completed: {cloned_segments}/{total_segments} segments dubbed",
+                            "reconstruction_stats": stats
+                        }
+                    )
+                except:
+                    pass
+                
+                logger.info(f"✅ Audio reconstruction completed successfully")
+                
+                return {
+                    "success": True,
+                    "dubbed_audio_path": reconstruction_result["output_path"],
+                    "duration": reconstruction_result["duration"],
+                    "stats": reconstruction_result.get("reconstruction_stats", {})
+                }
+            
+            else:
+                error_msg = reconstruction_result.get("error", "Unknown reconstruction error")
+                logger.error(f"❌ Audio reconstruction failed: {error_msg}")
+                
+                return {
+                    "success": False,
+                    "error": error_msg
+                }
+                
+        except Exception as e:
+            logger.error(f"Audio reconstruction process failed: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e)
+            }

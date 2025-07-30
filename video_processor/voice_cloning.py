@@ -1,17 +1,12 @@
 """
-Fish Speech Voice Cloning Service - Maximum Quality TTS
-Auto-downloads models and provides voice cloning functionality
+Fish Speech Voice Cloning Service - Clean GitHub Installation
+Auto-downloads models and provides high-quality voice cloning
 """
 
-import os
-import json
 import logging
 import threading
-import time
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Union
-import tempfile
-import shutil
+from typing import Dict, Any
 
 import torch
 import soundfile as sf
@@ -24,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class FishSpeechService:
-    """Fish Speech TTS service with auto model download and voice cloning"""
+    """Clean Fish Speech service with auto model download"""
     
     def __init__(self, device: str = "cuda", use_compile: bool = True):
         self.device = device if torch.cuda.is_available() else "cpu"
@@ -49,22 +44,13 @@ class FishSpeechService:
         logger.info(f"FishSpeechService initialized with device: {self.device}")
     
     def _ensure_fish_speech_available(self):
-        """Clone Fish Speech if needed"""
-        fish_speech_dir = Path("./fish-speech")
-        
-        if not fish_speech_dir.exists():
-            import subprocess
-            result = subprocess.run([
-                "git", "clone", "https://github.com/fishaudio/fish-speech.git"
-            ], capture_output=True, text=True)
-            
-            if result.returncode != 0:
-                raise Exception(f"Git clone failed: {result.stderr}")
-        
-        # Add to Python path
-        import sys
-        if str(fish_speech_dir) not in sys.path:
-            sys.path.insert(0, str(fish_speech_dir))
+        """Verify Fish Speech installation"""
+        try:
+            # Test Fish Speech import
+            import fish_speech
+            logger.debug("Fish Speech package found")
+        except ImportError:
+            raise Exception("Fish Speech not installed. Run: pip install git+https://github.com/fishaudio/fish-speech.git")
     
     def _download_models(self):
         """Download Fish Speech models automatically"""
@@ -93,7 +79,7 @@ class FishSpeechService:
             if self._is_initialized:
                 return
             
-            logger.info("🔄 Cloning Fish Speech repository...")
+            logger.info("🔍 Verifying Fish Speech installation...")
             self._ensure_fish_speech_available()
             
             logger.info("📥 Downloading OpenAudio S1 models...")
@@ -101,11 +87,7 @@ class FishSpeechService:
             
             logger.info("🚀 Loading Fish Speech models...")
             
-            # Import Fish Speech modules
-            import pyrootutils
-            fish_speech_root = Path("./fish-speech")
-            pyrootutils.setup_root(str(fish_speech_root / "__init__.py"), indicator=".project-root", pythonpath=True)
-            
+            # Import Fish Speech modules directly (installed package)
             from fish_speech.inference_engine import TTSInferenceEngine
             from fish_speech.models.dac.inference import load_model as load_decoder_model
             from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
@@ -211,23 +193,28 @@ class FishSpeechService:
             with open(output_path, 'wb') as f:
                 f.write(combined_audio)
             
-            # Verify audio file
+            # Process and match audio length
             try:
-                audio_data, sample_rate = sf.read(str(output_path))
-                duration = len(audio_data) / sample_rate
+                target_duration = segment_metadata.get("duration", 1.0)
+                matched_audio_path = self._match_audio_length(output_path, target_duration)
+                
+                audio_data, sample_rate = sf.read(str(matched_audio_path))
+                final_duration = len(audio_data) / sample_rate
                 
                 return {
                     "success": True,
-                    "cloned_audio_path": str(output_path),
-                    "duration": duration,
+                    "cloned_audio_path": str(matched_audio_path),
+                    "duration": final_duration,
+                    "target_duration": target_duration,
                     "sample_rate": sample_rate,
                     "text_synthesized": cleaned_text,
                     "reference_used": reference_audio_path,
-                    "model_used": "fish_speech_openaudio_s1"
+                    "model_used": "fish_speech_openaudio_s1",
+                    "length_matched": True
                 }
                 
             except Exception as e:
-                return {"success": False, "error": f"Generated audio verification failed: {str(e)}"}
+                return {"success": False, "error": f"Audio processing failed: {str(e)}"}
                 
         except Exception as e:
             logger.error(f"Voice cloning failed for segment: {str(e)}")
@@ -253,8 +240,46 @@ class FishSpeechService:
         seed_base = hash(speaker_id) % 1000000
         return abs(seed_base)
     
+    def _match_audio_length(self, audio_path: Path, target_duration: float) -> Path:
+        """Match cloned audio length to exact reference duration"""
+        try:
+            # Load cloned audio
+            audio_data, sample_rate = sf.read(str(audio_path))
+            current_duration = len(audio_data) / sample_rate
+            
+            # If already correct length (within 50ms tolerance), return as is
+            if abs(current_duration - target_duration) <= 0.05:
+                return audio_path
+            
+            target_samples = int(target_duration * sample_rate)
+            
+            # Crop if too long
+            if len(audio_data) > target_samples:
+                matched_audio = audio_data[:target_samples]
+            
+            # Pad with silence if too short
+            elif len(audio_data) < target_samples:
+                padding_needed = target_samples - len(audio_data)
+                silence = np.zeros(padding_needed, dtype=audio_data.dtype)
+                matched_audio = np.concatenate([audio_data, silence])
+            
+            else:
+                matched_audio = audio_data
+            
+            # Save matched audio
+            matched_path = audio_path.parent / f"matched_{audio_path.name}"
+            sf.write(str(matched_path), matched_audio, sample_rate)
+            
+            # Replace original with matched
+            audio_path.unlink()  # Delete original
+            matched_path.rename(audio_path)  # Rename matched to original
+            
+            return audio_path
+            
+        except Exception as e:
+            logger.error(f"Failed to match audio length: {str(e)}")
+            return audio_path  # Return original on failure
 
-    
     def cleanup(self):
         """Clean up resources"""
         try:
