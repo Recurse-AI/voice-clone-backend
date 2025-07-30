@@ -331,6 +331,15 @@ class TranscriptionService:
         try:
             logger.info(f"Starting OpenAI translation for {len(segments)} segments to {target_language}")
             
+            # Override AssemblyAI language detection with script-based detection
+            combined_text = " ".join([segment.get("text", "") for segment in segments])
+            script_detected_language = self._detect_language_from_script(combined_text)
+            
+            # Use script detection if it differs from AssemblyAI detection
+            if script_detected_language != "en" and detected_language == "en":
+                logger.info(f"Script analysis detected {script_detected_language}, overriding AssemblyAI detection ({detected_language})")
+                detected_language = script_detected_language
+            
             # Skip translation if already in target language
             if self._is_same_language(detected_language, target_language):
                 logger.info(f"Detected language ({detected_language}) matches target ({target_language}), skipping translation")
@@ -421,78 +430,236 @@ class TranscriptionService:
                 "duration": f"{req['duration']:.1f}s"
             })
         
+        # Fish Speech supported languages output mapping
+        language_output_map = {
+            # Fish Speech supported languages
+            "english": "English alphabet and words only",
+            "chinese": "Chinese characters (simplified/traditional) only",
+            "japanese": "Japanese characters (Hiragana/Katakana/Kanji) only", 
+            "german": "German with Latin alphabet only",
+            "french": "French with Latin alphabet only",
+            "spanish": "Spanish with Latin alphabet only",
+            "korean": "Korean Hangul characters only",
+            "arabic": "Arabic script only",
+            "russian": "Russian Cyrillic script only",
+            "dutch": "Dutch with Latin alphabet only",
+            "italian": "Italian with Latin alphabet only", 
+            "polish": "Polish with Latin alphabet only",
+            "portuguese": "Portuguese with Latin alphabet only",
+            # Common additional languages
+            "hindi": "Devanagari script (Hindi) only",
+            "bengali": "Bengali script only"
+        }
+        
+        target_script_instruction = language_output_map.get(target_language.lower(), f"{target_language} script only")
+        
         prompt = f"""
-DUBBING TRANSLATION TASK
+PROFESSIONAL DUBBING TRANSLATION TASK
 
-You are a professional dubbing translator specializing in video content translation from {detected_language} to {target_language}.
+You are an expert dubbing translator specializing in video content translation from {detected_language} to {target_language}.
 
-CRITICAL REQUIREMENTS FOR DUBBING:
-1. NATURAL SPEECH: Translate for spoken dialogue, not written text
-2. TIMING MATCH: Keep similar syllable count and speech rhythm 
-3. EMOTIONAL PRESERVATION: Maintain the speaker's emotional tone and intent
-4. CULTURAL ADAPTATION: Use culturally appropriate expressions
-5. LIP-SYNC FRIENDLY: Consider mouth movements and speech patterns
+CRITICAL DUBBING REQUIREMENTS:
+1. OUTPUT SCRIPT: Use {target_script_instruction} - NO mixing of scripts or languages
+2. NATURAL SPEECH: Translate for spoken dialogue, not written text  
+3. TIMING MATCH: Keep similar syllable count and speaking duration ({sum(req['duration'] for req in requests):.1f}s total)
+4. EMOTIONAL PRESERVATION: Maintain speaker's tone, energy, and emotional intent
+5. CULTURAL ADAPTATION: Use culturally natural expressions for {target_language} speakers
 6. CONVERSATIONAL STYLE: Use natural, spoken language (contractions, informal speech)
 
-FISH SPEECH TTS OPTIMIZATION:
-- Use clear, pronounceable text
-- Add emotional markers when appropriate: (happy), (excited), (sad), (serious), (casual), etc.
-- Use natural pauses with commas and periods
-- Avoid complex punctuation that might confuse TTS
-- Keep sentences conversational and flowing
+FISH SPEECH TTS OPTIMIZATION & TIMING CONTROL:
+- Use clear, pronounceable {target_language} text
+- Add emotional markers when appropriate: (happy), (excited), (sad), (serious), (casual), (confident), etc.
+- Use natural pauses with commas and periods for timing control
+- Add strategic extra spaces "   " at sentence endings for duration matching
+- Use ellipses "..." for longer pauses when needed
+- Control speaking speed with punctuation and spacing
+- Match speaking rhythm to original timing ({sum(req['duration'] for req in requests):.1f}s total)
 
 SEGMENTS TO TRANSLATE:
 {json.dumps(context_info, indent=2, ensure_ascii=False)}
 
-INSTRUCTIONS:
-1. Translate each segment preserving the speaker's personality and emotion
-2. Match the approximate speaking duration (consider syllable count)
-3. Use natural, conversational {target_language} 
-4. Add appropriate emotion markers for Fish Speech TTS
-5. Maintain speaker consistency across segments
-6. Consider the video dubbing context (speakers might be characters, presenters, etc.)
+TRANSLATION GUIDELINES & TIMING CONTROL:
+1. Each segment MUST be translated to proper {target_language} using {target_script_instruction}
+2. Preserve speaker personality and speaking style
+3. **CRITICAL TIMING MATCH**: Each segment must fill its exact duration to avoid silence gaps
+4. Add appropriate Fish Speech emotion markers: (happy), (excited), (serious), (casual), etc.
+5. Maintain conversational flow between segments
+6. Consider video context (podcast, interview, presentation, etc.)
 
-RESPONSE FORMAT (JSON):
+TIMING SYNCHRONIZATION TECHNIQUES:
+- If translation is shorter than original: Add strategic extra spaces "   " between words
+- Use ellipses "..." for natural pauses and timing extension
+- Add descriptive words or filler phrases when culturally appropriate
+- Use slower pacing markers like commas, periods for natural delays
+- Example: "What was the reason?   The actual reason for their success was...   hard work and one more thing."
+- Target: Fill the ENTIRE segment duration with natural-sounding speech
+
+MANDATORY OUTPUT FORMAT (JSON):
 {{
   "translations": [
     {{
       "segment_id": "segment_001",
-      "original_text": "original text",
-      "translated_text": "translated text with (emotion) markers",
-      "emotion_detected": "happy/sad/neutral/excited/etc",
-      "translation_notes": "brief note about translation choices",
-      "syllable_match": "similar/shorter/longer"
+      "original_text": "original text in source language",
+      "translated_text": "TRANSLATED TEXT WITH TIMING CONTROL (extra spaces   and pauses... as needed)",
+      "emotion_detected": "happy/sad/neutral/excited/serious/casual/etc",
+      "translation_notes": "timing strategy used (added spaces/pauses/extended phrases)",
+      "duration_match": "extended_to_match/natural_match/compressed",
+      "timing_adjustments": "spaces added between words / ellipses for pauses / extended phrasing",
+      "estimated_speech_time": "{req['duration']:.1f}s target"
     }}
   ],
   "translation_summary": {{
     "source_language": "{detected_language}",
     "target_language": "{target_language}",
+    "target_script": "{target_script_instruction}",
     "total_segments": {len(requests)},
-    "translation_approach": "description of overall approach"
+    "total_duration": "{sum(req['duration'] for req in requests):.1f}s",
+    "translation_approach": "timing-aware dubbing with duration matching",
+    "sync_strategy": "spaces and pauses added to match original video timing"
   }}
 }}
+
+IMPORTANT: All translated_text MUST be in {target_language} using {target_script_instruction}. NO exceptions.
 """
         return prompt
     
     def _get_translation_system_prompt(self, target_language: str) -> str:
         """Get system prompt for translation"""
-        return f"""You are an expert dubbing translator with extensive experience in video localization and voice-over work. 
+        
+        # Fish Speech supported languages script requirements
+        script_requirements = {
+            # Fish Speech supported languages
+            "english": "English alphabet only - no foreign scripts",
+            "chinese": "Chinese characters only - simplified/traditional Chinese",
+            "japanese": "Japanese characters only - Hiragana/Katakana/Kanji",
+            "german": "German with Latin alphabet only - proper German text",
+            "french": "French with Latin alphabet only - proper French text", 
+            "spanish": "Spanish with Latin alphabet only - proper Spanish text",
+            "korean": "Korean Hangul only - proper Korean text",
+            "arabic": "Arabic script only - proper Arabic text",
+            "russian": "Russian Cyrillic script only - proper Russian text",
+            "dutch": "Dutch with Latin alphabet only - proper Dutch text",
+            "italian": "Italian with Latin alphabet only - proper Italian text",
+            "polish": "Polish with Latin alphabet only - proper Polish text", 
+            "portuguese": "Portuguese with Latin alphabet only - proper Portuguese text",
+            # Common additional languages
+            "hindi": "Devanagari script only - proper Hindi text",
+            "bengali": "Bengali script only - proper Bengali text"
+        }
+        
+        script_req = script_requirements.get(target_language.lower(), f"{target_language} script only")
+        
+        return f"""You are an expert dubbing translator with extensive experience in video localization and voice-over work.
+
+CRITICAL LANGUAGE OUTPUT REQUIREMENT:
+- ALL translations MUST use {script_req}
+- NO mixing of scripts or languages in output
+- Translations must be grammatically correct {target_language}
 
 Your specializations:
-- Video dubbing and voice-over translation
-- Cross-cultural communication
-- Natural speech patterns in {target_language}
-- Text-to-Speech optimization
-- Emotional tone preservation
+- Professional video dubbing translation
+- Cross-cultural adaptation for {target_language} audiences  
+- Natural speech patterns and conversational flow
+- Text-to-Speech optimization for AI voice cloning
+- Emotional tone and speaker personality preservation
+- Timing-aware translation (matching speaking duration)
 
-You understand that dubbing translation requires:
-- Natural spoken language (not literary translation)
-- Timing and rhythm consideration
-- Cultural context adaptation
-- Emotional authenticity
-- Technical TTS optimization
+Dubbing translation principles:
+- Translate for spoken dialogue, not written text
+- Use natural, conversational {target_language} 
+- Maintain speaker's emotional tone and personality
+- **CRITICAL**: Match exact segment duration to prevent silence gaps
+- Add strategic spaces and pauses for timing synchronization
+- Use timing control: extra spaces "   ", ellipses "...", natural pauses
+- Add appropriate emotion markers for TTS enhancement
+- Ensure cultural authenticity for {target_language} speakers
+- Fill the entire audio duration with natural-sounding speech
 
-Always provide translations that sound natural when spoken aloud and work well with AI voice cloning technology."""
+MANDATORY: Every translated text must be in proper {target_language} using {script_req}. This is non-negotiable for dubbing quality."""
+    
+    def _validate_translation_script(self, text: str, target_language: str) -> bool:
+        """Validate that translated text uses correct script for target language"""
+        if not text:
+            return True
+        
+        target_lang = target_language.lower()
+        script_detected = self._detect_language_from_script(text)
+        
+        # Fish Speech supported languages to script mapping
+        expected_scripts = {
+            # Fish Speech supported languages
+            "english": "en",
+            "chinese": "zh", 
+            "japanese": "ja",
+            "german": "de",     # Uses Latin script
+            "french": "fr",     # Uses Latin script
+            "spanish": "es",    # Uses Latin script
+            "korean": "ko",
+            "arabic": "ar",
+            "russian": "ru",
+            "dutch": "nl",      # Uses Latin script
+            "italian": "it",    # Uses Latin script
+            "polish": "pl",     # Uses Latin script
+            "portuguese": "pt", # Uses Latin script
+            # Common additional languages
+            "hindi": "hi",
+            "bengali": "bn"
+        }
+        
+        expected_script = expected_scripts.get(target_lang, "en")
+        
+        # For Latin-script languages (English, German, French, Spanish, Dutch, Italian, Polish, Portuguese)
+        latin_script_languages = ["english", "german", "french", "spanish", "dutch", "italian", "polish", "portuguese"]
+        
+        if target_lang in latin_script_languages:
+            latin_chars = sum(1 for char in text if char.isalpha() and ord(char) <= 0x024F)
+            total_alpha_chars = sum(1 for char in text if char.isalpha())
+            
+            if total_alpha_chars > 0:
+                latin_percentage = (latin_chars / total_alpha_chars) * 100
+                return latin_percentage > 80  # At least 80% Latin characters for Latin-script languages
+            return True
+        
+        # For non-Latin script languages, check exact script match
+        return script_detected == expected_script
+    
+    def _optimize_timing_for_tts(self, text: str, target_duration: float) -> str:
+        """Optimize text timing for Fish Speech TTS to match target duration"""
+        if not text or target_duration <= 0:
+            return text
+        
+        # Estimate current speaking time (rough calculation)
+        # Average speaking rate: ~150 words per minute = 2.5 words/second
+        words = text.strip().split()
+        estimated_time = len(words) / 2.5
+        
+        # If translation is significantly shorter than target, add timing controls
+        if estimated_time < target_duration * 0.7:  # If less than 70% of target duration
+            duration_gap = target_duration - estimated_time
+            
+            # Add strategic spacing and pauses
+            optimized_text = text
+            
+            # Add extra spaces between sentences
+            optimized_text = optimized_text.replace('. ', '.   ')
+            optimized_text = optimized_text.replace('? ', '?   ')
+            optimized_text = optimized_text.replace('! ', '!   ')
+            
+            # Add ellipses for longer pauses if still short
+            if duration_gap > 2.0:  # If gap is more than 2 seconds
+                # Add ellipses at natural break points
+                optimized_text = optimized_text.replace(',', '...,')
+                optimized_text = optimized_text.replace(' and ', '... and ')
+                optimized_text = optimized_text.replace(' but ', '... but ')
+            
+            # Add final spacing if needed
+            if duration_gap > 1.0:
+                optimized_text = optimized_text + "   "
+            
+            logger.info(f"Timing optimized: {estimated_time:.1f}s -> target {target_duration:.1f}s")
+            return optimized_text
+        
+        return text
     
     def _apply_translations_to_segments(self, segments: List[Dict[str, Any]], 
                                        translation_result: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -511,19 +678,48 @@ Always provide translations that sound natural when spoken aloud and work well w
                 
                 if segment_id in translations_map:
                     translation = translations_map[segment_id]
+                    translated_text = translation.get("translated_text", segment.get("text", ""))
+                    
+                    # Apply timing optimization for better video sync
+                    segment_duration = segment.get("duration", 1.0)
+                    optimized_text = self._optimize_timing_for_tts(translated_text, segment_duration)
+                    
+                    # Validate translation script
+                    target_language = translation_result.get("translation_summary", {}).get("target_language", "English")
+                    is_valid_script = self._validate_translation_script(optimized_text, target_language)
+                    
+                    if not is_valid_script:
+                        logger.warning(f"Translation validation failed for segment {segment_id}: incorrect script for {target_language}")
+                        # Fallback to original text if validation fails
+                        final_text = segment.get("text", "")
+                        translation_quality = "validation_failed_fallback"
+                        script_valid = False
+                    else:
+                        final_text = optimized_text  # Use timing-optimized text
+                        translation_quality = "openai_gpt4o_timing_optimized"
+                        script_valid = True
                     
                     # Add translation fields
                     segment_copy["original_text"] = segment.get("text", "")
-                    segment_copy["text"] = translation.get("translated_text", segment.get("text", ""))
-                    segment_copy["english_text"] = translation.get("translated_text", segment.get("text", ""))
+                    segment_copy["text"] = final_text
+                    segment_copy["english_text"] = final_text
                     
-                    # Add translation metadata
+                    # Add translation metadata with timing information
+                    timing_applied = optimized_text != translated_text
                     segment_copy["translation"] = {
-                        "translated": True,
+                        "translated": script_valid,
+                        "script_validation": is_valid_script,
                         "emotion_detected": translation.get("emotion_detected", "neutral"),
                         "translation_notes": translation.get("translation_notes", ""),
-                        "syllable_match": translation.get("syllable_match", "similar"),
-                        "translation_quality": "openai_gpt4o"
+                        "duration_match": translation.get("duration_match", "similar"),
+                        "timing_adjustments": translation.get("timing_adjustments", "automatic_spacing" if timing_applied else "none"),
+                        "estimated_speech_time": f"{segment_duration:.1f}s",
+                        "translation_quality": translation_quality,
+                        "target_language": target_language,
+                        "sync_optimized": True,  # Indicates timing-aware translation
+                        "original_duration": segment.get("duration", 0),
+                        "timing_optimization_applied": timing_applied,
+                        "pre_optimization_text": translated_text if timing_applied else None
                     }
                 else:
                     # No translation found, keep original
@@ -553,6 +749,82 @@ Always provide translations that sound natural when spoken aloud and work well w
             }
         return segments
     
+    def _detect_language_from_script(self, text: str) -> str:
+        """Detect language based on script/characters in text"""
+        if not text:
+            return "en"
+        
+        # Count different script characters (Fish Speech supported languages)
+        script_counts = {
+            'latin': 0,       # English, German, French, Spanish, Dutch, Italian, Polish, Portuguese
+            'chinese': 0,     # Chinese (zh)
+            'japanese': 0,    # Japanese (ja) 
+            'korean': 0,      # Korean (ko)
+            'arabic': 0,      # Arabic (ar)
+            'cyrillic': 0,    # Russian (ru)
+            'devanagari': 0,  # Hindi (not in Fish Speech list but common)
+            'bengali': 0      # Bengali (not in Fish Speech list but common)
+        }
+        
+        for char in text:
+            code_point = ord(char)
+            # Devanagari script (Hindi) - U+0900 to U+097F
+            if 0x0900 <= code_point <= 0x097F:
+                script_counts['devanagari'] += 1
+            # Arabic script (Arabic) - U+0600 to U+06FF
+            elif 0x0600 <= code_point <= 0x06FF:
+                script_counts['arabic'] += 1
+            # Bengali script - U+0980 to U+09FF
+            elif 0x0980 <= code_point <= 0x09FF:
+                script_counts['bengali'] += 1
+            # Cyrillic script (Russian) - U+0400 to U+04FF
+            elif 0x0400 <= code_point <= 0x04FF:
+                script_counts['cyrillic'] += 1
+            # CJK characters (Chinese)
+            elif 0x4E00 <= code_point <= 0x9FFF:  # CJK Unified Ideographs
+                script_counts['chinese'] += 1
+            # Japanese characters
+            elif 0x3040 <= code_point <= 0x309F or 0x30A0 <= code_point <= 0x30FF:  # Hiragana/Katakana
+                script_counts['japanese'] += 1
+            # Korean characters
+            elif 0xAC00 <= code_point <= 0xD7AF:  # Hangul
+                script_counts['korean'] += 1
+            # Latin script (English, German, French, Spanish, Dutch, Italian, Polish, Portuguese)
+            elif char.isalpha() and code_point <= 0x024F:
+                script_counts['latin'] += 1
+        
+        # Determine language based on dominant script
+        total_chars = sum(script_counts.values())
+        if total_chars == 0:
+            return "en"
+        
+        # Calculate percentages
+        script_percentages = {script: (count / total_chars) * 100 
+                            for script, count in script_counts.items()}
+        
+        # If more than 20% non-Latin characters, override AssemblyAI detection
+        non_latin_percentage = 100 - script_percentages['latin']
+        
+        if non_latin_percentage > 20:
+            # Find dominant script
+            dominant_script = max(script_counts, key=script_counts.get)
+            
+            script_to_language = {
+                'devanagari': 'hi',   # Hindi (common but not in Fish Speech list)
+                'arabic': 'ar',       # Arabic (Fish Speech supported)
+                'bengali': 'bn',      # Bengali (common but not in Fish Speech list)  
+                'cyrillic': 'ru',     # Russian (Fish Speech supported)
+                'chinese': 'zh',      # Chinese (Fish Speech supported)
+                'japanese': 'ja',     # Japanese (Fish Speech supported)
+                'korean': 'ko'        # Korean (Fish Speech supported)
+            }
+            
+            return script_to_language.get(dominant_script, "en")
+        
+        # For Latin script, default to English (Fish Speech supported)
+        # Note: Fish Speech also supports: de, fr, es, nl, it, pl, pt with Latin script
+        return "en"
+    
     def _is_same_language(self, detected: str, target: str) -> bool:
         """Check if detected and target languages are the same"""
         # Normalize language codes
@@ -563,18 +835,24 @@ Always provide translations that sound natural when spoken aloud and work well w
         if detected_norm == target_norm:
             return True
         
-        # Common variations
+        # Fish Speech supported languages with common variations
         language_mapping = {
             "english": ["en", "eng", "english"],
-            "hindi": ["hi", "hin", "hindi"],
-            "bengali": ["bn", "ben", "bengali", "bangla"],
-            "spanish": ["es", "spa", "spanish"],
-            "french": ["fr", "fra", "french"],
-            "german": ["de", "deu", "german"],
-            "chinese": ["zh", "chi", "chinese", "mandarin"],
+            "chinese": ["zh", "chi", "chinese", "mandarin", "zh-cn", "zh-tw"],
             "japanese": ["ja", "jpn", "japanese"],
-            "korean": ["ko", "kor", "korean"],
-            "arabic": ["ar", "ara", "arabic"]
+            "german": ["de", "deu", "german", "deutsch"],
+            "french": ["fr", "fra", "french", "français"],
+            "spanish": ["es", "spa", "spanish", "español"],
+            "korean": ["ko", "kor", "korean", "한국어"],
+            "arabic": ["ar", "ara", "arabic", "العربية"],
+            "russian": ["ru", "rus", "russian", "русский"],
+            "dutch": ["nl", "nld", "dutch", "nederlands"],
+            "italian": ["it", "ita", "italian", "italiano"],
+            "polish": ["pl", "pol", "polish", "polski"],
+            "portuguese": ["pt", "por", "portuguese", "português"],
+            # Common but not Fish Speech supported
+            "hindi": ["hi", "hin", "hindi", "हिन्दी"],
+            "bengali": ["bn", "ben", "bengali", "bangla", "বাংলা"]
         }
         
         for lang_group in language_mapping.values():
