@@ -482,8 +482,9 @@ SEGMENTS TO TRANSLATE:
 RULES:
 1. Each segment gets unique translation (no duplicates)
 2. Use {target_script_instruction} only
-3. Add extra spaces for timing: "word   word" 
+3. Add extra spaces for timing: "word  word" 
 4. Keep it natural and conversational
+5. MUST BE IN {target_language} LANGUAGE ONLY, NO MIXING OF LANGUAGES OR SCRIPTS
 
 JSON OUTPUT:
 {{

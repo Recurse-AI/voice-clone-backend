@@ -173,16 +173,14 @@ class SegmentManager:
         
         return processed_segments
     
-    def _create_reference_audio_segments(self, segments: List[Dict], audio_id: str) -> List[Dict]:
+    def _create_reference_audio_segments(self, segments: List[Dict], audio_id: str, reference_folder: Path) -> List[Dict]:
         """Create reference audio segments for voice cloning from original vocal audio"""
         reference_segments = []
         
         for segment in segments:
             if segment["type"] == "speech" and len(segment.get("audio", [])) > 0:
-                # Save reference audio file for voice cloning
-                ref_audio_dir = Path(f"segments/{audio_id}/reference")
-                ref_audio_dir.mkdir(parents=True, exist_ok=True)
-                ref_audio_path = ref_audio_dir / f"ref_segment_{segment['index']:03d}.wav"
+                # Save reference audio file for voice cloning using the reference_folder we created
+                ref_audio_path = reference_folder / f"ref_segment_{segment['index']:03d}.wav"
                 
                 # Save reference audio
                 sf.write(ref_audio_path, segment["audio"], segment["sample_rate"])
@@ -278,18 +276,21 @@ class SegmentManager:
             processed_segments = self._crop_audio_segments(segments, audio, sample_rate)
             
             # Create reference audio segments for voice cloning
-            reference_segments = self._create_reference_audio_segments(processed_segments, audio_id)
+            reference_segments = self._create_reference_audio_segments(processed_segments, audio_id, reference_folder)
             
             # Prepare speech segments for voice cloning
             speech_segments_for_cloning = self.prepare_segments_for_voice_cloning(reference_segments, target_language)
             
             # Create proper directory structure for audio_reconstructor
-            segments_dir = Path(f"segments/{audio_id}")
-            segments_dir.mkdir(parents=True, exist_ok=True)
+            # Main segments directory that will contain segmentation_summary.json
+            segments_dir = output_dir / "segments" / audio_id  
+            segments_folder = segments_dir / "segments"  # Individual segment files
+            reference_folder = segments_dir / "reference"  # Reference audio files
             
-            # Create subdirectories  
-            segments_folder = segments_dir / "segments"
+            # Create directories
+            segments_dir.mkdir(parents=True, exist_ok=True)
             segments_folder.mkdir(exist_ok=True)
+            reference_folder.mkdir(exist_ok=True)
             
             # Save segments locally with compatible structure
             saved_segments = []
