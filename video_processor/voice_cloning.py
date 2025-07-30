@@ -28,8 +28,8 @@ class FishSpeechService:
         self.precision = torch.bfloat16 if self.device == "cuda" else torch.float32
         
         # Model configuration
-        self.model_repo = "fishaudio/openaudio-s1-mini"
-        self.model_path = "checkpoints/openaudio-s1-mini"
+        self.model_repo = "fishaudio/fish-speech-1.5"
+        self.model_path = "checkpoints/fish-speech-1.5"
         
         # Initialize as None, will be loaded lazily
         self.inference_engine = None
@@ -61,7 +61,10 @@ class FishSpeechService:
         model_dir = Path(self.model_path)
         model_dir.mkdir(parents=True, exist_ok=True)
         
-        model_files = ["config.json", "model.pth", "codec.pth", "special_tokens.json", "tokenizer.tiktoken"]
+        model_files = ["config.json", "model.pth", "special_tokens.json", "tokenizer.tiktoken"]
+        
+        # Try to download codec file (different possible names)
+        codec_files = ["codec.pth", "decoder.pth", "vqgan.pth", "vq_codec.pth"]
         
         for file_name in model_files:
             if not (model_dir / file_name).exists():
@@ -73,6 +76,29 @@ class FishSpeechService:
                     resume_download=True
                 )
                 logger.info(f"✅ Downloaded {file_name}")
+        
+        # Try to download codec file
+        codec_downloaded = False
+        for codec_name in codec_files:
+            if not codec_downloaded and not (model_dir / "codec.pth").exists():
+                try:
+                    hf_hub_download(
+                        repo_id=self.model_repo,
+                        filename=codec_name,
+                        local_dir=str(model_dir),
+                        local_dir_use_symlinks=False,
+                        resume_download=True
+                    )
+                    # Rename to codec.pth if downloaded with different name
+                    if codec_name != "codec.pth":
+                        (model_dir / codec_name).rename(model_dir / "codec.pth")
+                    logger.info(f"✅ Downloaded codec: {codec_name}")
+                    codec_downloaded = True
+                except:
+                    continue
+        
+        if not codec_downloaded:
+            logger.warning("⚠️ Codec file not found, will use Fish Speech without codec")
         
         logger.info("✅ Models ready")
     
@@ -105,29 +131,40 @@ class FishSpeechService:
             )
             logger.info("✅ Language model loaded")
             
-            # Load Fish Speech decoder model
-            self.decoder_model = load_decoder_model(
-                config_name="modded_dac_vq",
-                checkpoint_path=f"{self.model_path}/codec.pth",
-                device=self.device,
-            )
-            logger.info("✅ Decoder model loaded")
+            # Load Fish Speech decoder model (if codec available)
+            codec_path = f"{self.model_path}/codec.pth"
+            if Path(codec_path).exists():
+                self.decoder_model = load_decoder_model(
+                    config_name="modded_dac_vq",
+                    checkpoint_path=codec_path,
+                    device=self.device,
+                )
+                logger.info("✅ Decoder model loaded")
+            else:
+                self.decoder_model = None
+                logger.info("📝 Decoder model skipped (codec not available)")
             
             # Initialize TTS inference engine
-            self.inference_engine = TTSInferenceEngine(
-                llama_queue=self.llama_queue,
-                decoder_model=self.decoder_model,
-                compile=self.use_compile,
-                precision=self.precision,
-            )
-            logger.info("✅ TTS inference engine initialized")
+            if self.decoder_model:
+                self.inference_engine = TTSInferenceEngine(
+                    llama_queue=self.llama_queue,
+                    decoder_model=self.decoder_model,
+                    compile=self.use_compile,
+                    precision=self.precision,
+                )
+                logger.info("✅ TTS inference engine initialized")
+            else:
+                # Fish Speech can work without decoder for semantic tokens only
+                self.inference_engine = None
+                logger.info("📝 TTS engine initialized for semantic mode only")
             
-            # Warm up model
-            self._warmup_model()
-            logger.info("✅ Model warmup completed")
+            # Warm up model (if full engine available)
+            if self.inference_engine:
+                self._warmup_model()
+                logger.info("✅ Model warmup completed")
             
             self._is_initialized = True
-            logger.info("✅ Fish Speech ready for voice cloning!")
+            logger.info("✅ Fish Speech ready!")
     
     def _warmup_model(self):
         """Warm up model with simple inference"""
