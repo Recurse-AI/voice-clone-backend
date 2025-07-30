@@ -442,34 +442,47 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         if not processing_result["success"]:
             return {"success": False, "error": processing_result.get("error", "Audio processing failed")}
         
-        # Get reconstruction result
-        reconstruction_result = processing_result.get("audio_reconstruction", {"success": False, "error": "No reconstruction result from base processor"})
-        
-        # Debug: log processing result keys
-        logger.info(f"Processing result keys: {list(processing_result.keys())}")
-        logger.info(f"Reconstruction result keys: {list(reconstruction_result.keys()) if isinstance(reconstruction_result, dict) else 'Not a dict'}")
-        
-        if not reconstruction_result["success"]:
-            return {"success": False, "error": f"Audio reconstruction failed: {reconstruction_result['error']}"}
-        
         status_manager.update_status(audio_id, ProcessingStatus.PROCESSING, 80, {
             "message": "Audio reconstruction completed"
         })
         
-        # Get the output path from audio_reconstruction - NO FALLBACK
-        final_audio_path = reconstruction_result.get("output_path")
+        # NEW STRATEGY: Direct file finding instead of complex return chain
+        logger.info("🔍 Searching for output audio files...")
         
-        # If not found, try getting from final_dubbed_audio
-        if not final_audio_path:
-            final_dubbed_audio = processing_result.get("final_dubbed_audio", {})
-            final_audio_path = final_dubbed_audio.get("output_path")
+        # Look for the final audio file by pattern (more reliable)
+        import glob
+        import os
+        possible_patterns = [
+            f"./tmp/voice_cloning/dubbed_vocal_{audio_id}.wav",
+            f"./tmp/voice_cloning/dubbed_final_{audio_id}.wav", 
+            f"./tmp/local_storage/{audio_id}/dubbed_vocal_{audio_id}.wav",
+            f"./tmp/local_storage/{audio_id}/dubbed_final_{audio_id}.wav"
+        ]
         
-        logger.info(f"Got reconstruction output path: {final_audio_path}")
+        final_audio_path = None
+        for pattern in possible_patterns:
+            matches = glob.glob(pattern)
+            if matches:
+                # Get the most recent file if multiple matches
+                final_audio_path = max(matches, key=os.path.getmtime)
+                logger.info(f"✅ Found output file: {final_audio_path}")
+                break
         
-        # Ensure we have a valid path
-        if not final_audio_path:
-            logger.error("Final audio path is None - cannot upload to R2")
-            return {"success": False, "error": "Audio reconstruction failed - no output file found"}
+        if not final_audio_path or not os.path.exists(final_audio_path):
+            logger.error("❌ No output audio file found!")
+            # List what files ARE available for debugging
+            debug_patterns = ["./tmp/voice_cloning/*", f"./tmp/local_storage/{audio_id}/*"]
+            for debug_pattern in debug_patterns:
+                available_files = glob.glob(debug_pattern)
+                logger.info(f"Available files in {debug_pattern}: {available_files}")
+            return {"success": False, "error": "Audio reconstruction completed but output file not found"}
+        
+        # Verify file is valid and has content
+        file_size = os.path.getsize(final_audio_path)
+        logger.info(f"📁 Final audio file: {final_audio_path} (size: {file_size} bytes)")
+        
+        if file_size < 1000:  # Less than 1KB is probably empty/corrupt
+            return {"success": False, "error": f"Audio file too small ({file_size} bytes) - may be corrupted"}
         
         # Upload to R2
         status_manager.update_status(audio_id, ProcessingStatus.UPLOADING, 90, {
@@ -477,7 +490,6 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
         })
         
         try:
-            import os
             from r2_storage import R2Storage
             r2_storage = R2Storage()
             
