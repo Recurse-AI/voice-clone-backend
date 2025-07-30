@@ -20,16 +20,16 @@ logger = logging.getLogger(__name__)
 
 
 class FishSpeechService:
-    """OpenAudio S1-mini voice cloning service"""
+    """Fish Speech 1.5 voice cloning service"""
     
     def __init__(self, device: str = "cuda", use_compile: bool = True):
         self.device = device if torch.cuda.is_available() else "cpu"
         self.use_compile = use_compile
         self.precision = torch.bfloat16 if self.device == "cuda" else torch.float32
         
-        # Model configuration - OpenAudio S1-mini
-        self.model_repo = "fishaudio/openaudio-s1-mini"
-        self.model_path = "checkpoints/openaudio-s1-mini"
+        # Model configuration - Fish Speech 1.5 (public access)
+        self.model_repo = "fishaudio/fish-speech-1.5" 
+        self.model_path = "checkpoints/fish-speech-1.5"
         
         # Initialize as None, will be loaded lazily
         self.inference_engine = None
@@ -38,7 +38,7 @@ class FishSpeechService:
         self._model_lock = threading.Lock()
         self._is_initialized = False
         
-        logger.info(f"OpenAudio S1-mini service initialized with device: {self.device}")
+        logger.info(f"Fish Speech 1.5 service initialized with device: {self.device}")
     
     def _ensure_fish_speech_available(self):
         """Verify Fish Speech is ready (setup done by runpod_setup.sh)"""
@@ -55,14 +55,14 @@ class FishSpeechService:
             )
     
     def _download_models(self):
-        """Download OpenAudio S1-mini models"""
-        logger.info("📥 Downloading OpenAudio S1-mini models...")
+        """Download Fish Speech 1.5 models"""
+        logger.info("📥 Downloading Fish Speech 1.5 models...")
         
         model_dir = Path(self.model_path)
         model_dir.mkdir(parents=True, exist_ok=True)
         
-        # OpenAudio S1-mini standard files
-        model_files = ["config.json", "model.pth", "codec.pth", "special_tokens.json", "tokenizer.tiktoken"]
+        # Fish Speech 1.5 files
+        model_files = ["config.json", "model.pth", "special_tokens.json", "tokenizer.tiktoken"]
         
         for file_name in model_files:
             if not (model_dir / file_name).exists():
@@ -75,6 +75,20 @@ class FishSpeechService:
                 )
                 logger.info(f"✅ Downloaded {file_name}")
         
+        # Download Firefly-GAN codec for Fish Speech 1.5
+        codec_file = "firefly-gan-vq-fsq-8x1024-21hz-generator.pth"
+        if not (model_dir / "codec.pth").exists():
+            hf_hub_download(
+                repo_id=self.model_repo,
+                filename=codec_file,
+                local_dir=str(model_dir),
+                local_dir_use_symlinks=False,
+                resume_download=True
+            )
+            # Rename to codec.pth for compatibility
+            (model_dir / codec_file).rename(model_dir / "codec.pth")
+            logger.info(f"✅ Downloaded and renamed codec: {codec_file}")
+        
         logger.info("✅ Models ready")
     
     def _initialize_models(self):
@@ -86,10 +100,10 @@ class FishSpeechService:
             logger.info("🔍 Verifying Fish Speech...")
             self._ensure_fish_speech_available()
             
-            logger.info("📥 Downloading OpenAudio S1-mini models...")
+            logger.info("📥 Downloading Fish Speech 1.5 models...")
             self._download_models()
             
-            logger.info("🚀 Loading OpenAudio S1-mini models...")
+            logger.info("🚀 Loading Fish Speech 1.5 models...")
             
             # Import Fish Speech modules (manual setup)
             sys.path.insert(0, "./fish-speech")
@@ -128,7 +142,7 @@ class FishSpeechService:
             logger.info("✅ Model warmup completed")
             
             self._is_initialized = True
-            logger.info("✅ OpenAudio S1-mini ready!")
+            logger.info("✅ Fish Speech 1.5 ready!")
     
     def _warmup_model(self):
         """Warm up model with simple inference"""
