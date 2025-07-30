@@ -227,24 +227,34 @@ class FishSpeechService:
             if not audio_chunks:
                 return {"success": False, "error": "No audio generated"}
             
-            # Simple direct approach - Fish Speech returns audio directly
+            # Handle Fish Speech audio chunks properly
             import numpy as np
             import io
             import soundfile as sf
             
-            # Collect all audio data from inference results
+            # Collect all audio arrays with proper shape handling
             audio_arrays = []
             for chunk in audio_chunks:
-                # Fish Speech InferenceResult typically contains audio as numpy array
                 if hasattr(chunk, 'audio'):
-                    audio_arrays.append(chunk.audio)
+                    chunk_audio = chunk.audio
                 else:
-                    # Fallback: assume chunk itself is audio data
-                    audio_arrays.append(chunk)
+                    chunk_audio = chunk
+                
+                # Ensure audio is numpy array and flatten if needed
+                if isinstance(chunk_audio, np.ndarray):
+                    # Handle different shapes - flatten to 1D
+                    if chunk_audio.ndim > 1:
+                        chunk_audio = chunk_audio.flatten()
+                    audio_arrays.append(chunk_audio)
+                else:
+                    logger.warning(f"Unexpected chunk type: {type(chunk_audio)}")
             
-            # Combine arrays and convert to WAV bytes
+            # Combine arrays safely
             if audio_arrays:
-                combined_audio_array = np.concatenate(audio_arrays, axis=0)
+                # Concatenate all 1D arrays
+                combined_audio_array = np.concatenate(audio_arrays)
+                
+                # Convert to WAV bytes
                 buffer = io.BytesIO()
                 sf.write(buffer, combined_audio_array, 44100, format='WAV')
                 combined_audio = buffer.getvalue()

@@ -114,11 +114,11 @@ class AudioProcessor:
                 "success": True,
                 "segments_dir": str(output_dir),
                 "audio_id": audio_id,
-                "speakers": transcript_data['speakers'],
+                "speakers": transcript_data.get('speakers', []),
                 "total_segments": len(segments),
-                "total_duration": transcript_data['duration'],
+                "total_duration": transcript_data.get('duration', original_duration),
                 "language_code": language_code,
-                "detected_speakers": len(transcript_data['speakers']),
+                "detected_speakers": len(transcript_data.get('speakers', [])),
                 "speakers_expected": speakers_expected,
                 "voice_cloning": cloning_result,
                 "audio_reconstruction": reconstruction_result
@@ -431,11 +431,11 @@ class AudioProcessor:
                     except:
                         pass
                     
-                    # Skip silence or gap segments
+                    # Skip silence segments for voice cloning (keep for reconstruction)
                     segment_type = segment.get("type", "speech")
-                    if segment_type in ["silence", "gap"]:
+                    if segment_type == "silence":
                         cloning_stats["skipped_segments"] += 1
-                        logger.info(f"Skipping {segment_type} segment {segment.get('segment_index', i+1)}")
+                        logger.info(f"Skipping silence segment {segment.get('segment_index', i+1)} for voice cloning")
                         continue
                     
                     # Get segment metadata file

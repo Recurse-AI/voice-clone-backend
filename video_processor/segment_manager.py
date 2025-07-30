@@ -29,7 +29,7 @@ class SegmentManager:
         self.max_segment_duration = 11.0   # Maximum segment length (seconds)
         self.optimal_min_duration = 9.0    # Optimal minimum length (seconds)
         self.optimal_max_duration = 11.0   # Optimal maximum length (seconds)
-        self.min_silence_duration = 0.5    # Minimum silence to consider (seconds)
+        self.min_silence_duration = 2.5    # Minimum silence to keep as separate segment (seconds)
         self.speaker_switch_padding = 0.1   # Padding around speaker switches (seconds)
         
     def create_optimal_segments(self, transcript_data: Dict[str, Any], 
@@ -145,11 +145,11 @@ class SegmentManager:
             event_time = event["time"]
             event_type = event["type"]
             
-            # Check for silence gap before this event
+            # Check for silence gap before this event (minimum 2.5s)
             if event_time > last_utterance_end + self.min_silence_duration:
                 silence_duration = event_time - last_utterance_end
                 
-                # Add silence segment if significant
+                # Only create silence segment if >= 2.5s, otherwise merge with speech
                 if silence_duration >= self.min_silence_duration:
                     silence_segment = {
                         "start": last_utterance_end,
@@ -201,19 +201,21 @@ class SegmentManager:
         if current_segment:
             segments.append(current_segment)
         
-        # Add final silence if exists
+        # Add final silence if >= 2.5s
         if last_utterance_end < total_duration - self.min_silence_duration:
-            final_silence = {
-                "start": last_utterance_end,
-                "end": total_duration,
-                "duration": total_duration - last_utterance_end,
-                "speaker": "SILENCE",
-                "type": "silence",
-                "text": "",
-                "utterances": [],
-                "confidence": 1.0
-            }
-            segments.append(final_silence)
+            final_silence_duration = total_duration - last_utterance_end
+            if final_silence_duration >= self.min_silence_duration:
+                final_silence = {
+                    "start": last_utterance_end,
+                    "end": total_duration,
+                    "duration": final_silence_duration,
+                    "speaker": "SILENCE",
+                    "type": "silence", 
+                    "text": "",
+                    "utterances": [],
+                    "confidence": 1.0
+                }
+                segments.append(final_silence)
         
         return segments
     
