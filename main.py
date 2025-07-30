@@ -104,7 +104,7 @@ async def root():
 @app.post("/video-dub", response_model=StartProcessingResponse)
 async def video_dub(
     video_url: str = Form(..., description="Video URL for dubbing"),
-    include_instruments: bool = Form(True, description="Whether to include instruments in final audio"),
+    instructment: bool = Form(True, description="Whether to include instruments in final audio"),
     generate_subtitles: bool = Form(True, description="Whether to generate subtitles"),
     target_language: str = Form("English", description="Target language for translation"),
     language_code: Optional[str] = Form(None, description="Language code for transcription"),
@@ -131,7 +131,7 @@ async def video_dub(
     from video_processor.video_queue_manager import video_queue_manager
     
     queue_parameters = {
-        "include_instruments": include_instruments,
+        "include_instruments": instructment,
         "generate_subtitles": generate_subtitles,
         "target_language": target_language,
         "language_code": language_code,

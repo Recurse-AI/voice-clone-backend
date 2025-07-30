@@ -148,7 +148,8 @@ def process_video_background(
             audio_id,
             target_language,
             language_code=final_language_code,
-            speakers_expected=speakers_expected
+            speakers_expected=speakers_expected,
+            include_instruments=include_instruments
         )
         
         if not processing_result["success"]:
@@ -484,7 +485,8 @@ def process_video_with_queue(queue_request) -> Dict[str, Any]:
             audio_id,
             target_language,
             language_code=language_code,
-            speakers_expected=speakers_expected
+            speakers_expected=speakers_expected,
+            include_instruments=include_instruments
         )
         
         # Update progress after separation completes

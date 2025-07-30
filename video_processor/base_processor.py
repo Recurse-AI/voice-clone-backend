@@ -154,7 +154,8 @@ class AudioProcessor:
     def process_video_with_separation(self, video_path: str, audio_id: str, 
                                     target_language: str = "English",
                                     language_code: Optional[str] = None,
-                                    speakers_expected: Optional[int] = 1) -> Dict[str, Any]:
+                                    speakers_expected: Optional[int] = 1,
+                                    include_instruments: bool = False) -> Dict[str, Any]:
         """Process video with RunPod vocal/instrument separation"""
         try:
             # Extract audio from video
@@ -263,10 +264,11 @@ class AudioProcessor:
             voice_cloning = segment_result.get("voice_cloning", {})
             audio_reconstruction = segment_result.get("audio_reconstruction", {})
             
-            # If voice cloning succeeded, perform final reconstruction with instruments
+            # If voice cloning succeeded, perform final reconstruction with instruments if requested
             if voice_cloning.get("success") and audio_reconstruction.get("success"):
                 final_reconstruction = self._perform_audio_reconstruction(
-                    Path(segment_result["segments_dir"]), audio_id, True, str(instrument_path)
+                    Path(segment_result["segments_dir"]), audio_id, include_instruments, 
+                    str(instrument_path) if include_instruments else None
                 )
             else:
                 final_reconstruction = audio_reconstruction

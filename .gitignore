@@ -219,3 +219,8 @@ ffmpeg-master-latest-win64-gpl/
 
 .cursorrules
 .cursor/
+
+
+fish-speech/
+checkpoints/
+tmp/

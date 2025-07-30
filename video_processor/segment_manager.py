@@ -432,14 +432,19 @@ class SegmentManager:
             
             # Validate timing
             if segment["end"] <= segment["start"]:
-                logger.warning(f"Invalid segment timing at index {i}, adjusting")
-                segment["end"] = segment["start"] + 0.1
-                segment["duration"] = 0.1
+                logger.warning(f"Invalid segment timing at index {i}, skipping invalid segment")
+                continue  # Skip invalid segments instead of creating 0.1s segments
             
-            # Ensure minimum duration for speech segments
-            if segment["type"] == "speech" and segment["duration"] < 0.5:
-                segment["duration"] = 0.5
-                segment["end"] = segment["start"] + 0.5
+            # Ensure minimum duration for ALL segments (not just speech)
+            min_required_duration = 0.5  # Minimum 0.5 seconds for any segment
+            if segment["duration"] < min_required_duration:
+                if segment["type"] == "gap" or segment["type"] == "silence":
+                    logger.info(f"Skipping too short {segment['type']} segment ({segment['duration']:.2f}s)")
+                    continue  # Skip very short gap/silence segments
+                else:
+                    # For speech segments, extend them to minimum duration
+                    segment["duration"] = min_required_duration
+                    segment["end"] = segment["start"] + min_required_duration
             
             validated_segments.append(segment)
         
@@ -587,33 +592,9 @@ class SegmentManager:
     
     def _store_segment_locally(self, segment_audio: np.ndarray, metadata: Dict[str, Any], 
                               segment_index: int, sr: int):
-        """Store individual segment locally for backup"""
-        try:
-            # Convert audio to bytes
-            import io
-            buffer = io.BytesIO()
-            sf.write(buffer, segment_audio, sr, format='WAV')
-            audio_bytes = buffer.getvalue()
-            
-            # Store audio
-            audio_filename = f"segment_{segment_index:03d}.wav"
-            local_storage.store_audio(
-                metadata.get("segment_id", f"seg_{segment_index}"),
-                audio_bytes,
-                audio_filename
-            )
-            
-            # Store metadata
-            metadata_json = json.dumps(metadata, indent=2, ensure_ascii=False)
-            metadata_filename = f"segment_{segment_index:03d}_metadata.json"
-            local_storage.store_text(
-                metadata.get("segment_id", f"seg_{segment_index}"),
-                metadata_json.encode('utf-8'),
-                metadata_filename
-            )
-            
-        except Exception as e:
-            logger.warning(f"Failed to store segment {segment_index} locally: {str(e)}")
+        """Store individual segment locally for backup - DISABLED to prevent duplicate storage"""
+        # NOTE: Duplicate storage disabled as segments are already stored in voice_cloning directory
+        pass
     
     def _translate_segments_if_needed(self, segments: List[Dict[str, Any]], 
                                      transcript_data: Dict[str, Any], audio_id: str) -> List[Dict[str, Any]]:

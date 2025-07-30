@@ -268,9 +268,9 @@ class AudioReconstructor:
             vocal_audio = self._match_segment_length(vocal_audio, max_length)
             instruments_audio = self._match_segment_length(instruments_audio, max_length)
             
-            # Mix with appropriate levels
-            vocal_level = 0.7      # Vocal prominent
-            instrument_level = 0.5  # Instruments background
+            # Mix with appropriate levels - vocal prominent, instruments as background effect
+            vocal_level = 0.8      # Vocal prominent (80%)
+            instrument_level = 0.2  # Instruments background effect (20%)
             
             mixed_audio = (vocal_audio * vocal_level + instruments_audio * instrument_level)
             

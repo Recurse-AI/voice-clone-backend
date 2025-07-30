@@ -113,13 +113,12 @@ class FishSpeechService:
             if self._is_initialized:
                 return
             
-            logger.info("🔍 Verifying Fish Speech...")
+            logger.info("🔍 Verifying Fish Speech framework...")
             self._ensure_fish_speech_available()
             
-            logger.info("📥 Downloading Fish Speech 1.5 models...")
             self._download_models()
             
-            logger.info("🚀 Loading Fish Speech 1.5 models...")
+            logger.info("🚀 Loading OpenAudio S1-mini models...")
             
             # Import Fish Speech modules (manual setup)
             sys.path.insert(0, "./fish-speech")
