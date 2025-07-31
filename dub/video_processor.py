@@ -22,8 +22,6 @@ class VideoProcessor:
         self.subtitle_font_size = 18
         self.subtitle_margin_bottom = 30
         self.words_per_subtitle = 3
-    
-    def _load_subtitles(self, segments_dir: str) -> List[Dict]:
         subtitle_data = []
         segments_path = Path(segments_dir)
         
@@ -82,80 +80,8 @@ class VideoProcessor:
         subtitle_data.sort(key=lambda x: x['start'])
         return self._resolve_overlaps(subtitle_data)
     
-    def _create_word_chunks(self, text: str, start_time: float, end_time: float) -> List[Dict]:
-        words = text.split()
-        if not words:
-            return []
-        
-        chunks = []
-        total_duration = end_time - start_time
-        words_per_chunk = self.words_per_subtitle
-        
-        for i in range(0, len(words), words_per_chunk):
-            chunk_words = words[i:i + words_per_chunk]
-            chunk_text = ' '.join(chunk_words)
-            
-            chunk_start = start_time + (i / len(words)) * total_duration
-            chunk_end = start_time + ((i + len(chunk_words)) / len(words)) * total_duration
-            
-            if chunk_end - chunk_start < 0.8:
-                chunk_end = chunk_start + 0.8
-            
-            chunks.append({
-                'start': chunk_start,
-                'end': chunk_end,
-                'text': chunk_text,
-                'duration': chunk_end - chunk_start
-            })
-        
-        return chunks
-    
-    def _resolve_overlaps(self, subtitle_data: List[Dict]) -> List[Dict]:
-        if not subtitle_data:
-            return []
-        
-        resolved = []
-        
-        for current in subtitle_data:
-            if not resolved:
-                resolved.append(current)
-                continue
-            
-            last = resolved[-1]
-            
-            # Simple overlap resolution
-            if current['start'] < last['end']:
-                last['end'] = current['start']
-                if last['end'] - last['start'] < 0.5:
-                    resolved.pop()
-            
-            resolved.append(current)
-        
-        return resolved
-    
-    def _create_final_audio(self, audio_path: str, instruments_path: Optional[str], audio_id: str) -> Path:
-        final_audio_path = self.temp_dir / f"final_mixed_audio_{audio_id}.wav"
-        
-        cloned_audio, sr = sf.read(audio_path)
-        
-        if instruments_path and os.path.exists(instruments_path):
-            try:
-                instruments_audio, _ = sf.read(instruments_path)
-                
-                min_length = min(len(cloned_audio), len(instruments_audio))
-                cloned_audio = cloned_audio[:min_length]
-                instruments_audio = instruments_audio[:min_length]
-                
-                mixed_audio = cloned_audio * 0.8 + instruments_audio * 0.2
-                sf.write(final_audio_path, mixed_audio, sr)
-                
-            except Exception:
-                sf.write(final_audio_path, cloned_audio, sr)
-        else:
-            sf.write(final_audio_path, cloned_audio, sr)
-        
-        return final_audio_path
-    
+
+
     def _create_video_ffmpeg(self, video_path: str, audio_path: str, 
                            subtitle_path: Optional[str], output_path: Path) -> Dict[str, Any]:
         try:
@@ -267,21 +193,7 @@ class VideoProcessor:
                                audio_id: str, instruments_path: Optional[str] = None,
                                segments_dir: Optional[str] = None) -> Dict[str, Any]:
         try:
-            if instruments_path and os.path.exists(instruments_path):
-                final_audio_path = self._create_final_audio(audio_path, instruments_path, audio_id)
-            else:
-                final_audio_path = Path(audio_path)
-            
-            # Create subtitle file even when not attaching to video
-            subtitle_path = None
-            subtitle_count = 0
-            if segments_dir:
-                subtitle_data = self._load_subtitles(segments_dir)
-                if subtitle_data:
-                    subtitle_path = self.temp_dir / f"subtitles_{audio_id}.srt"
-                    self._create_srt_file(subtitle_data, subtitle_path)
-                    subtitle_count = len(subtitle_data)
-            
+
             output_path = self.temp_dir / f"video_no_subtitles_{audio_id}.mp4"
             
             # Create video without attaching subtitles

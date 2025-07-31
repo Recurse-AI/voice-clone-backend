@@ -6,6 +6,7 @@ and audio length adjustment.
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
@@ -58,15 +59,8 @@ class AudioUtils:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
-            # Verify file was downloaded
-            if not os.path.exists(output_path):
-                return {"success": False, "error": "File not found after download"}
-            
-            if os.path.getsize(output_path) == 0:
-                return {"success": False, "error": "Downloaded file is empty"}
-            
-            return {"success": True, "file_path": output_path}
-            
+            return {"success": True, "audio_path": output_path}
+         
         except requests.exceptions.RequestException as e:
             return {"success": False, "error": f"Download failed: {str(e)}"}
         except Exception as e:
@@ -82,16 +76,28 @@ class AudioUtils:
                 return 'ffmpeg'
         except FileNotFoundError:
             pass
+
+        # Check local FFmpeg installation in project directory
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        local_ffmpeg_paths = [
+            os.path.join(project_root, 'ffmpeg-master-latest-win64-gpl', 'ffmpeg-master-latest-win64-gpl', 'bin', 'ffmpeg.exe'),
+            os.path.join(project_root, 'ffmpeg-master-latest-win64-gpl', 'bin', 'ffmpeg.exe'),
+            os.path.join(project_root, 'ffmpeg', 'bin', 'ffmpeg.exe'),
+            os.path.join(project_root, 'ffmpeg.exe')
+        ]
         
-        # Check local Windows installation
-        import platform
-        if platform.system() == 'Windows':
-            local_ffmpeg = Path('./ffmpeg-master-latest-win64-gpl/ffmpeg-master-latest-win64-gpl/bin/ffmpeg.exe')
-            if local_ffmpeg.exists():
-                return str(local_ffmpeg)
+        for ffmpeg_path in local_ffmpeg_paths:
+            if os.path.exists(ffmpeg_path):
+                return ffmpeg_path
+
+        # Check if ffmpeg is in the same directory as the script
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        ffmpeg_path = os.path.join(script_dir, 'ffmpeg.exe')
+        if os.path.exists(ffmpeg_path):
+            return ffmpeg_path
         
-        # Default to system ffmpeg
-        return 'ffmpeg'
+        return None
+    
     
     @staticmethod
     def adjust_audio_length(audio: np.ndarray, target_duration: float, 
@@ -195,37 +201,66 @@ class AudioUtils:
         
         return audio_faded
     
-    def apply_fade(self, audio: np.ndarray, fade_in: float = 0.1, fade_out: float = 0.1, sr: int = 44100) -> np.ndarray:
-        """Apply fade in/out to audio"""
-        fade_in_samples = int(fade_in * sr)
-        fade_out_samples = int(fade_out * sr)
-        
-        # Apply fade in
-        if fade_in_samples > 0 and len(audio) > fade_in_samples:
-            fade_in_curve = np.linspace(0, 1, fade_in_samples)
-            audio[:fade_in_samples] *= fade_in_curve
-        
-        # Apply fade out
-        if fade_out_samples > 0 and len(audio) > fade_out_samples:
-            fade_out_curve = np.linspace(1, 0, fade_out_samples)
-            audio[-fade_out_samples:] *= fade_out_curve
-        
-        return audio
+    def split_audio_by_timestamps(self, input_audio_path: str, output_dir: str, 
+                                 segments: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Split audio file into segments based on timestamps using ffmpeg"""
+        try:
+            # Get FFmpeg executable path
+            ffmpeg_path = self._get_ffmpeg_path()
+            if not ffmpeg_path:
+                return {"success": False, "error": "FFmpeg not found"}
+            
+            # Create output directory
+            os.makedirs(output_dir, exist_ok=True)
+            
+            split_files = []
+            
+            for i, segment in enumerate(segments):
+                start_ms = segment.get('start', 0)
+                end_ms = segment.get('end', 0)
+                text = segment.get('text', f'segment_{i}')
+                
+                # Convert milliseconds to seconds
+                start_sec = start_ms / 1000.0
+                duration_sec = (end_ms - start_ms) / 1000.0
+                
+                # Create simple English filename - no text content
+                output_filename = f"segment_{i:03d}.wav"
+                output_path = os.path.join(output_dir, output_filename)
+                
+                # FFmpeg command to extract segment
+                cmd = [
+                    ffmpeg_path, '-y',
+                    '-i', input_audio_path,
+                    '-ss', str(start_sec),
+                    '-t', str(duration_sec),
+                    '-ac', '2',  # Stereo
+                    '-ar', '44100',  # Sample rate
+                    '-acodec', 'pcm_s16le',  # Audio codec
+                    output_path
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    split_files.append({
+                        "index": i,
+                        "text": text,
+                        "start_ms": start_ms,
+                        "end_ms": end_ms,
+                        "duration_ms": end_ms - start_ms,
+                        "output_path": output_path
+                    })
+                else:
+                    return {"success": False, "error": f"FFmpeg error for segment {i}: {result.stderr}"}
+            
+            return {
+                "success": True,
+                "segments_count": len(split_files),
+                "split_files": split_files,
+                "output_directory": output_dir
+            }
+                
+        except Exception as e:
+            return {"success": False, "error": str(e)}
     
-    def mix_audio_tracks(self, track1: np.ndarray, track2: np.ndarray, 
-                        ratio1: float = 0.8, ratio2: float = 0.2) -> np.ndarray:
-        """Mix two audio tracks with specified ratios"""
-        # Match lengths
-        min_length = min(len(track1), len(track2))
-        track1 = track1[:min_length]
-        track2 = track2[:min_length]
-        
-        # Mix with ratios
-        mixed = track1 * ratio1 + track2 * ratio2
-        
-        # Prevent clipping
-        max_val = np.max(np.abs(mixed))
-        if max_val > 1.0:
-            mixed = mixed / max_val
-        
-        return mixed 

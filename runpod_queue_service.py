@@ -8,7 +8,7 @@ Provides a clean interface for sync audio separation requests.
 import time
 from typing import Dict, Any, Optional
 import logging
-from video_processor.runpod_service import RunPodService
+from dub.runpod_service import RunPodService
 from runpod_queue_manager import runpod_queue_manager, QueueStatus
 
 logger = logging.getLogger(__name__)

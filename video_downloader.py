@@ -12,7 +12,6 @@ from export_video.constants import (
     DEFAULT_VIDEO_QUALITY, SUPPORTED_DOWNLOAD_SITES
 )
 from r2_storage import R2Storage
-from utils import local_storage
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -122,41 +121,11 @@ class VideoDownloadService:
                 with open(downloaded_file, 'rb') as f:
                     file_content = f.read()
                 
-                # Store in local storage
-                local_storage_result = local_storage.store_video(
-                    download_id, 
-                    file_content, 
-                    downloaded_file.name
-                )
+
                 
                 # Upload to Cloudflare R2
                 upload_result = await self.upload_to_cloudflare(download_id, downloaded_file, info)
                 
-                if upload_result["success"]:
-                    # Clean up temp file (but keep in local storage)
-                    self.cleanup_local_file(downloaded_file)
-                    
-                    return {
-                        "success": True,
-                        "download_id": download_id,
-                        "video_info": {
-                            "title": video_title,
-                            "duration": video_duration,
-                            "uploader": video_uploader,
-                            "file_size": file_size,
-                            "original_url": url
-                        },
-                        "cloudflare": upload_result["cloudflare"],
-                        "local_storage": {
-                            "stored": local_storage_result.get("success", False),
-                            "expires_at": local_storage_result.get("expires_at") if local_storage_result.get("success") else None,
-                            "local_path": local_storage_result.get("local_path") if local_storage_result.get("success") else None
-                        },
-                        "message": "Video downloaded, stored locally, and uploaded successfully"
-                    }
-                else:
-                    self.cleanup_local_file(downloaded_file)
-                    return upload_result
                     
             except Exception as e:
                 self.cleanup_local_file(downloaded_file)
@@ -223,28 +192,5 @@ class VideoDownloadService:
                 "success": False,
                 "error": f"Upload process failed: {str(e)}"
             }
-    
-    def cleanup_local_file(self, file_path: Path):
-        """Clean up downloaded local file"""
-        try:
-            if file_path and file_path.exists():
-                file_path.unlink()
-                logger.info(f"Cleaned up local file: {file_path}")
-        except Exception as e:
-            logger.error(f"Failed to cleanup file {file_path}: {str(e)}")
-    
-    def cleanup_old_files(self):
-        """Clean up old temporary files"""
-        try:
-            current_time = datetime.now().timestamp()
-            for file_path in self.temp_dir.glob("*"):
-                if file_path.is_file():
-                    file_age = current_time - file_path.stat().st_mtime
-                    if file_age > 3600:  # 1 hour
-                        file_path.unlink()
-                        logger.info(f"Cleaned up old temp file: {file_path}")
-        except Exception as e:
-            logger.error(f"Failed to cleanup old files: {str(e)}")
-
 # Global instance
 video_download_service = VideoDownloadService() 

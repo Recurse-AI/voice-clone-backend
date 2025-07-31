@@ -12,9 +12,8 @@ from contextlib import asynccontextmanager
 from config import settings
 from r2_storage import R2Storage
 from status_manager import status_manager, ProcessingStatus
-from utils import cleanup_temp_files, local_storage
 from video_downloader import video_download_service
-from schemas import StatusResponse, StartProcessingResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse, VideoDownloadRequest, VideoDownloadResponse, FileUploadResponse, UploadStatusResponse
+from schemas import StatusResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse, VideoDownloadRequest, VideoDownloadResponse, FileUploadResponse, UploadStatusResponse, SimpleDubbingRequest, SimpleDubbingResponse
 
 # Configure logging
 os.makedirs(settings.LOGS_DIR, exist_ok=True)
@@ -42,34 +41,28 @@ async def lifespan(app: FastAPI):
     # Create temp directory
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
     
-    # Initialize Fish Speech models on startup
-    logger.info("🚀 Initializing Fish Speech for voice cloning...")
+    # Initialize Fish Speech service
     try:
-        from video_processor.voice_cloning import get_fish_speech_service
-        
-        # Get Fish Speech service and force complete initialization
-        fish_service = get_fish_speech_service()
-        fish_service._initialize_models()
-        
-        logger.info("✅ OpenAudio S1-mini ready for voice cloning!")
-        
+        from dub.fish_speech_service import initialize_fish_speech
+        if initialize_fish_speech():
+            logger.info("✅ Fish Speech service initialized successfully")
+        else:
+            logger.warning("⚠️ Fish Speech service initialization failed")
     except Exception as e:
-        logger.error(f"❌ Fish Speech initialization failed: {str(e)}")
-        logger.error("Make sure to run: ./runpod_setup.sh to setup the complete environment")
-        raise e  # Exit if models can't load
+        logger.error(f"❌ Failed to initialize Fish Speech: {e}")
     
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     yield
     
     # Cleanup on shutdown
     logger.info("🔄 Shutting down API...")
+    # Cleanup Fish Speech service
     try:
-        from video_processor.voice_cloning import get_fish_speech_service
-        fish_service = get_fish_speech_service()
-        fish_service.cleanup()
+        from dub.fish_speech_service import cleanup_fish_speech
+        cleanup_fish_speech()
         logger.info("✅ Fish Speech service cleaned up")
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"❌ Failed to cleanup Fish Speech: {e}")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -101,59 +94,49 @@ async def root():
 
 
 
-@app.post("/video-dub", response_model=StartProcessingResponse)
-async def video_dub(
-    video_url: str = Form(..., description="Video URL for dubbing"),
-    instructment: bool = Form(True, description="Whether to include instruments in final audio"),
-    generate_subtitles: bool = Form(True, description="Whether to generate subtitles"),
-    target_language: str = Form("English", description="Target language for translation"),
-    language_code: Optional[str] = Form(None, description="Language code for transcription"),
-    speakers_expected: Optional[str] = Form(None, description="Expected number of speakers (1-10)")
-):
-    """Start video dubbing process - downloads video, extracts audio, and processes with queue system"""
-    
-    # Clean up inputs
-    video_url = video_url.strip()
-    language_code = language_code.strip() if language_code else None
-    speakers_expected = int(speakers_expected) if speakers_expected else 1
-    
-    # Validate URL format
-    if not video_url.startswith(('http://', 'https://')):
-        raise HTTPException(status_code=400, detail="Invalid video URL format")
+# Simple Dubbing API Endpoint
+@app.post("/api/simple-dubbing", response_model=SimpleDubbingResponse)
+async def create_simple_dubbing(request: SimpleDubbingRequest):
+    """Create dubbed audio using Simple Dubbed API"""
+    try:
+        logger.info(f"Simple dubbing request: {request.audioUrl}")
         
-    # Generate unique audio ID
-    audio_id = r2_storage.generate_audio_id()
-    
-    # Initialize status tracking
-    status_manager.initialize_status(audio_id)
-    
-    # Submit to video processing queue
-    from video_processor.video_queue_manager import video_queue_manager
-    
-    queue_parameters = {
-        "include_instruments": instructment,
-        "generate_subtitles": generate_subtitles,
-        "target_language": target_language,
-        "language_code": language_code,
-        "speakers_expected": speakers_expected,
-        "original_source_url": video_url
-    }
-    
-    video_queue_manager.submit_request(
-        video_source=video_url,
-        audio_id=audio_id,
-        is_file_upload=False,
-        parameters=queue_parameters
-    )
-    
-    return StartProcessingResponse(
-        success=True,
-        audio_id=audio_id,
-        message="Video dubbing started successfully - added to queue",
-        status="queued",
-        estimated_time="10-20 minutes",
-        status_check_url=f"/status/{audio_id}",
-    )
+        from dub.simple_dubbed_api import SimpleDubbedAPI
+        
+        # Initialize and process
+        api = SimpleDubbedAPI()
+        result = api.process_dubbed_audio(
+            audio_url=request.audioUrl,
+            speakers_count=request.speakersCount,
+            target_language=request.targetLanguage
+        )
+        
+        if result.get("success"):
+            logger.info(f"Simple dubbing completed: {result.get('transcript_id')}")
+            return SimpleDubbingResponse(
+                success=True,
+                message="Dubbing completed successfully",
+                transcriptId=result.get("transcript_id"),
+                segmentsCount=result.get("segments_count"),
+                targetLanguage=result.get("target_language"),
+                finalAudioUrl=result.get("final_audio_url"),
+                segments=result.get("segments", [])
+            )
+        else:
+            logger.error(f"Simple dubbing failed: {result.get('error')}")
+            return SimpleDubbingResponse(
+                success=False,
+                message="Dubbing process failed",
+                error=result.get("error")
+            )
+            
+    except Exception as e:
+        logger.error(f"Simple dubbing endpoint error: {str(e)}")
+        return SimpleDubbingResponse(
+            success=False,
+            message="Internal server error",
+            error=str(e)
+        )
 
 # Export Video Endpoints
 @app.post("/api/export-video", response_model=ExportJobResponse)
@@ -295,19 +278,7 @@ async def get_separation_queue_stats():
         logger.error(f"Failed to get queue stats: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get queue stats: {str(e)}")
 
-@app.get("/status/{audio_id}")
-async def get_status(audio_id: str):
-    """Get processing status for a specific audio ID"""
-    try:
-        status = status_manager.get_status(audio_id)
-        
-        # If completed, the download_url from R2 is already in details
-        if status.get("status") == "completed" and "download_url" in status.get("details", {}):
-            status["download_url"] = status["details"]["download_url"]
-            
-        return status
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+# Video-dub status endpoint removed as requested
 
 @app.post("/upload-file")
 async def upload_file(video_file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
@@ -397,17 +368,7 @@ async def process_file_background_only(file_id: str, temp_file_path: str, filena
         with open(temp_file_path, 'rb') as f:
             video_file_content = f.read()
         
-        local_result = local_storage.store_video(file_id, video_file_content, filename)
-        
-        if not local_result.get("success"):
-            upload_status_memory[file_id].update({
-                "status": "failed",
-                "progress": 0,
-                "message": f"Local storage failed: {local_result.get('error', 'Unknown error')}"
-            })
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-            return
+   
         
         upload_status_memory[file_id].update({"progress": 85, "message": "Uploading to cloud storage..."})
         file_key = f"uploads/{file_id}/{filename}"
@@ -424,24 +385,7 @@ async def process_file_background_only(file_id: str, temp_file_path: str, filena
             return
         
         uploaded_url = upload_result["url"]
-        
-        upload_status_memory[file_id].update({
-            "status": "completed",
-            "progress": 100,
-            "message": "Upload completed successfully",
-            "file_url": uploaded_url,
-            "local_path": local_result["local_path"],
-            "expires_at": local_result["expires_at"]
-        })
-        
-        uploaded_files_memory[file_id] = {
-            "url": uploaded_url,
-            "filename": filename,
-            "size": file_size,
-            "upload_time": datetime.now().isoformat(),
-            "local_path": local_result["local_path"],
-            "expires_at": local_result["expires_at"]
-        }
+      
         
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
@@ -479,48 +423,7 @@ async def get_upload_status(file_id: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/terminate/{audio_id}")
-async def terminate_process(audio_id: str, reason: Optional[str] = None):
-    """Terminate a processing request"""
-    try:
-        if not audio_id:
-            raise HTTPException(status_code=400, detail="Audio ID is required")
-        
-        status = status_manager.get_status(audio_id)
-        if not status:
-            raise HTTPException(status_code=404, detail="Process not found")
-        
-        if status.get("status") in ["completed", "failed"]:
-            return {
-                "success": False, 
-                "message": f"Process already {status.get('status')}",
-                "current_status": status.get("status")
-            }
-        
-        termination_reason = reason or "Manual termination via API"
-        success = status_manager.force_terminate_process(audio_id, termination_reason)
-        
-        if success:
-            logger.info(f"Successfully terminated process {audio_id}: {termination_reason}")
-            return {
-                "success": True,
-                "message": "Process terminated successfully",
-                "audio_id": audio_id,
-                "reason": termination_reason,
-                "terminated_at": datetime.now().isoformat()
-            }
-        else:
-            return {
-                "success": False,
-                "message": "Failed to terminate process - it may have already completed",
-                "audio_id": audio_id
-            }
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to terminate process {audio_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Termination failed: {str(e)}")
+# Video-dub terminate endpoint removed as requested
 
 @app.post("/api/download-video", response_model=VideoDownloadResponse)
 async def download_video(request: VideoDownloadRequest):

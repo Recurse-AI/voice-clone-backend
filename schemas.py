@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, validator
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 class StatusResponse(BaseModel):
     status: str
@@ -7,31 +7,8 @@ class StatusResponse(BaseModel):
     audio_id: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
 
-class StartProcessingResponse(BaseModel):
-    success: bool
-    audio_id: str
-    message: str
-    status: str
-    estimated_time: str
-    status_check_url: str
-
-class RegenerateSegmentRequest(BaseModel):
-    text: str
-    reference_audio_url: str
-    duration: float
-    seed: Optional[int] = None
-    temperature: Optional[float] = 1.0
-    cfg_scale: Optional[float] = 3.5
-    top_p: Optional[float] = 0.95
-
-class RegenerateSegmentResponse(BaseModel):
-    success: bool
-    message: str
-    audio_url: Optional[str] = None
-    audio_data: Optional[bytes] = None
-    duration: Optional[float] = None
-    generation_time: Optional[float] = None
-    parameters_used: Optional[Dict[str, Any]] = None
+# Video-dub related schemas removed as requested
+# (StartProcessingResponse, RegenerateSegmentRequest, RegenerateSegmentResponse)
 
 # Export Video Schemas
 class ExportVideoRequest(BaseModel):
@@ -152,4 +129,26 @@ class UploadStatusResponse(BaseModel):
     progress: int  # 0-100
     message: str
     original_filename: Optional[str] = None
-    file_url: Optional[str] = None 
+    file_url: Optional[str] = None
+
+# Simple Dubbing API Schemas
+class SimpleDubbingRequest(BaseModel):
+    audioUrl: str = Field(..., min_length=1, description="Audio URL to process for dubbing")
+    speakersCount: int = Field(2, ge=1, le=10, description="Expected number of speakers (1-10)")
+    targetLanguage: str = Field("English", description="Target language for dubbing")
+    
+    @validator('audioUrl')
+    def validate_audio_url(cls, v):
+        if not v.startswith(('http://', 'https://')):
+            raise ValueError("Audio URL must start with http:// or https://")
+        return v
+
+class SimpleDubbingResponse(BaseModel):
+    success: bool
+    message: str
+    transcriptId: Optional[str] = None
+    segmentsCount: Optional[int] = None
+    targetLanguage: Optional[str] = None
+    finalAudioUrl: Optional[str] = None
+    segments: Optional[List[Dict[str, Any]]] = None
+    error: Optional[str] = None
