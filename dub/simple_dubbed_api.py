@@ -242,7 +242,7 @@ class SimpleDubbedAPI:
                     temperature=0.8,
                     chunk_length=200
                 )
-                print(result)
+
                 if result.get("success"):
                     import soundfile as sf
                     import io

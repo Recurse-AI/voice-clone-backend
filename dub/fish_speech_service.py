@@ -152,11 +152,11 @@ class FishSpeechService:
             )
             
             logger.info(f"Generating voice with reference audio for text: {text[:50]}...")
-            
+            print(tts_request)
             # Generate audio using TTSInferenceEngine
             audio_data = b""
             for result in self.inference_engine.inference(tts_request):
-                if result.code == "chunk":
+                if result.code in ("chunk", "final"):
                     # Accumulate audio chunks
                     sample_rate, audio_chunk = result.audio
                     if isinstance(audio_chunk, np.ndarray):
