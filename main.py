@@ -8,12 +8,13 @@ from pathlib import Path
 import logging
 from datetime import datetime
 from contextlib import asynccontextmanager
+import asyncio
 
 from config import settings
 from r2_storage import R2Storage
 from status_manager import status_manager, ProcessingStatus
 from video_downloader import video_download_service
-from schemas import StatusResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse, VideoDownloadRequest, VideoDownloadResponse, FileUploadResponse, UploadStatusResponse, SimpleDubbingRequest, SimpleDubbingResponse
+from schemas import StatusResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse, VideoDownloadRequest, VideoDownloadResponse, UploadStatusResponse, VideoDubRequest, VideoDubResponse, VideoDubStatusResponse
 
 # Configure logging
 os.makedirs(settings.LOGS_DIR, exist_ok=True)
@@ -93,50 +94,6 @@ async def root():
     )
 
 
-
-# Simple Dubbing API Endpoint
-@app.post("/api/simple-dubbing", response_model=SimpleDubbingResponse)
-async def create_simple_dubbing(request: SimpleDubbingRequest):
-    """Create dubbed audio using Simple Dubbed API"""
-    try:
-        logger.info(f"Simple dubbing request: {request.audioUrl}")
-        
-        from dub.simple_dubbed_api import SimpleDubbedAPI
-        
-        # Initialize and process
-        api = SimpleDubbedAPI()
-        result = api.process_dubbed_audio(
-            audio_url=request.audioUrl,
-            speakers_count=request.speakersCount,
-            target_language=request.targetLanguage
-        )
-        
-        if result.get("success"):
-            logger.info(f"Simple dubbing completed: {result.get('transcript_id')}")
-            return SimpleDubbingResponse(
-                success=True,
-                message="Dubbing completed successfully",
-                transcriptId=result.get("transcript_id"),
-                segmentsCount=result.get("segments_count"),
-                targetLanguage=result.get("target_language"),
-                finalAudioUrl=result.get("final_audio_url"),
-                segments=result.get("segments", [])
-            )
-        else:
-            logger.error(f"Simple dubbing failed: {result.get('error')}")
-            return SimpleDubbingResponse(
-                success=False,
-                message="Dubbing process failed",
-                error=result.get("error")
-            )
-            
-    except Exception as e:
-        logger.error(f"Simple dubbing endpoint error: {str(e)}")
-        return SimpleDubbingResponse(
-            success=False,
-            message="Internal server error",
-            error=str(e)
-        )
 
 # Export Video Endpoints
 @app.post("/api/export-video", response_model=ExportJobResponse)
@@ -283,78 +240,70 @@ async def get_separation_queue_stats():
 @app.post("/upload-file")
 async def upload_file(video_file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     """Upload video file to Cloudflare with background processing"""
-    file_id = r2_storage.generate_audio_id()
+    job_id = r2_storage.generate_job_id()
     original_filename = video_file.filename
-    
     try:
-        temp_file_path = os.path.join(settings.TEMP_DIR, f"upload_{file_id}_{original_filename}")
-        os.makedirs(settings.TEMP_DIR, exist_ok=True)
-        
-        upload_status_memory[file_id] = {
+        # Change: save as tmp/voice_cloning/dub_{job_id}/{original_filename}
+        job_dir = os.path.join(settings.TEMP_DIR, f"dub_{job_id}")
+        os.makedirs(job_dir, exist_ok=True)
+        temp_file_path = os.path.join(job_dir, original_filename)
+        upload_status_memory[job_id] = {
             "status": "uploading",
             "progress": 5,
             "message": "Saving uploaded file...",
             "original_filename": original_filename,
             "started_at": datetime.now().isoformat()
         }
-        
         total_size = 0
         with open(temp_file_path, "wb") as buffer:
             while chunk := await video_file.read(8192):
                 buffer.write(chunk)
                 total_size += len(chunk)
-        
         file_size = os.path.getsize(temp_file_path)
-        upload_status_memory[file_id].update({
+        upload_status_memory[job_id].update({
             "progress": 15,
             "message": f"File saved ({file_size // (1024*1024)} MB), starting background processing..."
         })
-        
-        background_tasks.add_task(process_file_background_only, file_id, temp_file_path, original_filename, file_size)
-        
+        background_tasks.add_task(process_file_background_only, job_id, temp_file_path, original_filename, file_size)
         return {
             "success": True,
             "message": "File upload started successfully",
-            "file_id": file_id,
-            "status_check_url": f"/upload-status/{file_id}",
+            "job_id": job_id,
+            "status_check_url": f"/upload-status/{job_id}",
             "original_filename": original_filename,
             "file_size_mb": file_size // (1024*1024),
             "estimated_time": "2-10 minutes"
         }
-        
     except Exception as e:
-        temp_file_path = os.path.join(settings.TEMP_DIR, f"upload_{file_id}_{original_filename}")
+        job_dir = os.path.join(settings.TEMP_DIR, f"dub_{job_id}")
+        temp_file_path = os.path.join(job_dir, original_filename)
         if os.path.exists(temp_file_path):
             os.remove(temp_file_path)
-            
-        if file_id in upload_status_memory:
-            upload_status_memory[file_id].update({
+        if job_id in upload_status_memory:
+            upload_status_memory[job_id].update({
                 "status": "failed",
                 "progress": 0,
                 "message": f"File save failed: {str(e)}"
             })
         raise HTTPException(status_code=500, detail=f"Failed to start upload: {str(e)}")
 
-async def process_file_background_only(file_id: str, temp_file_path: str, filename: str, file_size: int):
-    """Background processing for uploaded file"""
+# --- Background process for upload ---
+async def process_file_background_only(job_id: str, temp_file_path: str, filename: str, file_size: int):
     try:
-        upload_status_memory[file_id].update({
+        upload_status_memory[job_id].update({
             "progress": 20, 
-            "message": "Validating uploaded file..."
+            "message": "Validating uploaded file...",
+            "status": "uploading"
         })
-        
         if not os.path.exists(temp_file_path):
             raise Exception("Temporary file not found")
-            
         if file_size == 0:
             raise Exception("Uploaded file is empty")
-        
-        upload_status_memory[file_id].update({"progress": 30, "message": "Checking file format..."})
+        upload_status_memory[job_id].update({"progress": 30, "message": "Checking file format...", "status": "uploading"})
         allowed_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
         file_ext = Path(filename).suffix.lower()
-        
         if file_ext not in allowed_extensions:
-            upload_status_memory[file_id].update({
+            upload_status_memory[job_id].update({
                 "status": "failed", 
                 "progress": 0, 
                 "message": f"Unsupported video format. Allowed: {', '.join(allowed_extensions)}"
@@ -362,62 +311,40 @@ async def process_file_background_only(file_id: str, temp_file_path: str, filena
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
             return
-        
-        upload_status_memory[file_id].update({"progress": 60, "message": "Storing locally..."})
-        
-        with open(temp_file_path, 'rb') as f:
-            video_file_content = f.read()
-        
-   
-        
-        upload_status_memory[file_id].update({"progress": 85, "message": "Uploading to cloud storage..."})
-        file_key = f"uploads/{file_id}/{filename}"
-        upload_result = r2_storage.upload_file(temp_file_path, file_key)
-        
-        if not upload_result.get("success"):
-            upload_status_memory[file_id].update({
-                "status": "failed",
-                "progress": 0,
-                "message": f"Cloud upload failed: {upload_result.get('error', 'Unknown error')}"
-            })
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-            return
-        
-        uploaded_url = upload_result["url"]
-      
-        
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-        
+        upload_status_memory[job_id].update({
+            "progress": 100,
+            "message": "File saved locally.",
+            "status": "done",
+            "file_url": temp_file_path
+        })
     except Exception as e:
-        upload_status_memory[file_id].update({
+        upload_status_memory[job_id].update({
             "status": "failed",
             "progress": 0,
-            "message": f"Upload processing failed: {str(e)}"
+            "message": f"Processing failed: {str(e)}"
         })
-        
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
 
-@app.get("/upload-status/{file_id}", response_model=UploadStatusResponse)
-async def get_upload_status(file_id: str):
+@app.get("/upload-status/{job_id}", response_model=UploadStatusResponse)
+async def get_upload_status(job_id: str):
     """Get upload progress status"""
     try:
-        if file_id not in upload_status_memory:
+        if job_id not in upload_status_memory:
             raise HTTPException(status_code=404, detail="Upload ID not found")
-        
-        data = upload_status_memory[file_id]
-        
-        return UploadStatusResponse(
-            file_id=file_id,
-            status=data["status"],
-            progress=data["progress"],
-            message=data["message"],
-            original_filename=data.get("original_filename"),
-            file_url=data.get("file_url")
-        )
-        
+        data = upload_status_memory[job_id]
+        # status: pending, uploading, done, failed
+        status = data.get("status", "pending")
+        progress = data.get("progress", 0)
+        message = data.get("message", "")
+        original_filename = data.get("original_filename")
+        file_url = data.get("file_url")
+        return {
+            "job_id": job_id,
+            "status": status,
+            "progress": progress,
+            "message": message,
+            "original_filename": original_filename,
+            "file_url": file_url
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -425,27 +352,140 @@ async def get_upload_status(file_id: str):
 
 # Video-dub terminate endpoint removed as requested
 
+@app.post("/api/video-dub", response_model=VideoDubResponse)
+async def start_video_dub(request: VideoDubRequest, background_tasks: BackgroundTasks):
+    """
+    Start video dubbing job (background).
+    ভিডিও upload-file API দিয়ে upload করতে হবে, তারপর এখানে সেই job_id দিতে হবে।
+    video_url ফিল্ড নেই, কারণ ভিডিও local-এ সংরক্ষিত থাকবে।
+    """
+    # Immediately initialize status so that the status endpoint can return data right away
+    from status_manager import status_manager, ProcessingStatus
+    status_manager.initialize_status(request.job_id)
+    status_manager.update_status(request.job_id, ProcessingStatus.PENDING, progress=0)
+
+    background_tasks.add_task(process_video_dub_background, request)
+    return VideoDubResponse(
+        success=True,
+        message="Video dub started successfully",
+        job_id=request.job_id,
+        status_check_url=f"/api/video-dub-status/{request.job_id}"
+    )
+
+@app.get("/api/video-dub-status/{job_id}", response_model=VideoDubStatusResponse)
+async def get_video_dub_status(job_id: str):
+    if not status_manager.get_status(job_id):
+        raise HTTPException(status_code=404, detail="Job ID not found")
+    data = status_manager.get_status(job_id)
+    return VideoDubStatusResponse(
+        job_id=job_id,
+        status=data["status"],
+        progress=data["progress"],
+        message=data["message"],
+        result_url=data.get("result_url"),
+        error=data.get("error"),
+        details=data.get("details")
+    )
+
+# Background processing function
+async def process_video_dub_background(request: VideoDubRequest):
+    job_id = request.job_id
+    try:
+        status_manager.update_status(job_id, ProcessingStatus.PROCESSING, progress=10, details={"message": "Finding uploaded video..."})
+        job_dir = os.path.join(settings.TEMP_DIR, f"dub_{job_id}")
+        if not os.path.exists(job_dir):
+            status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": "Uploaded video not found.", "error": "No such directory"})
+            return
+        video_files = [f for f in os.listdir(job_dir) if f.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'))]
+        if not video_files:
+            status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": "No video file found in upload folder.", "error": "No video file"})
+            return
+        local_video_path = os.path.join(job_dir, video_files[0])
+        status_manager.update_status(job_id, ProcessingStatus.PROCESSING, progress=20, details={"message": "Extracting audio..."})
+        from dub.audio_utils import AudioUtils
+        audio_utils = AudioUtils()
+        audio_path = os.path.join(job_dir, f"{job_id}.wav")
+        extract_result = audio_utils.extract_audio_from_video(local_video_path, audio_path)
+        if not extract_result["success"]:
+            status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": "Audio extraction failed.", "error": extract_result.get("error")})
+            return
+        status_manager.update_status(job_id, ProcessingStatus.PROCESSING, progress=30, details={"message": "Separating vocals and instruments..."})
+        from dub.runpod_service import RunPodService
+        runpod = RunPodService()
+        r2_audio_path = r2_storage.upload_file(audio_path, f"temp/{job_id}/{job_id}.wav")
+        if not r2_audio_path["success"]:
+            status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": "Audio upload failed.", "error": r2_audio_path.get("error")})
+            return
+        sep_result = runpod.process_audio_separation(r2_audio_path["url"])
+        if not sep_result or not sep_result.get('id'):
+            status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": "Audio separation job submission failed.", "error": sep_result.get("error") if sep_result else "Unknown error"})
+            return
+        status = runpod.wait_for_completion(sep_result['id'])
+        if status.get('status') != 'COMPLETED' or not status.get('output'):
+            status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": "Audio separation failed.", "error": status.get("error")})
+            return
+        vocal_url = status['output'].get('vocal_audio')
+        instrument_url = status['output'].get('instrument_audio')
+        vocal_path = os.path.join(job_dir, f"{job_id}_vocal.wav")
+        instrument_path = os.path.join(job_dir, f"{job_id}_instrument.wav")
+        if vocal_url:
+            download_result = audio_utils.download_audio_file(vocal_url, vocal_path)
+            if not download_result["success"]:
+                status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": "Vocal audio download failed.", "error": download_result.get("error")})
+                return
+        if instrument_url:
+            download_result = audio_utils.download_audio_file(instrument_url, instrument_path)
+            if not download_result["success"]:
+                status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": "Instrument audio download failed.", "error": download_result.get("error")})
+                return
+        status_manager.update_status(job_id, ProcessingStatus.PROCESSING, progress=40, details={"message": "Cloning voice and reconstructing audio..."})
+        from dub.simple_dubbed_api import SimpleDubbedAPI
+        simple_dubbed_api = SimpleDubbedAPI()
+        upload_response = r2_storage.upload_file(audio_path, f"temp/{job_id}/{job_id}.wav")
+        if not upload_response["success"]:
+            status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": "Audio upload failed.", "error": upload_response.get("error")})
+            return
+        audio_url = upload_response["url"]
+        pipeline_result = simple_dubbed_api.process_dubbed_audio(
+            job_id=job_id,
+            audio_url=audio_url,
+            video_path=local_video_path,
+            instrument_path=instrument_path,
+            target_language=request.target_language,
+            expected_speaker=request.expected_speaker,
+            source_video_language=request.source_video_language,
+            subtitle=request.subtitle,
+            instrument=request.instrument,
+            output_dir=job_dir
+        )
+        if not pipeline_result["success"]:
+            status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": "Dubbing pipeline failed.", "error": pipeline_result.get("error"), "details": pipeline_result.get("details")})
+            return
+        # Clean up temporary R2 files
+        r2_storage.delete_file(upload_response["r2_key"])
+        r2_storage.delete_file(r2_audio_path["r2_key"])
+        status_manager.update_status(job_id, ProcessingStatus.COMPLETED, progress=100, details={"message": "Video dubbing completed.", "result_url": pipeline_result.get("result_url") or (pipeline_result.get("result_urls", {}) or {}).get("final_video"), "details": pipeline_result.get("details")})
+    except Exception as e:
+        status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": f"Processing failed: {str(e)}", "error": str(e)})
+
 @app.post("/api/download-video", response_model=VideoDownloadResponse)
 async def download_video(request: VideoDownloadRequest):
-    """Download video from URL and upload to Cloudflare R2"""
+    """Download video from URL and store locally"""
     try:
         logger.info(f"Video download request: {request.url}")
-        
-        video_download_service.cleanup_old_files()
-        
+
         result = await video_download_service.download_video(
             url=request.url,
             quality=request.quality
         )
-        
+
         if result["success"]:
             logger.info(f"Video download successful: {result['download_id']}")
             return VideoDownloadResponse(
                 success=True,
                 message=result["message"],
-                download_id=result["download_id"],
-                video_info=result["video_info"],
-                cloudflare=result["cloudflare"]
+                job_id=result["job_id"],
+                video_info=result["video_info"]
             )
         else:
             logger.error(f"Video download failed: {result['error']}")
@@ -454,7 +494,6 @@ async def download_video(request: VideoDownloadRequest):
                 message="Video download failed",
                 error=result["error"]
             )
-            
     except Exception as e:
         logger.error(f"Video download endpoint error: {str(e)}")
         return VideoDownloadResponse(
@@ -462,6 +501,17 @@ async def download_video(request: VideoDownloadRequest):
             message="Internal server error",
             error=str(e)
         )
+
+# --------------------------------------------------------------------------
+# Periodic cleanup task – runs every hour
+# --------------------------------------------------------------------------
+@app.on_event("startup")
+async def _start_cleanup_task():
+    async def _cleanup_loop():
+        while True:
+            video_download_service.cleanup_old_files()
+            await asyncio.sleep(3600)
+    asyncio.create_task(_cleanup_loop())
 
 if __name__ == "__main__":
     import uvicorn

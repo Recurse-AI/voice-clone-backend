@@ -1,0 +1,15 @@
+{
+  "id": "seg_004",
+  "segment_index": 4,
+  "start": 41190,
+  "end": 83570,
+  "duration_ms": 42380,
+  "original_text": "इस खूबसूरत जगह पर नेचर कुछ ऐसी मेहरबान है कि इस जगह ने इंडिया के नाम इतने सारे रिकॉर्ड्स किए हुए हैं जो शायद आप सब को पता भी न हो। गिनीज वर्ल्ड रिकॉर्ड के अकॉर्डिंग यहाँ 1 साल में ऑलमोस्ट 11 हजार 400 एमएम बारिश होती है यानी थर्टी सेवन फीट से भी ज्यादा बारिश। हर साल और 2 हज़ार 22 में। मोसेन राम ने अपना ही रिकॉर्ड ब्रेक कर के 24 घंटे में सबसे ज्यादा रेनपॉ्डकारिकॉर्ड बनाया जो है 3 फीट से भी ज्यादा बारिश। सिर्फ 1 दिन में यहाँ की सिर्फ 1 दिन की बारिश दिल्ली के पूरे साल भर की बारिश से भी ज्यादा है।",
+  "dubbed_text": "Nature is so kind in this beautiful place that it has set so many records for India that you might not even know about. According to the Guinness World Records, almost 11,400 mm of rain falls here in a year, which is more than 37 feet of rain. Every year, and in 2022, Mawsynram broke its own record by making the highest rainfall record in 24 hours, which is more than 3 feet of rain. Just one day's rainfall here is more than the entire year's rainfall in Delhi.",
+  "original_audio_file": "segment_ce64cf68-bbce-4c11-bbe1-940bee4524fb_003.wav",
+  "cloned_audio_file": "cloned_ce64cf68-bbce-4c11-bbe1-940bee4524fb_003.wav",
+  "voice_cloned": true,
+  "original_audio_path": "./tmp/voice_cloning\\segments_ce64cf68-bbce-4c11-bbe1-940bee4524fb\\segment_003.wav",
+  "cloned_audio_path": "./tmp/voice_cloning/cloned_ce64cf68-bbce-4c11-bbe1-940bee4524fb_003.wav",
+  "speaker_label": "A"
+}

@@ -1,0 +1,15 @@
+{
+  "id": "seg_008",
+  "segment_index": 8,
+  "start": 64010,
+  "end": 66630,
+  "duration_ms": 2620,
+  "original_text": "हर साल और 2 हज़ार 22 में।",
+  "dubbed_text": "Every year, and in 2022.",
+  "original_audio_file": "segment_1957dc0a-b15b-4c04-84cf-0d292daed823_007.wav",
+  "cloned_audio_file": "cloned_1957dc0a-b15b-4c04-84cf-0d292daed823_007.wav",
+  "voice_cloned": true,
+  "original_audio_path": "./tmp/voice_cloning\\segments_1957dc0a-b15b-4c04-84cf-0d292daed823\\segment_007.wav",
+  "cloned_audio_path": "./tmp/voice_cloning/1957dc0a-b15b-4c04-84cf-0d292daed823/cloned_1957dc0a-b15b-4c04-84cf-0d292daed823_007.wav",
+  "speaker_label": "A"
+}

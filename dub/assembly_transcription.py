@@ -106,9 +106,8 @@ class TranscriptionService:
             logger.error(f"Transcription failed for {audio_id}: {str(e)}")
             raise Exception(f"Transcription service error: {str(e)}")
     
-    def get_paragraphs_and_split_audio(self, audio_url: str, output_dir: str = None, 
-                                    speakers_count: int = 2, max_paragraphs: int = None) -> Dict[str, Any]:
-        """Get paragraphs from AssemblyAI API and split audio into segments"""
+    def get_paragraphs_and_split_audio(self, audio_url: str, output_dir: str = None, speakers_count: int = 1, source_video_language: str = None, expected_speaker: str = None, max_paragraphs: int = None) -> Dict[str, Any]:
+        """Get paragraphs from AssemblyAI API and split audio into segments, with language and speaker control"""
         try:
             logger.info(f"Starting paragraph extraction and audio splitting for audio: {audio_url}")
             
@@ -117,26 +116,46 @@ class TranscriptionService:
             if not audio_filename.endswith('.wav'):
                 audio_filename = f"{audio_filename}.wav"
             
-            temp_audio_path = os.path.join(settings.TEMP_DIR, audio_filename)
-            os.makedirs(settings.TEMP_DIR, exist_ok=True)
+            # Store downloaded audio inside the provided output directory (or TEMP_DIR if None)
+            download_dir = output_dir if output_dir else settings.TEMP_DIR
+            os.makedirs(download_dir, exist_ok=True)
+            temp_audio_path = os.path.join(download_dir, audio_filename)
             
             download_result = self.audio_utils.download_audio_file(audio_url, temp_audio_path)
             if not download_result["success"]:
                 raise Exception(f"Failed to download audio: {download_result['error']}")
             
+            # Determine language config
+            language_detection = True if not source_video_language else False
+            language_code = source_video_language if source_video_language else None
+            
+            # Determine speakers_count
+            if expected_speaker:
+                speakers_count = 1
+            
             # Create transcription for the audio
-            transcript_result = self._create_transcription_for_audio(temp_audio_path, speakers_count)
+            transcript_result = self._create_transcription_for_audio(temp_audio_path, speakers_count, language_code, language_detection)
             transcript_id = transcript_result["transcript_id"]
             logger.info(f"Created transcript with ID: {transcript_id}")
             
             # Get paragraphs from AssemblyAI API
-            paragraphs_data = self._get_paragraphs_from_api(transcript_id)
+            # paragraphs_data = self._get_paragraphs_from_api(transcript_id)
             
-            if not paragraphs_data or "paragraphs" not in paragraphs_data:
-                raise Exception("No paragraphs found in transcription response")
+            # if not paragraphs_data or "paragraphs" not in paragraphs_data:
+            #     raise Exception("No paragraphs found in transcription response")
             
-            paragraphs = paragraphs_data["paragraphs"]
-            logger.info(f"Found {len(paragraphs)} paragraphs in transcript")
+            # paragraphs = paragraphs_data["paragraphs"]
+            # logger.info(f"Found {len(paragraphs)} paragraphs in transcript")
+
+            paragraphs_data = self._get_sentences_from_api(transcript_id)
+            if isinstance(paragraphs_data, dict) and "sentences" in paragraphs_data:
+                paragraphs = paragraphs_data["sentences"]
+            elif isinstance(paragraphs_data, list):
+                paragraphs = paragraphs_data
+            else:
+                raise Exception(f"Unexpected response format from AssemblyAI sentences API: {paragraphs_data}")
+            logger.info(f"Found {len(paragraphs)} sentences in transcript")
+            
             
             # Extract start, end, text from paragraphs
             segments_to_split = []
@@ -145,7 +164,8 @@ class TranscriptionService:
                 segments_to_split.append({
                     "start": paragraph["start"],
                     "end": paragraph["end"],
-                    "text": paragraph["text"]
+                    "text": paragraph["text"],
+                    "speaker_label": paragraph["words"][0]["speaker"] if paragraph.get("words") else None
                 })
             
             # Set output directory
@@ -162,9 +182,7 @@ class TranscriptionService:
             
             logger.info(f"Successfully split audio into {split_result['segments_count']} segments")
             
-            # Clean up downloaded audio file
-            if os.path.exists(temp_audio_path):
-                os.remove(temp_audio_path)
+
             
             # Combine split file info with original sentence data (including speaker)
             enhanced_segments = []
@@ -185,6 +203,7 @@ class TranscriptionService:
                 "audio_url": audio_url,
                 "paragraphs_count": len(paragraphs),
                 "segments_processed": len(enhanced_segments),
+                "original_audio": temp_audio_path,
                 "split_result": split_result,
                 "segments": enhanced_segments
             }
@@ -193,20 +212,18 @@ class TranscriptionService:
             logger.error(f"Paragraph extraction and audio splitting failed: {str(e)}")
             raise Exception(f"Service error: {str(e)}")
     
-    def _create_transcription_for_audio(self, audio_path: str, speakers_count: int = 2) -> Dict[str, Any]:
-        """Create a new transcription for audio file with speaker diarization"""
+    def _create_transcription_for_audio(self, audio_path: str, speakers_count: int = 2, language_code: str = None, language_detection: bool = True) -> Dict[str, Any]:
+        """Create a new transcription for audio file with speaker diarization and language control"""
         try:
             transcriber = aai.Transcriber()
-            
-            # Config for transcription with speaker diarization
             config = aai.TranscriptionConfig(
-                speaker_labels=True,  # Enable speaker detection
-                speakers_expected=speakers_count,  # Set expected speakers count
-                language_detection=True,
+                speaker_labels=True,
+                speakers_expected=speakers_count,
+                language_detection=language_detection,
+                language_code=None if language_detection else language_code,
                 punctuate=True,
                 format_text=True
             )
-            
             transcript = transcriber.transcribe(audio_path, config=config)
             
             # Wait for completion
@@ -236,7 +253,6 @@ class TranscriptionService:
             
             response = requests.get(url, headers=headers, timeout=30)
             response.raise_for_status()
-            print(response.json())
             
             return response.json()
             
@@ -245,10 +261,21 @@ class TranscriptionService:
         except json.JSONDecodeError as e:
             raise Exception(f"Failed to parse API response: {str(e)}")
     
-    # Backward compatibility alias
-    def get_sentences_and_split_audio(self, audio_url: str, transcript_id: str = None, 
-                                     output_dir: str = None, speakers_count: int = 2) -> Dict[str, Any]:
-        """Backward compatibility wrapper - redirects to get_paragraphs_and_split_audio"""
-        # Ignore transcript_id parameter for backward compatibility
-        return self.get_paragraphs_and_split_audio(audio_url, output_dir, speakers_count)
-   
+    def _get_sentences_from_api(self, transcript_id: str) -> Dict[str, Any]:
+        """Get sentences from AssemblyAI API using direct HTTP request"""
+        try:
+            url = f"https://api.assemblyai.com/v2/transcript/{transcript_id}/sentences"
+            headers = {
+                "Authorization": settings.ASSEMBLYAI_API_KEY
+            }
+            
+            response = requests.get(url, headers=headers, timeout=30)
+            response.raise_for_status()
+            
+            return response.json()
+            
+        except requests.exceptions.RequestException as e:
+            raise Exception(f"Failed to get sentences from API: {str(e)}")
+        except json.JSONDecodeError as e:
+            raise Exception(f"Failed to parse API response: {str(e)}")
+    

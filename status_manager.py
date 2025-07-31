@@ -40,7 +40,21 @@ class StatusManager:
         try:
             if settings.MONGODB_URI:
                 import pymongo
-                self._mongo_client = pymongo.MongoClient(settings.MONGODB_URI)
+                # Short timeouts so that API endpoints don't block if DB is unreachable
+                self._mongo_client = pymongo.MongoClient(
+                    settings.MONGODB_URI,
+                    serverSelectionTimeoutMS=3000,  # 3 s
+                    connectTimeoutMS=3000,
+                    socketTimeoutMS=3000
+                )
+                try:
+                    # Force connection test; if it fails we disable backup gracefully
+                    self._mongo_client.server_info()
+                except Exception as conn_err:
+                    logger.error(f"MongoDB connection test failed: {conn_err}. Status backup disabled.")
+                    self._mongo_client = None
+                    return
+
                 self._mongo_db = self._mongo_client.voice_cloning
                 self._mongo_collection = self._mongo_db.status
                 logger.info("MongoDB connected for status backup")
@@ -50,27 +64,27 @@ class StatusManager:
             logger.error(f"MongoDB connection failed: {e}")
             self._mongo_client = None
     
-    def _save_to_mongodb(self, audio_id: str, status_data: Dict[str, Any]):
+    def _save_to_mongodb(self, job_id: str, status_data: Dict[str, Any]):
         """Save status to MongoDB"""
         if self._mongo_collection is None:
             return
         
         try:
             self._mongo_collection.replace_one(
-                {"audio_id": audio_id},
+                {"job_id": job_id},
                 status_data,
                 upsert=True
             )
         except Exception as e:
             logger.error(f"Failed to save status to MongoDB: {e}")
     
-    def _get_from_mongodb(self, audio_id: str) -> Optional[Dict[str, Any]]:
+    def _get_from_mongodb(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get status from MongoDB"""
         if self._mongo_collection is None:
             return None
         
         try:
-            result = self._mongo_collection.find_one({"audio_id": audio_id})
+            result = self._mongo_collection.find_one({"job_id": job_id})
             if result:
                 result.pop('_id', None)  # Remove MongoDB ObjectId
                 return result
@@ -141,25 +155,25 @@ class StatusManager:
             # Save to MongoDB
             self._save_to_mongodb(audio_id, self._statuses[audio_id])
     
-    def set_progress(self, audio_id: str, progress: int) -> None:
+    def set_progress(self, job_id: str, progress: int) -> None:
         """Update progress percentage"""
         with self._lock:
-            if audio_id in self._statuses:
-                self._statuses[audio_id]["progress"] = min(100, max(0, progress))
-                self._statuses[audio_id]["updated_at"] = datetime.now().isoformat()
+            if job_id in self._statuses:
+                self._statuses[job_id]["progress"] = min(100, max(0, progress))
+                self._statuses[job_id]["updated_at"] = datetime.now().isoformat()
                 
                 # Save to MongoDB
-                self._save_to_mongodb(audio_id, self._statuses[audio_id])
+                self._save_to_mongodb(job_id, self._statuses[job_id])
     
-    def get_status(self, audio_id: str) -> Optional[Dict[str, Any]]:
+    def get_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get current status with MongoDB fallback and queue information"""
         with self._lock:
             status_data = None
-            if audio_id in self._statuses:
-                status_data = self._statuses[audio_id].copy()
+            if job_id in self._statuses:
+                status_data = self._statuses[job_id].copy()
             else:
                 # Fallback to MongoDB
-                status_data = self._get_from_mongodb(audio_id)
+                status_data = self._get_from_mongodb(job_id)
             
             if status_data:
                 # Video queue information removed - video-dub functionality removed
@@ -168,13 +182,13 @@ class StatusManager:
             
             return status_data
     
-    def complete_processing(self, audio_id: str, details: Optional[Dict[str, Any]] = None):
+    def complete_processing(self, job_id: str, details: Optional[Dict[str, Any]] = None):
         """Mark processing as completed"""
-        self.update_status(audio_id, ProcessingStatus.COMPLETED, 100, details)
+        self.update_status(job_id, ProcessingStatus.COMPLETED, 100, details)
     
-    def fail_processing(self, audio_id: str, error: str):
+    def fail_processing(self, job_id: str, error: str):
         """Mark processing as failed"""
-        self.update_status(audio_id, ProcessingStatus.FAILED, details={"error": error})
+        self.update_status(job_id, ProcessingStatus.FAILED, details={"error": error})
     
     def cleanup_old_statuses(self):
         """Clean up old statuses (older than 24 hours)"""

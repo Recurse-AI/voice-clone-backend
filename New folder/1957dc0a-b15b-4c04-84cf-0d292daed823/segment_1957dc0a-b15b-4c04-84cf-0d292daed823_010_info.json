@@ -1,0 +1,15 @@
+{
+  "id": "seg_011",
+  "segment_index": 11,
+  "start": 84570,
+  "end": 87440,
+  "duration_ms": 2870,
+  "original_text": "तो इतने स्पेशल मौसम वाली जगह में तो आना ही था।",
+  "dubbed_text": "So, I just had to come to such a special place in this weather.",
+  "original_audio_file": "segment_1957dc0a-b15b-4c04-84cf-0d292daed823_010.wav",
+  "cloned_audio_file": "cloned_1957dc0a-b15b-4c04-84cf-0d292daed823_010.wav",
+  "voice_cloned": true,
+  "original_audio_path": "./tmp/voice_cloning\\segments_1957dc0a-b15b-4c04-84cf-0d292daed823\\segment_010.wav",
+  "cloned_audio_path": "./tmp/voice_cloning/1957dc0a-b15b-4c04-84cf-0d292daed823/cloned_1957dc0a-b15b-4c04-84cf-0d292daed823_010.wav",
+  "speaker_label": "A"
+}

@@ -1,0 +1,15 @@
+{
+  "id": "seg_006",
+  "segment_index": 6,
+  "start": 41190,
+  "end": 52490,
+  "duration_ms": 11300,
+  "original_text": "इस खूबसूरत जगह पर नेचर कुछ ऐसी मेहरबान है कि इस जगह ने इंडिया के नाम इतने सारे रिकॉर्ड्स किए हुए हैं जो शायद आप सब को पता भी न हो।",
+  "dubbed_text": "Nature is so kind in this beautiful place that it has set so many records for India that you might not even be aware of.",
+  "original_audio_file": "segment_1957dc0a-b15b-4c04-84cf-0d292daed823_005.wav",
+  "cloned_audio_file": "cloned_1957dc0a-b15b-4c04-84cf-0d292daed823_005.wav",
+  "voice_cloned": true,
+  "original_audio_path": "./tmp/voice_cloning\\segments_1957dc0a-b15b-4c04-84cf-0d292daed823\\segment_005.wav",
+  "cloned_audio_path": "./tmp/voice_cloning/1957dc0a-b15b-4c04-84cf-0d292daed823/cloned_1957dc0a-b15b-4c04-84cf-0d292daed823_005.wav",
+  "speaker_label": "A"
+}

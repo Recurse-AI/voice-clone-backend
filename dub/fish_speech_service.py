@@ -152,7 +152,7 @@ class FishSpeechService:
             )
             
             logger.info(f"Generating voice with reference audio for text: {text[:50]}...")
-            print(tts_request)
+            
             # Generate audio using TTSInferenceEngine
             audio_data = b""
             for result in self.inference_engine.inference(tts_request):

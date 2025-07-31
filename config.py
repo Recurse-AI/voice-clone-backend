@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     R2_ACCESS_KEY_ID: str = os.getenv("R2_ACCESS_KEY_ID", "")
     R2_SECRET_ACCESS_KEY: str = os.getenv("R2_SECRET_ACCESS_KEY", "")
     R2_BUCKET_NAME: str = os.getenv("R2_BUCKET_NAME", "")
-    R2_ENDPOINT_URL: str = os.getenv("R2_ENDPOINT", os.getenv("R2_ENDPOINT_URL", ""))
+    R2_ENDPOINT_URL: str = os.getenv("R2_ENDPOINT_URL", "")
     R2_REGION: str = os.getenv("R2_REGION", "auto")
     R2_BASE_PATH: str = "voice-cloning"
     R2_PUBLIC_URL: str = os.getenv("R2_PUBLIC_URL", "")

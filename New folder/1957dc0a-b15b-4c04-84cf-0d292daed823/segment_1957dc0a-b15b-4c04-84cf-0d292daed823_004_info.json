@@ -1,0 +1,15 @@
+{
+  "id": "seg_005",
+  "segment_index": 5,
+  "start": 32790,
+  "end": 35810,
+  "duration_ms": 3020,
+  "original_text": "ये है वर्ल्ड्स वेटेस्ट प्लेस मोसिनराम।",
+  "dubbed_text": "This is the world's wettest place, Mawsynram.",
+  "original_audio_file": "segment_1957dc0a-b15b-4c04-84cf-0d292daed823_004.wav",
+  "cloned_audio_file": "cloned_1957dc0a-b15b-4c04-84cf-0d292daed823_004.wav",
+  "voice_cloned": true,
+  "original_audio_path": "./tmp/voice_cloning\\segments_1957dc0a-b15b-4c04-84cf-0d292daed823\\segment_004.wav",
+  "cloned_audio_path": "./tmp/voice_cloning/1957dc0a-b15b-4c04-84cf-0d292daed823/cloned_1957dc0a-b15b-4c04-84cf-0d292daed823_004.wav",
+  "speaker_label": "A"
+}

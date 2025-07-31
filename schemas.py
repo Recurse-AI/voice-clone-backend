@@ -7,8 +7,34 @@ class StatusResponse(BaseModel):
     audio_id: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
 
-# Video-dub related schemas removed as requested
-# (StartProcessingResponse, RegenerateSegmentRequest, RegenerateSegmentResponse)
+# Video-dub related schemas
+class VideoDubRequest(BaseModel):
+    """
+    ভিডিও ডাবিং প্রসেসের জন্য রিকোয়েস্ট।
+    ভিডিও upload-file API দিয়ে upload করতে হবে, তারপর এখানে সেই job_id দিতে হবে।
+    video_url ফিল্ড নেই, কারণ ভিডিও local-এ সংরক্ষিত থাকবে।
+    """
+    job_id: str = Field(..., description="Unique job ID for the dubbing process (from /upload-file API)")
+    target_language: str = Field(..., description="Target language for dubbing")
+    expected_speaker: Optional[str] = Field(None, description="Expected speaker name or ID")
+    source_video_language: Optional[str] = Field(None, description="Source video language (default: None, auto-detect)")
+    subtitle: bool = Field(False, description="Whether to add subtitles")
+    instrument: bool = Field(False, description="Whether to add instrument track")
+
+class VideoDubResponse(BaseModel):
+    success: bool
+    message: str
+    job_id: str
+    status_check_url: str
+
+class VideoDubStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    progress: int
+    message: str
+    result_url: Optional[str] = None
+    error: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
 
 # Export Video Schemas
 class ExportVideoRequest(BaseModel):
@@ -108,47 +134,16 @@ class VideoDownloadRequest(BaseModel):
 class VideoDownloadResponse(BaseModel):
     success: bool
     message: str
-    download_id: Optional[str] = None
+    job_id: Optional[str] = None       # New field for consistency with other APIs
     video_info: Optional[Dict[str, Any]] = None
     cloudflare: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
-# File Upload Schemas (for separate upload endpoint)
-class FileUploadResponse(BaseModel):
-    success: bool
-    message: str
-    file_id: str
-    file_url: str
-    original_filename: str
-    file_size: int
-
 # Upload Status Schema
 class UploadStatusResponse(BaseModel):
-    file_id: str
+    job_id: str
     status: str  # uploading, completed, failed
     progress: int  # 0-100
     message: str
     original_filename: Optional[str] = None
     file_url: Optional[str] = None
-
-# Simple Dubbing API Schemas
-class SimpleDubbingRequest(BaseModel):
-    audioUrl: str = Field(..., min_length=1, description="Audio URL to process for dubbing")
-    speakersCount: int = Field(2, ge=1, le=10, description="Expected number of speakers (1-10)")
-    targetLanguage: str = Field("English", description="Target language for dubbing")
-    
-    @validator('audioUrl')
-    def validate_audio_url(cls, v):
-        if not v.startswith(('http://', 'https://')):
-            raise ValueError("Audio URL must start with http:// or https://")
-        return v
-
-class SimpleDubbingResponse(BaseModel):
-    success: bool
-    message: str
-    transcriptId: Optional[str] = None
-    segmentsCount: Optional[int] = None
-    targetLanguage: Optional[str] = None
-    finalAudioUrl: Optional[str] = None
-    segments: Optional[List[Dict[str, Any]]] = None
-    error: Optional[str] = None

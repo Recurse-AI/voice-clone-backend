@@ -1,0 +1,15 @@
+{
+  "id": "seg_001",
+  "segment_index": 1,
+  "start": 740,
+  "end": 4520,
+  "duration_ms": 3780,
+  "original_text": "इंडिया के नार्थ हिस्ट में आने वाली ये खूबसूरत जगह है।",
+  "dubbed_text": "This is a beautiful place located in the north of India.",
+  "original_audio_file": "segment_1957dc0a-b15b-4c04-84cf-0d292daed823_000.wav",
+  "cloned_audio_file": "cloned_1957dc0a-b15b-4c04-84cf-0d292daed823_000.wav",
+  "voice_cloned": true,
+  "original_audio_path": "./tmp/voice_cloning\\segments_1957dc0a-b15b-4c04-84cf-0d292daed823\\segment_000.wav",
+  "cloned_audio_path": "./tmp/voice_cloning/1957dc0a-b15b-4c04-84cf-0d292daed823/cloned_1957dc0a-b15b-4c04-84cf-0d292daed823_000.wav",
+  "speaker_label": "A"
+}

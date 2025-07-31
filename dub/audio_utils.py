@@ -264,3 +264,15 @@ class AudioUtils:
         except Exception as e:
             return {"success": False, "error": str(e)}
     
+    @staticmethod
+    def mix_audio_files(file1: str, file2: str, out_path: str, ratio1: float = 0.75, ratio2: float = 0.25):
+        import soundfile as sf
+        audio1, sr1 = sf.read(file1)
+        audio2, sr2 = sf.read(file2)
+        if sr1 != sr2:
+            raise Exception("Sample rate mismatch")
+        min_len = min(len(audio1), len(audio2))
+        mixed = ratio1 * audio1[:min_len] + ratio2 * audio2[:min_len]
+        sf.write(out_path, mixed, sr1)
+        return out_path
+    
