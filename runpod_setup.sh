@@ -209,6 +209,9 @@ MONGODB_URI=${MONGODB_URI}
 # Processing Options
 ENABLE_SUBTITLES=true
 ENABLE_INSTRUMENTS=true
+
+# GPU Video Encoding
+FFMPEG_USE_GPU=1
 EOF
 
 # Kill existing processes

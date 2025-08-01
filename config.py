@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     BASE_SEED: int = 42  # Base seed for speaker-specific seeds
     SPEAKER_SEED_OFFSET: int = 1000  # Offset for speaker-specific seeds
     USE_SPEED_ADJUSTMENT: bool = True  # Enable time stretching when needed
+    # FFmpeg Configuration
+    FFMPEG_USE_GPU: bool = bool(int(os.getenv('FFMPEG_USE_GPU', '0')))  # 1 to enable GPU (NVENC)
     
     # Processing Options
     ENABLE_SUBTITLES: bool = True

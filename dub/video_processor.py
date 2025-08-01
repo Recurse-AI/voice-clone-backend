@@ -9,6 +9,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from config import settings
 
 
 
@@ -69,17 +70,21 @@ class VideoProcessor:
                 # Convert to POSIX style path to avoid backslash escaping issues on Windows
                 subtitle_path_str = str(subtitle_path).replace('\\', '/')
                 # High-quality settings when adding subtitles
+                video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
+                preset = 'fast' if settings.FFMPEG_USE_GPU else 'medium'
                 cmd.extend([
                     '-vf', f"subtitles='{subtitle_path_str}':force_style='Fontname=Arial-Bold,Fontsize={self.subtitle_font_size},Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV={self.subtitle_margin_bottom}'",
-                    '-c:v', 'libx264',
-                    '-preset', 'medium',
+                    '-c:v', video_codec,
+                    '-preset', preset,
                     '-b:v', '5000k',
                 ])
             else:
                 # High quality without subtitles
+                video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
+                preset = 'fast' if settings.FFMPEG_USE_GPU else 'medium'
                 cmd.extend([
-                    '-c:v', 'libx264',
-                    '-preset', 'medium',
+                    '-c:v', video_codec,
+                    '-preset', preset,
                     '-b:v', '5000k',
                 ])
             
