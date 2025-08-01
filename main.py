@@ -387,8 +387,8 @@ async def get_video_dub_status(job_id: str):
         details=data.get("details")
     )
 
-# Background processing function
-async def process_video_dub_background(request: VideoDubRequest):
+# Background processing function (runs in threadpool)
+def process_video_dub_background(request: VideoDubRequest):
     job_id = request.job_id
     try:
         status_manager.update_status(job_id, ProcessingStatus.PROCESSING, progress=10, details={"message": "Finding uploaded video..."})
