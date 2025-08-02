@@ -14,7 +14,7 @@ from config import settings
 from r2_storage import R2Storage
 from status_manager import status_manager, ProcessingStatus
 from video_downloader import video_download_service
-from schemas import StatusResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse, VideoDownloadRequest, VideoDownloadResponse, UploadStatusResponse, VideoDubRequest, VideoDubResponse, VideoDubStatusResponse
+from schemas import StatusResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, QueueStatsResponse, VideoDownloadRequest, VideoDownloadResponse, UploadStatusResponse, VideoDubRequest, VideoDubResponse, VideoDubStatusResponse, VoiceCloneRequest, VoiceCloneResponse
 
 # Configure logging
 os.makedirs(settings.LOGS_DIR, exist_ok=True)
@@ -25,7 +25,12 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(log_file_path, mode='a', encoding='utf-8')
+        logging.handlers.RotatingFileHandler(
+            log_file_path,
+            maxBytes=10*1024*1024,  # 10 MB per file
+            backupCount=5,
+            encoding='utf-8'
+        )
     ]
 )
 logger = logging.getLogger(__name__)
@@ -53,6 +58,14 @@ async def lifespan(app: FastAPI):
         logger.error(f"❌ Failed to initialize Fish Speech: {e}")
     
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
+    
+    # Start periodic cleanup task (runs every hour)
+    async def _cleanup_loop():
+        while True:
+            video_download_service.cleanup_old_files()
+            await asyncio.sleep(3600)
+    asyncio.create_task(_cleanup_loop())
+    
     yield
     
     # Cleanup on shutdown
@@ -513,16 +526,81 @@ async def download_video(request: VideoDownloadRequest):
             error=str(e)
         )
 
-# --------------------------------------------------------------------------
-# Periodic cleanup task – runs every hour
-# --------------------------------------------------------------------------
-@app.on_event("startup")
-async def _start_cleanup_task():
-    async def _cleanup_loop():
-        while True:
-            video_download_service.cleanup_old_files()
-            await asyncio.sleep(3600)
-    asyncio.create_task(_cleanup_loop())
+# Voice Clone Segment API
+@app.post("/api/voice-clone-segment", response_model=VoiceCloneResponse)
+async def voice_clone_segment(request: VoiceCloneRequest):
+    """
+    Voice clone a single text segment using reference audio.
+    1. Downloads reference audio from URL.
+    2. Generates cloned voice with FishSpeech.
+    3. Uploads generated audio to R2 bucket.
+    4. Returns public URL of cloned audio.
+    """
+    try:
+        job_id = r2_storage.generate_job_id()
+        job_dir = os.path.join(settings.TEMP_DIR, f"voice_clone_{job_id}")
+        os.makedirs(job_dir, exist_ok=True)
+
+        # Download reference audio
+        from dub.audio_utils import AudioUtils
+        audio_utils = AudioUtils()
+        reference_path = os.path.join(job_dir, "reference.wav")
+        download_res = audio_utils.download_audio_file(request.referenceAudioUrl, reference_path)
+        if not download_res["success"]:
+            raise HTTPException(status_code=400, detail=f"Reference audio download failed: {download_res.get('error')}")
+
+        # Read reference audio bytes
+        with open(reference_path, "rb") as f:
+            reference_bytes = f.read()
+
+        # Generate cloned audio
+        from dub.fish_speech_service import get_fish_speech_service
+        fish_service = get_fish_speech_service()
+
+        generation_kwargs = {}
+        if request.speakerLabel:
+            generation_kwargs["seed"] = abs(hash(request.speakerLabel)) % (2 ** 32)
+
+        result = fish_service.generate_with_reference_audio(
+            text=request.text,
+            reference_audio_bytes=reference_bytes,
+            reference_text=request.referenceText,
+            **generation_kwargs
+        )
+
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error", "Voice generation failed"))
+
+        cloned_path = os.path.join(job_dir, f"{job_id}.wav")
+        with open(cloned_path, "wb") as f:
+            f.write(result["audio_data"])
+
+        # Upload to R2
+        r2_key = r2_storage.generate_file_path(job_id, "", f"{job_id}.wav")
+        upload_res = r2_storage.upload_file(cloned_path, r2_key, content_type="audio/wav")
+
+        if not upload_res.get("success"):
+            raise HTTPException(status_code=500, detail=upload_res.get("error", "Upload failed"))
+
+        duration_seconds = None
+        if result.get("sample_rate"):
+            duration_seconds = round(len(result["audio_data"]) / (result["sample_rate"] * 2), 2)
+
+        return VoiceCloneResponse(
+            success=True,
+            message="Voice cloned successfully",
+            jobId=job_id,
+            audioUrl=upload_res["url"],
+            duration=duration_seconds
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        from dub.audio_utils import AudioUtils
+        AudioUtils.remove_temp_dir(folder_path=locals().get("job_dir"))
+
 
 if __name__ == "__main__":
     import uvicorn
@@ -531,5 +609,5 @@ if __name__ == "__main__":
         host=settings.HOST,
         port=settings.PORT,
         workers=settings.WORKERS,
-        reload=False
+        reload=False 
     ) 

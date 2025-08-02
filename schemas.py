@@ -147,3 +147,18 @@ class UploadStatusResponse(BaseModel):
     message: str
     original_filename: Optional[str] = None
     file_url: Optional[str] = None
+
+# Voice Clone Segment Schemas
+class VoiceCloneRequest(BaseModel):
+    referenceAudioUrl: str = Field(..., description="URL to the reference audio segment")
+    referenceText: str = Field(..., description="Text spoken in the reference audio")
+    text: str = Field(..., description="Text to synthesize with cloned voice")
+    speakerLabel: Optional[str] = Field(None, description="Optional speaker label to derive deterministic seed")
+
+class VoiceCloneResponse(BaseModel):
+    success: bool
+    message: str
+    jobId: str
+    audioUrl: Optional[str] = None
+    duration: Optional[float] = None
+    error: Optional[str] = None
