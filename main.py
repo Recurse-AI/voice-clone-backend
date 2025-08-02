@@ -6,6 +6,7 @@ import os
 import shutil
 from pathlib import Path
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from contextlib import asynccontextmanager
 import asyncio
@@ -25,7 +26,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.handlers.RotatingFileHandler(
+        RotatingFileHandler(
             log_file_path,
             maxBytes=10*1024*1024,  # 10 MB per file
             backupCount=5,
