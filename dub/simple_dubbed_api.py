@@ -14,6 +14,7 @@ from .fish_speech_service import get_fish_speech_service
 from r2_storage import R2Storage
 import numpy as np
 from .audio_utils import AudioUtils
+from typing import Optional, Dict, Any
 from status_manager import status_manager, ProcessingStatus
 
 logger = logging.getLogger(__name__)
@@ -55,14 +56,25 @@ def smart_chunk(text: str, chunk_size: int = 200, min_size: int = 180) -> list[s
     if current.strip():
         chunks.append(current.strip())
 
-    # Final fallback: ensure no chunk exceeds chunk_size
+    # Final fallback: ensure no chunk exceeds chunk_size and never split inside a word
     final_chunks: list[str] = []
     for ch in chunks:
         if len(ch) <= chunk_size:
             final_chunks.append(ch)
-        else:
-            for i in range(0, len(ch), chunk_size):
-                final_chunks.append(ch[i:i + chunk_size].strip())
+            continue
+
+        # Break long chunk while preserving words
+        words = ch.split()
+        curr_chunk = words[0]
+        for word in words[1:]:
+            # +1 for the space that will be added before the word
+            if len(curr_chunk) + 1 + len(word) > chunk_size:
+                final_chunks.append(curr_chunk)
+                curr_chunk = word
+            else:
+                curr_chunk += " " + word
+        if curr_chunk:
+            final_chunks.append(curr_chunk)
 
     return [c for c in final_chunks if c]
 
@@ -102,15 +114,14 @@ class SimpleDubbedAPI:
                 prompt_lines.append(f"[{idx+1}] (Target duration: {seg['duration_ms']} ms) {seg['text']}")
             joined_texts = "\n".join(prompt_lines)
             system_prompt = (
-                f"Translate the following texts to {target_language} for voice dubbing.\n"
-                f"For each segment, try to match the target duration by adding extra white spaces between words if needed.\n"
-                f"The target duration for each segment is given in milliseconds.\n"
-                f"Make sure the output uses the correct alphabet/script for {target_language}.\n"
-                f"If the target language is not English, do not use English letters.\n"
-                f"Break long whitespace naturally, as a human would speak.\n"
-                f"The output should sound natural and fluent for native speakers of {target_language}.\n"
-                f"If the output needs to be lengthened to match a target duration, it is preferable to add extra white spaces between words within sentences, rather than between sentences.\n"
-                f"Do not add extra explanation or comments, only return the translated texts in the same order as input, separated by |||."
+                f"You are assisting in creating dubbing scripts for the Fish Audio OpenAudio-S1 TTS model.\n"
+                f"Translate each input segment into {target_language} (keeping meaning accurate).\n"
+                f"Constraints for every translated segment:\n"
+                f"1. Try to match the target duration (given in ms) — if you need to lengthen, prefer inserting extra *spaces* between words rather than adding new words.\n"
+                f"2. Use the correct alphabet/script for {target_language}; never mix English letters unless the original word is a proper noun or acronym.\n"
+                f"3. You MAY optionally use the Fish-Audio emotion/tone markers like (excited), (sad), (whispering) etc. **only** when that better reflects the original intent. Place the marker at the very beginning of the sentence.\n"
+                f"4. Do NOT add any explanatory text, numbering, or comments — only the final translated sentences.\n"
+                f"5. Return the translated segments in the same order, separated by ||| on a single line."
             )
             user_prompt = (
                 "Translate each segment below. Return only the translated segments, in order, separated by |||.\n"
@@ -192,17 +203,29 @@ class SimpleDubbedAPI:
                     continue
                 dubbed_text = dubbed_texts[dub_idx]
                 dub_idx += 1
-                cloned_audio_path = self._voice_clone_segment(
-                    dubbed_text, original_audio_path, seg_id, original_text, speaker_label, job_id=job_id, process_temp_dir=process_temp_dir
+                clone_result = self._voice_clone_segment(
+                    dubbed_text,
+                    original_audio_path,
+                    seg_id,
+                    original_text,
+                    speaker_label,
+                    job_id=job_id,
+                    process_temp_dir=process_temp_dir,
                 )
+                if clone_result:
+                    cloned_audio_path = clone_result.get("path")
+                    cloned_duration_ms = clone_result.get("duration_ms", end_ms - start_ms)
+                else:
+                    cloned_audio_path = None
+                    cloned_duration_ms = end_ms - start_ms
                 info_filename = f"segment_{job_id}_{i:03d}_info.json"
                 info_path = os.path.join(process_temp_dir, info_filename).replace('\\', '/')
                 segment_json = {
                     "id": seg_id,
                     "segment_index": i + 1,
                     "start": start_ms,
-                    "end": end_ms,
-                    "duration_ms": end_ms - start_ms,
+                    "end": start_ms + cloned_duration_ms,
+                    "duration_ms": cloned_duration_ms,
                     "original_text": original_text,
                     "dubbed_text": dubbed_text,
                     "original_audio_file": f"segment_{i:03d}.wav" if original_audio_path else None,
@@ -357,7 +380,7 @@ class SimpleDubbedAPI:
             AudioUtils.remove_temp_dir(folder_path=locals().get("process_temp_dir"))
             return {"success": False, "error": str(e)}
     
-    def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, original_text: str = "", speaker_label: str = None, job_id: str = None, process_temp_dir: str = None) -> str:
+    def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, original_text: str = "", speaker_label: str = None, job_id: str = None, process_temp_dir: str = None) -> Optional[Dict[str, Any]]:
         """Voice clone dubbed text using FishSpeechService with reference audio and transcript_id in filename"""
         try:
             if not reference_audio_path:
@@ -428,7 +451,8 @@ class SimpleDubbedAPI:
                 sf.write(buffer, final_audio, sample_rate_out, format='WAV')
                 with open(cloned_path, "wb") as f:
                     f.write(buffer.getvalue())
-                return cloned_path
+                duration_ms = int(len(final_audio) / sample_rate_out * 1000)
+                return {"path": cloned_path, "duration_ms": duration_ms}
             return None
                 
         except Exception as e:
@@ -462,13 +486,20 @@ class SimpleDubbedAPI:
                     end_ms = segment["end"]
                     start_sample = int((start_ms / 1000.0) * sample_rate)
                     segment_duration_samples = int(((end_ms - start_ms) / 1000.0) * sample_rate)
-                    if len(cloned_audio) > segment_duration_samples:
-                        cloned_audio = cloned_audio[:segment_duration_samples]
-                    elif len(cloned_audio) < segment_duration_samples:
+                    # If cloned audio is longer than the original slot, allow it to spill over
+                    # rather than hard-truncating (which caused words to be cut mid-way).
+                    if len(cloned_audio) < segment_duration_samples:
                         padding = segment_duration_samples - len(cloned_audio)
-                        cloned_audio = np.pad(cloned_audio, (0, padding), mode='constant')
-                    end_sample = min(start_sample + len(cloned_audio), total_samples)
-                    final_audio[start_sample:end_sample] = cloned_audio[:end_sample-start_sample]
+                        cloned_audio = np.pad(cloned_audio, (0, padding), mode="constant")
+
+                    end_sample = start_sample + len(cloned_audio)
+                    # Expand final_audio length if needed
+                    if end_sample > len(final_audio):
+                        extra_len = end_sample - len(final_audio)
+                        final_audio = np.pad(final_audio, (0, extra_len), mode="constant")
+                        total_samples = len(final_audio)
+
+                    final_audio[start_sample:end_sample] = cloned_audio[: end_sample - start_sample]
                     logger.info(f"Placed {segment['id']} at {start_ms}ms")
                 except Exception as e:
                     logger.error(f"Failed to process segment {segment['id']}: {str(e)}")
