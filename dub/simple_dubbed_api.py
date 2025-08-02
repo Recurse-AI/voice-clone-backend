@@ -18,6 +18,16 @@ from status_manager import status_manager, ProcessingStatus
 
 logger = logging.getLogger(__name__)
 
+# Supported languages for dubbing and Fish Speech voice synthesis
+SUPPORTED_LANGUAGE_NAMES = {
+    "english", "chinese", "japanese", "german", "french", "spanish",
+    "korean", "arabic", "russian", "dutch", "italian", "polish", "portuguese"
+}
+SUPPORTED_LANGUAGE_CODES = {
+    "en", "zh", "ja", "de", "fr", "es",
+    "ko", "ar", "ru", "nl", "it", "pl", "pt"
+}
+
 class SimpleDubbedAPI:
     """Simple clean API for dubbed audio processing"""
     
@@ -71,8 +81,17 @@ class SimpleDubbedAPI:
             all_dubbed.extend([seg.strip() for seg in output.split("|||")])
         return all_dubbed
 
-    def process_dubbed_audio(self, audio_url: str, job_id: str, target_language: str, expected_speaker: str = None, source_video_language: str = None, output_dir: str = None, instrument_path: str = None, video_path: str = None, subtitle: bool = False, instrument: bool = False) -> dict:
-        """Complete dubbed audio processing with job_id, expected_speaker, source_video_language, output_dir, instrument mix, subtitle, video merge. target_language must be a string."""
+    def process_dubbed_audio(self, audio_url: str, job_id: str, target_language: str, speakers_count: int = 1, source_video_language: str = None, output_dir: str = None, instrument_path: str = None, video_path: str = None, subtitle: bool = False, instrument: bool = False) -> dict:
+        """Complete dubbed audio processing with job_id, expected_speaker, source_video_language, output_dir, instrument mix, subtitle, video merge.
+
+        target_language must be one of the supported languages defined in SUPPORTED_LANGUAGE_NAMES / SUPPORTED_LANGUAGE_CODES.
+        """
+        # Validate target language early to avoid unnecessary processing
+        if target_language.lower() not in SUPPORTED_LANGUAGE_NAMES and target_language.lower() not in SUPPORTED_LANGUAGE_CODES:
+            error_msg = f"Unsupported target language: {target_language}"
+            status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": error_msg})
+            return {"success": False, "error": error_msg}
+
         try:
             status_manager.update_status(job_id, ProcessingStatus.PROCESSING, progress=45, details={"message": "Transcribing audio..."})
             # Define a dedicated folder for this job inside the TEMP_DIR
@@ -80,13 +99,11 @@ class SimpleDubbedAPI:
                 output_dir = os.path.join(self.temp_dir, job_id)
             process_temp_dir = output_dir  # We now keep all generated files inside this folder
             os.makedirs(process_temp_dir, exist_ok=True)
-            speakers_count = int(expected_speaker) if expected_speaker else 1
             paragraphs_result = self.transcription_service.get_paragraphs_and_split_audio(
                 audio_url=audio_url,
                 output_dir=output_dir,
                 speakers_count=speakers_count,
-                source_video_language=source_video_language,
-                expected_speaker=expected_speaker
+                source_video_language=source_video_language
             )
             if not paragraphs_result["success"]:
                 status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=50, details={"message": paragraphs_result.get("error", "Transcription failed")})

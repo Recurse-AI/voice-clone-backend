@@ -22,6 +22,62 @@ logger = logging.getLogger(__name__)
 
 class TranscriptionService:
     """Enhanced transcription service with speaker diarization"""
+
+    # Mapping of common language names to ISO 639-1 codes accepted by AssemblyAI
+    LANGUAGE_NAME_TO_CODE = {
+        # Generic / global
+        "auto detect": None,
+        "arabic": "ar",
+        "azerbaijani": "az",
+        "chinese": "zh",
+        "czech": "cs",
+        "danish": "da",
+        "dutch": "nl",
+        "english": "en",
+        "english_global": "en",
+        "english_us": "en-us",
+        "english_au": "en-au",
+        "english_uk": "en-gb",
+        "finnish": "fi",
+        "french": "fr",
+        "german": "de",
+        "hebrew": "he",
+        "hindi": "hi",
+        "hungarian": "hu",
+        "indonesian": "id",
+        "italian": "it",
+        "japanese": "ja",
+        "korean": "ko",
+        "norwegian": "no",
+        "polish": "pl",
+        "portuguese": "pt",
+        "romanian": "ro",
+        "russian": "ru",
+        "spanish": "es",
+        "swedish": "sv",
+        "turkish": "tr",
+        "ukrainian": "uk",
+        "vietnamese": "vi",
+    }
+
+    @classmethod
+    def _normalize_language_code(cls, language: Optional[str]) -> Optional[str]:
+        """
+        Convert a human-readable language name to a valid AssemblyAI ISO code.
+        If the given language is already a 2-letter code, it is returned in lower-case.
+        """
+        if not language:
+            return None
+        language = language.strip()
+        # If already a 2-letter ISO code, return lower-case.
+        if len(language) == 2 and language.isalpha():
+            return language.lower()
+
+        # If provided in pattern like en-US or en_US → standardise to lowercase with hyphen
+        if (len(language) == 5 or len(language) == 5) and ("-" in language or "_" in language):
+            return language.replace("_", "-").lower()
+
+        return cls.LANGUAGE_NAME_TO_CODE.get(language.lower())
     
     def __init__(self):
         self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
@@ -60,8 +116,9 @@ class TranscriptionService:
             config = self.transcription_config.copy()
             
             # Set language if specified
-            if language_code:
-                config["language_code"] = language_code
+            normalized_code = self._normalize_language_code(language_code) if language_code else None
+            if normalized_code:
+                config["language_code"] = normalized_code
                 config["language_detection"] = False
             
             # Set expected speakers if specified
@@ -106,7 +163,7 @@ class TranscriptionService:
             logger.error(f"Transcription failed for {audio_id}: {str(e)}")
             raise Exception(f"Transcription service error: {str(e)}")
     
-    def get_paragraphs_and_split_audio(self, audio_url: str, output_dir: str = None, speakers_count: int = 1, source_video_language: str = None, expected_speaker: str = None, max_paragraphs: int = None) -> Dict[str, Any]:
+    def get_paragraphs_and_split_audio(self, audio_url: str, output_dir: str = None, speakers_count: int = 1, source_video_language: str = None, max_paragraphs: int = None) -> Dict[str, Any]:
         """Get paragraphs from AssemblyAI API and split audio into segments, with language and speaker control"""
         try:
             logger.info(f"Starting paragraph extraction and audio splitting for audio: {audio_url}")
@@ -126,12 +183,10 @@ class TranscriptionService:
                 raise Exception(f"Failed to download audio: {download_result['error']}")
             
             # Determine language config
-            language_detection = True if not source_video_language else False
-            language_code = source_video_language if source_video_language else None
+            language_code = self._normalize_language_code(source_video_language)
+            language_detection = True if not language_code else False
             
-            # Determine speakers_count
-            if expected_speaker:
-                speakers_count = 1
+            speakers_count = int(speakers_count) if speakers_count else 1
             
             # Create transcription for the audio
             transcript_result = self._create_transcription_for_audio(temp_audio_path, speakers_count, language_code, language_detection)

@@ -452,7 +452,7 @@ def process_video_dub_background(request: VideoDubRequest):
             video_path=local_video_path,
             instrument_path=instrument_path,
             target_language=request.target_language,
-            expected_speaker=request.expected_speaker,
+            speakers_count=int(request.expected_speaker) if request.expected_speaker else 1,
             source_video_language=request.source_video_language,
             subtitle=request.subtitle,
             instrument=request.instrument,
