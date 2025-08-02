@@ -223,8 +223,7 @@ class TranscriptionService:
                     "speaker_label": paragraph["words"][0]["speaker"] if paragraph.get("words") else None
                 })
 
-            # Merge very short back-to-back segments from the same speaker
-            segments_to_split = self._merge_adjacent_short_segments(segments_to_split)
+
             
             # Set output directory
             if not output_dir:
@@ -337,51 +336,5 @@ class TranscriptionService:
         except json.JSONDecodeError as e:
             raise Exception(f"Failed to parse API response: {str(e)}")
 
-    def _merge_adjacent_short_segments(
-        self,
-        segments: List[Dict[str, Any]],
-        max_gap_ms: int = 500,
-        max_single_seg_ms: int = 1500,
-        max_merged_ms: int = 7000,
-    ) -> List[Dict[str, Any]]:
-        """
-        Merge consecutive segments that:
-        1. Belong to the same speaker
-        2. Have a silent gap ≤ ``max_gap_ms`` between them
-        3. Each individual segment is shorter than ``max_single_seg_ms``
-        4. The resulting merged segment does not exceed ``max_merged_ms``
 
-        Returns a new list of segments after merging.
-        """
-        if not segments:
-            return segments
-
-        merged_segments: List[Dict[str, Any]] = []
-        current = segments[0].copy()
-
-        for next_seg in segments[1:]:
-            same_speaker = current.get("speaker_label") == next_seg.get("speaker_label")
-            gap_ms = next_seg["start"] - current["end"]
-            curr_len = current["end"] - current["start"]
-            next_len = next_seg["end"] - next_seg["start"]
-            potential_len = next_seg["end"] - current["start"]
-
-            if (
-                same_speaker
-                and gap_ms <= max_gap_ms
-                and curr_len <= max_single_seg_ms
-                and next_len <= max_single_seg_ms
-                and potential_len <= max_merged_ms
-            ):
-                # Merge
-                current["end"] = next_seg["end"]
-                current["text"] = (
-                    f"{current['text'].rstrip()} {next_seg['text'].lstrip()}".strip()
-                )
-            else:
-                merged_segments.append(current)
-                current = next_seg.copy()
-
-        merged_segments.append(current)
-        return merged_segments
     
