@@ -319,14 +319,14 @@ class SimpleDubbedAPI:
             if len(audio_data.shape) > 1:
                 audio_data = audio_data[:, 0]
 
-            # Limit reference audio to a short clip (3-7 s recommended)
-            max_ref_seconds = 7  # keep at most 6 seconds to avoid GPU OOM / index errors
+            # Limit reference audio length based on configuration
+            from config import settings
+            max_ref_seconds = settings.MAX_REFERENCE_SECONDS
             total_seconds = len(audio_data) / sample_rate
             if total_seconds > max_ref_seconds:
-                # take a centred slice of length max_ref_seconds
-                start_sample = int((total_seconds / 2 - max_ref_seconds / 2) * sample_rate)
-                end_sample = start_sample + int(max_ref_seconds * sample_rate)
-                audio_data = audio_data[start_sample:end_sample]
+                # take the beginning slice of length max_ref_seconds for better alignment
+                end_sample = int(max_ref_seconds * sample_rate)
+                audio_data = audio_data[:end_sample]
 
             buffer = io.BytesIO()
             sf.write(buffer, audio_data, sample_rate, format='WAV')

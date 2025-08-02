@@ -56,6 +56,8 @@ class Settings(BaseSettings):
     BASE_SEED: int = 42  # Base seed for speaker-specific seeds
     SPEAKER_SEED_OFFSET: int = 1000  # Offset for speaker-specific seeds
     USE_SPEED_ADJUSTMENT: bool = True  # Enable time stretching when needed
+    # Voice cloning configuration
+    MAX_REFERENCE_SECONDS: int = int(os.getenv('MAX_REFERENCE_SECONDS', '20'))  # Maximum seconds of reference audio to feed into TTS
     # FFmpeg Configuration
     FFMPEG_USE_GPU: bool = bool(int(os.getenv('FFMPEG_USE_GPU', '0')))  # 1 to enable GPU (NVENC)
     

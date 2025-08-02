@@ -212,6 +212,7 @@ ENABLE_INSTRUMENTS=true
 
 # GPU Video Encoding
 FFMPEG_USE_GPU=1
+MAX_REFERENCE_SECONDS=20
 EOF
 
 # Kill existing processes
