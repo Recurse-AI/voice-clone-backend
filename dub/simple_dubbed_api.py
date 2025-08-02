@@ -338,7 +338,7 @@ class SimpleDubbedAPI:
             segment_index = int(segment_id.split('_')[1]) - 1
             cloned_filename = f"cloned_{job_id}_{segment_index:03d}.wav"
             cloned_path = os.path.join(process_temp_dir, cloned_filename).replace('\\', '/')
-            def smart_chunk(text, chunk_size=200, min_size=180):
+            def smart_chunk(text, chunk_size=300, min_size=280):
                 chunks = []
                 i = 0
                 while i < len(text):
@@ -368,12 +368,12 @@ class SimpleDubbedAPI:
                     text=chunk,
                     reference_audio_bytes=reference_audio_bytes,
                     reference_text=original_text or "Reference audio",
-                    max_new_tokens=1024,
+                    max_new_tokens=2048,
                     top_p=0.7,
                     repetition_penalty=1.2,
                     temperature=0.7,
                     seed=seed_val,
-                    chunk_length=200
+                    chunk_length=300
                 )
                 if result.get("success"):
                     import soundfile as sf
