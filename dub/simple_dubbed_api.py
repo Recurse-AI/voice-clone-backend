@@ -18,6 +18,55 @@ from status_manager import status_manager, ProcessingStatus
 
 logger = logging.getLogger(__name__)
 
+import re
+
+# Utility to split text into chunks that respect punctuation across multiple languages.
+# Supports Unicode punctuation like Chinese, Japanese, Arabic, etc.
+def smart_chunk(text: str, chunk_size: int = 200, min_size: int = 180) -> list[str]:
+    """
+    Split text into chunks suitable for TTS/voice cloning, respecting sentence boundaries.
+
+    1. Try to break on punctuation (including Unicode punctuation) so sentences remain intact.
+    2. Ensure each chunk length is between `min_size` and `chunk_size` when possible.
+    3. Fallback to character-length slicing for text with no discernible punctuation.
+    """
+    if not text:
+        return []
+
+    text = text.strip()
+    if len(text) <= chunk_size:
+        return [text]
+
+    # Regex to split after both ASCII and common Unicode punctuation marks.
+    sentence_break_re = re.compile(r"(?<=[\.\!\?。！？؟؛…])")
+    sentences = sentence_break_re.split(text)
+
+    chunks: list[str] = []
+    current = ""
+
+    for sent in sentences:
+        if not sent:
+            continue
+        if len(current) + len(sent) <= chunk_size or len(current) < min_size:
+            current += sent
+        else:
+            chunks.append(current.strip())
+            current = sent
+    if current.strip():
+        chunks.append(current.strip())
+
+    # Final fallback: ensure no chunk exceeds chunk_size
+    final_chunks: list[str] = []
+    for ch in chunks:
+        if len(ch) <= chunk_size:
+            final_chunks.append(ch)
+        else:
+            for i in range(0, len(ch), chunk_size):
+                final_chunks.append(ch[i:i + chunk_size].strip())
+
+    return [c for c in final_chunks if c]
+
+
 # Supported languages for dubbing and Fish Speech voice synthesis
 SUPPORTED_LANGUAGE_NAMES = {
     "english", "chinese", "japanese", "german", "french", "spanish",
@@ -188,11 +237,17 @@ class SimpleDubbedAPI:
                 text = seg["dubbed_text"]
                 start = seg["start"] / 1000.0
                 end = seg["end"] / 1000.0
-                words = text.split()
-                for i in range(0, len(words), 3):
-                    chunk = " ".join(words[i:i+3])
-                    chunk_start = start + (end - start) * (i / max(1, len(words)))
-                    chunk_end = start + (end - start) * ((i+3) / max(1, len(words)))
+
+                # Use the same smart_chunk utility to create subtitle lines (smaller length).
+                chunks = smart_chunk(text, chunk_size=60, min_size=40)
+                total_chars = sum(len(c) for c in chunks) or 1
+
+                char_count_before = 0
+                for chunk in chunks:
+                    chunk_len = len(chunk)
+                    chunk_start = start + (end - start) * (char_count_before / total_chars)
+                    char_count_before += chunk_len
+                    chunk_end = start + (end - start) * (char_count_before / total_chars)
                     subtitle_data.append({"start": chunk_start, "end": min(chunk_end, end), "text": chunk})
             subtitle_path = os.path.join(process_temp_dir, f"subtitles_{job_id}.srt")
             processor.create_srt_file(subtitle_data, subtitle_path)
@@ -338,26 +393,8 @@ class SimpleDubbedAPI:
             segment_index = int(segment_id.split('_')[1]) - 1
             cloned_filename = f"cloned_{job_id}_{segment_index:03d}.wav"
             cloned_path = os.path.join(process_temp_dir, cloned_filename).replace('\\', '/')
-            def smart_chunk(text, chunk_size=300, min_size=280):
-                chunks = []
-                i = 0
-                while i < len(text):
-                    end = min(i + chunk_size, len(text))
-                    chunk = text[i:end]
-                    puncts = [chunk.rfind(p) for p in '.!?']
-                    punct = max(puncts)
-                    if punct >= min_size - 1:
-                        split_at = punct + 1
-                    else:
-                        space = chunk.rfind(' ')
-                        if space >= min_size - 1:
-                            split_at = space + 1
-                        else:
-                            split_at = len(chunk)
-                    chunks.append(text[i:i+split_at].strip())
-                    i += split_at
-                return [c for c in chunks if c]
-            text_chunks = smart_chunk(dubbed_text)
+            # Split dubbed text into manageable chunks
+            text_chunks = smart_chunk(dubbed_text, chunk_size=200, min_size=180)
             audio_chunks = []
             sample_rate_out = None
             seed_val = None
@@ -373,7 +410,7 @@ class SimpleDubbedAPI:
                     repetition_penalty=1.2,
                     temperature=0.7,
                     seed=seed_val,
-                    chunk_length=300
+                    chunk_length=200
                 )
                 if result.get("success"):
                     import soundfile as sf
