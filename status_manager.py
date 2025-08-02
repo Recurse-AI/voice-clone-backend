@@ -65,14 +65,17 @@ class StatusManager:
             self._mongo_client = None
     
     def _save_to_mongodb(self, job_id: str, status_data: Dict[str, Any]):
-        """Save status to MongoDB"""
+        """Save status to MongoDB. Always store a top-level job_id field so that
+        later look-ups with the same key succeed even after a restart."""
         if self._mongo_collection is None:
             return
-        
+        # Ensure the document carries job_id explicitly
+        doc = status_data.copy()
+        doc["job_id"] = job_id
         try:
             self._mongo_collection.replace_one(
                 {"job_id": job_id},
-                status_data,
+                doc,
                 upsert=True
             )
         except Exception as e:

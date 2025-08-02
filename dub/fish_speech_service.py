@@ -201,6 +201,9 @@ class FishSpeechService:
             
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                # Collect inter-process GPU memory to avoid fragmentation
+                if hasattr(torch.cuda, "ipc_collect"):
+                    torch.cuda.ipc_collect()
             
             self.is_initialized = False
             logger.info("Fish Speech TTSInferenceEngine cleaned up")

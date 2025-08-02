@@ -76,16 +76,13 @@ class VideoProcessor:
                     '-vf', f"subtitles='{subtitle_path_str}':force_style='Fontname=Arial-Bold,Fontsize={self.subtitle_font_size},Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV={self.subtitle_margin_bottom}'",
                     '-c:v', video_codec,
                     '-preset', preset,
-                    '-b:v', '5000k',
+                    '-crf', '18',  # visually lossless
+                    '-b:v', '0',
                 ])
             else:
-                # High quality without subtitles
-                video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
-                preset = 'fast' if settings.FFMPEG_USE_GPU else 'medium'
+                # No subtitles → we can keep original video stream to preserve quality
                 cmd.extend([
-                    '-c:v', video_codec,
-                    '-preset', preset,
-                    '-b:v', '5000k',
+                    '-c:v', 'copy',  # copy original video stream without re-encoding
                 ])
             
             cmd.extend([
