@@ -285,10 +285,14 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
                 "progress": 0,
                 "message": f"File save failed: {str(e)}"
             })
+        from dub.audio_utils import AudioUtils
+        AudioUtils.remove_temp_dir(folder_path=job_dir)
         raise HTTPException(status_code=500, detail=f"Failed to start upload: {str(e)}")
 
 # --- Background process for upload ---
 async def process_file_background_only(job_id: str, temp_file_path: str, filename: str, file_size: int):
+    from dub.audio_utils import AudioUtils
+    job_dir = os.path.dirname(temp_file_path)
     try:
         upload_status_memory[job_id].update({
             "progress": 20, 
@@ -310,6 +314,7 @@ async def process_file_background_only(job_id: str, temp_file_path: str, filenam
             })
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
+            AudioUtils.remove_temp_dir(folder_path=job_dir)
             return
         upload_status_memory[job_id].update({
             "progress": 100,
@@ -323,6 +328,7 @@ async def process_file_background_only(job_id: str, temp_file_path: str, filenam
             "progress": 0,
             "message": f"Processing failed: {str(e)}"
         })
+        AudioUtils.remove_temp_dir(folder_path=job_dir)
 
 @app.get("/upload-status/{job_id}", response_model=UploadStatusResponse)
 async def get_upload_status(job_id: str):
@@ -389,7 +395,9 @@ async def get_video_dub_status(job_id: str):
 
 # Background processing function (runs in threadpool)
 def process_video_dub_background(request: VideoDubRequest):
+    from dub.audio_utils import AudioUtils
     job_id = request.job_id
+    job_dir = os.path.join(settings.TEMP_DIR, f"dub_{job_id}")
     try:
         status_manager.update_status(job_id, ProcessingStatus.PROCESSING, progress=10, details={"message": "Finding uploaded video..."})
         job_dir = os.path.join(settings.TEMP_DIR, f"dub_{job_id}")
@@ -467,6 +475,9 @@ def process_video_dub_background(request: VideoDubRequest):
         status_manager.update_status(job_id, ProcessingStatus.COMPLETED, progress=100, details={"message": "Video dubbing completed.", "result_url": pipeline_result.get("result_url") or (pipeline_result.get("result_urls", {}) or {}).get("final_video"), "details": pipeline_result.get("details")})
     except Exception as e:
         status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": f"Processing failed: {str(e)}", "error": str(e)})
+    finally:
+        # Ensure temp directory is removed in any case
+        AudioUtils.remove_temp_dir(folder_path=job_dir)
 
 @app.post("/api/download-video", response_model=VideoDownloadResponse)
 async def download_video(request: VideoDownloadRequest):

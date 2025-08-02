@@ -107,6 +107,8 @@ class SimpleDubbedAPI:
             )
             if not paragraphs_result["success"]:
                 status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=50, details={"message": paragraphs_result.get("error", "Transcription failed")})
+                # Clean up temp directory on failure
+                AudioUtils.remove_temp_dir(folder_path=process_temp_dir)
                 return {"success": False, "error": paragraphs_result.get("error", "Transcription failed")}
             raw_paragraphs = paragraphs_result["segments"]
             logger.info(f"Found {len(raw_paragraphs)} segments")
@@ -280,8 +282,7 @@ class SimpleDubbedAPI:
 
             # Optionally, clean up local temp directory
             try:
-                import shutil
-                shutil.rmtree(process_temp_dir, ignore_errors=True)
+                AudioUtils.remove_temp_dir(folder_path=process_temp_dir)
             except Exception:
                 pass
 
@@ -297,6 +298,8 @@ class SimpleDubbedAPI:
         except Exception as e:
             logger.error(f"Dubbed processing failed: {str(e)}")
             status_manager.update_status(job_id, ProcessingStatus.FAILED, progress=0, details={"message": f"Dubbed processing failed: {str(e)}", "error": str(e)})
+            # Clean up temp directory on exception
+            AudioUtils.remove_temp_dir(folder_path=locals().get("process_temp_dir"))
             return {"success": False, "error": str(e)}
     
     def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, original_text: str = "", speaker_label: str = None, job_id: str = None, process_temp_dir: str = None) -> str:

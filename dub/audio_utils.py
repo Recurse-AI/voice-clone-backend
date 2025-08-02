@@ -266,6 +266,7 @@ class AudioUtils:
     
     @staticmethod
     def mix_audio_files(file1: str, file2: str, out_path: str, ratio1: float = 0.75, ratio2: float = 0.25):
+        """Mix two audio files with given ratios and write to out_path"""
         import soundfile as sf
         audio1, sr1 = sf.read(file1)
         audio2, sr2 = sf.read(file2)
@@ -275,4 +276,25 @@ class AudioUtils:
         mixed = ratio1 * audio1[:min_len] + ratio2 * audio2[:min_len]
         sf.write(out_path, mixed, sr1)
         return out_path
+
+    @staticmethod
+    def remove_temp_dir(job_id: str = None, folder_path: str = None) -> bool:
+        """Remove temporary directory by job_id or explicit folder_path.
+
+        Either job_id or folder_path must be provided. If job_id is given, the
+        directory is resolved under settings.TEMP_DIR.
+        Returns True if deletion attempted (regardless of existing), False if
+        parameters were invalid.
+        """
+        from config import settings
+        if not job_id and not folder_path:
+            return False
+        if folder_path is None:
+            folder_path = os.path.join(settings.TEMP_DIR, job_id)
+        try:
+            import shutil
+            shutil.rmtree(folder_path, ignore_errors=True)
+            return True
+        except Exception:
+            return False
     
