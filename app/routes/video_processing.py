@@ -233,22 +233,42 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         # Auto-deduct credits on successful completion (non-blocking)
         def deduct_credits_non_blocking():
             try:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                credit_result = loop.run_until_complete(
-                    credit_service.deduct_credits_on_completion(
-                        user_id=user_id,
-                        job_id=job_id,
-                        job_type=JobType.DUB,
-                        duration_seconds=request.duration
-                    )
-                )
-                loop.close()
+                # Check if there's already an event loop in this thread
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_closed():
+                        raise RuntimeError("Event loop is closed")
+                except RuntimeError:
+                    # No event loop in this thread, create a new one
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
                 
-                if credit_result["success"]:
-                    logger.info(f"Auto-deducted {credit_result['deducted']} credits for completed dub job {job_id}")
+                # Run the async function
+                if loop.is_running():
+                    # Loop is already running, use create_task instead
+                    asyncio.create_task(
+                        credit_service.deduct_credits_on_completion(
+                            user_id=user_id,
+                            job_id=job_id,
+                            job_type=JobType.DUB,
+                            duration_seconds=request.duration
+                        )
+                    )
                 else:
-                    logger.error(f"Failed to auto-deduct credits for dub job {job_id}: {credit_result['message']}")
+                    credit_result = loop.run_until_complete(
+                        credit_service.deduct_credits_on_completion(
+                            user_id=user_id,
+                            job_id=job_id,
+                            job_type=JobType.DUB,
+                            duration_seconds=request.duration
+                        )
+                    )
+                    
+                    if credit_result["success"]:
+                        logger.info(f"Auto-deducted {credit_result['deducted']} credits for completed dub job {job_id}")
+                    else:
+                        logger.error(f"Failed to auto-deduct credits for dub job {job_id}: {credit_result['message']}")
+                        
             except Exception as e:
                 logger.error(f"Credit deduction failed for job {job_id}: {e}")
         
