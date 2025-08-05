@@ -1,0 +1,152 @@
+import logging
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+from bson import ObjectId
+from app.models.dub_job import DubJob
+from app.config.database import dub_jobs_collection
+
+logger = logging.getLogger(__name__)
+
+class DubJobService:
+    """Service for managing dub jobs in MongoDB"""
+    
+    def __init__(self):
+        self.collection = dub_jobs_collection
+    
+    async def create_job(self, job_data: Dict[str, Any]) -> Optional[DubJob]:
+        """Create a new dub job"""
+        try:
+            dub_job = DubJob(**job_data)
+            
+            # Convert to dict for MongoDB
+            job_dict = dub_job.dict(exclude={'id'})
+            
+            # Insert into database
+            result = await self.collection.insert_one(job_dict)
+            dub_job.id = str(result.inserted_id)
+            
+            logger.info(f"Created dub job: {dub_job.job_id}")
+            return dub_job
+            
+        except Exception as e:
+            logger.error(f"Failed to create dub job: {e}")
+            return None
+    
+    async def get_job(self, job_id: str) -> Optional[DubJob]:
+        """Get dub job by job_id"""
+        try:
+            job_data = await self.collection.find_one({"job_id": job_id})
+            if job_data:
+                job_data['id'] = str(job_data['_id'])
+                del job_data['_id']
+                return DubJob(**job_data)
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get dub job {job_id}: {e}")
+            return None
+    
+    async def update_job_status(self, job_id: str, status: str, progress: int = None, **kwargs) -> bool:
+        """Update job status and progress"""
+        try:
+            update_data = {
+                "status": status,
+                "updated_at": datetime.now()
+            }
+            
+            if progress is not None:
+                update_data["progress"] = progress
+                
+            # Set timestamps based on status
+            if status in ['downloading', 'processing'] and not await self._has_started(job_id):
+                update_data["started_at"] = datetime.now()
+            elif status in ['completed', 'failed']:
+                update_data["completed_at"] = datetime.now()
+            
+            # Add additional fields
+            update_data.update(kwargs)
+            
+            result = await self.collection.update_one(
+                {"job_id": job_id},
+                {"$set": update_data}
+            )
+            
+            success = result.modified_count > 0
+            if success:
+                logger.info(f"Updated dub job {job_id}: {status} ({progress}%)")
+            return success
+            
+        except Exception as e:
+            logger.error(f"Failed to update dub job {job_id}: {e}")
+            return False
+    
+    async def _has_started(self, job_id: str) -> bool:
+        """Check if job has started_at timestamp"""
+        try:
+            job_data = await self.collection.find_one(
+                {"job_id": job_id}, 
+                {"started_at": 1}
+            )
+            return job_data and job_data.get("started_at") is not None
+        except:
+            return False
+    
+    async def get_user_jobs(self, user_id: str, limit: int = 50) -> List[DubJob]:
+        """Get all dub jobs for a user"""
+        try:
+            cursor = self.collection.find(
+                {"user_id": user_id}
+            ).sort("created_at", -1).limit(limit)
+            
+            jobs = []
+            async for job_data in cursor:
+                job_data['id'] = str(job_data['_id'])
+                del job_data['_id']
+                jobs.append(DubJob(**job_data))
+            
+            return jobs
+            
+        except Exception as e:
+            logger.error(f"Failed to get user dub jobs: {e}")
+            return []
+    
+    async def get_jobs_by_status(self, status: str, limit: int = 100) -> List[DubJob]:
+        """Get jobs by status (for monitoring/cleanup)"""
+        try:
+            cursor = self.collection.find(
+                {"status": status}
+            ).sort("created_at", -1).limit(limit)
+            
+            jobs = []
+            async for job_data in cursor:
+                job_data['id'] = str(job_data['_id'])
+                del job_data['_id']
+                jobs.append(DubJob(**job_data))
+            
+            return jobs
+            
+        except Exception as e:
+            logger.error(f"Failed to get jobs by status {status}: {e}")
+            return []
+    
+    async def update_details(self, job_id: str, details: Dict[str, Any]) -> bool:
+        """Update job details"""
+        try:
+            result = await self.collection.update_one(
+                {"job_id": job_id},
+                {
+                    "$set": {
+                        "details": details,
+                        "updated_at": datetime.now()
+                    }
+                }
+            )
+            
+            return result.modified_count > 0
+            
+        except Exception as e:
+            logger.error(f"Failed to update dub job details {job_id}: {e}")
+            return False
+
+# Global service instance
+dub_job_service = DubJobService()

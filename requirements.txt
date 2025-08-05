@@ -1,0 +1,104 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pydantic-settings
+
+# Audio processing
+soundfile
+librosa
+numpy
+scipy
+pydub
+ffmpeg-python
+
+# Video processing
+moviepy
+
+# AI/ML
+torch
+transformers>=4.40.0
+tokenizers
+accelerate
+openai
+
+# Fish Speech TTS dependencies (comprehensive)
+huggingface_hub>=0.20.0
+einx>=0.1.3
+tiktoken>=0.5.0
+ormsgpack>=1.4.0
+loguru>=0.7.0
+torchaudio
+loralib
+einops>=0.6.0
+omegaconf>=2.2.0
+hydra-core>=1.2.0
+fire
+wandb
+vector-quantize-pytorch
+natsort
+silero-vad
+descript-audiotools
+descript-audio-codec
+pyrootutils>=1.0.4
+resampy>=0.4.3
+zstandard>=0.22.0
+cachetools
+pytorch-lightning>=2.1.0
+lightning>=2.1.0
+
+# AssemblyAI for transcription
+assemblyai
+
+# Storage
+boto3
+botocore    
+
+# Database
+pymongo
+motor
+
+# Authentication & Security  
+bcrypt
+passlib
+PyJWT
+email_validator
+
+# Payment Processing
+stripe
+
+# Database migrations
+alembic
+SQLAlchemy
+
+# Additional FastAPI dependencies
+dnspython
+cffi
+pycparser
+greenlet
+Mako
+MarkupSafe
+sniffio
+typing-inspection
+annotated-types
+anyio
+click
+h11
+idna
+pydantic_core
+starlette
+
+# Utilities
+python-dotenv
+pathlib
+typing-extensions
+requests
+tqdm
+aiofiles
+
+# Video downloading
+yt-dlp
+
+# Development
+pytest
+pytest-asyncio
