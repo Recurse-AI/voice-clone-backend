@@ -18,6 +18,15 @@ async def create_user(user_dict: dict):
     user_dict["credits"] = 25  # New users get 25 free credits
     user_dict["role"] = "user"
     user_dict["verificationAttempts"] = 0
+    
+    # Initialize default subscription for new users
+    user_dict["subscription"] = {
+        "type": "free",
+        "status": "none",
+        "stripeCustomerId": None,
+        "stripeSubscriptionId": None,
+        "currentPeriodEnd": None
+    }
 
     result = await db["users"].insert_one(user_dict)
     user_dict["id"] = str(result.inserted_id)

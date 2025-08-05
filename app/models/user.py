@@ -8,7 +8,6 @@ class Subscription(BaseModel):
     stripeCustomerId: Optional[str] = None
     stripeSubscriptionId: Optional[str] = None
     currentPeriodEnd: Optional[datetime] = None
-    secondsUsed: int = 0
 
 class User(BaseModel):
     id: Optional[str] = None
@@ -23,7 +22,7 @@ class User(BaseModel):
     googleId: Optional[str] = None
     profilePicture: Optional[str] = None
     role: Literal['user', 'admin'] = 'user'
-    subscription: Optional[Subscription] = None
+    subscription: Optional[Subscription] = Subscription()
     resetPasswordToken: Optional[str] = None
     resetPasswordExpiry: Optional[datetime] = None
     createdAt: Optional[datetime] = None

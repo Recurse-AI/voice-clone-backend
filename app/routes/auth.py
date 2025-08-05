@@ -105,7 +105,13 @@ async def login_user(req: LoginData):
             profilePicture=user.profilePicture,
             role=user.role,
             credits=user.credits,
-            subscription=user.subscription
+            subscription=user.subscription or {
+                "type": "free",
+                "status": "none",
+                "stripeCustomerId": None,
+                "stripeSubscriptionId": None,
+                "currentPeriodEnd": None
+            }
         )
         
         user_data = full_user.model_dump(mode='json')
@@ -160,7 +166,13 @@ async def profile(
             profilePicture=user.profilePicture,
             role=user.role,
             credits=user.credits,
-            subscription=user.subscription
+            subscription=user.subscription or {
+                "type": "free",
+                "status": "none",
+                "stripeCustomerId": None,
+                "stripeSubscriptionId": None,
+                "currentPeriodEnd": None
+            }
         )
         
         user_data = full_user.model_dump(mode='json')
@@ -217,7 +229,13 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
             profilePicture=user.profilePicture,
             role=user.role,
             credits=user.credits,
-            subscription=user.subscription
+            subscription=user.subscription or {
+                "type": "free",
+                "status": "none",
+                "stripeCustomerId": None,
+                "stripeSubscriptionId": None,
+                "currentPeriodEnd": None
+            }
         )
         
         user_data = full_user.model_dump(mode='json')
