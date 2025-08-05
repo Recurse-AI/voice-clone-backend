@@ -13,6 +13,24 @@ from datetime import datetime, timezone, timedelta
 
 auth = APIRouter()
 
+def prepare_subscription_data(subscription):
+    """Helper function to prepare subscription data for FullUser schema"""
+    if subscription:
+        if hasattr(subscription, 'model_dump'):
+            return subscription.model_dump()
+        elif hasattr(subscription, 'dict'):
+            return subscription.dict()
+        else:
+            return subscription
+    else:
+        return {
+            "type": "free",
+            "status": "none",
+            "stripeCustomerId": None,
+            "stripeSubscriptionId": None,
+            "currentPeriodEnd": None
+        }
+
 # Define the security scheme
 security = HTTPBearer(
     bearerFormat="JWT",  
@@ -97,6 +115,8 @@ async def login_user(req: LoginData):
         user: dict = await get_user(req)
 
         # Convert to FullUser schema to include subscription information
+        subscription_data = prepare_subscription_data(user.subscription)
+        
         full_user = FullUser(
             id=user.id,
             name=user.name,
@@ -105,13 +125,7 @@ async def login_user(req: LoginData):
             profilePicture=user.profilePicture,
             role=user.role,
             credits=user.credits,
-            subscription=user.subscription or {
-                "type": "free",
-                "status": "none",
-                "stripeCustomerId": None,
-                "stripeSubscriptionId": None,
-                "currentPeriodEnd": None
-            }
+            subscription=subscription_data
         )
         
         user_data = full_user.model_dump(mode='json')
@@ -158,6 +172,8 @@ async def profile(
             )
 
         # Convert to FullUser schema to include subscription information
+        subscription_data = prepare_subscription_data(user.subscription)
+        
         full_user = FullUser(
             id=user.id,
             name=user.name,
@@ -166,13 +182,7 @@ async def profile(
             profilePicture=user.profilePicture,
             role=user.role,
             credits=user.credits,
-            subscription=user.subscription or {
-                "type": "free",
-                "status": "none",
-                "stripeCustomerId": None,
-                "stripeSubscriptionId": None,
-                "currentPeriodEnd": None
-            }
+            subscription=subscription_data
         )
         
         user_data = full_user.model_dump(mode='json')
@@ -221,6 +231,8 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
             )
         
         # Convert to FullUser schema to include subscription information
+        subscription_data = prepare_subscription_data(user.subscription)
+        
         full_user = FullUser(
             id=user.id,
             name=user.name,
@@ -229,13 +241,7 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
             profilePicture=user.profilePicture,
             role=user.role,
             credits=user.credits,
-            subscription=user.subscription or {
-                "type": "free",
-                "status": "none",
-                "stripeCustomerId": None,
-                "stripeSubscriptionId": None,
-                "currentPeriodEnd": None
-            }
+            subscription=subscription_data
         )
         
         user_data = full_user.model_dump(mode='json')
