@@ -57,34 +57,13 @@ for i in {1..3}; do
     fi
 done
 
-# Install dependencies with fallback (including Fish Speech 1.5 requirements)
+# Install dependencies (including Fish Speech 1.5 requirements)
 echo "📦 Installing required packages..."
-apt-get install -y ffmpeg libavutil58 libavcodec58 libavformat58 libsndfile1 python3-dev python3-pip python3-venv git curl build-essential portaudio19-dev libsox-dev || {
-    echo "⚠️  Some packages failed to install, checking what's available..."
-    
-    # Try installing packages individually
-    for package in ffmpeg libavutil58 libavcodec58 libavformat58 libsndfile1 python3-dev python3-pip python3-venv git curl build-essential portaudio19-dev libsox-dev; do
-        if apt-get install -y "$package"; then
-            echo "✅ Installed $package"
-        else
-            echo "⚠️  Failed to install $package"
-        fi
-    done
+apt-get install -y ffmpeg libsndfile1 python3-dev python3-pip python3-venv git curl build-essential portaudio19-dev libsox-dev || {
+    echo "⚠️  Some packages failed to install, continuing anyway..."
 }
 
 apt-get autoremove -y || true
-
-# Install additional FFmpeg libraries to fix torchaudio compatibility
-echo "🎵 Installing FFmpeg libraries for torchaudio compatibility..."
-# Try different FFmpeg versions (newer first, fallback to older)
-for ffmpeg_ver in "libavutil58 libavcodec58 libavformat58" "libavutil57 libavcodec57 libavformat57" "libavutil56 libavcodec56 libavformat56"; do
-    if apt-get install -y $ffmpeg_ver; then
-        echo "✅ Installed FFmpeg libraries: $ffmpeg_ver"
-        break
-    else
-        echo "⚠️  Failed to install $ffmpeg_ver, trying older version..."
-    fi
-done
 
 # Verify GPU availability
 echo "🔍 Checking GPU availability..."
