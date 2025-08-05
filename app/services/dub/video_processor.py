@@ -109,7 +109,7 @@ class VideoProcessor:
     def _create_final_audio(self, audio_path: str, instruments_path: str, audio_id: str) -> Path:
         """Mix original audio with instrument track and return mixed file path"""
         try:
-            from dub.audio_utils import AudioUtils
+            from .audio_utils import AudioUtils
             output_path = self.temp_dir / f"final_mix_{audio_id}.wav"
             AudioUtils.mix_audio_files(audio_path, instruments_path, str(output_path))
             return output_path

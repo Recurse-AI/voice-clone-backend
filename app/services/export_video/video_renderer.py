@@ -28,7 +28,7 @@ class VideoRenderer:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         
         # Use existing video processor
-        from dub.video_processor import VideoProcessor
+        from app.services.dub.video_processor import VideoProcessor
         self.video_processor = VideoProcessor(str(self.temp_dir))
     
     async def render_video(self, video_url: Optional[str], final_audio_path: str,

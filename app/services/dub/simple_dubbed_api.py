@@ -296,7 +296,7 @@ class SimpleDubbedAPI:
             logger.info("Generating subtitles...")
             # Step 5: Subtitle generation (if subtitle True)
             # --- Always generate SRT file ---
-            from dub.video_processor import VideoProcessor
+            from .video_processor import VideoProcessor
             processor = VideoProcessor(temp_dir=process_temp_dir)
             subtitle_data = []
             for seg in dubbed_segments:
@@ -323,7 +323,7 @@ class SimpleDubbedAPI:
             final_video_path = None
             video_error = None
             if video_path and os.path.exists(video_path):
-                from dub.video_processor import VideoProcessor
+                from .video_processor import VideoProcessor
                 processor = VideoProcessor(temp_dir=process_temp_dir)
                 if subtitle and subtitle_path and os.path.exists(subtitle_path):
                     result = processor.create_video_with_subtitles(
