@@ -29,7 +29,7 @@ def send_email(sender_email: str, receiver_email: str, subject: str, body: str, 
 
 # Background task function to send verification email
 def send_verification_email_background_task(background_tasks: BackgroundTasks, email: str, name: str, token: str):
-    verification_link = f"{settings.FRONTEND_URL}/verify-email?token={token}"
+    verification_link = f"{settings.FRONTEND_URL}/auth/verify-email?token={token}"
 
     subject = "Please Verify Your Email"
     body = f"Hello {name},\n\nPlease click on the link below to verify your email address:\n{verification_link}"
@@ -41,7 +41,7 @@ def send_verification_email_background_task(background_tasks: BackgroundTasks, e
 
 # Background task function to send password reset email
 def send_reset_email_background_task(background_tasks: BackgroundTasks, email: str, name: str, token: str):
-    reset_link = f"{settings.FRONTEND_URL}/reset-password?token={token}"
+    reset_link = f"{settings.FRONTEND_URL}/auth/reset-password?token={token}"
 
     subject = "Reset Your Password"
     body = f"Hello {name},\n\nWe received a request to reset your password.\nPlease click the link below to proceed:\n{reset_link}\n\nIf you did not request this, you can ignore this email."

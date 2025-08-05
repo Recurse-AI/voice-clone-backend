@@ -1,0 +1,724 @@
+{
+  "apiTitle": "ClearVocals API",
+  "version": "1.0.0",
+  "description": "Complete API schema for ClearVocals Voice Cloning and Audio Processing Platform",
+  "baseUrl": "https://your-api-domain.com",
+  "authentication": {
+    "type": "JWT Bearer Token",
+    "header": "Authorization: Bearer <token>",
+    "description": "Most endpoints require authentication. Get token from login endpoint."
+  },
+  "endpoints": {
+    "root": {
+      "path": "/",
+      "method": "GET",
+      "description": "API status check",
+      "authentication": false,
+      "request": {},
+      "response": {
+        "status": "string",
+        "message": "string"
+      }
+    },
+    "auth": {
+      "home": {
+        "path": "/api/auth/",
+        "method": "GET",
+        "description": "Auth module home endpoint",
+        "authentication": false,
+        "request": {},
+        "response": {
+          "message": "this is auth home"
+        }
+      },
+      "register": {
+        "path": "/api/auth/register",
+        "method": "POST",
+        "description": "User registration with email verification",
+        "authentication": false,
+        "request": {
+          "name": "string (required)",
+          "email": "string (required, valid email)",
+          "password": "string (required)"
+        },
+        "response": {
+          "message": "User created successfully. Please verify email"
+        },
+        "errorResponse": {
+          "success": false,
+          "error": "string",
+          "message": "string"
+        }
+      },
+      "verifyEmail": {
+        "path": "/api/auth/verify-email",
+        "method": "GET",
+        "description": "Verify user email with token",
+        "authentication": false,
+        "request": {
+          "token": "string (query parameter, required)"
+        },
+        "response": {
+          "message": "Email verified successfully"
+        }
+      },
+      "login": {
+        "path": "/api/auth/login",
+        "method": "POST",
+        "description": "User login",
+        "authentication": false,
+        "request": {
+          "email": "string (required, valid email)",
+          "password": "string (required)"
+        },
+        "response": {
+          "message": "Login successfull",
+          "user": {
+            "id": "string",
+            "name": "string",
+            "email": "string",
+            "isEmailVerified": "boolean",
+            "profilePicture": "string|null",
+            "role": "user|admin",
+            "credits": "number",
+            "subscription": {
+              "type": "free|premium|pro",
+              "status": "active|trialing|past_due|canceled|none",
+              "stripeCustomerId": "string|null",
+              "stripeSubscriptionId": "string|null",
+              "currentPeriodEnd": "string|null"
+            }
+          },
+          "token": "string",
+          "remainingCredits": "number"
+        }
+      },
+      "profile": {
+        "path": "/api/auth/profile",
+        "method": "GET",
+        "description": "Get current user profile",
+        "authentication": true,
+        "request": {},
+        "response": {
+          "message": "Profile retrieved successfully",
+          "user": "User object (same as login response)",
+          "remainingCredits": "number"
+        }
+      },
+      "updateProfile": {
+        "path": "/api/auth/profile",
+        "method": "PUT",
+        "description": "Update user profile",
+        "authentication": true,
+        "request": {
+          "name": "string (required)"
+        },
+        "response": {
+          "message": "Profile retrieved successfully",
+          "user": "User object",
+          "remainingCredits": "number"
+        }
+      },
+      "forgotPassword": {
+        "path": "/api/auth/forgot-password",
+        "method": "POST",
+        "description": "Request password reset",
+        "authentication": false,
+        "request": {
+          "email": "string (required, valid email)"
+        },
+        "response": {
+          "message": "Password reset email send successfully",
+          "details": "Please check your email for reset instructions",
+          "email": "string"
+        }
+      },
+      "resetPasswordCheck": {
+        "path": "/api/auth/reset-password",
+        "method": "GET",
+        "description": "Verify reset password token",
+        "authentication": false,
+        "request": {
+          "token": "string (query parameter, required)"
+        },
+        "response": {
+          "message": "Token is valid",
+          "email": "string"
+        }
+      },
+      "resetPassword": {
+        "path": "/api/auth/reset-password",
+        "method": "POST",
+        "description": "Reset password with token",
+        "authentication": false,
+        "request": {
+          "token": "string (query parameter, required)",
+          "password": "string (required, in request body)"
+        },
+        "response": {
+          "message": "Password reset successful"
+        }
+      }
+    },
+    "stripe": {
+      "getPricingPlans": {
+        "path": "/api/stripe/plans",
+        "method": "GET",
+        "description": "Get all active pricing plans",
+        "authentication": false,
+        "request": {},
+        "response": {
+          "success": true,
+          "plans": [
+            {
+              "_id": "string",
+              "name": "string",
+              "displayOrder": "number",
+              "isActive": "boolean",
+              "pricing": "object"
+            }
+          ],
+          "count": "number"
+        }
+      },
+      "createCheckoutSession": {
+        "path": "/api/stripe/create-checkout-session",
+        "method": "POST",
+        "description": "Create Stripe checkout session for payment",
+        "authentication": true,
+        "request": {
+          "price": "number (required, minimum $5)"
+        },
+        "response": {
+          "success": true,
+          "sessionId": "string",
+          "url": "string (Stripe checkout URL)",
+          "credits": "number",
+          "price": "number (final price after discount)",
+          "discount": "number (discount percentage)"
+        }
+      },
+      "verifyPayment": {
+        "path": "/api/stripe/verify-payment/{sessionId}",
+        "method": "GET",
+        "description": "Verify completed payment and add credits",
+        "authentication": true,
+        "request": {
+          "sessionId": "string (path parameter, required)"
+        },
+        "response": {
+          "success": true,
+          "message": "Payment verified and processed successfully",
+          "transaction": "string",
+          "user": {
+            "credits": "number",
+            "subscription": {
+              "type": "premium",
+              "status": "active"
+            }
+          }
+        }
+      },
+      "getPurchaseHistory": {
+        "path": "/api/stripe/purchase-history",
+        "method": "GET",
+        "description": "Get user's purchase history",
+        "authentication": true,
+        "request": {},
+        "response": {
+          "message": "Purchase history retrieved successfully",
+          "transactions": [
+            {
+              "_id": "string",
+              "userId": "string",
+              "type": "purchase",
+              "credits": "number",
+              "amount": "number",
+              "stripeSessionId": "string",
+              "description": "string",
+              "status": "success",
+              "createdAt": "string (ISO date)"
+            }
+          ]
+        }
+      },
+      "webhook": {
+        "path": "/api/stripe/webhook",
+        "method": "POST",
+        "description": "Stripe webhook endpoint (internal use)",
+        "authentication": false,
+        "request": "Raw Stripe webhook payload",
+        "response": {
+          "received": true
+        }
+      },
+      "customerPortal": {
+        "path": "/api/stripe/customer-portal",
+        "method": "GET",
+        "description": "Get customer portal (Not implemented yet)",
+        "authentication": true,
+        "status": "NOT_IMPLEMENTED",
+        "request": {},
+        "response": "Not implemented"
+      }
+    },
+    "videoExport": {
+      "exportVideo": {
+        "path": "/api/export-video",
+        "method": "POST",
+        "description": "Start video export job",
+        "authentication": false,
+        "request": {
+          "audioId": "string (required, min length 1)",
+          "format": "string (mp4|avi|mov|mkv, default: mp4)",
+          "settings": {
+            "quality": "low|medium|high|ultra",
+            "resolution": "object",
+            "otherSettings": "any"
+          },
+          "timeline": {
+            "duration": "number (required)",
+            "fps": "number (required)",
+            "size": "object (required)",
+            "items": "array (required)"
+          },
+          "editingChanges": "object (required)",
+          "voiceCloneData": "object (required)",
+          "exportMetadata": "object (required)",
+          "instrumentsUrl": "string|null (optional)",
+          "subtitlesUrl": "string|null (optional)"
+        },
+        "response": {
+          "jobId": "string",
+          "status": "string",
+          "message": "Video export started successfully",
+          "estimatedDuration": "number|null"
+        }
+      },
+      "getExportStatus": {
+        "path": "/api/export-status/{job_id}",
+        "method": "GET",
+        "description": "Get video export job status",
+        "authentication": false,
+        "request": {
+          "job_id": "string (path parameter, required)"
+        },
+        "response": {
+          "jobId": "string",
+          "status": "string",
+          "progress": "number",
+          "downloadUrl": "string|null",
+          "error": "string|null",
+          "processingLogs": {
+            "logs": ["string"]
+          }
+        }
+      }
+    },
+    "audioProcessing": {
+      "audioSeparation": {
+        "path": "/api/audio-separation",
+        "method": "POST",
+        "description": "Start audio separation job (vocal/instrument separation)",
+        "authentication": true,
+        "request": {
+          "audioUrl": "string (required, must start with http/https)",
+          "duration": "number (required, > 0, <= 7200 seconds, max 2 hours)",
+          "callerInfo": "string|null (optional, max 255 chars)"
+        },
+        "response": {
+          "success": true,
+          "requestId": "string",
+          "message": "Processing started successfully",
+          "estimatedTime": "5-15 minutes",
+          "statusCheckUrl": "string",
+          "queuePosition": "number|null"
+        },
+        "creditCheck": {
+          "note": "1 credit per minute of audio",
+          "errorResponse": {
+            "success": false,
+            "message": "Insufficient credits",
+            "required_credits": "number",
+            "available_credits": "number"
+          }
+        }
+      },
+      "getAudioSeparationStatus": {
+        "path": "/api/audio-separation-status/{request_id}",
+        "method": "GET",
+        "description": "Get audio separation job status",
+        "authentication": false,
+        "request": {
+          "request_id": "string (path parameter, required)"
+        },
+        "response": {
+          "requestId": "string",
+          "status": "pending|processing|completed|failed|cancelled",
+          "progress": "number (0-100)",
+          "queuePosition": "number|null",
+          "vocalUrl": "string|null (available when completed)",
+          "instrumentUrl": "string|null (available when completed)",
+          "error": "string|null",
+          "createdAt": "string (ISO date)",
+          "startedAt": "string|null (ISO date)",
+          "completedAt": "string|null (ISO date)",
+          "callerInfo": "string|null"
+        }
+      },
+      "voiceCloneSegment": {
+        "path": "/api/voice-clone-segment",
+        "method": "POST",
+        "description": "Clone voice for a single text segment using reference audio",
+        "authentication": false,
+        "request": {
+          "referenceAudioUrl": "string (required, must start with http/https)",
+          "referenceText": "string (required, 1-5000 chars, text spoken in reference audio)",
+          "text": "string (required, 1-5000 chars, text to synthesize)",
+          "speakerLabel": "string|null (optional, max 100 chars)"
+        },
+        "response": {
+          "success": true,
+          "message": "Voice cloned successfully",
+          "jobId": "string",
+          "audioUrl": "string",
+          "duration": "number|null (seconds)",
+          "error": "string|null"
+        }
+      },
+      "deductCreditsForSeparation": {
+        "path": "/api/audio-separation-deduct-credits",
+        "method": "POST",
+        "description": "Manually deduct credits for audio separation (usually auto-deducted)",
+        "authentication": true,
+        "request": {
+          "job_id": "string (required, 1-255 chars)",
+          "duration": "number (required, > 0, <= 14400 seconds, max 4 hours)"
+        },
+        "response": {
+          "success": true,
+          "message": "Credits deducted successfully",
+          "deducted_credits": "number",
+          "remaining_credits": "number",
+          "duration": "number"
+        }
+      }
+    },
+    "uploads": {
+      "uploadFile": {
+        "path": "/upload-file",
+        "method": "POST",
+        "description": "Upload video file for processing",
+        "authentication": false,
+        "contentType": "multipart/form-data",
+        "request": {
+          "video_file": "File (required, video file)"
+        },
+        "response": {
+          "success": true,
+          "message": "File uploaded successfully",
+          "job_id": "string",
+          "status_check_url": "string",
+          "original_filename": "string",
+          "file_size_mb": "number",
+          "estimated_time": "2-10 minutes"
+        },
+        "allowedFormats": [".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm", ".m4v"]
+      },
+      "getUploadStatus": {
+        "path": "/upload-status/{job_id}",
+        "method": "GET",
+        "description": "Get file upload status",
+        "authentication": false,
+        "request": {
+          "job_id": "string (path parameter, required)"
+        },
+        "response": {
+          "job_id": "string",
+          "status": "pending|uploading|done|failed",
+          "progress": "number (0-100)",
+          "message": "string",
+          "original_filename": "string|null",
+          "file_url": "string|null"
+        }
+      }
+    },
+    "videoProcessing": {
+      "videoDub": {
+        "path": "/api/video-dub",
+        "method": "POST",
+        "description": "Start video dubbing job (requires uploaded video via upload-file API)",
+        "authentication": true,
+        "request": {
+          "job_id": "string (required, from upload-file API)",
+          "target_language": "string (required)",
+          "project_title": "string (optional, default: 'Untitled Project')",
+          "duration": "number|null (optional, > 0, <= 14400 seconds, max 4 hours)",
+          "expected_speaker": "string|null (optional, speaker name or ID)",
+          "source_video_language": "string|null (optional, auto-detect if null)",
+          "subtitle": "boolean (default: false)",
+          "instrument": "boolean (default: false)"
+        },
+        "response": {
+          "success": true,
+          "message": "Video dub started successfully",
+          "job_id": "string",
+          "status_check_url": "string"
+        },
+        "creditCheck": {
+          "note": "Credits required based on video duration",
+          "errorResponse": {
+            "success": false,
+            "message": "Insufficient credits",
+            "required_credits": "number",
+            "available_credits": "number"
+          }
+        }
+      },
+      "getVideoDubStatus": {
+        "path": "/api/video-dub-status/{job_id}",
+        "method": "GET",
+        "description": "Get video dubbing job status",
+        "authentication": false,
+        "request": {
+          "job_id": "string (path parameter, required)"
+        },
+        "response": {
+          "job_id": "string",
+          "status": "string",
+          "progress": "number (0-100)",
+          "message": "string",
+          "result_url": "string|null (download URL when completed)",
+          "error": "string|null",
+          "details": "object"
+        }
+      },
+      "downloadVideo": {
+        "path": "/api/download-video",
+        "method": "POST",
+        "description": "Download video from URL (YouTube, etc.)",
+        "authentication": false,
+        "request": {
+          "url": "string (required, must start with http/https)",
+          "quality": "string|null (optional, e.g., 'best', 'worst', 'best[height<=720]')"
+        },
+        "response": {
+          "success": true,
+          "message": "string",
+          "job_id": "string",
+          "video_info": {
+            "title": "string",
+            "duration": "number",
+            "format": "string",
+            "other_metadata": "any"
+          },
+          "cloudflare": "object|null",
+          "error": "string|null"
+        }
+      }
+    },
+    "userJobs": {
+      "getUserSeparations": {
+        "path": "/api/jobs/separations",
+        "method": "GET",
+        "description": "Get all audio separation jobs for current user",
+        "authentication": true,
+        "request": {
+          "limit": "number (query parameter, optional, default: 50)"
+        },
+        "response": {
+          "success": true,
+          "message": "string",
+          "jobs": [
+            {
+              "job_id": "string",
+              "status": "string",
+              "progress": "number",
+              "audio_url": "string",
+              "vocal_url": "string|null",
+              "instrument_url": "string|null",
+              "error": "string|null",
+              "created_at": "string (ISO date)",
+              "updated_at": "string (ISO date)",
+              "completed_at": "string|null (ISO date)"
+            }
+          ],
+          "total": "number"
+        }
+      },
+      "getSeparationDetail": {
+        "path": "/api/jobs/separation/{job_id}",
+        "method": "GET",
+        "description": "Get detailed information about a specific separation job",
+        "authentication": true,
+        "request": {
+          "job_id": "string (path parameter, required)"
+        },
+        "response": {
+          "success": true,
+          "job": "UserSeparationJob object (same as in list)",
+          "error": "string|null"
+        }
+      },
+      "getUserDubs": {
+        "path": "/api/jobs/dubs",
+        "method": "GET",
+        "description": "Get all video dubbing jobs for current user",
+        "authentication": true,
+        "request": {
+          "limit": "number (query parameter, optional, default: 50)"
+        },
+        "response": {
+          "success": true,
+          "message": "string",
+          "jobs": [
+            {
+              "job_id": "string",
+              "status": "string",
+              "progress": "number",
+              "original_filename": "string|null",
+              "target_language": "string",
+              "result_url": "string|null",
+              "error": "string|null",
+              "created_at": "string (ISO date)",
+              "updated_at": "string (ISO date)",
+              "completed_at": "string|null (ISO date)"
+            }
+          ],
+          "total": "number"
+        }
+      },
+      "getDubDetail": {
+        "path": "/api/jobs/dub/{job_id}",
+        "method": "GET",
+        "description": "Get detailed information about a specific dubbing job",
+        "authentication": true,
+        "request": {
+          "job_id": "string (path parameter, required)"
+        },
+        "response": {
+          "success": true,
+          "job": "UserDubJob object (same as in list)",
+          "error": "string|null"
+        }
+      }
+    }
+  },
+  "commonErrorResponses": {
+    "400": {
+      "description": "Bad Request - Invalid input data",
+      "response": {
+        "error": "string",
+        "message": "string",
+        "details": "string|object"
+      }
+    },
+    "401": {
+      "description": "Unauthorized - Authentication required or invalid token",
+      "response": {
+        "error": "Unauthorized",
+        "message": "string"
+      }
+    },
+    "403": {
+      "description": "Forbidden - Access denied",
+      "response": {
+        "error": "Access denied",
+        "message": "string"
+      }
+    },
+    "404": {
+      "description": "Not Found - Resource not found",
+      "response": {
+        "error": "Not found",
+        "message": "string"
+      }
+    },
+    "500": {
+      "description": "Internal Server Error",
+      "response": {
+        "error": "Server error",
+        "message": "string",
+        "details": "string"
+      }
+    }
+  },
+  "dataTypes": {
+    "User": {
+      "id": "string",
+      "name": "string",
+      "email": "string (valid email)",
+      "isEmailVerified": "boolean",
+      "profilePicture": "string|null",
+      "role": "user|admin",
+      "credits": "number",
+      "subscription": {
+        "type": "free|premium|pro",
+        "status": "active|trialing|past_due|canceled|none",
+        "stripeCustomerId": "string|null",
+        "stripeSubscriptionId": "string|null",
+        "currentPeriodEnd": "string|null (ISO date)"
+      }
+    }
+  },
+  "creditSystem": {
+    "description": "1 credit = 1 minute of processing time",
+    "rates": {
+      "audioSeparation": "1 credit per minute",
+      "videoDubbing": "Credits based on video duration",
+      "voiceCloning": "Usually free for small segments"
+    },
+    "checkBeforeProcessing": "All processing endpoints check for sufficient credits before starting",
+    "autoDeduction": "Credits are automatically deducted upon successful job completion"
+  },
+  "fileSupport": {
+    "videoUpload": {
+      "supportedFormats": [".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm", ".m4v"],
+      "maxDuration": "4 hours (14400 seconds)",
+      "uploadMethod": "Use /upload-file endpoint first, then use job_id in processing endpoints"
+    },
+    "audioProcessing": {
+      "supportedFormats": "Any format accessible via HTTP URL",
+      "maxDuration": "2 hours for separation (7200 seconds), 4 hours for dubbing (14400 seconds)"
+    }
+  },
+  "workflowExamples": {
+    "audioSeparation": {
+      "steps": [
+        "1. POST /api/audio-separation with audioUrl and duration",
+        "2. Poll GET /api/audio-separation-status/{request_id} until status is 'completed'",
+        "3. Download results from vocalUrl and instrumentUrl in response",
+        "4. Credits are auto-deducted on completion"
+      ]
+    },
+    "videoDubbing": {
+      "steps": [
+        "1. POST /upload-file with video file",
+        "2. Poll GET /upload-status/{job_id} until status is 'done'",
+        "3. POST /api/video-dub with job_id and dubbing parameters",
+        "4. Poll GET /api/video-dub-status/{job_id} until status shows completion",
+        "5. Download result from result_url",
+        "6. Credits are auto-deducted on completion"
+      ]
+    },
+    "userRegistrationAndPayment": {
+      "steps": [
+        "1. POST /api/auth/register to create account",
+        "2. GET /api/auth/verify-email with token from email",
+        "3. POST /api/auth/login to get auth token",
+        "4. GET /api/stripe/plans to show pricing options",
+        "5. POST /api/stripe/create-checkout-session to initiate payment",
+        "6. Redirect user to Stripe checkout URL",
+        "7. GET /api/stripe/verify-payment/{sessionId} to confirm and add credits"
+      ]
+    }
+  },
+  "notes": {
+    "authentication": "Include 'Authorization: Bearer <token>' header for authenticated endpoints",
+    "errorHandling": "All endpoints return consistent error response format",
+    "backgroundProcessing": "Most processing endpoints return immediately and require status polling",
+    "creditManagement": "Credits are checked before processing and deducted automatically on completion",
+    "fileStorage": "Files are temporarily stored during processing and automatically cleaned up",
+    "webhooks": "Stripe webhooks handle payment completion automatically"
+  }
+}
