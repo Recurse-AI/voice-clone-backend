@@ -59,11 +59,11 @@ done
 
 # Install dependencies with fallback (including Fish Speech 1.5 requirements)
 echo "📦 Installing required packages..."
-apt-get install -y ffmpeg libsndfile1 python3-dev python3-pip python3-venv git curl build-essential portaudio19-dev libsox-dev || {
+apt-get install -y ffmpeg libavutil58 libavcodec58 libavformat58 libsndfile1 python3-dev python3-pip python3-venv git curl build-essential portaudio19-dev libsox-dev || {
     echo "⚠️  Some packages failed to install, checking what's available..."
     
     # Try installing packages individually
-    for package in ffmpeg libsndfile1 python3-dev python3-pip python3-venv git curl build-essential portaudio19-dev libsox-dev; do
+    for package in ffmpeg libavutil58 libavcodec58 libavformat58 libsndfile1 python3-dev python3-pip python3-venv git curl build-essential portaudio19-dev libsox-dev; do
         if apt-get install -y "$package"; then
             echo "✅ Installed $package"
         else
@@ -73,6 +73,18 @@ apt-get install -y ffmpeg libsndfile1 python3-dev python3-pip python3-venv git c
 }
 
 apt-get autoremove -y || true
+
+# Install additional FFmpeg libraries to fix torchaudio compatibility
+echo "🎵 Installing FFmpeg libraries for torchaudio compatibility..."
+# Try different FFmpeg versions (newer first, fallback to older)
+for ffmpeg_ver in "libavutil58 libavcodec58 libavformat58" "libavutil57 libavcodec57 libavformat57" "libavutil56 libavcodec56 libavformat56"; do
+    if apt-get install -y $ffmpeg_ver; then
+        echo "✅ Installed FFmpeg libraries: $ffmpeg_ver"
+        break
+    else
+        echo "⚠️  Failed to install $ffmpeg_ver, trying older version..."
+    fi
+done
 
 # Verify GPU availability
 echo "🔍 Checking GPU availability..."
@@ -185,11 +197,11 @@ sleep 3
 # Start API with proper virtual environment
 echo "🚀 Starting API server..."
 source venv/bin/activate
-nohup ./venv/bin/python main.py > ./logs/api.log 2>&1 &
+nohup ./venv/bin/python main.py > /dev/null 2>&1 &
 
 # Wait for API to start
 echo "⏳ Waiting for API to start..."
 
 echo "🎉 Setup complete! Your Voice Cloning API is ready!" 
 
-# git pull && pkill -f "python.*main.py" && nohup ./venv/bin/python main.py > ./logs/api.log 2>&1 &
+# git pull && pkill -f "python.*main.py" && nohup ./venv/bin/python main.py > /dev/null 2>&1 &
