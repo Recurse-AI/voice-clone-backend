@@ -18,12 +18,27 @@ def _update_separation_status_non_blocking(job_id: str, status: str, progress: i
     def run_update():
         try:
             import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(
-                separation_job_service.update_job_status(job_id, status, progress, **kwargs)
-            )
-            loop.close()
+            # Check if there's already an event loop in this thread
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_closed():
+                    raise RuntimeError("Event loop is closed")
+            except RuntimeError:
+                # No event loop in this thread, create a new one
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            # Run the async function
+            if loop.is_running():
+                # Loop is already running, use create_task instead
+                asyncio.create_task(
+                    separation_job_service.update_job_status(job_id, status, progress, **kwargs)
+                )
+            else:
+                loop.run_until_complete(
+                    separation_job_service.update_job_status(job_id, status, progress, **kwargs)
+                )
+                
         except Exception as e:
             logger.error(f"Failed to update separation status for {job_id}: {e}")
     

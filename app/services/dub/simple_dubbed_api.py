@@ -107,13 +107,27 @@ class SimpleDubbedAPI:
         """Non-blocking status update to avoid blocking main processing"""
         def run_update():
             try:
-                # Create new event loop for this thread
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(
-                    status_manager.update_status(job_id, status, progress, details, job_type)
-                )
-                loop.close()
+                # Check if there's already an event loop in this thread
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_closed():
+                        raise RuntimeError("Event loop is closed")
+                except RuntimeError:
+                    # No event loop in this thread, create a new one
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                # Run the async function
+                if loop.is_running():
+                    # Loop is already running, use create_task instead  
+                    asyncio.create_task(
+                        status_manager.update_status(job_id, status, progress, details, job_type)
+                    )
+                else:
+                    loop.run_until_complete(
+                        status_manager.update_status(job_id, status, progress, details, job_type)
+                    )
+                    
             except Exception as e:
                 logger.error(f"Failed to update status for {job_id}: {e}")
         
@@ -399,7 +413,8 @@ class SimpleDubbedAPI:
             # Error status will be handled by video_processing
             logger.error(f"Dubbed processing failed: {str(e)}")
             # Clean up temp directory on exception
-            AudioUtils.remove_temp_dir(folder_path=locals().get("process_temp_dir"))
+            if locals().get("process_temp_dir"):
+                AudioUtils.remove_temp_dir(folder_path=locals().get("process_temp_dir"))
             return {"success": False, "error": str(e)}
     
     def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, original_text: str = "", speaker_label: str = None, job_id: str = None, process_temp_dir: str = None) -> Optional[Dict[str, Any]]:

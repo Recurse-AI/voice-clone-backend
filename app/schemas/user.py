@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional, Literal
+from typing import Optional, Literal, Union, Dict, Any
 from datetime import datetime
 
 class Subscription(BaseModel):
@@ -31,7 +31,7 @@ class UserOut(UserBase):
         from_attributes = True
 
 class FullUser(UserOut):
-    subscription: Optional[Subscription] = None
+    subscription: Optional[Union[Subscription, Dict[str, Any]]] = None
 
 class TokenUser(BaseModel):
     id: str
