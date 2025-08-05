@@ -163,7 +163,7 @@ docker-compose.override.yml
 *.ckpt
 *.bin
 *.safetensors
-models/
+# models/ - commented out to allow Python model definitions
 checkpoints/
 
 # R2 Storage temp
@@ -224,3 +224,16 @@ ffmpeg-master-latest-win64-gpl/
 fish-speech/
 checkpoints/
 tmp/
+logs/
+.cursor/
+../fish-speech/
+
+.env.production
+.env.development
+.env.staging
+.env.production
+.env.development
+.env.staging
+.env.production
+.env.development
+.env.staging
