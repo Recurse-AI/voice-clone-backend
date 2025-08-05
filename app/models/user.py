@@ -20,8 +20,6 @@ class User(BaseModel):
     emailVerificationExpiry: Optional[datetime] = None
     verificationAttempts: int = 0
     credits: int = 0
-    freeSecondsUsed: int = 0
-    freeSecondsLimit: int = 1500
     googleId: Optional[str] = None
     profilePicture: Optional[str] = None
     role: Literal['user', 'admin'] = 'user'

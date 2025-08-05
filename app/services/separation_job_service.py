@@ -136,6 +136,34 @@ class SeparationJobService:
         except Exception as e:
             logger.error(f"Failed to update separation job details {job_id}: {e}")
             return False
+    
+    async def delete_job(self, job_id: str, user_id: str) -> bool:
+        """Delete a separation job (with user ownership check)"""
+        try:
+            # First check if job exists and belongs to user
+            job = await self.get_job(job_id)
+            if not job:
+                logger.warning(f"Separation job {job_id} not found for deletion")
+                return False
+            
+            if job.user_id != user_id:
+                logger.warning(f"User {user_id} attempted to delete separation job {job_id} they don't own")
+                return False
+            
+            # Delete the job
+            result = await self.collection.delete_one({"job_id": job_id})
+            
+            success = result.deleted_count > 0
+            if success:
+                logger.info(f"Deleted separation job {job_id} for user {user_id}")
+            else:
+                logger.warning(f"Failed to delete separation job {job_id} - no documents deleted")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"Failed to delete separation job {job_id}: {e}")
+            return False
 
 # Global service instance
 separation_job_service = SeparationJobService()

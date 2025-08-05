@@ -101,7 +101,22 @@
         "request": {},
         "response": {
           "message": "Profile retrieved successfully",
-          "user": "User object (same as login response)",
+          "user": {
+            "id": "string",
+            "name": "string",
+            "email": "string",
+            "isEmailVerified": "boolean",
+            "profilePicture": "string|null",
+            "role": "user|admin",
+            "credits": "number",
+            "subscription": {
+              "type": "free|premium|pro",
+              "status": "active|trialing|past_due|canceled|none",
+              "stripeCustomerId": "string|null",
+              "stripeSubscriptionId": "string|null",
+              "currentPeriodEnd": "string|null"
+            }
+          },
           "remainingCredits": "number"
         }
       },
@@ -114,8 +129,23 @@
           "name": "string (required)"
         },
         "response": {
-          "message": "Profile retrieved successfully",
-          "user": "User object",
+          "message": "Profile updated successfully",
+          "user": {
+            "id": "string",
+            "name": "string",
+            "email": "string",
+            "isEmailVerified": "boolean",
+            "profilePicture": "string|null",
+            "role": "user|admin",
+            "credits": "number",
+            "subscription": {
+              "type": "free|premium|pro",
+              "status": "active|trialing|past_due|canceled|none",
+              "stripeCustomerId": "string|null",
+              "stripeSubscriptionId": "string|null",
+              "currentPeriodEnd": "string|null"
+            }
+          },
           "remainingCredits": "number"
         }
       },
@@ -600,6 +630,42 @@
           "success": true,
           "job": "UserDubJob object (same as in list)",
           "error": "string|null"
+        }
+      },
+      "deleteSeparationJob": {
+        "path": "/api/jobs/separation/{job_id}",
+        "method": "DELETE",
+        "description": "Delete a specific audio separation job",
+        "authentication": true,
+        "request": {
+          "job_id": "string (path parameter, required)"
+        },
+        "response": {
+          "success": true,
+          "message": "Separation job deleted successfully",
+          "job_id": "string"
+        },
+        "errorResponses": {
+          "403": "Access denied - Job doesn't belong to current user",
+          "404": "Separation job not found"
+        }
+      },
+      "deleteDubJob": {
+        "path": "/api/jobs/dub/{job_id}",
+        "method": "DELETE",
+        "description": "Delete a specific video dubbing job",
+        "authentication": true,
+        "request": {
+          "job_id": "string (path parameter, required)"
+        },
+        "response": {
+          "success": true,
+          "message": "Dub job deleted successfully",
+          "job_id": "string"
+        },
+        "errorResponses": {
+          "403": "Access denied - Job doesn't belong to current user",
+          "404": "Dub job not found"
         }
       }
     }

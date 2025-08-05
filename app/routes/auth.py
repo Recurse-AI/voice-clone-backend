@@ -96,11 +96,19 @@ async def login_user(req: LoginData):
     try:
         user: dict = await get_user(req)
 
-        if hasattr(user, 'model_dump'):
-            user_data = user.model_dump(mode='json')  # Handles datetime serialization
-        else:
-            user_data = user
-
+        # Convert to FullUser schema to include subscription information
+        full_user = FullUser(
+            id=user.id,
+            name=user.name,
+            email=user.email,
+            isEmailVerified=user.isEmailVerified,
+            profilePicture=user.profilePicture,
+            role=user.role,
+            credits=user.credits,
+            subscription=user.subscription
+        )
+        
+        user_data = full_user.model_dump(mode='json')
         logger.info(f"get the user : {user_data}")
         remaining_credits = calculate_remaining_seconds(user_data)
         
@@ -143,7 +151,19 @@ async def profile(
                 }
             )
 
-        user_data = user.model_dump(mode='json') if hasattr(user, 'model_dump') else user
+        # Convert to FullUser schema to include subscription information
+        full_user = FullUser(
+            id=user.id,
+            name=user.name,
+            email=user.email,
+            isEmailVerified=user.isEmailVerified,
+            profilePicture=user.profilePicture,
+            role=user.role,
+            credits=user.credits,
+            subscription=user.subscription
+        )
+        
+        user_data = full_user.model_dump(mode='json')
         remaining_credits = calculate_remaining_seconds(user_data)
 
         return JSONResponse(
@@ -188,13 +208,25 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
                 }
             )
         
-        user_data = user.model_dump(mode='json') if hasattr(user, 'model_dump') else user
+        # Convert to FullUser schema to include subscription information
+        full_user = FullUser(
+            id=user.id,
+            name=user.name,
+            email=user.email,
+            isEmailVerified=user.isEmailVerified,
+            profilePicture=user.profilePicture,
+            role=user.role,
+            credits=user.credits,
+            subscription=user.subscription
+        )
+        
+        user_data = full_user.model_dump(mode='json')
         remaining_credits = calculate_remaining_seconds(user_data)
 
         return JSONResponse(
             status_code=200,
             content={
-                "message": "Profile retrieved successfully",
+                "message": "Profile updated successfully",
                 "user": user_data,
                 "remainingCredits": remaining_credits
             }

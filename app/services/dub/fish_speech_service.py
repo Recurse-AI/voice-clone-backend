@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Optional, Dict, Any, Generator, Union
 
 # Add fish-speech to Python path
-fish_speech_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'fish-speech')
+# Go up 3 levels: services/dub -> services -> app -> root, then to fish-speech
+fish_speech_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'fish-speech')
 if fish_speech_path not in sys.path:
     sys.path.insert(0, fish_speech_path)
 

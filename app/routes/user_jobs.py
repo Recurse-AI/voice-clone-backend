@@ -180,3 +180,68 @@ async def get_dub_job_detail(
     except Exception as e:
         logger.error(f"Failed to get dub job {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to get job details")
+
+# Delete Job APIs
+@router.delete("/separation/{job_id}")
+async def delete_separation_job(
+    job_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete a specific separation job"""
+    try:
+        user_id = current_user.id
+        
+        # Delete the job using service
+        success = await separation_job_service.delete_job(job_id, user_id)
+        
+        if not success:
+            # Check if job exists but doesn't belong to user
+            job = await separation_job_service.get_job(job_id)
+            if job and job.user_id != user_id:
+                raise HTTPException(status_code=403, detail="Access denied")
+            else:
+                raise HTTPException(status_code=404, detail="Separation job not found")
+        
+        return {
+            "success": True,
+            "message": "Separation job deleted successfully",
+            "job_id": job_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete separation job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete job")
+
+@router.delete("/dub/{job_id}")
+async def delete_dub_job(
+    job_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete a specific dub job"""
+    try:
+        user_id = current_user.id
+        
+        # Delete the job using service
+        success = await dub_job_service.delete_job(job_id, user_id)
+        
+        if not success:
+            # Check if job exists but doesn't belong to user
+            job = await dub_job_service.get_job(job_id)
+            if job and job.user_id != user_id:
+                raise HTTPException(status_code=403, detail="Access denied")
+            else:
+                raise HTTPException(status_code=404, detail="Dub job not found")
+        
+        return {
+            "success": True,
+            "message": "Dub job deleted successfully",
+            "job_id": job_id
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete dub job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete job")
