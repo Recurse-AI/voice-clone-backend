@@ -61,21 +61,26 @@ def process_audio_separation_background(request_id: str, user_id: str, duration_
                 )
                 
                 if job_status == "completed":
-                    # Extract result URLs
-                    result_urls = {}
-                    if status.get("result") and status["result"].get("output"):
-                        output = status["result"]["output"]
-                        result_urls = {
-                            "vocal_url": output.get("vocal_audio"),
-                            "instrument_url": output.get("instrument_audio")
-                        }
+                    # Extract result URLs from RunPod response
+                    vocal_url = None
+                    instrument_url = None
+                    
+                    if status.get("result"):
+                        # RunPod result contains the output data
+                        output = status["result"]
+                        vocal_url = output.get("vocal_audio") or output.get("vocals")
+                        instrument_url = output.get("instrument_audio") or output.get("instruments")
+                        
+                        # Log the response structure for debugging
+                        logger.info(f"RunPod separation response for {request_id}: vocal_url={vocal_url}, instrument_url={instrument_url}")
                     
                     # Update job with completion details (non-blocking)
                     _update_separation_status_non_blocking(
                         job_id=request_id,
                         status="completed",
                         progress=100,
-                        result_urls=result_urls,
+                        vocal_url=vocal_url,
+                        instrument_url=instrument_url,
                         details={
                             "completed_at": datetime.now().isoformat(),
                             "processing_time_seconds": attempt * 10,
