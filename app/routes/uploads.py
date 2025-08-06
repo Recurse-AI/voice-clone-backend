@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 @router.post("/upload-file")
 async def upload_file(video_file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
-    """Upload video file to Cloudflare with background processing"""
+    """Upload media file (video/audio) with background processing"""
     from app.utils.r2_storage import R2Storage
     from app.config.settings import settings
     
@@ -81,13 +81,21 @@ async def process_file_background_only(job_id: str, temp_file_path: str, filenam
         if file_size == 0:
             raise Exception("Uploaded file is empty")
         update_upload_status(job_id, {"progress": 30, "message": "Checking file format...", "status": "uploading"})
-        allowed_extensions = ALLOWED_VIDEO_EXTENSIONS
+        
+        # Import audio formats from settings
+        from app.config.settings import settings
+        allowed_video_extensions = ALLOWED_VIDEO_EXTENSIONS
+        allowed_audio_extensions = set(settings.ALLOWED_AUDIO_FORMATS)
+        allowed_extensions = allowed_video_extensions.union(allowed_audio_extensions)
+        
         file_ext = Path(filename).suffix.lower()
         if file_ext not in allowed_extensions:
+            video_formats = ', '.join(sorted(allowed_video_extensions))
+            audio_formats = ', '.join(sorted(allowed_audio_extensions))
             update_upload_status(job_id, {
                 "status": "failed", 
                 "progress": 0, 
-                "message": f"Unsupported video format. Allowed: {', '.join(allowed_extensions)}"
+                "message": f"Unsupported file format. Allowed video: {video_formats}. Allowed audio: {audio_formats}"
             })
             if os.path.exists(temp_file_path):
                 os.remove(temp_file_path)
@@ -95,7 +103,7 @@ async def process_file_background_only(job_id: str, temp_file_path: str, filenam
             return
         update_upload_status(job_id, {
             "progress": 100,
-            "message": "File saved locally.",
+            "message": "Media file saved locally.",
             "status": "done",
             "file_url": temp_file_path
         })

@@ -271,15 +271,15 @@ async def start_audio_separation(
         logger.error(f"Failed to start audio separation: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start separation: {str(e)}")
 
-@router.get("/audio-separation-status/{request_id}", response_model=SeparationStatusResponse)
-async def get_audio_separation_status(request_id: str):
-    """Get status of audio separation request"""
+@router.get("/audio-separation-status/{job_id}", response_model=SeparationStatusResponse)
+async def get_audio_separation_status(job_id: str):
+    """Get status of audio separation job"""
     try:
         from app.utils.runpod_service import runpod_service
         
-        status = runpod_service.get_separation_status(request_id)
+        status = runpod_service.get_separation_status(job_id)
         if not status:
-            raise HTTPException(status_code=404, detail="Separation request not found")
+            raise HTTPException(status_code=404, detail="Separation job not found")
         
         vocal_url = None
         instrument_url = None
@@ -291,7 +291,7 @@ async def get_audio_separation_status(request_id: str):
                 instrument_url = result["output"].get("instrument_audio")
         
         return SeparationStatusResponse(
-            job_id=request_id,
+            job_id=job_id,
             status=status["status"],
             progress=status["progress"],
             queuePosition=status.get("queue_position"),

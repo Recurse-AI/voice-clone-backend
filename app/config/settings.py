@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     
     # File Upload Configuration
     MAX_FILE_SIZE: int = 1024 * 1024 * 1024  # 1GB
-    ALLOWED_AUDIO_FORMATS: list = [".wav", ".mp3", ".flac", ".m4a"]
+    ALLOWED_AUDIO_FORMATS: list = [".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg"]
     TEMP_DIR: str = os.getenv("TEMP_DIR", "./tmp/voice_cloning")
     
     # Local Storage Settings
