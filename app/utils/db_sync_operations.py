@@ -6,7 +6,9 @@ import math
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 from pymongo import MongoClient
+from bson import ObjectId
 from app.config.settings import settings
+from app.config.constants import CREDITS_PER_MINUTE_SEPARATION, CREDITS_PER_MINUTE_DUB
 
 logger = logging.getLogger(__name__)
 
@@ -117,26 +119,43 @@ class SyncDBOperations:
             sync_db = sync_client[settings.DB_NAME]
             users_collection = sync_db.users
             
-            # Calculate credits required based on job type
+            # Calculate credits required based on job type using constants
             if job_type.lower() == "dub":
-                credits_per_minute = 2  # DUB jobs cost more
+                # DUB jobs: 0.05 credits per second (converted to per minute calculation)
+                credits_required = round(duration_seconds * 0.05, 2)
             else:
-                credits_per_minute = 1  # Default for separation
-                
-            credits_required = math.ceil(duration_seconds / 60 * credits_per_minute)
+                # Separation jobs: 1 credit per minute
+                duration_minutes = duration_seconds / 60.0
+                credits_required = round(duration_minutes * CREDITS_PER_MINUTE_SEPARATION, 2)
             
-            # Deduct credits from user
-            result = users_collection.update_one(
-                {"_id": user_id, "credits": {"$gte": credits_required}},
-                {
-                    "$inc": {"credits": -credits_required},
-                    "$set": {"updated_at": datetime.now(timezone.utc)}
-                }
-            )
+            # Ensure minimum credit requirement
+            if credits_required == 0:
+                credits_required = 0.01  # Minimum 0.01 credits
+            
+            # Try to find user by ObjectId first, then by string
+            user_query_conditions = [
+                {"_id": ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id, "credits": {"$gte": credits_required}},
+                {"_id": user_id, "credits": {"$gte": credits_required}}
+            ]
+            
+            result = None
+            for query in user_query_conditions:
+                try:
+                    result = users_collection.update_one(
+                        query,
+                        {
+                            "$inc": {"credits": -credits_required},
+                            "$set": {"updated_at": datetime.now(timezone.utc)}
+                        }
+                    )
+                    if result.modified_count > 0:
+                        break
+                except Exception:
+                    continue
             
             sync_client.close()
             
-            if result.modified_count > 0:
+            if result and result.modified_count > 0:
                 logger.info(f"Credit deduction completed for {job_type} job {job_id}: {credits_required} credits")
                 return True
             else:
