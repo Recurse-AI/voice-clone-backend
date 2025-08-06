@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Literal
+from typing import Optional, Literal, Dict, Any
 from datetime import datetime, timezone
 
 class SeparationJob(BaseModel):
@@ -14,6 +14,7 @@ class SeparationJob(BaseModel):
     # Input
     audio_url: str = Field(..., description="Original audio URL for separation")
     caller_info: Optional[str] = Field(None, description="API caller information")
+    original_filename: Optional[str] = Field(None, description="Original filename")
     
     # Results (populated when completed)
     vocal_url: Optional[str] = Field(None, description="Separated vocal audio URL")
@@ -21,6 +22,9 @@ class SeparationJob(BaseModel):
     
     # RunPod tracking
     runpod_request_id: Optional[str] = Field(None, description="RunPod job ID")
+    
+    # Additional details and metadata
+    details: Optional[Dict[str, Any]] = Field(None, description="Additional job details and metadata")
     
     # Error handling
     error: Optional[str] = Field(None, description="Error message if failed")

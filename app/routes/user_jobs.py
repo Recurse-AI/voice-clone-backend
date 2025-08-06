@@ -40,6 +40,17 @@ async def get_user_separations(
         # Convert to response format
         user_jobs = []
         for job in jobs:
+            # Get queue position for pending/processing jobs
+            queue_position = None
+            if job.runpod_request_id and job.status in ['pending', 'processing']:
+                from app.utils.runpod_service import runpod_service
+                try:
+                    runpod_status = runpod_service.get_separation_status(job.runpod_request_id)
+                    if runpod_status:
+                        queue_position = runpod_status.get("queue_position")
+                except Exception as e:
+                    logger.warning(f"Failed to get RunPod queue position for job {job.job_id}: {e}")
+            
             user_job = UserSeparationJob(
                 job_id=job.job_id,
                 status=job.status,
@@ -48,6 +59,7 @@ async def get_user_separations(
                 vocal_url=job.vocal_url,
                 instrument_url=job.instrument_url,
                 error=job.error,
+                queuePosition=queue_position,
                 created_at=job.created_at.isoformat(),
                 updated_at=job.updated_at.isoformat(),
                 completed_at=job.completed_at.isoformat() if job.completed_at else None
@@ -92,6 +104,7 @@ async def get_separation_job_detail(
         if job.user_id != user_id:
             raise HTTPException(status_code=403, detail="Access denied")
         
+      
         user_job = UserSeparationJob(
             job_id=job.job_id,
             status=job.status,
@@ -100,6 +113,7 @@ async def get_separation_job_detail(
             vocal_url=job.vocal_url,
             instrument_url=job.instrument_url,
             error=job.error,
+            queuePosition=None,
             created_at=job.created_at.isoformat(),
             updated_at=job.updated_at.isoformat(),
             completed_at=job.completed_at.isoformat() if job.completed_at else None
@@ -112,6 +126,7 @@ async def get_separation_job_detail(
     except Exception as e:
         logger.error(f"Failed to get separation job {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to get job details")
+
 
 # Dub Job APIs
 @router.get("/dubs", response_model=UserDubListResponse)

@@ -184,6 +184,7 @@ class UserSeparationJob(BaseModel):
     vocal_url: Optional[str] = None
     instrument_url: Optional[str] = None
     error: Optional[str] = None
+    queuePosition: Optional[int] = None
     created_at: str
     updated_at: str
     completed_at: Optional[str] = None

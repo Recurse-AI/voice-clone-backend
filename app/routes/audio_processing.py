@@ -25,24 +25,24 @@ def _deduct_separation_credits_non_blocking(user_id: str, job_id: str, duration_
     deduct_credits(user_id, job_id, duration_seconds, "separation")
 
 # Background Task Functions
-def process_audio_separation_background(request_id: str, user_id: str, duration_seconds: float):
+def process_audio_separation_background(job_id: str, runpod_request_id: str, user_id: str, duration_seconds: float):
     """Background task to monitor audio separation progress and auto-deduct credits on completion (sync - runs in separate thread)"""
     try:
         from app.utils.runpod_service import runpod_service
         import asyncio
         
-        logger.info(f"Starting background monitoring for separation job {request_id}")
+        logger.info(f"Starting background monitoring for separation job {job_id} (RunPod: {runpod_request_id})")
         
         max_attempts = MAX_ATTEMPTS_DEFAULT
         attempt = 0
         
         while attempt < max_attempts:
             try:
-                # Check job status from RunPod
-                status = runpod_service.get_separation_status(request_id)
+                # Check job status from RunPod using RunPod request ID
+                status = runpod_service.get_separation_status(runpod_request_id)
                 
                 if not status:
-                    logger.warning(f"No status found for separation job {request_id} (attempt {attempt + 1})")
+                    logger.warning(f"No status found for RunPod job {runpod_request_id} (attempt {attempt + 1})")
                     # Don't break immediately - might be temporary RunPod issue
                     attempt += 1
                     time.sleep(POLLING_INTERVAL_SECONDS)
@@ -53,9 +53,9 @@ def process_audio_separation_background(request_id: str, user_id: str, duration_
                 
 
                 
-                # Update MongoDB status (non-blocking)
+                # Update MongoDB status (non-blocking) using our job_id
                 _update_separation_status_non_blocking(
-                    job_id=request_id,
+                    job_id=job_id,
                     status=job_status,
                     progress=progress
                 )
@@ -72,11 +72,11 @@ def process_audio_separation_background(request_id: str, user_id: str, duration_
                         instrument_url = output.get("instrument_audio") or output.get("instruments")
                         
                         # Log the response structure for debugging
-                        logger.info(f"RunPod separation response for {request_id}: vocal_url={vocal_url}, instrument_url={instrument_url}")
+                        logger.info(f"RunPod separation response for {runpod_request_id}: vocal_url={vocal_url}, instrument_url={instrument_url}")
                     
                     # Update job with completion details (non-blocking)
                     _update_separation_status_non_blocking(
-                        job_id=request_id,
+                        job_id=job_id,
                         status="completed",
                         progress=100,
                         vocal_url=vocal_url,
@@ -91,7 +91,7 @@ def process_audio_separation_background(request_id: str, user_id: str, duration_
                     # Auto-deduct credits on successful completion (non-blocking)
                     _deduct_separation_credits_non_blocking(
                         user_id=user_id,
-                        job_id=request_id,
+                        job_id=job_id,
                         duration_seconds=duration_seconds
                     )
                     
@@ -100,12 +100,12 @@ def process_audio_separation_background(request_id: str, user_id: str, duration_
                 elif job_status == "failed":
                     error_msg = status.get("error", "Audio separation failed")
                     _update_separation_status_non_blocking(
-                        job_id=request_id,
+                        job_id=job_id,
                         status="failed",
                         progress=0,
                         error=error_msg
                     )
-                    logger.error(f"Separation job {request_id} failed: {error_msg}")
+                    logger.error(f"Separation job {job_id} (RunPod: {runpod_request_id}) failed: {error_msg}")
                     break
                     
                 # Wait before next check
@@ -114,25 +114,25 @@ def process_audio_separation_background(request_id: str, user_id: str, duration_
                 attempt += 1
                 
             except Exception as e:
-                logger.error(f"Error checking separation job {request_id} status (attempt {attempt}): {e}")
+                logger.error(f"Error checking separation job {job_id} (RunPod: {runpod_request_id}) status (attempt {attempt}): {e}")
                 import time
                 time.sleep(POLLING_INTERVAL_SECONDS)
                 attempt += 1
         
         if attempt >= max_attempts:
-            logger.warning(f"Separation job {request_id} monitoring timed out after {max_attempts * POLLING_INTERVAL_SECONDS} seconds")
+            logger.warning(f"Separation job {job_id} (RunPod: {runpod_request_id}) monitoring timed out after {max_attempts * POLLING_INTERVAL_SECONDS} seconds")
             _update_separation_status_non_blocking(
-                job_id=request_id,
+                job_id=job_id,
                 status="failed",
                 progress=0,
                 error="Job monitoring timed out"
             )
             
     except Exception as e:
-        logger.error(f"Background separation monitoring failed for job {request_id}: {e}")
+        logger.error(f"Background separation monitoring failed for job {job_id} (RunPod: {runpod_request_id}): {e}")
         try:
             _update_separation_status_non_blocking(
-                job_id=request_id,
+                job_id=job_id,
                 status="failed",
                 progress=0,
                 error=f"Background monitoring error: {str(e)}"
@@ -200,18 +200,22 @@ async def start_audio_separation(
         # Submit separation request with uploaded audio URL
         from app.utils.runpod_service import runpod_service
         
-        separation_request_id = runpod_service.submit_separation_request(
+        runpod_request_id = runpod_service.submit_separation_request(
             audio_url,
             caller_info=request.callerInfo or "audio_separation_api"
         )
         
+        # Use upload job_id as separation job_id for consistency
+        separation_job_id = job_id
+        
         # Create separation job in MongoDB for tracking
         job_data = {
-            "job_id": separation_request_id,
+            "job_id": separation_job_id,
             "user_id": user_id,
             "audio_url": audio_url,
             "original_filename": upload_data.get("original_filename", os.path.basename(local_audio_path)),
             "caller_info": request.callerInfo or "audio_separation_api",
+            "runpod_request_id": runpod_request_id,
             "details": {
                 "duration": request.duration,
                 "required_credits": credit_check["required"],
@@ -223,26 +227,26 @@ async def start_audio_separation(
         # Save to MongoDB
         job = await separation_job_service.create_job(job_data)
         if not job:
-            logger.error(f"Failed to create separation job in MongoDB for {separation_request_id}")
+            logger.error(f"Failed to create separation job in MongoDB for {separation_job_id}")
         
         # Set initial pending status
-        await separation_job_service.update_job_status(separation_request_id, "pending", 0)
+        await separation_job_service.update_job_status(separation_job_id, "pending", 0)
         
-        status = runpod_service.get_separation_status(separation_request_id)
+        status = runpod_service.get_separation_status(runpod_request_id)
         queue_position = status.get("queue_position") if status else None
         
         # Run separation monitoring in separate thread
-        thread = threading.Thread(target=process_audio_separation_background, args=(separation_request_id, user_id, request.duration), daemon=True)
+        thread = threading.Thread(target=process_audio_separation_background, args=(separation_job_id, runpod_request_id, user_id, request.duration), daemon=True)
         thread.start()
         
-        logger.info(f"Started audio separation job {separation_request_id} for user {user_id} (upload job: {job_id}, duration: {request.duration}s)")
+        logger.info(f"Started audio separation job {separation_job_id} (RunPod: {runpod_request_id}) for user {user_id} (duration: {request.duration}s)")
         
         return AudioSeparationResponse(
             success=True,
-            job_id=separation_request_id,
+            job_id=separation_job_id,
             message=MSG_PROCESSING_STARTED,
             estimatedTime="5-15 minutes",
-            statusCheckUrl=f"/api/audio-separation-status/{separation_request_id}",
+            statusCheckUrl=f"/api/jobs/separation/{separation_job_id}",
             queuePosition=queue_position
         )
         
@@ -252,44 +256,7 @@ async def start_audio_separation(
         logger.error(f"Failed to start audio separation: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start separation: {str(e)}")
 
-@router.get("/audio-separation-status/{job_id}", response_model=SeparationStatusResponse)
-async def get_audio_separation_status(job_id: str):
-    """Get status of audio separation job"""
-    try:
-        from app.utils.runpod_service import runpod_service
-        
-        status = runpod_service.get_separation_status(job_id)
-        if not status:
-            raise HTTPException(status_code=404, detail="Separation job not found")
-        
-        vocal_url = None
-        instrument_url = None
-        
-        if status["status"] == "completed" and status.get("result"):
-            result = status["result"]
-            if result.get("output"):
-                vocal_url = result["output"].get("vocal_audio")
-                instrument_url = result["output"].get("instrument_audio")
-        
-        return SeparationStatusResponse(
-            job_id=job_id,
-            status=status["status"],
-            progress=status["progress"],
-            queuePosition=status.get("queue_position"),
-            vocalUrl=vocal_url,
-            instrumentUrl=instrument_url,
-            error=status.get("error"),
-            createdAt=status["created_at"],
-            startedAt=status.get("started_at"),
-            completedAt=status.get("completed_at"),
-            callerInfo=status.get("caller_info")
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to get separation status: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get status: {str(e)}")
+
 
 # Voice Clone Endpoint
 @router.post("/voice-clone-segment", response_model=VoiceCloneResponse)

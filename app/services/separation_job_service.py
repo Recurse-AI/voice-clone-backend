@@ -47,6 +47,8 @@ class SeparationJobService:
             logger.error(f"Failed to get separation job {job_id}: {e}")
             return None
     
+
+    
     async def update_job_status(self, job_id: str, status: str, progress: int = None, **kwargs) -> bool:
         """Update job status and progress"""
         try:
