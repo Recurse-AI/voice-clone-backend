@@ -93,9 +93,13 @@ async def update_user_name(id: str, data: UpdateProfileRequest) -> User:
     return User(**user_data)
 
 async def get_user_email(email: EmailStr) -> User:
-    user_data = await db["users"].find_one({"email": email})
-    if not user_data:
-        raise HTTPException(status_code=401, detail="Invalid id")
+    try:
+        user_data = await db["users"].find_one({"email": email})
+        if not user_data:
+            raise HTTPException(status_code=404, detail="User not found with this email")
+    except Exception as e:
+        logger.error(f"Error finding user with email {email}: {e}")
+        raise HTTPException(status_code=404, detail="User not found with this email")
 
     logger.info(f"user find by email: {user_data}")
     user_data["id"] = str(user_data["_id"])

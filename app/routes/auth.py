@@ -278,10 +278,13 @@ async def request_password_reset(req: ResetPasswordRequest, background_tasks: Ba
                 content="User not found"
             )
 
+        logger.info(f"Found user with id: {user.id} (type: {type(user.id)})")
+        
         token = generate_url_safe_token()
         expiry = datetime.now(timezone.utc) + timedelta(milliseconds=settings.RESET_PASSWORD_EXPIRES)
 
-        updated_user = await update_reset_password(str(user.id), token, expiry)
+        # user.id is already a string from get_user_email, no need to convert again
+        updated_user = await update_reset_password(user.id, token, expiry)
 
         background_tasks.add_task(send_reset_email_background_task, background_tasks, updated_user.email, updated_user.name, token)
         
