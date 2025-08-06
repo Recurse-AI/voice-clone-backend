@@ -79,9 +79,12 @@ class RunPodService:
                 progress = 0
                 status = "pending"
                 
-                if runpod_status in ['IN_QUEUE', 'IN_PROGRESS']:
-                    status = "processing"
-                    progress = 50 if runpod_status == 'IN_PROGRESS' else 10
+                if runpod_status == 'IN_QUEUE':
+                    status = "pending"
+                    progress = 10
+                elif runpod_status == 'IN_PROGRESS':
+                    status = "processing" 
+                    progress = 50
                 elif runpod_status == 'COMPLETED':
                     status = "completed"
                     progress = 100
@@ -98,6 +101,9 @@ class RunPodService:
                     "started_at": data.get('started_at'),
                     "completed_at": data.get('completed_at')
                 }
+            elif response.status_code == 404:
+                logger.error(f"Job not found: {request_id}")
+                return None
             else:
                 logger.error(f"Failed to get status: {response.status_code} - {response.text}")
                 return None

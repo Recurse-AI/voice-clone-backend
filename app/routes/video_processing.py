@@ -90,7 +90,8 @@ async def start_video_dub(
         if not job:
             logger.error(f"Failed to create dub job in MongoDB for {request.job_id}")
         
-                            # Status is managed by dub_job_service, no need for separate status manager
+        # Set initial pending status
+        await dub_job_service.update_job_status(request.job_id, "pending", 0)
 
         # Run processing in separate thread to avoid blocking main event loop
         thread = threading.Thread(target=process_video_dub_background, args=(request, user_id), daemon=True)
@@ -143,7 +144,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
     job_id = request.job_id
     job_dir = os.path.join(settings.TEMP_DIR, f"dub_{job_id}")
     try:
-        _update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 10, {"message": "Finding uploaded video..."}, "dub")
+        _update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 10, {"message": "Starting processing - Finding uploaded video..."}, "dub")
         job_dir = os.path.join(settings.TEMP_DIR, f"dub_{job_id}")
         if not os.path.exists(job_dir):
             _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {"error": "Uploaded video not found - No such directory"}, "dub")

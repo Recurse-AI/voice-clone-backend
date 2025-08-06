@@ -74,11 +74,16 @@ def process_audio_separation_background(request_id: str, user_id: str, duration_
                 status = runpod_service.get_separation_status(request_id)
                 
                 if not status:
-                    logger.warning(f"No status found for separation job {request_id}")
-                    break
+                    logger.warning(f"No status found for separation job {request_id} (attempt {attempt + 1})")
+                    # Don't break immediately - might be temporary RunPod issue
+                    attempt += 1
+                    time.sleep(POLLING_INTERVAL_SECONDS)
+                    continue
                 
                 job_status = status.get("status", "unknown")
                 progress = status.get("progress", 0)
+                
+
                 
                 # Update MongoDB status (non-blocking)
                 _update_separation_status_non_blocking(
@@ -246,6 +251,9 @@ async def start_audio_separation(
         job = await separation_job_service.create_job(job_data)
         if not job:
             logger.error(f"Failed to create separation job in MongoDB for {separation_request_id}")
+        
+        # Set initial pending status
+        await separation_job_service.update_job_status(separation_request_id, "pending", 0)
         
         status = runpod_service.get_separation_status(separation_request_id)
         queue_position = status.get("queue_position") if status else None
