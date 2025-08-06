@@ -5,6 +5,7 @@ import time
 import logging
 from typing import Dict, Any, Optional
 import requests
+from datetime import datetime
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -97,7 +98,7 @@ class RunPodService:
                     "progress": progress,
                     "result": data.get('output'),
                     "error": data.get('error'),
-                    "created_at": data.get('created_at'),
+                    "created_at": data.get('created_at') or datetime.now().isoformat(),
                     "started_at": data.get('started_at'),
                     "completed_at": data.get('completed_at')
                 }

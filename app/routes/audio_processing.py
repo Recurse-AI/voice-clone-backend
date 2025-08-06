@@ -15,46 +15,14 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 def _update_separation_status_non_blocking(job_id: str, status: str, progress: int = None, **kwargs):
-    """Schedule separation status update on main event loop"""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.get_event_loop()
-
-    def run_update():
-        try:
-            asyncio.run_coroutine_threadsafe(
-                separation_job_service.update_job_status(job_id, status, progress, **kwargs),
-                loop
-            )
-        except Exception as e:
-            logger.error(f"Failed to update separation status for {job_id}: {e}")
-
-    threading.Thread(target=run_update, daemon=True).start()
+    """Update separation status using common utility"""
+    from app.utils.db_sync_operations import update_separation_status
+    update_separation_status(job_id, status, progress, **kwargs)
 
 def _deduct_separation_credits_non_blocking(user_id: str, job_id: str, duration_seconds: float):
-    """Schedule credit deduction on main event loop"""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.get_event_loop()
-
-    def run_deduction():
-        try:
-            fut = asyncio.run_coroutine_threadsafe(
-                credit_service.deduct_credits_on_completion(
-                    user_id=user_id,
-                    job_id=job_id,
-                    job_type=JobType.SEPARATION,
-                    duration_seconds=duration_seconds
-                ),
-                loop
-            )
-            fut.add_done_callback(lambda f: logger.info(f"Credit deduction completed for separation job {job_id}" if not f.exception() else f"Credit deduction failed for separation job {job_id}: {f.exception()}"))
-        except Exception as e:
-            logger.error(f"Credit deduction thread failed for separation job {job_id}: {e}")
-
-    threading.Thread(target=run_deduction, daemon=True).start()
+    """Deduct credits using common utility"""
+    from app.utils.db_sync_operations import deduct_credits
+    deduct_credits(user_id, job_id, duration_seconds, "separation")
 
 # Background Task Functions
 def process_audio_separation_background(request_id: str, user_id: str, duration_seconds: float):

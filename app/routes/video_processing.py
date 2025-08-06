@@ -18,25 +18,10 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 def _update_status_non_blocking(job_id: str, status: ProcessingStatus, progress: int, details: dict, job_type: str = "dub"):
-    """Schedule status update on main event loop from any thread"""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # Not in an event loop (unlikely here), fallback to asyncio.get_event_loop()
-        loop = asyncio.get_event_loop()
-    
-    def run_update():
-        try:
-            fut = asyncio.run_coroutine_threadsafe(
-                status_manager.update_status(job_id, status, progress, details, job_type),
-                loop
-            )
-            # Optional: wait for completion or add callback
-            # fut.result()
-        except Exception as e:
-            logger.error(f"Failed to update status for {job_id}: {e}")
-    
-    threading.Thread(target=run_update, daemon=True).start()
+    """Update dub job status using common utility"""
+    from app.utils.db_sync_operations import update_dub_status
+    status_str = status.value if hasattr(status, 'value') else str(status)
+    update_dub_status(job_id, status_str, progress, details)
 
 @router.post("/video-dub", response_model=VideoDubResponse)
 async def start_video_dub(
@@ -227,28 +212,9 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             "video_upload": pipeline_result.get("video_upload")
         }, "dub")
         
-        # Auto-deduct credits on successful completion (non-blocking)
-        def deduct_credits_non_blocking():
-            try:
-                try:
-                    loop_inner = asyncio.get_running_loop()
-                except RuntimeError:
-                    loop_inner = asyncio.get_event_loop()
-
-                fut = asyncio.run_coroutine_threadsafe(
-                    credit_service.deduct_credits_on_completion(
-                        user_id=user_id,
-                        job_id=job_id,
-                        job_type=JobType.DUB,
-                        duration_seconds=request.duration
-                    ),
-                    loop_inner
-                )
-                fut.add_done_callback(lambda f: logger.info(f"Auto-deduct credits completed for dub job {job_id}" if not f.exception() else f"Failed to auto-deduct credits for dub job {job_id}: {f.exception()}") )
-            except Exception as e:
-                logger.error(f"Failed to schedule credit deduction for dub job {job_id}: {e}")
-        
-        threading.Thread(target=deduct_credits_non_blocking, daemon=True).start()
+        # Auto-deduct credits on successful completion
+        from app.utils.db_sync_operations import deduct_credits
+        deduct_credits(user_id, job_id, request.duration, "dub")
         
 
     except Exception as e:

@@ -104,22 +104,10 @@ class SimpleDubbedAPI:
         os.makedirs(self.temp_dir, exist_ok=True)
     
     def _update_status_non_blocking(self, job_id: str, status: ProcessingStatus, progress: int, details: dict, job_type: str = "dub"):
-        """Schedule status update on main event loop"""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
-
-        def run_update():
-            try:
-                asyncio.run_coroutine_threadsafe(
-                    status_manager.update_status(job_id, status, progress, details, job_type),
-                    loop
-                )
-            except Exception as e:
-                logger.error(f"Failed to update status for {job_id}: {e}")
-
-        threading.Thread(target=run_update, daemon=True).start()
+        """Update dub job status using common utility"""
+        from app.utils.db_sync_operations import update_dub_status
+        status_str = status.value if hasattr(status, 'value') else str(status)
+        update_dub_status(job_id, status_str, progress, details)
     
     def dub_text_batch(self, segments: list, target_language: str = "English", batch_size: int = 10) -> list:
         """
