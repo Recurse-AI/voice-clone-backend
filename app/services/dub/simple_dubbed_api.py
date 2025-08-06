@@ -107,24 +107,10 @@ class SimpleDubbedAPI:
         """Non-blocking status update to avoid blocking main processing"""
         def run_update():
             try:
-                # Check if there's already an event loop in this thread
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_closed():
-                        raise RuntimeError("Event loop is closed")
-                except RuntimeError:
-                    # No event loop in this thread, create a new one
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                
-                # Use the new loop to run the async function
-                try:
-                    loop.run_until_complete(
-                        status_manager.update_status(job_id, status, progress, details, job_type)
-                    )
-                finally:
-                    loop.close()
-                    
+                # Use asyncio.run() to handle event loop properly in thread
+                asyncio.run(
+                    status_manager.update_status(job_id, status, progress, details, job_type)
+                )
             except Exception as e:
                 logger.error(f"Failed to update status for {job_id}: {e}")
         

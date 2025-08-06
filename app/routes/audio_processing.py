@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
+import asyncio
 import threading
 from fastapi.responses import JSONResponse
 import logging
@@ -17,28 +18,10 @@ def _update_separation_status_non_blocking(job_id: str, status: str, progress: i
     """Non-blocking status update for separation jobs"""
     def run_update():
         try:
-            import asyncio
-            # Check if there's already an event loop in this thread
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    raise RuntimeError("Event loop is closed")
-            except RuntimeError:
-                # No event loop in this thread, create a new one
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
-            # Run the async function
-            if loop.is_running():
-                # Loop is already running, use create_task instead
-                asyncio.create_task(
-                    separation_job_service.update_job_status(job_id, status, progress, **kwargs)
-                )
-            else:
-                loop.run_until_complete(
-                    separation_job_service.update_job_status(job_id, status, progress, **kwargs)
-                )
-                
+            # Use asyncio.run() to handle event loop properly in thread
+            asyncio.run(
+                separation_job_service.update_job_status(job_id, status, progress, **kwargs)
+            )
         except Exception as e:
             logger.error(f"Failed to update separation status for {job_id}: {e}")
     
@@ -49,42 +32,20 @@ def _deduct_separation_credits_non_blocking(user_id: str, job_id: str, duration_
     """Non-blocking credit deduction for separation jobs"""
     def run_deduction():
         try:
-            import asyncio
-            # Check if there's already an event loop in this thread
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_closed():
-                    raise RuntimeError("Event loop is closed")
-            except RuntimeError:
-                # No event loop in this thread, create a new one
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            # Use asyncio.run() to handle event loop properly in thread
+            credit_result = asyncio.run(
+                credit_service.deduct_credits_on_completion(
+                    user_id=user_id,
+                    job_id=job_id,
+                    job_type=JobType.SEPARATION,
+                    duration_seconds=duration_seconds
+                )
+            )
             
-            # Run the async function
-            if loop.is_running():
-                # Loop is already running, use create_task instead
-                asyncio.create_task(
-                    credit_service.deduct_credits_on_completion(
-                        user_id=user_id,
-                        job_id=job_id,
-                        job_type=JobType.SEPARATION,
-                        duration_seconds=duration_seconds
-                    )
-                )
+            if credit_result["success"]:
+                logger.info(f"Auto-deducted {credit_result['deducted']} credits for completed separation job {job_id}")
             else:
-                credit_result = loop.run_until_complete(
-                    credit_service.deduct_credits_on_completion(
-                        user_id=user_id,
-                        job_id=job_id,
-                        job_type=JobType.SEPARATION,
-                        duration_seconds=duration_seconds
-                    )
-                )
-                
-                if credit_result["success"]:
-                    logger.info(f"Auto-deducted {credit_result['deducted']} credits for completed separation job {job_id}")
-                else:
-                    logger.error(f"Failed to auto-deduct credits for separation job {job_id}: {credit_result['message']}")
+                logger.error(f"Failed to auto-deduct credits for separation job {job_id}: {credit_result['message']}")
                     
         except Exception as e:
             logger.error(f"Credit deduction failed for separation job {job_id}: {e}")
