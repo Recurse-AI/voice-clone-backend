@@ -299,9 +299,9 @@ async def get_purchase_history(user: TokenUser = Security(get_current_user)):
 async def verify_payment(sessionId: str, current_user: TokenUser = Security(get_current_user)):
     try:
         _user = await get_user_id(current_user.id)
-        user: dict = _user.dict()
-        user_id = str(user.get("_id") or user.get("id"))
-        user["_id"] = str(user.get("_id") or user.get("id"))
+        user: dict = _user.model_dump()
+        user_id = str(user.get("id"))
+
         if not sessionId:
             return JSONResponse(
                 status_code=400,
@@ -355,7 +355,6 @@ async def verify_payment(sessionId: str, current_user: TokenUser = Security(get_
                 }
             )
         # Update user credits and subscription type to premium
-        logger.info(f"-------> user id : {user_id}")
         result = await db["users"].update_one(
             {"_id": ObjectId(user_id)},
             {"$inc": {"credits": credits_to_add}, "$set": {"subscription.type": "premium", "subscription.status": "active"}}

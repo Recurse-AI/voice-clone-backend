@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = os.getenv("SECRET_KEY", "qK8pR7xT5vZ2wY9sA1bC3dE4fG6hJ0mL2nP3rS5tU7vX9yZ")
     ALGORITHM: str = "RS256"
     SINGIN_TOKEN_EXPIRES: int = 7
+    JWT_ALGORITHM: str = "HS256"
     
     # Email Configuration
     EMAIL_HOST_USER: str = os.getenv("EMAIL_HOST_USER", "")
