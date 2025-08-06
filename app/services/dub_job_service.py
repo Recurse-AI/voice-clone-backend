@@ -1,10 +1,10 @@
 import logging
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 from app.models.dub_job import DubJob
 from app.config.database import dub_jobs_collection
-from app.config.constants import DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT
+from app.config.constants import MAX_QUERY_LIMIT
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class DubJobService:
         try:
             update_data = {
                 "status": status,
-                "updated_at": datetime.now()
+                "updated_at": datetime.now(timezone.utc)
             }
             
             if progress is not None:
@@ -60,9 +60,9 @@ class DubJobService:
                 
             # Set timestamps based on status
             if status in ['downloading', 'processing'] and not await self._has_started(job_id):
-                update_data["started_at"] = datetime.now()
+                update_data["started_at"] = datetime.now(timezone.utc)
             elif status in ['completed', 'failed']:
-                update_data["completed_at"] = datetime.now()
+                update_data["completed_at"] = datetime.now(timezone.utc)
             
             # Add additional fields
             update_data.update(kwargs)
@@ -149,7 +149,7 @@ class DubJobService:
                 {
                     "$set": {
                         "details": details,
-                        "updated_at": datetime.now()
+                        "updated_at": datetime.now(timezone.utc)
                     }
                 }
             )

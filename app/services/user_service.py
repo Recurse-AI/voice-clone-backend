@@ -49,8 +49,16 @@ async def get_user(data: LoginData) -> User:
     return User(**user_data)
 
 async def get_user_id(id: str) -> User:
-    user_data = await db["users"].find_one({"_id": ObjectId(id)})
-    if not user_data:
+    try:
+        # Validate ObjectId format first
+        if not ObjectId.is_valid(id):
+            raise HTTPException(status_code=401, detail="Invalid id format")
+        
+        user_data = await db["users"].find_one({"_id": ObjectId(id)})
+        if not user_data:
+            raise HTTPException(status_code=401, detail="Invalid id")
+    except Exception as e:
+        logger.error(f"Error finding user with id {id}: {e}")
         raise HTTPException(status_code=401, detail="Invalid id")
 
     user_data["id"] = str(user_data["_id"])
@@ -97,7 +105,12 @@ async def get_user_email(email: EmailStr) -> User:
     return User(**user_data)
 
 async def update_reset_password(id: str, token: str, expiry: datetime) -> User:
-    update_result = await db["users"].find_one_and_update(
+    try:
+        # Validate ObjectId format first
+        if not ObjectId.is_valid(id):
+            raise HTTPException(status_code=401, detail="Invalid id format")
+        
+        update_result = await db["users"].find_one_and_update(
             {"_id": ObjectId(id)},
             {
                 "$set": {
@@ -108,10 +121,13 @@ async def update_reset_password(id: str, token: str, expiry: datetime) -> User:
             },
             return_document=ReturnDocument.AFTER  # tells 
         )
-    if not update_result:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to update reset token"
-        )
-    logger.info("Token and expiry date updated")
-    return User(**update_result)
+        if not update_result:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to update reset token"
+            )
+        logger.info("Token and expiry date updated")
+        return User(**update_result)
+    except Exception as e:
+        logger.error(f"Error updating reset password for id {id}: {e}")
+        raise HTTPException(status_code=401, detail="Invalid id")

@@ -31,16 +31,13 @@ def _update_status_non_blocking(job_id: str, status: ProcessingStatus, progress:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
             
-            # Run the async function
-            if loop.is_running():
-                # Loop is already running, use create_task instead
-                asyncio.create_task(
-                    status_manager.update_status(job_id, status, progress, details, job_type)
-                )
-            else:
+            # Use the new loop to run the async function
+            try:
                 loop.run_until_complete(
                     status_manager.update_status(job_id, status, progress, details, job_type)
                 )
+            finally:
+                loop.close()
                 
         except Exception as e:
             logger.error(f"Failed to update status for {job_id}: {e}")
@@ -250,18 +247,8 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                 
-                # Run the async function
-                if loop.is_running():
-                    # Loop is already running, use create_task instead
-                    asyncio.create_task(
-                        credit_service.deduct_credits_on_completion(
-                            user_id=user_id,
-                            job_id=job_id,
-                            job_type=JobType.DUB,
-                            duration_seconds=request.duration
-                        )
-                    )
-                else:
+                # Use the new loop to run the async function
+                try:
                     credit_result = loop.run_until_complete(
                         credit_service.deduct_credits_on_completion(
                             user_id=user_id,
@@ -276,8 +263,11 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                     else:
                         logger.error(f"Failed to auto-deduct credits for dub job {job_id}: {credit_result['message']}")
                         
+                finally:
+                    loop.close()
+                        
             except Exception as e:
-                logger.error(f"Credit deduction failed for job {job_id}: {e}")
+                logger.error(f"Failed to auto-deduct credits for dub job {job_id}: {e}")
         
         credit_thread = threading.Thread(target=deduct_credits_non_blocking, daemon=True)
         credit_thread.start()

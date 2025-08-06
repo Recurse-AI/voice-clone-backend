@@ -117,16 +117,13 @@ class SimpleDubbedAPI:
                     loop = asyncio.new_event_loop()
                     asyncio.set_event_loop(loop)
                 
-                # Run the async function
-                if loop.is_running():
-                    # Loop is already running, use create_task instead  
-                    asyncio.create_task(
-                        status_manager.update_status(job_id, status, progress, details, job_type)
-                    )
-                else:
+                # Use the new loop to run the async function
+                try:
                     loop.run_until_complete(
                         status_manager.update_status(job_id, status, progress, details, job_type)
                     )
+                finally:
+                    loop.close()
                     
             except Exception as e:
                 logger.error(f"Failed to update status for {job_id}: {e}")

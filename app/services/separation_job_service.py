@@ -1,6 +1,6 @@
 import logging
 from typing import List, Optional, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from bson import ObjectId
 from app.models.separation_job import SeparationJob
 from app.config.database import separation_jobs_collection
@@ -52,7 +52,7 @@ class SeparationJobService:
         try:
             update_data = {
                 "status": status,
-                "updated_at": datetime.now()
+                "updated_at": datetime.now(timezone.utc)
             }
             
             if progress is not None:
@@ -60,9 +60,9 @@ class SeparationJobService:
                 
             # Set timestamps based on status
             if status == 'processing':
-                update_data["started_at"] = datetime.now()
+                update_data["started_at"] = datetime.now(timezone.utc)
             elif status in ['completed', 'failed']:
-                update_data["completed_at"] = datetime.now()
+                update_data["completed_at"] = datetime.now(timezone.utc)
             
             # Add additional fields
             update_data.update(kwargs)
@@ -142,7 +142,7 @@ class SeparationJobService:
                 {
                     "$set": {
                         "details": details,
-                        "updated_at": datetime.now()
+                        "updated_at": datetime.now(timezone.utc)
                     }
                 }
             )
