@@ -15,43 +15,46 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 def _update_separation_status_non_blocking(job_id: str, status: str, progress: int = None, **kwargs):
-    """Non-blocking status update for separation jobs"""
+    """Schedule separation status update on main event loop"""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+
     def run_update():
         try:
-            # Use asyncio.run() to handle event loop properly in thread
-            asyncio.run(
-                separation_job_service.update_job_status(job_id, status, progress, **kwargs)
+            asyncio.run_coroutine_threadsafe(
+                separation_job_service.update_job_status(job_id, status, progress, **kwargs),
+                loop
             )
         except Exception as e:
             logger.error(f"Failed to update separation status for {job_id}: {e}")
-    
-    thread = threading.Thread(target=run_update, daemon=True)
-    thread.start()
+
+    threading.Thread(target=run_update, daemon=True).start()
 
 def _deduct_separation_credits_non_blocking(user_id: str, job_id: str, duration_seconds: float):
-    """Non-blocking credit deduction for separation jobs"""
+    """Schedule credit deduction on main event loop"""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.get_event_loop()
+
     def run_deduction():
         try:
-            # Use asyncio.run() to handle event loop properly in thread
-            credit_result = asyncio.run(
+            fut = asyncio.run_coroutine_threadsafe(
                 credit_service.deduct_credits_on_completion(
                     user_id=user_id,
                     job_id=job_id,
                     job_type=JobType.SEPARATION,
                     duration_seconds=duration_seconds
-                )
+                ),
+                loop
             )
-            
-            if credit_result["success"]:
-                logger.info(f"Auto-deducted {credit_result['deducted']} credits for completed separation job {job_id}")
-            else:
-                logger.error(f"Failed to auto-deduct credits for separation job {job_id}: {credit_result['message']}")
-                    
+            fut.add_done_callback(lambda f: logger.info(f"Credit deduction completed for separation job {job_id}" if not f.exception() else f"Credit deduction failed for separation job {job_id}: {f.exception()}"))
         except Exception as e:
-            logger.error(f"Credit deduction failed for separation job {job_id}: {e}")
-    
-    thread = threading.Thread(target=run_deduction, daemon=True)
-    thread.start()
+            logger.error(f"Credit deduction thread failed for separation job {job_id}: {e}")
+
+    threading.Thread(target=run_deduction, daemon=True).start()
 
 # Background Task Functions
 def process_audio_separation_background(request_id: str, user_id: str, duration_seconds: float):
@@ -188,25 +191,29 @@ async def start_audio_separation(
                 }
             )
         
-        # Find uploaded audio file locally (similar to video dub flow)
-        from app.config.settings import settings
-        uploads_dir = os.path.join(settings.TEMP_DIR, "uploads", job_id)
+        # Get uploaded file path from upload status
+        from app.utils.shared_memory import get_upload_status as get_upload_status_data, job_exists
         
-        if not os.path.exists(uploads_dir):
-            raise HTTPException(status_code=400, detail="Uploaded audio not found - No such directory")
+        if not job_exists(job_id):
+            raise HTTPException(status_code=400, detail="Upload job not found")
+            
+        upload_data = get_upload_status_data(job_id)
+        if upload_data.get("status") != "done":
+            raise HTTPException(status_code=400, detail=f"Upload not completed. Status: {upload_data.get('status', 'unknown')}")
         
-        # Find audio file in upload directory
-        audio_files = [f for f in os.listdir(uploads_dir) if f.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.aac', '.ogg'))]
-        if not audio_files:
-            raise HTTPException(status_code=400, detail="No audio file found in upload folder")
-        
-        local_audio_path = os.path.join(uploads_dir, audio_files[0])
+        local_audio_path = upload_data.get("file_url")
+        if not local_audio_path or not os.path.exists(local_audio_path):
+            raise HTTPException(status_code=400, detail="Uploaded file not found on disk")
+            
+        # Verify it's an audio file
+        if not local_audio_path.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.aac', '.ogg')):
+            raise HTTPException(status_code=400, detail="Uploaded file is not an audio format")
         
         # Upload audio to R2 storage for separation processing
         from app.utils.r2_storage import R2Storage
         r2_storage = R2Storage()
         
-        audio_upload_result = r2_storage.upload_audio_file(local_audio_path, job_id)
+        audio_upload_result = r2_storage.upload_file(local_audio_path, f"audio_separation/{job_id}/audio.wav")
         if not audio_upload_result.get("success"):
             raise HTTPException(status_code=500, detail=f"Audio upload failed: {audio_upload_result.get('error')}")
         
@@ -225,7 +232,7 @@ async def start_audio_separation(
             "job_id": separation_request_id,
             "user_id": user_id,
             "audio_url": audio_url,
-            "original_filename": audio_files[0],
+            "original_filename": upload_data.get("original_filename", os.path.basename(local_audio_path)),
             "caller_info": request.callerInfo or "audio_separation_api",
             "details": {
                 "duration": request.duration,
