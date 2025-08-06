@@ -25,7 +25,7 @@ class UserOut(UserBase):
     isEmailVerified: bool
     profilePicture: Optional[str] = None
     role: Literal['user', 'admin'] = 'user'
-    credits: int = 0
+    credits: float = 0.0
 
     class Config:
         from_attributes = True

@@ -18,7 +18,7 @@ class User(BaseModel):
     emailVerificationToken: Optional[str] = None
     emailVerificationExpiry: Optional[datetime] = None
     verificationAttempts: int = 0
-    credits: int = 0
+    credits: float = 0.0
     googleId: Optional[str] = None
     profilePicture: Optional[str] = None
     role: Literal['user', 'admin'] = 'user'
