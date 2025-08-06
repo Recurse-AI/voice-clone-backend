@@ -191,7 +191,14 @@ async def start_audio_separation(
         from app.utils.r2_storage import R2Storage
         r2_storage = R2Storage()
         
-        audio_upload_result = r2_storage.upload_file(local_audio_path, f"audio_separation/{job_id}/audio.wav")
+        # Get original filename from upload data or fallback to local path basename
+        original_filename = upload_data.get("original_filename", os.path.basename(local_audio_path))
+        
+        # Generate R2 key preserving original filename
+        audio_extension = os.path.splitext(original_filename)[1] if original_filename else ".wav"
+        r2_audio_key = f"audio_separation/{job_id}/{original_filename}"
+        
+        audio_upload_result = r2_storage.upload_file(local_audio_path, r2_audio_key)
         if not audio_upload_result.get("success"):
             raise HTTPException(status_code=500, detail=f"Audio upload failed: {audio_upload_result.get('error')}")
         

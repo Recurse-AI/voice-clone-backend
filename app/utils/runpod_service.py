@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional
 import requests
 from datetime import datetime
 from app.config.settings import settings
+from app.config.constants import AVERAGE_JOB_PROCESSING_MINUTES, PROCESSING_JOB_QUEUE_POSITION
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,10 @@ class RunPodService:
             if response.status_code == 200:
                 data = response.json()
                 
+                # Log RunPod response structure for debugging queue position
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"RunPod status response for {request_id}: {data}")
+                
                 # Map RunPod status to our simplified status
                 runpod_status = data.get('status')
                 progress = 0
@@ -93,11 +98,26 @@ class RunPodService:
                     status = "failed"
                     progress = 0
                 
+                # Calculate queue position from delayTime (if available)
+                delay_time = data.get('delayTime')  # in milliseconds
+                queue_position = None
+                if delay_time is not None:
+                    if status == "pending":
+                        # Rough estimate using configurable average processing time
+                        # Convert delayTime (ms) to estimated queue position
+                        estimated_wait_minutes = delay_time / (1000 * 60)  # convert ms to minutes
+                        queue_position = max(1, int(estimated_wait_minutes / AVERAGE_JOB_PROCESSING_MINUTES))
+                    elif status == "processing":
+                        # Job is currently being processed, no queue position
+                        queue_position = PROCESSING_JOB_QUEUE_POSITION
+                
                 return {
                     "status": status,
                     "progress": progress,
                     "result": data.get('output'),
                     "error": data.get('error'),
+                    "queue_position": queue_position,
+                    "delay_time": delay_time,  # preserve original delayTime for debugging
                     "created_at": data.get('created_at') or datetime.now().isoformat(),
                     "started_at": data.get('started_at'),
                     "completed_at": data.get('completed_at')

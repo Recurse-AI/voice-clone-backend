@@ -10,11 +10,35 @@ from app.services.separation_job_service import separation_job_service
 from app.services.dub_job_service import dub_job_service
 from app.services.job_response_service import job_response_service
 from app.dependencies.auth import get_current_user
-from app.config.constants import DEFAULT_QUERY_LIMIT
+from app.config.constants import DEFAULT_QUERY_LIMIT, MAX_QUEUE_POSITION_CHECKS
+from app.utils.runpod_service import runpod_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+
+def get_job_queue_position(job) -> Optional[int]:
+    """Get queue position for a job from RunPod service"""
+    if not job.runpod_request_id or job.status not in ['pending', 'processing']:
+        return None
+    
+    try:
+        runpod_status = runpod_service.get_separation_status(job.runpod_request_id)
+        if runpod_status:
+            queue_position = runpod_status.get("queue_position")
+            delay_time = runpod_status.get("delay_time")
+            
+            # Log RunPod response for debugging (only for pending jobs)
+            if job.status == 'pending' and (queue_position is not None or delay_time is not None):
+                logger.info(f"Job {job.job_id}: queue_position={queue_position}, delay_time={delay_time}ms")
+            
+            return queue_position
+        else:
+            logger.debug(f"No RunPod status returned for job {job.job_id}")
+            return None
+    except Exception as e:
+        logger.warning(f"Failed to get RunPod queue position for job {job.job_id}: {e}")
+        return None
 
 
 # Separation Job APIs
@@ -39,17 +63,14 @@ async def get_user_separations(
         
         # Convert to response format
         user_jobs = []
+        pending_jobs_count = 0
+        
         for job in jobs:
-            # Get queue position for pending/processing jobs
+            # Get queue position for pending/processing jobs (limit to avoid performance issues)
             queue_position = None
-            if job.runpod_request_id and job.status in ['pending', 'processing']:
-                from app.utils.runpod_service import runpod_service
-                try:
-                    runpod_status = runpod_service.get_separation_status(job.runpod_request_id)
-                    if runpod_status:
-                        queue_position = runpod_status.get("queue_position")
-                except Exception as e:
-                    logger.warning(f"Failed to get RunPod queue position for job {job.job_id}: {e}")
+            if job.status in ['pending', 'processing'] and pending_jobs_count < MAX_QUEUE_POSITION_CHECKS:
+                pending_jobs_count += 1
+                queue_position = get_job_queue_position(job)
             
             user_job = UserSeparationJob(
                 job_id=job.job_id,
@@ -104,16 +125,8 @@ async def get_separation_job_detail(
         if job.user_id != user_id:
             raise HTTPException(status_code=403, detail="Access denied")
         
-        # If job has RunPod request ID and is still processing, check RunPod for queue position
-        queue_position = None
-        if job.runpod_request_id and job.status in ['pending', 'processing']:
-            from app.utils.runpod_service import runpod_service
-            try:
-                runpod_status = runpod_service.get_separation_status(job.runpod_request_id)
-                if runpod_status:
-                    queue_position = runpod_status.get("queue_position")
-            except Exception as e:
-                logger.warning(f"Failed to get RunPod queue position for job {job_id}: {e}")
+        # Get queue position for pending/processing jobs
+        queue_position = get_job_queue_position(job)
         
         user_job = UserSeparationJob(
             job_id=job.job_id,

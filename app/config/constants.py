@@ -65,6 +65,11 @@ AUDIO_SAMPLE_RATE = 44100
 AUDIO_DEFAULT_FORMAT = "wav"
 VOICE_CLONE_TIMEOUT_SECONDS = 300  # 5 minutes timeout for voice cloning
 
+# Queue Position Constants
+MAX_QUEUE_POSITION_CHECKS = 5  # Maximum number of jobs to check queue position for (performance)
+AVERAGE_JOB_PROCESSING_MINUTES = 3  # Average processing time per job for queue position estimation
+PROCESSING_JOB_QUEUE_POSITION = 0  # Queue position for jobs currently being processed
+
 # Database Query Constants
 DEFAULT_QUERY_LIMIT = 50
 MAX_QUERY_LIMIT = 1000
