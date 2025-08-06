@@ -349,16 +349,16 @@
       "audioSeparation": {
         "path": "/api/audio-separation",
         "method": "POST",
-        "description": "Start audio separation job (vocal/instrument separation)",
+        "description": "Start audio separation job with uploaded audio file (requires upload-file API first)",
         "authentication": true,
         "request": {
-          "audioUrl": "string (required, must start with http/https)",
+          "job_id": "string (required, from /upload-file API)",
           "duration": "number (required, > 0, <= 7200 seconds, max 2 hours)",
           "callerInfo": "string|null (optional, max 255 chars)"
         },
         "response": {
           "success": true,
-          "requestId": "string",
+          "job_id": "string",
           "message": "Processing started successfully",
           "estimatedTime": "5-15 minutes",
           "statusCheckUrl": "string",
@@ -375,15 +375,15 @@
         }
       },
       "getAudioSeparationStatus": {
-        "path": "/api/audio-separation-status/{request_id}",
+        "path": "/api/audio-separation-status/{job_id}",
         "method": "GET",
         "description": "Get audio separation job status",
         "authentication": false,
         "request": {
-          "request_id": "string (path parameter, required)"
+          "job_id": "string (path parameter, required)"
         },
         "response": {
-          "requestId": "string",
+          "job_id": "string",
           "status": "pending|processing|completed|failed|cancelled",
           "progress": "number (0-100)",
           "queuePosition": "number|null",
@@ -415,34 +415,18 @@
           "duration": "number|null (seconds)",
           "error": "string|null"
         }
-      },
-      "deductCreditsForSeparation": {
-        "path": "/api/audio-separation-deduct-credits",
-        "method": "POST",
-        "description": "Manually deduct credits for audio separation (usually auto-deducted)",
-        "authentication": true,
-        "request": {
-          "job_id": "string (required, 1-255 chars)",
-          "duration": "number (required, > 0, <= 14400 seconds, max 4 hours)"
-        },
-        "response": {
-          "success": true,
-          "message": "Credits deducted successfully",
-          "deducted_credits": "number",
-          "remaining_credits": "number",
-          "duration": "number"
-        }
       }
+
     },
     "uploads": {
       "uploadFile": {
         "path": "/upload-file",
         "method": "POST",
-        "description": "Upload video file for processing",
+        "description": "Upload video or audio file for processing",
         "authentication": false,
         "contentType": "multipart/form-data",
         "request": {
-          "video_file": "File (required, video file)"
+          "file": "File (required, video or audio file)"
         },
         "response": {
           "success": true,
@@ -453,7 +437,10 @@
           "file_size_mb": "number",
           "estimated_time": "2-10 minutes"
         },
-        "allowedFormats": [".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm", ".m4v"]
+        "allowedFormats": {
+          "video": [".mp4", ".avi", ".mov", ".mkv", ".flv", ".wmv", ".webm", ".m4v"],
+          "audio": [".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"]
+        }
       },
       "getUploadStatus": {
         "path": "/upload-status/{job_id}",
@@ -968,17 +955,20 @@
       "uploadMethod": "Use /upload-file endpoint first, then use job_id in processing endpoints"
     },
     "audioProcessing": {
-      "supportedFormats": "Any format accessible via HTTP URL",
-      "maxDuration": "2 hours for separation (7200 seconds), 4 hours for dubbing (14400 seconds)"
+      "supportedFormats": [".mp3", ".wav", ".m4a", ".flac", ".aac", ".ogg"],
+      "maxDuration": "2 hours for separation (7200 seconds), 4 hours for dubbing (14400 seconds)",
+      "uploadMethod": "Use /upload-file endpoint first, then use job_id in processing endpoints"
     }
   },
   "workflowExamples": {
     "audioSeparation": {
       "steps": [
-        "1. POST /api/audio-separation with audioUrl and duration",
-        "2. Poll GET /api/audio-separation-status/{request_id} until status is 'completed'",
-        "3. Download results from vocalUrl and instrumentUrl in response",
-        "4. Credits are auto-deducted on completion"
+        "1. POST /upload-file with audio file to get job_id",
+        "2. Poll GET /upload-status/{job_id} until upload is 'done'",
+        "3. POST /api/audio-separation with job_id and duration",
+        "4. Poll GET /api/audio-separation-status/{job_id} until status is 'completed'",
+        "5. Download results from vocalUrl and instrumentUrl in response",
+        "6. Credits are auto-deducted on completion"
       ]
     },
     "videoDubbing": {

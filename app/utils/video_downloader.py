@@ -11,7 +11,6 @@ import yt_dlp
 from app.services.export_video.constants import (
     DOWNLOAD_TIMEOUT,
     DEFAULT_VIDEO_QUALITY,
-    SUPPORTED_DOWNLOAD_SITES,
 )
 from app.config.settings import settings
 from app.utils.r2_storage import R2Storage
@@ -20,13 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 class VideoDownloadService:
-    """Download videos from supported platforms and keep them locally.
+    """Download media (video/audio) from any supported URL and keep them locally.
 
     The downloaded file is stored under:
-        {settings.TEMP_DIR}/dub_{job_id}/{video_filename}
+        {settings.TEMP_DIR}/dub_{job_id}/{filename}
 
-    No Cloudflare / R2 upload happens here – keeping things simple and local as
-    requested.
+    Supports 800+ sites via yt-dlp. No Cloudflare / R2 upload happens here – 
+    keeping things simple and local as requested.
     """
 
     def __init__(self) -> None:
@@ -36,31 +35,22 @@ class VideoDownloadService:
     # ---------------------------------------------------------------------
     # Helper utilities
     # ---------------------------------------------------------------------
-    def _is_supported_url(self, url: str) -> bool:
-        try:
-            url_l = url.lower()
-            return any(site in url_l for site in SUPPORTED_DOWNLOAD_SITES)
-        except Exception:
-            return False
 
     # ---------------------------------------------------------------------
     # Public API
     # ---------------------------------------------------------------------
     async def download_video(self, url: str, quality: str | None = None) -> Dict[str, Any]:
-        """Download a video and return metadata.
+        """Download media (video/audio) from any URL and return metadata.
 
         Args:
-            url:  The video URL (YouTube, Vimeo, …).
-            quality: Optional yt-dl format string.
+            url:  The media URL from any supported site (800+ sites via yt-dlp).
+            quality: Optional yt-dlp format string.
         Returns:
             A dict ready to be fed into the FastAPI response.
         """
         try:
-            if not self._is_supported_url(url):
-                return {
-                    "success": False,
-                    "error": "Unsupported video platform or invalid URL",
-                }
+            # Let yt-dlp handle URL validation naturally - it supports many more sites
+            # than our hardcoded list
 
             # Generate a unique job ID and matching storage directory
             job_id = self.r2_storage.generate_job_id()
@@ -104,7 +94,7 @@ class VideoDownloadService:
 
             return {
                 "success": True,
-                "message": "Video downloaded successfully",
+                "message": "Media downloaded successfully",
                 "job_id": job_id,
                 "video_info": {
                     "title": video_title,

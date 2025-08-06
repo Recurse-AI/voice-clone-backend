@@ -90,26 +90,20 @@ class ExportStatusResponse(BaseModel):
 
 # Audio Separation API Schemas
 class AudioSeparationRequest(BaseModel):
-    audioUrl: str = Field(..., min_length=1, description="Audio file URL")
+    job_id: str = Field(..., min_length=1, description="Unique job ID for audio separation (from /upload-file API)")
     duration: float = Field(..., gt=0, le=7200, description="Audio duration in seconds (max 2 hours)")
     callerInfo: Optional[str] = Field(None, max_length=255, description="Caller information")
-    
-    @validator('audioUrl')
-    def validate_audio_url(cls, v):
-        if not v.startswith(('http://', 'https://')):
-            raise ValueError("Audio URL must start with http:// or https://")
-        return v
 
 class AudioSeparationResponse(BaseModel):
     success: bool
-    requestId: str
+    job_id: str
     message: str
     estimatedTime: str
     statusCheckUrl: str
     queuePosition: Optional[int] = None
 
 class SeparationStatusResponse(BaseModel):
-    requestId: str
+    job_id: str
     status: str  # pending, processing, completed, failed, cancelled
     progress: int  # 0-100
     queuePosition: Optional[int] = None
@@ -246,7 +240,3 @@ class DubJobDetailResponse(BaseModel):
     job: Optional[UserDubJob] = None
     error: Optional[str] = None
 
-# Credit Management Schemas
-class CreditDeductRequest(BaseModel):
-    job_id: str = Field(..., min_length=1, max_length=255, description="Dubbing job ID") 
-    duration: float = Field(..., gt=0, le=14400, description="Duration in seconds (max 4 hours)")

@@ -251,13 +251,13 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         # Ensure temp directory is removed in any case
         AudioUtils.remove_temp_dir(folder_path=job_dir)
 
-@router.post("/download-video", response_model=VideoDownloadResponse)
-async def download_video(request: VideoDownloadRequest):
-    """Download video from URL and store locally"""
+@router.post("/download-media", response_model=VideoDownloadResponse)
+async def download_media(request: VideoDownloadRequest):
+    """Download media (video/audio) from URL and store locally"""
     try:
         from app.utils.video_downloader import video_download_service
         
-        logger.info(f"Video download request: {request.url}")
+        logger.info(f"Media download request: {request.url}")
 
         result = await video_download_service.download_video(
             url=request.url,
@@ -265,7 +265,7 @@ async def download_video(request: VideoDownloadRequest):
         )
 
         if result["success"]:
-            logger.info(f"Video download successful: {result['download_id']}")
+            logger.info(f"Media download successful: {result['job_id']}")
             return VideoDownloadResponse(
                 success=True,
                 message=result["message"],
@@ -273,14 +273,14 @@ async def download_video(request: VideoDownloadRequest):
                 video_info=result["video_info"]
             )
         else:
-            logger.error(f"Video download failed: {result['error']}")
+            logger.error(f"Media download failed: {result['error']}")
             return VideoDownloadResponse(
                 success=False,
-                message="Video download failed",
+                message="Media download failed",
                 error=result["error"]
             )
     except Exception as e:
-        logger.error(f"Video download endpoint error: {str(e)}")
+        logger.error(f"Media download endpoint error: {str(e)}")
         return VideoDownloadResponse(
             success=False,
             message="Internal server error",

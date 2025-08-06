@@ -4,7 +4,7 @@ import threading
 from fastapi.responses import JSONResponse
 import logging
 import os
-from app.schemas import AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, VoiceCloneRequest, VoiceCloneResponse, CreditDeductRequest
+from app.schemas import AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, VoiceCloneRequest, VoiceCloneResponse
 from app.dependencies.auth import get_current_user
 from app.services.separation_job_service import separation_job_service
 from app.services.credit_service import credit_service, JobType
@@ -165,9 +165,10 @@ async def start_audio_separation(
     request: AudioSeparationRequest,
     current_user = Depends(get_current_user)
 ):
-    """Start audio separation job with credit pre-check and user tracking"""
+    """Start audio separation job with uploaded file and credit pre-check"""
     try:
         user_id = current_user.id
+        job_id = request.job_id
         
         # Pre-check: Verify user has sufficient credits
         credit_check = await credit_service.check_sufficient_credits(
@@ -187,48 +188,78 @@ async def start_audio_separation(
                 }
             )
         
+        # Find uploaded audio file locally (similar to video dub flow)
+        from app.config.settings import settings
+        uploads_dir = os.path.join(settings.TEMP_DIR, "uploads", job_id)
+        
+        if not os.path.exists(uploads_dir):
+            raise HTTPException(status_code=400, detail="Uploaded audio not found - No such directory")
+        
+        # Find audio file in upload directory
+        audio_files = [f for f in os.listdir(uploads_dir) if f.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.aac', '.ogg'))]
+        if not audio_files:
+            raise HTTPException(status_code=400, detail="No audio file found in upload folder")
+        
+        local_audio_path = os.path.join(uploads_dir, audio_files[0])
+        
+        # Upload audio to R2 storage for separation processing
+        from app.utils.r2_storage import R2Storage
+        r2_storage = R2Storage()
+        
+        audio_upload_result = r2_storage.upload_audio_file(local_audio_path, job_id)
+        if not audio_upload_result.get("success"):
+            raise HTTPException(status_code=500, detail=f"Audio upload failed: {audio_upload_result.get('error')}")
+        
+        audio_url = audio_upload_result["url"]
+        
+        # Submit separation request with uploaded audio URL
         from app.utils.runpod_service import runpod_service
         
-        request_id = runpod_service.submit_separation_request(
-            request.audioUrl,
+        separation_request_id = runpod_service.submit_separation_request(
+            audio_url,
             caller_info=request.callerInfo or "audio_separation_api"
         )
         
         # Create separation job in MongoDB for tracking
         job_data = {
-            "job_id": request_id,
+            "job_id": separation_request_id,
             "user_id": user_id,
-            "audio_url": request.audioUrl,
+            "audio_url": audio_url,
+            "original_filename": audio_files[0],
             "caller_info": request.callerInfo or "audio_separation_api",
             "details": {
                 "duration": request.duration,
-                "required_credits": credit_check["required"]
+                "required_credits": credit_check["required"],
+                "upload_job_id": job_id,
+                "local_audio_path": local_audio_path
             }
         }
         
         # Save to MongoDB
         job = await separation_job_service.create_job(job_data)
         if not job:
-            logger.error(f"Failed to create separation job in MongoDB for {request_id}")
+            logger.error(f"Failed to create separation job in MongoDB for {separation_request_id}")
         
-        status = runpod_service.get_separation_status(request_id)
+        status = runpod_service.get_separation_status(separation_request_id)
         queue_position = status.get("queue_position") if status else None
         
-        # Run separation monitoring in separate thread to avoid blocking main event loop
-        thread = threading.Thread(target=process_audio_separation_background, args=(request_id, user_id, request.duration), daemon=True)
+        # Run separation monitoring in separate thread
+        thread = threading.Thread(target=process_audio_separation_background, args=(separation_request_id, user_id, request.duration), daemon=True)
         thread.start()
         
-        logger.info(f"Started audio separation job {request_id} for user {user_id} (duration: {request.duration}s, credits: {credit_check['required']})")
+        logger.info(f"Started audio separation job {separation_request_id} for user {user_id} (upload job: {job_id}, duration: {request.duration}s)")
         
         return AudioSeparationResponse(
             success=True,
-            requestId=request_id,
+            job_id=separation_request_id,
             message=MSG_PROCESSING_STARTED,
             estimatedTime="5-15 minutes",
-            statusCheckUrl=f"/api/audio-separation-status/{request_id}",
+            statusCheckUrl=f"/api/audio-separation-status/{separation_request_id}",
             queuePosition=queue_position
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to start audio separation: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start separation: {str(e)}")
@@ -253,7 +284,7 @@ async def get_audio_separation_status(request_id: str):
                 instrument_url = result["output"].get("instrument_audio")
         
         return SeparationStatusResponse(
-            requestId=request_id,
+            job_id=request_id,
             status=status["status"],
             progress=status["progress"],
             queuePosition=status.get("queue_position"),
@@ -351,53 +382,3 @@ async def voice_clone_segment(request: VoiceCloneRequest):
         from app.services.dub.audio_utils import AudioUtils
         AudioUtils.remove_temp_dir(folder_path=locals().get("job_dir"))
 
-# Credit Management for Audio Separation
-@router.post("/audio-separation-deduct-credits")
-async def deduct_credits_for_audio_separation(
-    request: CreditDeductRequest,
-    current_user = Depends(get_current_user)
-):
-    """Deduct credits for audio separation after successful completion (1 credit per minute)"""
-    try:
-        user_id = current_user.id
-        
-        # Get job details from MongoDB for ownership verification
-        job = await separation_job_service.get_job(request.job_id)
-        if not job:
-            raise HTTPException(status_code=404, detail="Separation job not found")
-        
-        if job.user_id != user_id:
-            raise HTTPException(status_code=403, detail="Access denied")
-        
-        # Use common credit service for deduction
-        result = await credit_service.deduct_credits_on_completion(
-            user_id=user_id,
-            job_id=request.job_id,
-            job_type=JobType.SEPARATION,
-            duration_seconds=request.duration
-        )
-        
-        if not result["success"]:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "success": False,
-                    "message": result["message"],
-                    "deducted_credits": result["deducted"],
-                    "remaining_credits": result["remaining"]
-                }
-            )
-        
-        return {
-            "success": True,
-            "message": "Credits deducted successfully",
-            "deducted_credits": result["deducted"],
-            "remaining_credits": result["remaining"],
-            "duration": request.duration
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to deduct credits for separation job {request.job_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to deduct credits: {str(e)}")
