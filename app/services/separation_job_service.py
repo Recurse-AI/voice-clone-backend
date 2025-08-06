@@ -1,9 +1,10 @@
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from bson import ObjectId
 from app.models.separation_job import SeparationJob
 from app.config.database import separation_jobs_collection
+from app.config.constants import DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +81,27 @@ class SeparationJobService:
             logger.error(f"Failed to update separation job {job_id}: {e}")
             return False
     
-    async def get_user_jobs(self, user_id: str, limit: int = 50) -> List[SeparationJob]:
-        """Get all separation jobs for a user"""
+    async def get_user_jobs(self, user_id: str, page: int = 1, limit: int = None) -> Tuple[List[SeparationJob], int]:
+        """Get paginated separation jobs for a user"""
         try:
-            cursor = self.collection.find(
-                {"user_id": user_id}
-            ).sort("created_at", -1).limit(limit)
+            # Use default limit if not provided
+            if limit is None:
+                limit = DEFAULT_QUERY_LIMIT
+            
+            # Ensure limit doesn't exceed maximum
+            limit = min(limit, MAX_QUERY_LIMIT)
+            
+            # Calculate skip value for pagination
+            skip = (page - 1) * limit
+            
+            # Base query filter
+            query_filter = {"user_id": user_id}
+            
+            # Get total count
+            total_count = await self.collection.count_documents(query_filter)
+            
+            # Get paginated results
+            cursor = self.collection.find(query_filter).sort("created_at", -1).skip(skip).limit(limit)
             
             jobs = []
             async for job_data in cursor:
@@ -93,11 +109,11 @@ class SeparationJobService:
                 del job_data['_id']
                 jobs.append(SeparationJob(**job_data))
             
-            return jobs
+            return jobs, total_count
             
         except Exception as e:
             logger.error(f"Failed to get user separation jobs: {e}")
-            return []
+            return [], 0
     
     async def get_jobs_by_status(self, status: str, limit: int = 100) -> List[SeparationJob]:
         """Get jobs by status (for monitoring/cleanup)"""

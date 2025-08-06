@@ -199,6 +199,15 @@ class UserSeparationListResponse(BaseModel):
     message: str
     jobs: List[UserSeparationJob]
     total: int
+    page: Optional[int] = None
+    limit: Optional[int] = None
+    total_pages: Optional[int] = None
+
+class FileInfo(BaseModel):
+    filename: str
+    url: str
+    size: Optional[int] = None
+    type: str  # video, audio, subtitle, summary, metadata, other
 
 class UserDubJob(BaseModel):
     job_id: str
@@ -206,7 +215,12 @@ class UserDubJob(BaseModel):
     progress: int
     original_filename: Optional[str] = None
     target_language: str
+    source_video_language: Optional[str] = None
+    expected_speaker: Optional[str] = None
+    subtitle: bool = False
+    instrument: bool = False
     result_url: Optional[str] = None
+    files: Optional[List[FileInfo]] = None
     error: Optional[str] = None
     created_at: str
     updated_at: str
@@ -217,6 +231,9 @@ class UserDubListResponse(BaseModel):
     message: str
     jobs: List[UserDubJob]
     total: int
+    page: Optional[int] = None
+    limit: Optional[int] = None
+    total_pages: Optional[int] = None
 
 # Individual Job Detail Schemas
 class SeparationJobDetailResponse(BaseModel):

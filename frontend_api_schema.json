@@ -551,121 +551,345 @@
       "getUserSeparations": {
         "path": "/api/jobs/separations",
         "method": "GET",
-        "description": "Get all audio separation jobs for current user",
+        "description": "Get paginated audio separation jobs for current user with pagination support",
         "authentication": true,
         "request": {
-          "limit": "number (query parameter, optional, default: 50)"
+          "page": "number (query parameter, optional, default: 1, min: 1) - Page number for pagination",
+          "limit": "number (query parameter, optional, default: 50, max: 1000) - Number of items per page"
         },
         "response": {
           "success": true,
-          "message": "string",
+          "message": "string - Success message with page info",
           "jobs": [
             {
-              "job_id": "string",
-              "status": "string",
-              "progress": "number",
-              "audio_url": "string",
-              "vocal_url": "string|null",
-              "instrument_url": "string|null",
-              "error": "string|null",
-              "created_at": "string (ISO date)",
-              "updated_at": "string (ISO date)",
-              "completed_at": "string|null (ISO date)"
+              "job_id": "string - Unique identifier for the separation job",
+              "status": "string - Job status: 'pending' | 'processing' | 'completed' | 'failed'",
+              "progress": "number (0-100) - Processing progress percentage",
+              "audio_url": "string - Original audio file URL for separation",
+              "vocal_url": "string|null - Separated vocal audio download URL (available when status is 'completed')",
+              "instrument_url": "string|null - Separated instrument audio download URL (available when status is 'completed')",
+              "error": "string|null - Error message if job failed",
+              "created_at": "string (ISO date) - Job creation timestamp",
+              "updated_at": "string (ISO date) - Last update timestamp",
+              "completed_at": "string|null (ISO date) - Job completion timestamp"
             }
           ],
-          "total": "number"
+          "total": "number - Total number of jobs for the user",
+          "page": "number - Current page number",
+          "limit": "number - Number of items per page",
+          "total_pages": "number - Total number of pages available"
+        },
+        "errorResponses": {
+          "400": "Bad Request - Invalid page parameter (must be > 0)",
+          "401": "Unauthorized - User not authenticated or invalid token",
+          "500": "Internal Server Error - Database or processing error"
+        },
+        "examples": {
+          "request": "/api/jobs/separations?page=1&limit=10",
+          "response": {
+            "success": true,
+            "message": "Found 2 separation jobs (page 1)",
+            "jobs": [
+              {
+                "job_id": "sep_123456789",
+                "status": "completed",
+                "progress": 100,
+                "audio_url": "https://storage.example.com/original_audio.mp3",
+                "vocal_url": "https://storage.example.com/vocals.wav",
+                "instrument_url": "https://storage.example.com/instruments.wav",
+                "error": null,
+                "created_at": "2024-01-15T10:30:00Z",
+                "updated_at": "2024-01-15T10:33:00Z",
+                "completed_at": "2024-01-15T10:33:00Z"
+              }
+            ],
+            "total": 15,
+            "page": 1,
+            "limit": 10,
+            "total_pages": 2
+          }
         }
       },
       "getSeparationDetail": {
         "path": "/api/jobs/separation/{job_id}",
         "method": "GET",
-        "description": "Get detailed information about a specific separation job",
+        "description": "Get detailed information about a specific audio separation job by job ID",
         "authentication": true,
         "request": {
-          "job_id": "string (path parameter, required)"
+          "job_id": "string (path parameter, required) - Unique job identifier"
         },
         "response": {
           "success": true,
-          "job": "UserSeparationJob object (same as in list)",
-          "error": "string|null"
+          "job": {
+            "job_id": "string - Unique identifier for the separation job",
+            "status": "string - Current job status",
+            "progress": "number (0-100) - Processing progress percentage",
+            "audio_url": "string - Original audio file URL",
+            "vocal_url": "string|null - Separated vocal audio download URL",
+            "instrument_url": "string|null - Separated instrument audio download URL",
+            "error": "string|null - Error message if job failed",
+            "created_at": "string (ISO date) - Job creation timestamp",
+            "updated_at": "string (ISO date) - Last update timestamp",
+            "completed_at": "string|null (ISO date) - Job completion timestamp"
+          },
+          "error": "string|null - Error message if operation failed"
+        },
+        "errorResponses": {
+          "403": "Forbidden - Job doesn't belong to current user",
+          "404": "Not Found - Job with specified ID not found",
+          "401": "Unauthorized - User not authenticated",
+          "500": "Internal Server Error - Database or processing error"
+        },
+        "examples": {
+          "request": "/api/jobs/separation/sep_123456789",
+          "response": {
+            "success": true,
+            "job": {
+              "job_id": "sep_123456789",
+              "status": "processing",
+              "progress": 65,
+              "audio_url": "https://storage.example.com/original_audio.mp3",
+              "vocal_url": null,
+              "instrument_url": null,
+              "error": null,
+              "created_at": "2024-01-15T10:30:00Z",
+              "updated_at": "2024-01-15T10:32:00Z",
+              "completed_at": null
+            },
+            "error": null
+          }
         }
       },
       "getUserDubs": {
         "path": "/api/jobs/dubs",
         "method": "GET",
-        "description": "Get all video dubbing jobs for current user",
+        "description": "Get paginated video dubbing jobs for current user with pagination support",
         "authentication": true,
         "request": {
-          "limit": "number (query parameter, optional, default: 50)"
+          "page": "number (query parameter, optional, default: 1, min: 1) - Page number for pagination",
+          "limit": "number (query parameter, optional, default: 50, max: 1000) - Number of items per page"
         },
         "response": {
           "success": true,
-          "message": "string",
+          "message": "string - Success message with page info",
           "jobs": [
             {
-              "job_id": "string",
-              "status": "string",
-              "progress": "number",
-              "original_filename": "string|null",
-              "target_language": "string",
-              "result_url": "string|null",
-              "error": "string|null",
-              "created_at": "string (ISO date)",
-              "updated_at": "string (ISO date)",
-              "completed_at": "string|null (ISO date)"
+              "job_id": "string - Unique identifier for the dubbing job",
+              "status": "string - Job status: 'pending' | 'downloading' | 'separating' | 'transcribing' | 'processing' | 'uploading' | 'completed' | 'failed'",
+              "progress": "number (0-100) - Processing progress percentage",
+              "original_filename": "string|null - Original uploaded video filename (project title)",
+              "target_language": "string - Target language code for dubbing (e.g., 'en', 'bn', 'hi')",
+              "source_video_language": "string|null - Source video language code (auto-detected or provided)",
+              "expected_speaker": "string|null - Expected speaker name or voice ID for dubbing",
+              "subtitle": "boolean - Whether subtitles are included in the output",
+              "instrument": "boolean - Whether instrumental track is preserved",
+              "result_url": "string|null - Final dubbed video download URL (extracted from details.result_url when completed)",
+              "files": [
+                {
+                  "filename": "string - File name (e.g., 'video_no_subtitles_job123.mp4')",
+                  "url": "string - Direct download URL for the file",
+                  "size": "number|null - File size in bytes",
+                  "type": "string - File category: 'video' | 'audio' | 'subtitle' | 'summary' | 'metadata' | 'other'"
+                }
+              ],
+              "error": "string|null - Error message if job failed",
+              "created_at": "string (ISO date) - Job creation timestamp",
+              "updated_at": "string (ISO date) - Last update timestamp",
+              "completed_at": "string|null (ISO date) - Job completion timestamp"
             }
           ],
-          "total": "number"
+          "total": "number - Total number of jobs for the user",
+          "page": "number - Current page number",
+          "limit": "number - Number of items per page",
+          "total_pages": "number - Total number of pages available"
+        },
+        "errorResponses": {
+          "400": "Bad Request - Invalid page parameter (must be > 0)",
+          "401": "Unauthorized - User not authenticated or invalid token",
+          "500": "Internal Server Error - Database or processing error"
+        },
+        "examples": {
+          "request": "/api/jobs/dubs?page=1&limit=10",
+          "response": {
+            "success": true,
+            "message": "Found 3 dub jobs (page 1)",
+            "jobs": [
+              {
+                "job_id": "job_20250805_203351_f9537a4f",
+                "status": "completed",
+                "progress": 100,
+                "original_filename": "My Project Title",
+                "target_language": "bn",
+                "source_video_language": "en",
+                "expected_speaker": "John Doe",
+                "subtitle": false,
+                "instrument": true,
+                "result_url": "https://pub-1b758b3fa78c4404bb6a60c2a61d6e2a.r2.dev/voice-cloning/2025/08/05/job_20250805_203351_f9537a4f/video_no_subtitles_job_20250805_203351_f9537a4f.mp4",
+                "files": [
+                  {
+                    "filename": "video_no_subtitles_job_20250805_203351_f9537a4f.mp4",
+                    "url": "https://pub-1b758b3fa78c4404bb6a60c2a61d6e2a.r2.dev/voice-cloning/2025/08/05/job_20250805_203351_f9537a4f/video_no_subtitles_job_20250805_203351_f9537a4f.mp4",
+                    "size": 15240000,
+                    "type": "video"
+                  },
+                  {
+                    "filename": "segment_001.wav",
+                    "url": "https://pub-1b758b3fa78c4404bb6a60c2a61d6e2a.r2.dev/voice-cloning/2025/08/05/job_20250805_203351_f9537a4f/segment_001.wav",
+                    "size": 512000,
+                    "type": "audio"
+                  },
+                  {
+                    "filename": "segment_002.wav",
+                    "url": "https://pub-1b758b3fa78c4404bb6a60c2a61d6e2a.r2.dev/voice-cloning/2025/08/05/job_20250805_203351_f9537a4f/segment_002.wav",
+                    "size": 480000,
+                    "type": "audio"
+                  },
+                  {
+                    "filename": "subtitles_job_20250805_203351_f9537a4f.srt",
+                    "url": "https://pub-1b758b3fa78c4404bb6a60c2a61d6e2a.r2.dev/voice-cloning/2025/08/05/job_20250805_203351_f9537a4f/subtitles_job_20250805_203351_f9537a4f.srt",
+                    "size": 1200,
+                    "type": "subtitle"
+                  },
+                  {
+                    "filename": "dubbing_process_summary_job_20250805_203351_f9537a4f.json",
+                    "url": "https://pub-1b758b3fa78c4404bb6a60c2a61d6e2a.r2.dev/voice-cloning/2025/08/05/job_20250805_203351_f9537a4f/dubbing_process_summary_job_20250805_203351_f9537a4f.json",
+                    "size": 4800,
+                    "type": "summary"
+                  },
+                  {
+                    "filename": "segment_001_info.json",
+                    "url": "https://pub-1b758b3fa78c4404bb6a60c2a61d6e2a.r2.dev/voice-cloning/2025/08/05/job_20250805_203351_f9537a4f/segment_001_info.json",
+                    "size": 350,
+                    "type": "metadata"
+                  }
+                ],
+                "error": null,
+                "created_at": "2024-01-15T10:30:00Z",
+                "updated_at": "2024-01-15T10:35:00Z",
+                "completed_at": "2024-01-15T10:35:00Z"
+              }
+            ],
+            "total": 25,
+            "page": 1,
+            "limit": 10,
+            "total_pages": 3
+          }
         }
       },
       "getDubDetail": {
         "path": "/api/jobs/dub/{job_id}",
         "method": "GET",
-        "description": "Get detailed information about a specific dubbing job",
+        "description": "Get detailed information about a specific dubbing job by job ID",
         "authentication": true,
         "request": {
-          "job_id": "string (path parameter, required)"
+          "job_id": "string (path parameter, required) - Unique job identifier"
         },
         "response": {
           "success": true,
-          "job": "UserDubJob object (same as in list)",
-          "error": "string|null"
+          "job": {
+            "job_id": "string - Unique identifier for the dubbing job",
+            "status": "string - Current job status",
+            "progress": "number (0-100) - Processing progress percentage",
+            "original_filename": "string|null - Original uploaded video filename (project title)",
+            "target_language": "string - Target language for dubbing",
+            "source_video_language": "string|null - Source video language code",
+            "expected_speaker": "string|null - Expected speaker name or voice ID",
+            "subtitle": "boolean - Whether subtitles are included",
+            "instrument": "boolean - Whether instrumental track is preserved",
+            "result_url": "string|null - Final dubbed video download URL (from details.result_url)",
+            "files": "array|null - Complete list of all generated files with download URLs",
+            "error": "string|null - Error message if job failed",
+            "created_at": "string (ISO date) - Job creation timestamp",
+            "updated_at": "string (ISO date) - Last update timestamp",
+            "completed_at": "string|null (ISO date) - Job completion timestamp"
+          },
+          "error": "string|null - Error message if operation failed"
+        },
+        "errorResponses": {
+          "403": "Forbidden - Job doesn't belong to current user",
+          "404": "Not Found - Job with specified ID not found",
+          "401": "Unauthorized - User not authenticated",
+          "500": "Internal Server Error - Database or processing error"
+        },
+        "examples": {
+          "request": "/api/jobs/dub/dub_123456789",
+          "response": {
+            "success": true,
+            "job": {
+              "job_id": "job_20250805_203351_f9537a4f",
+              "status": "processing",
+              "progress": 75,
+              "original_filename": "My Project Title",
+              "target_language": "bn",
+              "source_video_language": "en",
+              "expected_speaker": "John Doe",
+              "subtitle": false,
+              "instrument": true,
+              "result_url": null,
+              "files": null,
+              "error": null,
+              "created_at": "2024-01-15T10:30:00Z",
+              "updated_at": "2024-01-15T10:33:00Z",
+              "completed_at": null
+            },
+            "error": null
+          }
         }
       },
       "deleteSeparationJob": {
         "path": "/api/jobs/separation/{job_id}",
         "method": "DELETE",
-        "description": "Delete a specific audio separation job",
+        "description": "Delete a specific audio separation job permanently from user's account",
         "authentication": true,
         "request": {
-          "job_id": "string (path parameter, required)"
+          "job_id": "string (path parameter, required) - Unique job identifier to delete"
         },
         "response": {
           "success": true,
           "message": "Separation job deleted successfully",
-          "job_id": "string"
+          "job_id": "string - ID of the deleted job"
         },
         "errorResponses": {
-          "403": "Access denied - Job doesn't belong to current user",
-          "404": "Separation job not found"
+          "403": "Forbidden - Job doesn't belong to current user",
+          "404": "Not Found - Job with specified ID not found",
+          "401": "Unauthorized - User not authenticated",
+          "500": "Internal Server Error - Database or processing error"
+        },
+        "examples": {
+          "request": "DELETE /api/jobs/separation/sep_123456789",
+          "response": {
+            "success": true,
+            "message": "Separation job deleted successfully",
+            "job_id": "sep_123456789"
+          }
         }
       },
       "deleteDubJob": {
         "path": "/api/jobs/dub/{job_id}",
         "method": "DELETE",
-        "description": "Delete a specific video dubbing job",
+        "description": "Delete a specific video dubbing job permanently from user's account",
         "authentication": true,
         "request": {
-          "job_id": "string (path parameter, required)"
+          "job_id": "string (path parameter, required) - Unique job identifier to delete"
         },
         "response": {
           "success": true,
           "message": "Dub job deleted successfully",
-          "job_id": "string"
+          "job_id": "string - ID of the deleted job"
         },
         "errorResponses": {
-          "403": "Access denied - Job doesn't belong to current user",
-          "404": "Dub job not found"
+          "403": "Forbidden - Job doesn't belong to current user",
+          "404": "Not Found - Job with specified ID not found",
+          "401": "Unauthorized - User not authenticated",
+          "500": "Internal Server Error - Database or processing error"
+        },
+        "examples": {
+          "request": "DELETE /api/jobs/dub/dub_123456789",
+          "response": {
+            "success": true,
+            "message": "Dub job deleted successfully",
+            "job_id": "dub_123456789"
+          }
         }
       }
     }
@@ -785,6 +1009,9 @@
     "backgroundProcessing": "Most processing endpoints return immediately and require status polling",
     "creditManagement": "Credits are checked before processing and deducted automatically on completion",
     "fileStorage": "Files are temporarily stored during processing and automatically cleaned up",
-    "webhooks": "Stripe webhooks handle payment completion automatically"
+    "webhooks": "Stripe webhooks handle payment completion automatically",
+    "pagination": "Job listing endpoints support pagination with page and limit parameters",
+    "dubJobWorkflow": "Dub jobs progress through statuses: pending → downloading → separating → transcribing → processing → uploading → completed/failed",
+    "separationJobWorkflow": "Separation jobs progress through statuses: pending → processing → completed/failed"
   }
 }

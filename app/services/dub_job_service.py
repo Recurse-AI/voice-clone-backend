@@ -1,9 +1,10 @@
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
 from bson import ObjectId
 from app.models.dub_job import DubJob
 from app.config.database import dub_jobs_collection
+from app.config.constants import DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT
 
 logger = logging.getLogger(__name__)
 
@@ -91,12 +92,23 @@ class DubJobService:
         except:
             return False
     
-    async def get_user_jobs(self, user_id: str, limit: int = 50) -> List[DubJob]:
-        """Get all dub jobs for a user"""
+    async def get_user_jobs(self, user_id: str, page: int = 1, limit: int = None) -> Tuple[List[DubJob], int]:
+        """Get paginated dub jobs for a user"""
         try:
-            cursor = self.collection.find(
-                {"user_id": user_id}
-            ).sort("created_at", -1).limit(limit)
+            # Ensure limit doesn't exceed maximum
+            limit = min(limit, MAX_QUERY_LIMIT) if limit else MAX_QUERY_LIMIT
+            
+            # Calculate skip value for pagination
+            skip = (page - 1) * limit
+            
+            # Base query filter
+            query_filter = {"user_id": user_id}
+            
+            # Get total count
+            total_count = await self.collection.count_documents(query_filter)
+            
+            # Get paginated results
+            cursor = self.collection.find(query_filter).sort("created_at", -1).skip(skip).limit(limit)
             
             jobs = []
             async for job_data in cursor:
@@ -104,11 +116,11 @@ class DubJobService:
                 del job_data['_id']
                 jobs.append(DubJob(**job_data))
             
-            return jobs
+            return jobs, total_count
             
         except Exception as e:
             logger.error(f"Failed to get user dub jobs: {e}")
-            return []
+            return [], 0
     
     async def get_jobs_by_status(self, status: str, limit: int = 100) -> List[DubJob]:
         """Get jobs by status (for monitoring/cleanup)"""

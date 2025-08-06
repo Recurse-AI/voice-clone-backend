@@ -8,25 +8,34 @@ from app.schemas import (
 )
 from app.services.separation_job_service import separation_job_service
 from app.services.dub_job_service import dub_job_service
+from app.services.job_response_service import job_response_service
 from app.dependencies.auth import get_current_user
+from app.config.constants import DEFAULT_QUERY_LIMIT
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
 
 # Separation Job APIs
 @router.get("/separations", response_model=UserSeparationListResponse)
 async def get_user_separations(
     request: Request,
-    limit: int = 50,
+    page: int = 1,
+    limit: int = None,
     current_user = Depends(get_current_user)
 ):
-    """Get all separation jobs for current user"""
+    """Get paginated separation jobs for current user"""
     try:
         user_id = current_user.id
         if not user_id:
             raise HTTPException(status_code=401, detail="User ID not found")
         
-        jobs = await separation_job_service.get_user_jobs(str(user_id), limit)
+        # Validate pagination parameters
+        if page < 1:
+            raise HTTPException(status_code=400, detail="Page must be greater than 0")
+        
+        jobs, total_count = await separation_job_service.get_user_jobs(str(user_id), page, limit)
         
         # Convert to response format
         user_jobs = []
@@ -45,11 +54,18 @@ async def get_user_separations(
             )
             user_jobs.append(user_job)
         
+        # Calculate pagination metadata
+        actual_limit = limit if limit else DEFAULT_QUERY_LIMIT
+        total_pages = (total_count + actual_limit - 1) // actual_limit  # Ceiling division
+        
         return UserSeparationListResponse(
             success=True,
-            message=f"Found {len(user_jobs)} separation jobs",
+            message=f"Found {len(user_jobs)} separation jobs (page {page})",
             jobs=user_jobs,
-            total=len(user_jobs)
+            total=total_count,
+            page=page,
+            limit=actual_limit,
+            total_pages=total_pages
         )
         
     except HTTPException:
@@ -101,39 +117,37 @@ async def get_separation_job_detail(
 @router.get("/dubs", response_model=UserDubListResponse)
 async def get_user_dubs(
     request: Request,
-    limit: int = 50,
+    page: int = 1,
+    limit: int = None,
     current_user = Depends(get_current_user)
 ):
-    """Get all dub jobs for current user"""
+    """Get paginated dub jobs for current user"""
     try:
         user_id = current_user.id
         if not user_id:
             raise HTTPException(status_code=401, detail="User ID not found")
         
-        jobs = await dub_job_service.get_user_jobs(str(user_id), limit)
+        # Validate pagination parameters
+        if page < 1:
+            raise HTTPException(status_code=400, detail="Page must be greater than 0")
         
-        # Convert to response format
-        user_jobs = []
-        for job in jobs:
-            user_job = UserDubJob(
-                job_id=job.job_id,
-                status=job.status,
-                progress=job.progress,
-                original_filename=job.original_filename,
-                target_language=job.target_language,
-                result_url=job.result_url,
-                error=job.error,
-                created_at=job.created_at.isoformat(),
-                updated_at=job.updated_at.isoformat(),
-                completed_at=job.completed_at.isoformat() if job.completed_at else None
-            )
-            user_jobs.append(user_job)
+        jobs, total_count = await dub_job_service.get_user_jobs(str(user_id), page, limit)
+        
+        # Format jobs using service
+        user_jobs = job_response_service.format_dub_jobs(jobs)
+        
+        # Calculate pagination metadata
+        actual_limit = limit if limit else DEFAULT_QUERY_LIMIT
+        total_pages = (total_count + actual_limit - 1) // actual_limit  # Ceiling division
         
         return UserDubListResponse(
             success=True,
-            message=f"Found {len(user_jobs)} dub jobs",
+            message=f"Found {len(user_jobs)} dub jobs (page {page})",
             jobs=user_jobs,
-            total=len(user_jobs)
+            total=total_count,
+            page=page,
+            limit=actual_limit,
+            total_pages=total_pages
         )
         
     except HTTPException:
@@ -160,18 +174,8 @@ async def get_dub_job_detail(
         if job.user_id != user_id:
             raise HTTPException(status_code=403, detail="Access denied")
         
-        user_job = UserDubJob(
-            job_id=job.job_id,
-            status=job.status,
-            progress=job.progress,
-            original_filename=job.original_filename,
-            target_language=job.target_language,
-            result_url=job.result_url,
-            error=job.error,
-            created_at=job.created_at.isoformat(),
-            updated_at=job.updated_at.isoformat(),
-            completed_at=job.completed_at.isoformat() if job.completed_at else None
-        )
+        # Format job using service
+        user_job = job_response_service.format_dub_job(job)
         
         return DubJobDetailResponse(success=True, job=user_job)
         
