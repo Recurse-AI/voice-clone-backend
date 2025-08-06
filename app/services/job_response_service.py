@@ -40,8 +40,9 @@ class JobResponseService:
         """Extract files information from job details"""
         if not job.details or not isinstance(job.details, dict):
             return None
-            
-        folder_upload = job.details.get("folder_upload", {})
+        
+        # Get folder upload data directly
+        folder_upload = job.details.get("folder_upload")
         if not folder_upload or not isinstance(folder_upload, dict):
             return None
         
@@ -59,8 +60,9 @@ class JobResponseService:
         # Sort files by type and name for better organization
         if files_info:
             files_info.sort(key=lambda x: (x.type, x.filename))
+            return files_info
             
-        return files_info
+        return None
     
     @staticmethod
     def format_dub_job(job: DubJob) -> UserDubJob:

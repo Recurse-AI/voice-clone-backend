@@ -228,7 +228,14 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         r2_storage.delete_file(upload_response["r2_key"])
         r2_storage.delete_file(r2_audio_path["r2_key"])
         result_url = pipeline_result.get("result_url") or (pipeline_result.get("result_urls", {}) or {}).get("final_video")
-        _update_status_non_blocking(job_id, ProcessingStatus.COMPLETED, 100, {"message": "Video dubbing completed.", "result_url": result_url, "details": pipeline_result.get("details")}, "dub")
+        _update_status_non_blocking(job_id, ProcessingStatus.COMPLETED, 100, {
+            "message": "Video dubbing completed.", 
+            "result_url": result_url, 
+            "details": pipeline_result.get("details"),
+            "folder_upload": pipeline_result.get("folder_upload"),
+            "result_urls": pipeline_result.get("result_urls"),
+            "video_upload": pipeline_result.get("video_upload")
+        }, "dub")
         
         # Auto-deduct credits on successful completion (non-blocking)
         def deduct_credits_non_blocking():

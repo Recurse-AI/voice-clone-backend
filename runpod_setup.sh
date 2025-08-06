@@ -4,6 +4,10 @@
 
 echo "🚀 Setting up Voice Cloning API on RunPod GPU..."
 
+# delete all files in /tmp && logs
+rm -rf /tmp/*
+rm -rf logs/*
+
 # Fix /tmp directory permissions first
 echo "🔧 Fixing system permissions..."
 chmod 1777 /tmp 2>/dev/null || true
