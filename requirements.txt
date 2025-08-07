@@ -63,7 +63,8 @@ bcrypt==3.2.2
 passlib
 PyJWT
 email_validator
-
+google-auth
+itsdangerous
 # Payment Processing
 stripe
 
