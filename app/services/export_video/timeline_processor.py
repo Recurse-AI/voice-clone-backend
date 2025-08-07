@@ -132,15 +132,15 @@ class TimelineProcessor:
             height=position_data.get("height", DEFAULT_VIDEO_HEIGHT)
         )
         
+        # Visual effects - use direct effects data from frontend
+        effects_data = item.get("effects", {})
+        
         # Transformations - use effects for opacity, default for others
         transform = Transform(
             scale=1.0,  # Default scale (no transform data in frontend schema)
             rotation=0.0,  # Default rotation
             opacity=effects_data.get("opacity", 100) / 100
         )
-        
-        # Visual effects - use direct effects data from frontend
-        effects_data = item.get("effects", {})
         effects = Effects(
             brightness=effects_data.get("brightness", 100) / 100,
             blur=effects_data.get("blur", 0),
