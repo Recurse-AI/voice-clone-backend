@@ -11,10 +11,13 @@ from datetime import datetime, timezone
 from pymongo import ReturnDocument
 
 async def create_user(user_dict: dict):
-    user_dict["password"] = hash_password(user_dict["password"])
+    if user_dict.get("password") is not None:  # Only hash if password exists
+        user_dict["password"] = hash_password(user_dict["password"])
+    
+    # Rest of your existing code stays exactly the same
     user_dict["createdAt"] = datetime.now(timezone.utc)
     user_dict["updatedAt"] = datetime.now(timezone.utc)
-    user_dict["isEmailVerified"] = False
+    user_dict["isEmailVerified"] = False if "isEmailVerified" not in user_dict else user_dict["isEmailVerified"]
     user_dict["credits"] = 25  # New users get 25 free credits
     user_dict["role"] = "user"
     user_dict["verificationAttempts"] = 0
@@ -35,7 +38,7 @@ async def create_user(user_dict: dict):
 
 async def get_user(data: LoginData) -> User:
     user_data = await db["users"].find_one({"email": data.email})
-    
+    logger.info(f"----> poniter reached here.")
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
