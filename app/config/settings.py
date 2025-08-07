@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
     WORKERS: int = 1
-    NODE_ENV: str = "development"
+    NODE_ENV: str = "production"
     BACKEND_URL: str = "http://localhost:8000"
     FRONTEND_URL: str = "https://clearvocals.io"
     PUBLIC_HOST: str = "clearvocals.io"
