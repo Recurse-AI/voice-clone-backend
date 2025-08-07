@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     WORKERS: int = 1
     NODE_ENV: str = "development"
     BACKEND_URL: str = "http://localhost:8000"
-    FRONTEND_URL: str = "http://localhost:3000"
+    FRONTEND_URL: str = "https://clearvocals.io"
     PUBLIC_HOST: str = "clearvocals.io"
     
     # File Upload Configuration

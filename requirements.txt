@@ -65,6 +65,8 @@ PyJWT
 email_validator
 google-auth
 itsdangerous
+authlib
+
 # Payment Processing
 stripe
 
