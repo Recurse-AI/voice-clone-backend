@@ -146,7 +146,7 @@ async def create_checkout_session(request: Checkout, current_user: TokenUser = S
         # price = data.get("price")
         user = await get_user_id(current_user.id)
         user_id = current_user.id
-        logger.info("price , ", price)
+        logger.info(f"price: {price}")
         if user is None:
             return not_found_response(ERROR_USER_NOT_FOUND, "User no longer exists")
         # Input validation
@@ -295,6 +295,7 @@ async def get_purchase_history(user: TokenUser = Security(get_current_user)):
             }
         )
     
+from pymongo.errors import DuplicateKeyError
 @stripe_route.get("/verify-payment/{sessionId}", dependencies=[Depends(auth_protect)])
 async def verify_payment(sessionId: str, current_user: TokenUser = Security(get_current_user)):
     try:
@@ -342,7 +343,7 @@ async def verify_payment(sessionId: str, current_user: TokenUser = Security(get_
                 content=jsonable_encoder({
                     "success": True,
                     "message": "Payment already processed",
-                    "transaction": existing
+                    "transaction": convert_objectids(existing)
                 })
             )
         credits_to_add = float(session.metadata.get("credit", 0))
@@ -355,6 +356,27 @@ async def verify_payment(sessionId: str, current_user: TokenUser = Security(get_
                 }
             )
         # Update user credits and subscription type to premium
+        try:
+            txn = await db["creditTransaction"].insert_one({
+                "userId": user_id,
+                "type": "purchase",
+                "credits": credits_to_add,
+                "amount": session.amount_total / 100,
+                "stripeSessionId": sessionId,
+                "description": f"Purchase of {credits_to_add} credits",
+                "status": "success",
+                "createdAt": datetime.now(timezone.utc)
+            })
+        except DuplicateKeyError:
+            # Transaction already exists, so don't add credits again
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "message": "Payment already processed",
+                    "transaction": await db["creditTransaction"].find_one({"stripeSessionId": sessionId, "userId": user_id})
+                }
+            )
         result = await db["users"].update_one(
             {"_id": ObjectId(user_id)},
             {"$inc": {"credits": credits_to_add}, "$set": {"subscription.type": "premium", "subscription.status": "active"}}
@@ -367,16 +389,6 @@ async def verify_payment(sessionId: str, current_user: TokenUser = Security(get_
                     "message": "User not found"
                 }
             )
-        txn = await db["creditTransaction"].insert_one({
-            "userId": user_id,
-            "type": "purchase",
-            "credits": credits_to_add,
-            "amount": session.amount_total / 100,
-            "stripeSessionId": sessionId,
-            "description": f"Purchase of {credits_to_add} credits",
-            "status": "success",
-            "createdAt": datetime.now(timezone.utc)
-        })
         logger.info(f"Successfully processed payment verification for user {user_id}. Added {credits_to_add} credits")
         return JSONResponse(
             status_code=200,
@@ -423,6 +435,38 @@ async def handle_checkout_completed(session):
             return
         logger.info(f"Attempting to add {credits_to_add} credits to user: {user_id}")
         # Update user credits and subscription type to premium
+        # Create transaction record
+        # await db["creditTransaction"].insert_one({
+        #     "userId": user_id,
+        #     "type": "purchase",
+        #     "credits": credits_to_add,
+        #     "amount": session["amount_total"] / 100,
+        #     "stripeSessionId": session["id"],
+        #     "description": f"Purchase of {credits_to_add} credits",
+        #     "status": "success",
+        #     "createdAt": datetime.now(timezone.utc)
+        # })
+        try:
+            txn = await db["creditTransaction"].insert_one({
+                "userId": user_id,
+                "type": "purchase",
+                "credits": credits_to_add,
+                "amount": session.amount_total / 100,
+                "stripeSessionId": session["id"],
+                "description": f"Purchase of {credits_to_add} credits",
+                "status": "success",
+                "createdAt": datetime.now(timezone.utc)
+            })
+        except DuplicateKeyError:
+            # Transaction already exists, so don't add credits again
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "message": "Payment already processed",
+                    "transaction": await db["creditTransaction"].find_one({"stripeSessionId": session["id"], "userId": user_id})
+                }
+            )
         result = await db["users"].update_one(
             {"_id": ObjectId(user_id)},
             {"$inc": {"credits": credits_to_add}, "$set": {"subscription.type": "premium", "subscription.status": "active"}}
@@ -430,17 +474,6 @@ async def handle_checkout_completed(session):
         if result.modified_count == 0:
             logger.error(f"User not found: {user_id}")
             return
-        # Create transaction record
-        await db["creditTransaction"].insert_one({
-            "userId": user_id,
-            "type": "purchase",
-            "credits": credits_to_add,
-            "amount": session["amount_total"] / 100,
-            "stripeSessionId": session["id"],
-            "description": f"Purchase of {credits_to_add} credits",
-            "status": "success",
-            "createdAt": datetime.now(timezone.utc)
-        })
         logger.info(f"Successfully added {credits_to_add} credits to user {user_id}. Updated subscription type to premium.")
     except Exception as error:
         logger.error(f"Error handling checkout completed: {str(error)}")
