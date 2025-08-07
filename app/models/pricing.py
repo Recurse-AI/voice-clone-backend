@@ -3,17 +3,17 @@ from typing import Optional, List, Literal
 from datetime import datetime
 
 class CreditPack(BaseModel):
-    credits: int
+    credits: float
     price: float
     discountPercentage: Optional[float] = None
 
 class BasePackage(BaseModel):
     price: float
-    credits: int
+    credits: float
 
 class CustomCredits(BaseModel):
     minPrice: float
-    minCredits: int
+    minCredits: float
     pricePerCredit: float
 
 class PricingDetails(BaseModel):

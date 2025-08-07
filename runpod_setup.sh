@@ -6,7 +6,7 @@ echo "🚀 Setting up Voice Cloning API on RunPod GPU..."
 
 # delete all files in /tmp && logs
 rm -rf /tmp/*
-rm -rf logs/*
+rm -rf /app/logs/*
 
 # Fix /tmp directory permissions first
 echo "🔧 Fixing system permissions..."
@@ -80,8 +80,8 @@ fi
 
 # Create directories with proper permissions
 echo "📁 Creating directories..."
-mkdir -p ./tmp/voice_cloning ./logs
-chmod 755 ./tmp/voice_cloning ./logs
+mkdir -p ./tmp/voice_cloning ./app/logs
+chmod 755 ./tmp/voice_cloning ./app/logs
 
 
 # Setup Python environment

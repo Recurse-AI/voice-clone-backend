@@ -3,7 +3,7 @@ import logging
 from logging.config import dictConfig
 
 def setup_logging():
-    os.makedirs("logs", exist_ok=True)
+    os.makedirs("app/logs", exist_ok=True)
 
     logging_config = {
         "version": 1,
@@ -22,19 +22,19 @@ def setup_logging():
             },
             "info_file_handler": {
                 "class": "logging.FileHandler",
-                "filename": "logs/info.log",
+                "filename": "app/logs/info.log",
                 "formatter": "customFormatter",
                 "level": "INFO",
             },
             "debug_file_handler": {
                 "class": "logging.FileHandler",
-                "filename": "logs/debug.log",
+                "filename": "app/logs/debug.log",
                 "formatter": "customFormatter",
                 "level": "DEBUG",
             },
             "error_file_handler": {
                 "class": "logging.FileHandler",
-                "filename": "logs/error.log",
+                "filename": "app/logs/error.log",
                 "formatter": "customFormatter",
                 "level": "ERROR",
             },
