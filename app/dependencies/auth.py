@@ -11,6 +11,7 @@ async def get_current_user(
 ) -> TokenUser:
     try:
         token = credentials.credentials
+        logger.info(f"getting get user. {token}")
         if not token:
             raise HTTPException(
                 status_code=403,
@@ -25,3 +26,4 @@ async def get_current_user(
             status_code=401,
             detail="Invalid or expired token"
         )
+    

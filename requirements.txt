@@ -59,7 +59,7 @@ pymongo
 motor
 
 # Authentication & Security  
-bcrypt
+bcrypt==3.2.2
 passlib
 PyJWT
 email_validator

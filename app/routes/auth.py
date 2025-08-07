@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Security, BackgroundTasks, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Security, BackgroundTasks, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBearer
 from app.schemas.user import *
 from app.config.database import db 
@@ -10,6 +10,9 @@ from app.utils.logger import logger
 from app.utils.email_helper import *
 from app.utils.token_helper import *
 from datetime import datetime, timezone, timedelta
+from app.services.google_auth import verify_google_token, handle_google_user
+from app.config.settings import settings
+from authlib.integrations.starlette_client import OAuth
 
 auth = APIRouter()
 
@@ -105,7 +108,7 @@ async def verify_email(token: str):
     except Exception as e:
         logger.error(f"Email verification error: {str(e)}")
         raise HTTPException(
-            status_code=400, 
+            status_code=500, 
             detail="Verification failed. Please contact support."
         )
 
@@ -113,7 +116,14 @@ async def verify_email(token: str):
 async def login_user(req: LoginData):
     try:
         user: dict = await get_user(req)
-
+        # logger.info(f"user email : {user["email"]} is verfied: {user["isEmailVerified"]}")
+        if user.isEmailVerified == False:
+            return JSONResponse(
+                status_code=403,
+                content={
+                    "details": "Email is not verified",
+                }
+            )
         # Convert to FullUser schema to include subscription information
         subscription_data = prepare_subscription_data(user.subscription)
         
@@ -161,7 +171,7 @@ async def profile(
     ):
     try:
         user = await get_user_id(current_user.id)
-
+        logger.info(f"getting get user. {current_user.id}")
         if user is None:
             return JSONResponse(
                 status_code=404,
@@ -270,6 +280,7 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
 async def request_password_reset(req: ResetPasswordRequest, background_tasks: BackgroundTasks) -> JSONResponse:
     
     try:
+        logger.info(f"----> forgot-password {req.email}")
         user = await get_user_email(req.email)
         logger.info("controller reached here")
         if not user : 
@@ -384,3 +395,90 @@ async def reset_password(token: str, body: ResetPasswordBody) -> JSONResponse:
                 "details": "An error occurred while resetting password"
             }
         )
+
+
+GOOGLE_AUTH_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_ENDPOINT = "https://www.googleapis.com/oauth2/v2/userinfo"
+GOOGLE_REDIRECT_URI= f"{settings.BACKEND_URL}/api/auth/google/callback"
+
+from urllib.parse import urlencode
+import httpx
+
+@auth.get("/google")
+async def google_login(request: Request):
+    """Initiates Google OAuth flow"""
+    try:
+        query_params = {
+            "client_id": settings.GOOGLE_CLIENT_ID,
+            "redirect_uri": GOOGLE_REDIRECT_URI,
+            "response_type": "code",
+            "scope": "openid email profile",
+            "access_type": "offline",
+            "prompt": "consent",
+        }
+        url = f"{GOOGLE_AUTH_ENDPOINT}?{urlencode(query_params)}"
+        return RedirectResponse(url)
+    
+    except Exception as e:
+        logger.error(f"Google login error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to initiate Google login")
+
+@auth.get("/google/callback")
+async def google_callback(request: Request):
+    try:
+        code = request.query_params.get("code")
+        if not code:
+            raise HTTPException(status_code=400, detail="Missing authorization code")
+        
+        data = {
+            "code": code,
+            "client_id": settings.GOOGLE_CLIENT_ID,
+            "client_secret": settings.GOOGLE_CLIENT_SECRET,
+            "redirect_uri": GOOGLE_REDIRECT_URI,
+            "grant_type": "authorization_code",
+        }
+        
+        async with httpx.AsyncClient() as client:
+            token_response = await client.post(GOOGLE_TOKEN_ENDPOINT, data=data)
+            token_data = token_response.json()
+            access_token = token_data.get("access_token")
+
+            if not access_token:
+                raise HTTPException(status_code=400, detail="Failed to retrieve access token")
+
+            headers = {"Authorization": f"Bearer {access_token}"}
+            userinfo_response = await client.get(GOOGLE_USERINFO_ENDPOINT, headers=headers)
+            user_info = userinfo_response.json()
+
+        logger.info(f"userinfo: {user_info}")
+        
+        try:
+            # Try to find user by email
+            user = await get_user_email(user_info['email'])
+            user = user.dict()
+        except HTTPException:
+            new_user = {
+                "email": user_info['email'],
+                "name": user_info.get('name'),
+                "password": None,
+                "profilePicture": user_info.get('picture'),
+                "isEmailVerified": True,
+            }
+
+            user = await create_user(new_user)
+
+        # Generate JWT token
+        jwt_token = create_jwt_token({
+            "id": user["id"],
+            "email": user["email"]
+        })
+
+        # Redirect to frontend with token
+        redirect_url = f"{settings.FRONTEND_URL}/auth/google/callback?token={jwt_token}"
+        return RedirectResponse(url=redirect_url, status_code=302)
+    
+    except Exception as e:
+        logger.error(f"Google callback error: {str(e)}")
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth")
+

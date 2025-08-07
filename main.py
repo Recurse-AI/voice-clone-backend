@@ -23,6 +23,7 @@ from app.routes.video_processing import router as video_processing_router
 from app.routes.user_jobs import router as user_jobs_router
 from app.utils.init_pricing_plans import init_pricing_plans
 from app.middleware.auth_middleware import AuthMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 
 from app.config.settings import settings
 from app.utils.r2_storage import R2Storage
@@ -87,6 +88,12 @@ app = FastAPI(
     version=settings.API_VERSION,
     description=settings.API_DESCRIPTION,
     lifespan=lifespan
+)
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.SECRET_KEY,  # Use your existing secret key
+    max_age=3600  # Session expiry in seconds (1 hour)
 )
 
 # Add CORS middleware
