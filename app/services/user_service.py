@@ -59,10 +59,12 @@ async def get_user_id(id: str) -> User:
         
         user_data = await db["users"].find_one({"_id": ObjectId(id)})
         if not user_data:
-            raise HTTPException(status_code=401, detail="Invalid id")
+            raise HTTPException(status_code=404, detail="User not found")
     except Exception as e:
         logger.error(f"Error finding user with id {id}: {e}")
-        raise HTTPException(status_code=401, detail="Invalid id")
+        if "User not found" in str(e):
+            raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=401, detail="Invalid id format")
 
     user_data["id"] = str(user_data["_id"])
     user_data["_id"] = user_data["id"]

@@ -58,6 +58,12 @@ class VideoProcessor:
     def _create_video_ffmpeg(self, video_path: str, audio_path: str, 
                            subtitle_path: Optional[str], output_path: Path) -> Dict[str, Any]:
         try:
+            # Validate input files
+            if not video_path or not os.path.exists(video_path):
+                return {"success": False, "error": f"Invalid video file: {video_path}"}
+            if not audio_path or not os.path.exists(audio_path):
+                return {"success": False, "error": f"Invalid audio file: {audio_path}"}
+            
             ffmpeg_cmd = self._get_ffmpeg_path()
 
             cmd = [
@@ -155,6 +161,11 @@ class VideoProcessor:
 
     def create_video_with_subtitles(self, video_path: str, audio_path: str, segments_dir: str, audio_id: str, instruments_path: Optional[str] = None) -> Dict[str, Any]:
         try:
+            # Validate input files early
+            if not video_path or not os.path.exists(video_path):
+                return {"success": False, "error": f"Invalid video file: {video_path}"}
+            if not audio_path or not os.path.exists(audio_path):
+                return {"success": False, "error": f"Invalid audio file: {audio_path}"}
             if instruments_path and os.path.exists(instruments_path):
                 final_audio_path = self._create_final_audio(audio_path, instruments_path, audio_id)
             else:
@@ -195,6 +206,11 @@ class VideoProcessor:
 
     def create_video_with_audio(self, video_path: str, audio_path: str, audio_id: str, instruments_path: Optional[str] = None, segments_dir: Optional[str] = None) -> Dict[str, Any]:
         try:
+            # Validate input files early
+            if not video_path or not os.path.exists(video_path):
+                return {"success": False, "error": f"Invalid video file: {video_path}"}
+            if not audio_path or not os.path.exists(audio_path):
+                return {"success": False, "error": f"Invalid audio file: {audio_path}"}
             output_path = self.temp_dir / f"video_no_subtitles_{audio_id}.mp4"
             if instruments_path and os.path.exists(instruments_path):
                 final_audio_path = self._create_final_audio(audio_path, instruments_path, audio_id)

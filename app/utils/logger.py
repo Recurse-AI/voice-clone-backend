@@ -1,9 +1,15 @@
 import logging
 from pathlib import Path
+from logging.handlers import RotatingFileHandler
 
 # Create logs directory
 logs_dir = Path(__file__).resolve().parent.parent / "logs"
 logs_dir.mkdir(parents=True, exist_ok=True)
+
+# Log Rotation Configuration:
+# - Max size: 5MB per file (5*1024*1024 bytes)
+# - Backup count: 2 (total 3 files max)
+# - Auto deletion: oldest files removed when limit exceeded
 
 # Log file paths
 info_log = logs_dir / "info.log"
@@ -27,18 +33,33 @@ formatter = logging.Formatter(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 
-# Info handler
-info_handler = logging.FileHandler(info_log)
+# Info handler with 5MB rotation
+info_handler = RotatingFileHandler(
+    info_log, 
+    maxBytes=5*1024*1024,  # 5MB
+    backupCount=2,         # Keep 2 backup files
+    encoding='utf-8'
+)
 info_handler.setLevel(logging.INFO)
 info_handler.setFormatter(formatter)
 
-# Debug handler
-debug_handler = logging.FileHandler(debug_log)
+# Debug handler with 5MB rotation
+debug_handler = RotatingFileHandler(
+    debug_log, 
+    maxBytes=5*1024*1024,  # 5MB
+    backupCount=2,         # Keep 2 backup files
+    encoding='utf-8'
+)
 debug_handler.setLevel(logging.DEBUG)
 debug_handler.setFormatter(formatter)
 
-# Error handler
-error_handler = logging.FileHandler(error_log)
+# Error handler with 5MB rotation
+error_handler = RotatingFileHandler(
+    error_log, 
+    maxBytes=5*1024*1024,  # 5MB
+    backupCount=2,         # Keep 2 backup files
+    encoding='utf-8'
+)
 error_handler.setLevel(logging.ERROR)
 error_handler.setFormatter(formatter)
 
