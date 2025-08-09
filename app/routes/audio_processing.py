@@ -10,9 +10,10 @@ from app.services.separation_job_service import separation_job_service
 from app.services.credit_service import credit_service, JobType
 from app.config.constants import MAX_ATTEMPTS_DEFAULT, POLLING_INTERVAL_SECONDS, MSG_PROCESSING_STARTED, ERROR_PROCESSING_FAILED
 from datetime import datetime
+from app.utils.logger import logger
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
 
 def _update_separation_status_non_blocking(job_id: str, status: str, progress: int = None, **kwargs):
     """Update separation status using common utility"""
@@ -150,7 +151,6 @@ async def start_audio_separation(
     try:
         user_id = current_user.id
         job_id = request.job_id
-        
         # Pre-check: Verify user has sufficient credits
         credit_check = await credit_service.check_sufficient_credits(
             user_id=user_id,
@@ -172,6 +172,7 @@ async def start_audio_separation(
         # Get uploaded file path from upload status
         from app.utils.shared_memory import get_upload_status as get_upload_status_data, job_exists
         
+        logger.info(f"user_id {user_id} and job_id {job_id}")
         if not job_exists(job_id):
             raise HTTPException(status_code=400, detail="Upload job not found")
             
@@ -180,13 +181,19 @@ async def start_audio_separation(
             raise HTTPException(status_code=400, detail=f"Upload not completed. Status: {upload_data.get('status', 'unknown')}")
         
         local_audio_path = upload_data.get("file_url")
+
+        if not local_audio_path:
+        # If file_url not found, try to get from video_info
+            video_info = upload_data.get("video_info", {})
+            local_audio_path = video_info.get("local_path")
         if not local_audio_path or not os.path.exists(local_audio_path):
             raise HTTPException(status_code=400, detail="Uploaded file not found on disk")
             
         # Verify it's an audio file
-        if not local_audio_path.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.aac', '.ogg')):
+        if not local_audio_path.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.aac', '.ogg', '.mp4', '.mov', '.avi', '.mkv')):
             raise HTTPException(status_code=400, detail="Uploaded file is not an audio format")
         
+        logger.info(f"---> local url {local_audio_path}")
         # Upload audio to R2 storage for separation processing
         from app.utils.r2_storage import R2Storage
         r2_storage = R2Storage()

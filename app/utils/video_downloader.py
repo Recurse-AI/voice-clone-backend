@@ -14,6 +14,7 @@ from app.services.export_video.constants import (
 )
 from app.config.settings import settings
 from app.utils.r2_storage import R2Storage
+from app.utils.shared_memory import set_upload_status, update_upload_status
 
 logger = logging.getLogger(__name__)
 
@@ -57,18 +58,45 @@ class VideoDownloadService:
             job_dir = Path(settings.TEMP_DIR) / f"dub_{job_id}"
             job_dir.mkdir(parents=True, exist_ok=True)
 
+            # Set initial status
+            set_upload_status(job_id, {
+                "status": "downloading",
+                "progress": 0,
+                "message": "Starting download...",
+                "started_at": datetime.now().isoformat(),
+                "url": url
+            })
+
             quality_format = quality or DEFAULT_VIDEO_QUALITY
             output_template = str(job_dir / "%(title)s.%(ext)s")
 
-            # Grab basic metadata first – helpful for the final response
+            # Update status while getting metadata
+            update_upload_status(job_id, {
+                "progress": 10,
+                "message": "Extracting video information..."
+            })
+
+            # Grab basic metadata first
             with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
                 info = ydl.extract_info(url, download=False)
                 if not info:
+                    update_upload_status(job_id, {
+                        "status": "failed",
+                        "message": "Could not extract video information"
+                    })
                     return {"success": False, "error": "Could not extract video information"}
 
                 video_title = info.get("title", "Unknown")
                 video_duration = info.get("duration", 0)
                 video_uploader = info.get("uploader", "Unknown")
+
+            # Update status before download
+            update_upload_status(job_id, {
+                "progress": 30,
+                "message": "Downloading video...",
+                "video_title": video_title,
+                "video_duration": video_duration
+            })
 
             ydl_opts = {
                 "outtmpl": output_template,
@@ -87,10 +115,33 @@ class VideoDownloadService:
 
             downloaded_files = list(job_dir.glob("*"))
             if not downloaded_files:
+                update_upload_status(job_id, {
+                    "status": "failed",
+                    "message": "Download completed but file not found"
+                })
                 return {"success": False, "error": "Download completed but file not found"}
 
             downloaded_file = downloaded_files[0]
             file_size = downloaded_file.stat().st_size
+
+            # Set final success status
+            update_upload_status(job_id, {
+                "status": "done",
+                "progress": 100,
+                "message": "Download completed successfully",
+                "file_url": str(downloaded_file),
+                "original_filename": downloaded_file.name,
+                "file_size": file_size,
+                "completed_at": datetime.now().isoformat(),
+                "video_info": {
+                    "title": video_title,
+                    "duration": video_duration,
+                    "uploader": video_uploader,
+                    "filename": downloaded_file.name,
+                    "file_size": file_size,
+                    "local_path": str(downloaded_file)
+                }
+            })
 
             return {
                 "success": True,
@@ -108,6 +159,12 @@ class VideoDownloadService:
             }
         except Exception as e:
             logger.error(f"Video download error: {e}")
+            if 'job_id' in locals():
+                update_upload_status(job_id, {
+                    "status": "failed",
+                    "progress": 0,
+                    "message": f"Download failed: {str(e)}"
+                })
             return {"success": False, "error": str(e)}
 
     # ------------------------------------------------------------------
