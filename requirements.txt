@@ -52,13 +52,13 @@ assemblyai
 
 # Storage
 boto3
-botocore    
+botocore
 
 # Database
 pymongo
 motor
 
-# Authentication & Security  
+# Authentication & Security
 bcrypt==3.2.2
 passlib
 PyJWT
@@ -66,6 +66,8 @@ email_validator
 google-auth
 itsdangerous
 authlib
+httpx
+starlette-session
 
 # Payment Processing
 stripe
