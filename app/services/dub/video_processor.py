@@ -69,28 +69,42 @@ class VideoProcessor:
             if subtitle_path and Path(subtitle_path).exists():
                 # Convert to POSIX style path to avoid backslash escaping issues on Windows
                 subtitle_path_str = str(subtitle_path).replace('\\', '/')
-                # High-quality settings when adding subtitles
+                # High-quality settings optimized for social media platforms
                 video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
-                preset = 'fast' if settings.FFMPEG_USE_GPU else 'medium'
+                preset = 'fast' if settings.FFMPEG_USE_GPU else 'slow'  # Better quality preset
                 cmd.extend([
                     '-vf', f"subtitles='{subtitle_path_str}':force_style='Fontname=Arial-Bold,Fontsize={self.subtitle_font_size},Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV={self.subtitle_margin_bottom}'",
                     '-c:v', video_codec,
                     '-preset', preset,
-                    '-crf', '18',  # visually lossless
-                    '-b:v', '0',
+                    '-crf', '20',  # High quality for platform upload
+                    '-maxrate', '6000k',  # Max bitrate for platform compatibility
+                    '-bufsize', '12000k',  # Buffer size for consistent quality
+                    '-profile:v', 'high',  # High profile for better compression
+                    '-level', '4.1',  # Compatibility with most platforms
                 ])
             else:
-                # No subtitles → we can keep original video stream to preserve quality
+                # High-quality re-encoding even without subtitles for platform optimization
+                video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
+                preset = 'fast' if settings.FFMPEG_USE_GPU else 'slow'
                 cmd.extend([
-                    '-c:v', 'copy',  # copy original video stream without re-encoding
+                    '-c:v', video_codec,
+                    '-preset', preset,
+                    '-crf', '20',  # Consistent high quality
+                    '-maxrate', '6000k',
+                    '-bufsize', '12000k',
+                    '-profile:v', 'high',
+                    '-level', '4.1',
                 ])
             
             cmd.extend([
                 '-c:a', 'aac',
-                '-b:a', '128k',
+                '-b:a', '192k',  # Higher audio quality for platform uploads
+                '-ar', '48000',  # Professional audio sample rate
+                '-ac', '2',  # Stereo audio
                 '-map', '0:v:0',
                 '-map', '1:a:0',
                 '-shortest',
+                '-movflags', '+faststart',  # Optimize for streaming
                 str(output_path)
             ])
             

@@ -11,6 +11,7 @@ import yt_dlp
 from app.services.export_video.constants import (
     DOWNLOAD_TIMEOUT,
     DEFAULT_VIDEO_QUALITY,
+    PLATFORM_VIDEO_QUALITY,
 )
 from app.config.settings import settings
 from app.utils.r2_storage import R2Storage
@@ -40,12 +41,13 @@ class VideoDownloadService:
     # ---------------------------------------------------------------------
     # Public API
     # ---------------------------------------------------------------------
-    async def download_video(self, url: str, quality: str | None = None) -> Dict[str, Any]:
+    async def download_video(self, url: str, quality: str | None = None, platform_optimized: bool = True) -> Dict[str, Any]:
         """Download media (video/audio) from any URL and return metadata.
 
         Args:
             url:  The media URL from any supported site (800+ sites via yt-dlp).
             quality: Optional yt-dlp format string.
+            platform_optimized: If True, use platform-optimized quality for social media uploads.
         Returns:
             A dict ready to be fed into the FastAPI response.
         """
@@ -67,7 +69,13 @@ class VideoDownloadService:
                 "url": url
             })
 
-            quality_format = quality or DEFAULT_VIDEO_QUALITY
+            # Use platform-optimized quality by default for better social media compatibility
+            if quality:
+                quality_format = quality
+            elif platform_optimized:
+                quality_format = PLATFORM_VIDEO_QUALITY
+            else:
+                quality_format = DEFAULT_VIDEO_QUALITY
             output_template = str(job_dir / "%(title)s.%(ext)s")
 
             # Update status while getting metadata

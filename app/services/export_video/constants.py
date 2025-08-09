@@ -18,10 +18,12 @@ DEFAULT_VIDEO_FORMAT = "mp4"
 EXPORT_QUALITY_LOW = "low"
 EXPORT_QUALITY_MEDIUM = "medium" 
 EXPORT_QUALITY_HIGH = "high"
+EXPORT_QUALITY_PLATFORM = "platform"  # For social media platforms
 
-BITRATE_LOW = "1000k"
-BITRATE_MEDIUM = "2000k"
-BITRATE_HIGH = "5000k"
+BITRATE_LOW = "2000k"
+BITRATE_MEDIUM = "4000k"
+BITRATE_HIGH = "8000k"
+BITRATE_PLATFORM = "6000k"  # Optimized for YouTube/Facebook
 
 # Canvas/Overlay Constants
 DEFAULT_OVERLAY_WIDTH = 300
@@ -59,7 +61,8 @@ COLOR_BLACK = "&H00000000"
 DOWNLOAD_TIMEOUT = 300  # 5 minutes timeout for video downloads
 DOWNLOAD_TEMP_DIR = "./tmp/downloads"
 MAX_VIDEO_SIZE = 500 * 1024 * 1024  # 500MB max video size
-DEFAULT_VIDEO_QUALITY = "best[height<=720]"  # Default to 720p max
+DEFAULT_VIDEO_QUALITY = "best[height<=1080]"  # Improved to 1080p max for better quality
+PLATFORM_VIDEO_QUALITY = "best[height<=1080][fps<=60]"  # Optimized for social media platforms
 
 # Supported Video Download Sites
 SUPPORTED_DOWNLOAD_SITES = [
