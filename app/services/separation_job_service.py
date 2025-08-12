@@ -54,7 +54,7 @@ class SeparationJobService:
         try:
             update_data = {
                 "status": status,
-                "updated_at": datetime.now(timezone.utc)
+                "updated_at": datetime.now()
             }
             
             if progress is not None:
@@ -62,9 +62,9 @@ class SeparationJobService:
                 
             # Set timestamps based on status
             if status == 'processing':
-                update_data["started_at"] = datetime.now(timezone.utc)
+                update_data["started_at"] = datetime.now()
             elif status in ['completed', 'failed']:
-                update_data["completed_at"] = datetime.now(timezone.utc)
+                update_data["completed_at"] = datetime.now()
             
             # Add additional fields
             update_data.update(kwargs)
@@ -144,7 +144,7 @@ class SeparationJobService:
                 {
                     "$set": {
                         "details": details,
-                        "updated_at": datetime.now(timezone.utc)
+                        "updated_at": datetime.now()
                     }
                 }
             )

@@ -19,8 +19,8 @@ def create_jwt_token(user: dict) -> str:
     payload = {
         "id": user["id"],
         "email": user["email"],
-        "iat": datetime.now(timezone.utc),
-        "exp": datetime.now(timezone.utc) + timedelta(days=SINGIN_TOKEN_EXPIRES)
+        "iat": datetime.now(),
+        "exp": datetime.now() + timedelta(days=SINGIN_TOKEN_EXPIRES)
     }
     token = jwt.encode(payload=payload, key=SECRET_KEY, algorithm=ALGORITHM)
     return token

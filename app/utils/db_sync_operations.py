@@ -30,7 +30,7 @@ class SyncDBOperations:
             
             update_data = {
                 "status": status,
-                "updated_at": datetime.now(timezone.utc)
+                "updated_at": datetime.now()
             }
             
             if progress is not None:
@@ -41,9 +41,9 @@ class SyncDBOperations:
                 # Check if already started
                 existing_job = sync_collection.find_one({"job_id": job_id}, {"started_at": 1})
                 if existing_job and not existing_job.get("started_at"):
-                    update_data["started_at"] = datetime.now(timezone.utc)
+                    update_data["started_at"] = datetime.now()
             elif status in ['completed', 'failed']:
-                update_data["completed_at"] = datetime.now(timezone.utc)
+                update_data["completed_at"] = datetime.now()
             
             # Add additional fields
             update_data.update(kwargs)
@@ -77,7 +77,7 @@ class SyncDBOperations:
             update_data = {
                 "status": status,
                 "progress": progress,
-                "updated_at": datetime.now(timezone.utc)
+                "updated_at": datetime.now()
             }
             
             # Set timestamps based on status
@@ -85,9 +85,9 @@ class SyncDBOperations:
                 # Check if already started
                 existing_job = sync_collection.find_one({"job_id": job_id}, {"started_at": 1})
                 if existing_job and not existing_job.get("started_at"):
-                    update_data["started_at"] = datetime.now(timezone.utc)
+                    update_data["started_at"] = datetime.now()
             elif status in ['completed', 'failed']:
-                update_data["completed_at"] = datetime.now(timezone.utc)
+                update_data["completed_at"] = datetime.now()
             
             # Add details
             if details:
@@ -145,7 +145,7 @@ class SyncDBOperations:
                         query,
                         {
                             "$inc": {"credits": -credits_required},
-                            "$set": {"updated_at": datetime.now(timezone.utc)}
+                            "$set": {"updated_at": datetime.now()}
                         }
                     )
                     if result.modified_count > 0:
