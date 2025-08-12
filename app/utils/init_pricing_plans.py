@@ -1,5 +1,5 @@
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.models.pricing import Pricing  # adjust this import path as needed
 from app.utils.logger import logger
@@ -41,8 +41,8 @@ async def init_pricing_plans():
             "outputFormats": ["mp3", "wav", "flac", "m4a"],
             "isActive": True,
             "displayOrder": 2,
-            "createdAt": datetime.utcnow(),
-            "updatedAt": datetime.utcnow()
+            "createdAt": datetime.now(timezone.utc),
+            "updatedAt": datetime.now(timezone.utc)
         },
         {
             "name": "starter",
@@ -79,8 +79,8 @@ async def init_pricing_plans():
             "outputFormats": ["mp3", "wav", "flac", "m4a", "aac"],
             "isActive": True,
             "displayOrder": 4,
-            "createdAt": datetime.utcnow(),
-            "updatedAt": datetime.utcnow()
+            "createdAt": datetime.now(timezone.utc),
+            "updatedAt": datetime.now(timezone.utc)
         },
         {
             "name": "premium",
@@ -143,8 +143,8 @@ async def init_pricing_plans():
             "outputFormats": ["mp3", "wav", "flac", "m4a", "aiff", "ogg"],
             "isActive": True,
             "displayOrder": 3,
-            "createdAt": datetime.utcnow(),
-            "updatedAt": datetime.utcnow()
+            "createdAt": datetime.now(timezone.utc),
+            "updatedAt": datetime.now(timezone.utc)
         }
     ]
 

@@ -4,7 +4,7 @@ Status Manager - Using Centralized MongoDB Only (No Local Storage)
 import logging
 from typing import Dict, Any, Optional
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
 from app.services.dub_job_service import dub_job_service
 from app.services.separation_job_service import separation_job_service
 
@@ -97,7 +97,7 @@ class StatusManager:
                     "details": details or {},
                     "job_type": job_type,
                     "message": self._get_status_message(ProcessingStatus(status_value)),
-                    "updated_at": datetime.now().isoformat()
+                    "updated_at": datetime.now(timezone.utc).isoformat()
                 }
                 logger.info(f"Cached {job_type} job {job_id} status: {status_value} (progress: {progress}%)")
                 
@@ -133,7 +133,7 @@ class StatusManager:
             # If job is in local cache, update progress there (fast)
             if job_id in self.processing_cache:
                 self.processing_cache[job_id]["progress"] = progress
-                self.processing_cache[job_id]["updated_at"] = datetime.now().isoformat()
+                self.processing_cache[job_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
                 logger.debug(f"Updated progress in cache for {job_id}: {progress}%")
                 return
             
@@ -177,7 +177,7 @@ class StatusManager:
         """Clean up stale cache entries older than max_age_hours"""
         from datetime import datetime, timedelta
         
-        cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
         stale_jobs = []
         
         for job_id, data in self.processing_cache.items():

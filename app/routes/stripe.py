@@ -365,7 +365,7 @@ async def verify_payment(sessionId: str, current_user: TokenUser = Security(get_
                 "stripeSessionId": sessionId,
                 "description": f"Purchase of {credits_to_add} credits",
                 "status": "success",
-                "createdAt": datetime.now()
+                "createdAt": datetime.now(timezone.utc)
             })
         except DuplicateKeyError:
             # Transaction already exists, so don't add credits again
@@ -455,7 +455,7 @@ async def handle_checkout_completed(session):
                 "stripeSessionId": session["id"],
                 "description": f"Purchase of {credits_to_add} credits",
                 "status": "success",
-                "createdAt": datetime.now()
+                "createdAt": datetime.now(timezone.utc)
             })
         except DuplicateKeyError:
             # Transaction already exists, so don't add credits again

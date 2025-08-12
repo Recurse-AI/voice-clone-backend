@@ -94,7 +94,7 @@ async def verify_email(token: str):
             {
                 "$set": {
                     "isEmailVerified": True,
-                    "updatedAt": datetime.now()
+                    "updatedAt": datetime.now(timezone.utc)
                 },
                 "$unset": {
                     "emailVerificationToken": ""
@@ -292,7 +292,7 @@ async def request_password_reset(req: ResetPasswordRequest, background_tasks: Ba
         logger.info(f"Found user with id: {user.id} (type: {type(user.id)})")
         
         token = generate_url_safe_token()
-        expiry = datetime.now() + timedelta(milliseconds=settings.RESET_PASSWORD_EXPIRES)
+        expiry = datetime.now(timezone.utc) + timedelta(milliseconds=settings.RESET_PASSWORD_EXPIRES)
 
         # user.id is already a string from get_user_email, no need to convert again
         updated_user = await update_reset_password(user.id, token, expiry)
@@ -328,7 +328,7 @@ async def reset_password_token_check(token: str) -> JSONResponse:
             )
         email: EmailStr = user["email"]
         expiry = user.get("resetPasswordExpiry")
-        if not expiry or datetime.now() > expiry:
+        if not expiry or datetime.now(timezone.utc) > expiry:
             return JSONResponse(
                 status_code=400,
                 content={"error": "Token expired", "details": "Please request a new reset link"}
@@ -354,7 +354,7 @@ async def reset_password(token: str, body: ResetPasswordBody) -> JSONResponse:
     try:
         user =         await db["users"].find_one({
             "resetPasswordToken": token,
-            "resetPasswordExpiry": {"$gt": datetime.now()}
+            "resetPasswordExpiry": {"$gt": datetime.now(timezone.utc)}
         })
 
         if not user:

@@ -15,8 +15,8 @@ async def create_user(user_dict: dict):
         user_dict["password"] = hash_password(user_dict["password"])
     
     # Rest of your existing code stays exactly the same
-    user_dict["createdAt"] = datetime.now()
-    user_dict["updatedAt"] = datetime.now()
+    user_dict["createdAt"] = datetime.now(timezone.utc)
+    user_dict["updatedAt"] = datetime.now(timezone.utc)
     user_dict["isEmailVerified"] = False if "isEmailVerified" not in user_dict else user_dict["isEmailVerified"]
     user_dict["credits"] = 25  # New users get 25 free credits
     user_dict["role"] = "user"
@@ -78,7 +78,7 @@ async def update_user_name(id: str, data: UpdateProfileRequest) -> User:
         {
             "$set": {
                 "name": data.name,
-                "updatedAt": datetime.now()
+                "updatedAt": datetime.now(timezone.utc)
             }
         },
         return_document=ReturnDocument.AFTER  # tells Motor to return updated doc
@@ -125,7 +125,7 @@ async def update_reset_password(id: str, token: str, expiry: datetime) -> User:
                 "$set": {
                     "resetPasswordToken": token,
                     "resetPasswordExpiry": expiry,
-                    "updatedAt": datetime.now()
+                    "updatedAt": datetime.now(timezone.utc)
                 }
             },
             return_document=ReturnDocument.AFTER  # tells 

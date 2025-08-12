@@ -5,6 +5,7 @@ from app.config.database import users_collection
 from app.services.dub_job_service import dub_job_service
 from app.services.separation_job_service import separation_job_service
 from bson import ObjectId
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +132,7 @@ class CreditService:
             credit_info = {
                 "credits_deducted": True,
                 "deducted_amount": credits_to_deduct,
-                "deducted_at": f"{__import__('datetime').datetime.now().isoformat()}",
+                "deducted_at": f"{__import__('datetime').datetime.now(timezone.utc).isoformat()}",
                 "job_type": job_type.value,
                 "duration": duration_seconds
             }

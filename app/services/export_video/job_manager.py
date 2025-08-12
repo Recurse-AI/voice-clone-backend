@@ -5,7 +5,7 @@ Handles export job lifecycle and status tracking
 
 from typing import Dict, Optional
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .models import ExportJob
 
@@ -50,7 +50,7 @@ class ExportJobManager:
             return False
         
         job = self._jobs[job_id]
-        timestamp = datetime.now().strftime("%H:%M:%S")
+        timestamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
         log_message = f"[{timestamp}] {message}"
         job.processing_logs.append(log_message)
         logger.info(f"Job {job_id}: {message}")
@@ -111,7 +111,7 @@ class ExportJobManager:
     
     def cleanup_old_jobs(self, max_age_hours: int = 24):
         """Remove old jobs to prevent memory leaks"""
-        current_time = datetime.now()
+        current_time = datetime.now(timezone.utc)
         jobs_to_remove = []
         
         for job_id, job in self._jobs.items():

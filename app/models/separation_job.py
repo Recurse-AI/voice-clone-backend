@@ -30,8 +30,8 @@ class SeparationJob(BaseModel):
     error: Optional[str] = Field(None, description="Error message if failed")
     
     # Timestamps
-    created_at: datetime = Field(default_factory=lambda: datetime.now())
-    updated_at: datetime = Field(default_factory=lambda: datetime.now())
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     
@@ -44,13 +44,13 @@ class SeparationJob(BaseModel):
         self.status = status
         if progress is not None:
             self.progress = progress
-        self.updated_at = datetime.now()
+        self.updated_at = datetime.now(timezone.utc)
         
         # Set timestamps based on status
         if status == 'processing' and not self.started_at:
-            self.started_at = datetime.now()
+            self.started_at = datetime.now(timezone.utc)
         elif status in ['completed', 'failed']:
-            self.completed_at = datetime.now()
+            self.completed_at = datetime.now(timezone.utc)
             
         # Update additional fields
         for key, value in kwargs.items():
