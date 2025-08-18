@@ -1,11 +1,15 @@
 from fastapi import APIRouter, Security, BackgroundTasks, Request, Depends
 from fastapi.responses import JSONResponse
+from typing import List, Optional, Dict, Any
 from fastapi.security import HTTPBearer
 from app.schemas.user import *
 from app.config.database import db 
 from app.config.settings import settings
 from app.config.constants import MIN_PAYMENT_AMOUNT_USD, ERROR_USER_NOT_FOUND
 from app.services.user_service import *
+from app.services.pricing_service import pricing_service
+from app.services.stripe_service import stripe_service
+from app.services.transaction_service import transaction_service
 from app.utils.user_helper import *
 from app.utils.response_helper import error_response, success_response, not_found_response
 from app.dependencies.auth import get_current_user
@@ -17,6 +21,7 @@ from pydantic import BaseModel
 import stripe
 from bson import ObjectId
 from datetime import datetime, timezone, timedelta
+from fastapi import HTTPException
 
 stripe_route = APIRouter()
 
@@ -42,7 +47,10 @@ FRONTEND_URL = settings.FRONTEND_URL
 STRIPE_WEBHOOK_SECRET = settings.STRIPE_WEBHOOK_SECRET
 
 class Checkout(BaseModel):
-    price: int
+    planName: str
+
+class CustomCheckout(BaseModel):
+    price: float
 
 def mongo_json(data):
     return jsonable_encoder(
@@ -53,29 +61,24 @@ def mongo_json(data):
         }
     )
 
-# Dummy auth dependency placeholder, replace with your actual auth
 def auth_protect():
     pass
 
 @stripe_route.get("/plans")
 async def get_pricing_plans(request: Request):
     try:
-        plans = await db["pricings"].find({"isActive": True}).sort("displayOrder").to_list(length=100)
-        if not plans:
+        response: List[Dict[str, Any]] = await pricing_service.get_all_plans()
+        if not response:
             return JSONResponse(
                 status_code=404,
-                content=mongo_json({
+                content=pricing_service.mongo_json({
                     "error": "No pricing plans found",
                     "message": "No active pricing plans available"
                 })
             )
         return JSONResponse(
-            status_code=200,
-            content=mongo_json({
-                "success": True,
-                "plans": plans,
-                "count": len(plans)
-            })
+            status_code=response["status_code"],
+            content=response["content"]
         )
     except Exception as error:
         logger.error(f"Get pricing plans error: {str(error)}")
@@ -83,399 +86,217 @@ async def get_pricing_plans(request: Request):
         message = "An error occurred while retrieving pricing plans" if getenv("NODE_ENV") == "production" else str(error)
         return JSONResponse(
             status_code=500,
-            content=mongo_json({
+            content=pricing_service.mongo_json({
                 "error": "Server error",
                 "message": message
             })
         )
 
-def calculate_credits(price, premium_plan):
-    credits = 0
-    discount_percentage = 0
-    final_price = price
-    packs = premium_plan.get("pricing", {}).get("creditPacks", [])
-    matching_pack = next((pack for pack in packs if pack["price"] == price), None)
-    if matching_pack:
-        credits = matching_pack["credits"]
-        discount_percentage = matching_pack.get("discountPercentage", 0)
-        final_price = price * (1 - discount_percentage / 100)
-    elif price > 180:
-        base_credits = 5000
-        base_price = 180
-        base_discount = 10
-        credits = int((price * base_credits) / base_price)
-        discount_percentage = base_discount
-        final_price = price * (1 - discount_percentage / 100)
-    else:
-        credits = int(price * 25)
-        discount_percentage = 0
+@stripe_route.post("/create-checkout-session-custom", dependencies=[Depends(auth_protect)])
+async def create_checkout_session_custom(
+    request: CustomCheckout, 
+    current_user: TokenUser = Security(get_current_user)
+):  
+    try:
+        user = await get_user_id(current_user.id)
+        if not user:
+            return error_response(ERROR_USER_NOT_FOUND, "User not found")
+        
+        # Create Stripe session
+        price = request.price
         final_price = price
-    return credits, discount_percentage, final_price
+        discount_percentage = 0
+        credits = stripe_service.custom_credit_amount(price)
+        name = "custom"
 
-async def handle_stripe_customer(user, user_id):
-    customer_id = getattr(getattr(user, "subscription", None), "stripeCustomerId", None)
+        if not credits and not price:
+            return error_response(
+                "Failed to create checkout session",
+                "Need credits and price",
+                500
+            )
 
-    if customer_id:
-        try:
-            stripe.Customer.retrieve(customer_id)
-            return customer_id
-        except Exception:
-            customer_id = None
-
-    # Create new customer
-    stripe_customer = stripe.Customer.create(
-        email=user.email,
-        name=getattr(user, "name", ""),
-        metadata={"userId": user_id}
-    )
-    customer_id = stripe_customer.id
-
-    await db["users"].update_one(
-        {"_id": user.id},
-        {"$set": {"subscription.stripeCustomerId": customer_id}}
-    )
-
-    return customer_id
+        session = await stripe_service.get_session_info(user, str(current_user.id), price, final_price, discount_percentage, credits, name)
+        
+        return success_response({
+            "sessionId": session.id,
+            "url": session.url,
+            "credits": credits,
+            "price": final_price,
+            "originalPrice": price,
+            "discount": discount_percentage,
+            "name": name
+        })
+    except HTTPException as he:
+        return error_response(str(he.detail), "Checkout Error", he.status_code)
+    except Exception as e:
+        logger.error(f"Checkout session error: {str(e)}")
+        return error_response(
+            "Failed to create checkout session",
+            "Internal Server Error",
+            500
+        )
+  
 
 @stripe_route.post("/create-checkout-session", dependencies=[Depends(auth_protect)])
-async def create_checkout_session(request: Checkout, current_user: TokenUser = Security(get_current_user)):
-    
+async def create_checkout_session(
+    request: Checkout, 
+    current_user: TokenUser = Security(get_current_user)
+):
     try:
-        logger.info("controller  reached here in checkout session line 121")
-        price = request.price
-        # price = data.get("price")
         user = await get_user_id(current_user.id)
-        user_id = current_user.id
-        logger.info(f"price: {price}")
-        if user is None:
-            return not_found_response(ERROR_USER_NOT_FOUND, "User no longer exists")
-        # Input validation
-        if not user_id:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": "Authentication required",
-                    "message": "User authentication needed"
-                }
-            )
-        if not price or price < MIN_PAYMENT_AMOUNT_USD:
-            return error_response(
-                f"Price is required and must be at least ${MIN_PAYMENT_AMOUNT_USD}",
-                "Invalid price",
-                status_code=400
-            )
-
-        # Find user (already fetched as 'user')
         if not user:
-            return not_found_response(ERROR_USER_NOT_FOUND)
+            return error_response(ERROR_USER_NOT_FOUND, "User not found")
+        # Get credit pack details
+        pack_details = await pricing_service.get_credit_pack_details_by_name(request.planName)
+        if not pack_details:
+            return error_response(
+                "Credit pack not found", 
+                "The requested pricing plan was not found or is inactive"
+            )
+        # Create Stripe session
+        price = pack_details["original_price"]
+        final_price = pack_details["final_price"]
+        discount_percentage = pack_details["discount_percentage"]
+        credits = pack_details["credits"]
+        name = pack_details["name"]  
 
-        # Get premium plan from database
-        premium_plan = await db["pricings"].find_one({"name": "premium"})
-        if not premium_plan:
-            return not_found_response("Premium plan configuration not found", "Pricing plan not found")
-
-        # Calculate credits and discount
-        credits, discount_percentage, final_price = calculate_credits(price, premium_plan)
-
-
-        logger.info(f"Credits calculation - Original: ${price}, Credits: {credits}, Discount: {discount_percentage}%, Final: ${final_price}")
-
-        # Handle Stripe customer
-        customer_id = await handle_stripe_customer(user, user_id)
-
-        # Create checkout session
-        session = stripe.checkout.Session.create(
-            customer=customer_id,
-            payment_method_types=["card"],
-            line_items=[{
-                "price_data": {
-                    "currency": "usd",
-                    "product_data": {   
-                        "name": f"{credits} Credits",
-                        "description": f"{credits} processing minutes for audio separation"
-                    },
-                    "unit_amount": int(final_price * 100),
-                },
-                "quantity": 1,
-            }],
-            allow_promotion_codes=True,
-            mode="payment",
-            success_url=f"{settings.FRONTEND_URL}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
-            cancel_url=f"{settings.FRONTEND_URL}/pricing",
-            metadata={
-                "userId": user_id,
-                "credit": credits,
-                "price": final_price,
-                "originalPrice": price,
-                "discountPercentage": discount_percentage
-            }
+        session = await stripe_service.get_session_info(user, str(current_user.id), price, final_price, discount_percentage, credits, name)
+        
+        return success_response({
+            "sessionId": session.id,
+            "url": session.url,
+            "credits": pack_details["credits"],
+            "price": pack_details["final_price"],
+            "originalPrice": pack_details["original_price"],
+            "discount": pack_details["discount_percentage"],
+            "name": pack_details["name"]
+        })
+    except HTTPException as he:
+        return error_response(str(he.detail), "Checkout Error", he.status_code)
+    except Exception as e:
+        logger.error(f"Checkout session error: {str(e)}")
+        return error_response(
+            "Failed to create checkout session",
+            "Internal Server Error",
+            500
         )
-
-        return JSONResponse(
-            status_code=200,
-            content={
-                "success": True,
-                "sessionId": session.id,
-                "url": session.url,
-                "credits": credits,
-                "price": final_price,
-                "discount": discount_percentage
-            }
-        )
-
-    except Exception as error:
-        logger.error(f"Stripe checkout error: {str(error)}")
-        from os import getenv
-        message = "An error occurred while creating checkout session" if getenv("NODE_ENV") == "production" else str(error)
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "Server error",
-                "message": message
-            }
-        )
-
 
 @stripe_route.get("/customer-portal", dependencies=[Depends(auth_protect)])
 def get_customer_portal():
     pass
 
-@stripe_route.post("/webhook")  # raw body handled separately in actual implementation
+@stripe_route.post("/webhook")
 async def webhook(request: Request):
     sig = request.headers.get('stripe-signature')
     logger.info(f"Received webhook with signature: {'present' if sig else 'missing'}")
-    payload = await request.body()
-    event = None
+    
     try:
-        event = stripe.Webhook.construct_event(payload, sig, STRIPE_WEBHOOK_SECRET)
-        logger.info(f"Webhook event verified successfully: {event['type']}")
-    except Exception as err:
-        logger.error(f"Webhook signature verification failed: {str(err)}")
-        return JSONResponse(status_code=400, content={"error": f"Webhook Error: {str(err)}"})
+        payload = await request.body()
+        event = await stripe_service.verify_webhook_signature(payload, sig)
+        
+        logger.info(f"Processing webhook event: {event['type']} with ID: {event['id']}")
+        
+        if event['type'] == 'checkout.session.completed':
+            result = await transaction_service.handle_checkout_completed(event['data']['object'])
+            if result:
+                logger.info(f"Successfully processed checkout session: {result['message']}")
+            else:
+                logger.warning("Checkout session processed with no result")
+                
+        elif event['type'] == 'customer.created':
+            logger.info(f"Stripe customer created: {event['data']['object'].get('id')}")
+        
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "message": "Webhook processed successfully"}
+        )
 
-    logger.info(f"Processing webhook event: {event['type']} with ID: {event['id']}")
-    try:
-        event_type = event['type']
-        data_object = event['data']['object']
-        if event_type == 'checkout.session.completed':
-            await handle_checkout_completed(data_object)
-        elif event_type == 'customer.created':
-            logger.info(f"Stripe customer created: {data_object.get('id')}")
-        else:
-            logger.info(f"Unhandled Stripe event: {event_type}")
-        logger.info(f"Webhook event processed successfully: {event_type}")
-        return JSONResponse(status_code=200, content={"received": True})
+    except HTTPException as he:
+        return JSONResponse(status_code=he.status_code, content={"error": str(he.detail)})
     except Exception as error:
-        logger.error(f"Error handling webhook event: {str(error)}")
-        return JSONResponse(status_code=200, content={"received": True, "error": str(error)})
+        logger.error(f"Webhook processing error: {str(error)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Server error", "message": str(error)}
+        )
 
 @stripe_route.get("/purchase-history", dependencies=[Depends(auth_protect)])
 async def get_purchase_history(user: TokenUser = Security(get_current_user)):
     try:
-        user_id = str(user.id)
-        cursor = db["creditTransaction"].find(
-            {"userId": user_id}
-        ).sort("createdAt", -1)
-        transactions = [txn async for txn in cursor]
-        transactions = convert_objectids(transactions)
+        response = await transaction_service.get_purchase_history(str(user.id))
         return JSONResponse(
-            status_code=200,
-            content=jsonable_encoder({
-                "message": "Purchase history retrieved successfully",
-                "transactions": transactions
-            })
+            status_code=response["status_code"],
+            content=response["content"]
         )
     except Exception as error:
         logger.error(f"Error retrieving purchase history: {str(error)}")
         return JSONResponse(
             status_code=500,
             content={
+                "success": False,
                 "error": "Server error",
-                "details": str(error)
+                "message": str(error)
             }
         )
-    
-from pymongo.errors import DuplicateKeyError
+
+
 @stripe_route.get("/verify-payment/{sessionId}", dependencies=[Depends(auth_protect)])
-async def verify_payment(sessionId: str, current_user: TokenUser = Security(get_current_user)):
+async def verify_payment(
+    sessionId: str, 
+    current_user: TokenUser = Security(get_current_user)
+):
     try:
-        _user = await get_user_id(current_user.id)
-        user: dict = _user.model_dump()
-        user_id = str(user.get("id"))
+        user = await get_user_id(current_user.id)
+        user_id = str(user.id)
 
         if not sessionId:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": "Session ID required",
-                    "message": "Stripe session ID is required"
-                }
-            )
-        session = stripe.checkout.Session.retrieve(sessionId)
-        if not session:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "error": "Session not found",
-                    "message": "Payment session not found"
-                }
-            )
-        if session.metadata.get("userId") != user_id:
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "error": "Unauthorized",
-                    "message": "This payment session does not belong to you"
-                }
-            )
-        if session.payment_status != "paid":
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": "Payment not completed",
-                    "message": "Payment has not been completed successfully"
-                }
-            )
-        existing = await db["creditTransaction"].find_one({"stripeSessionId": sessionId, "userId": user_id})
+            return error_response("Session ID required", "Stripe session ID is required")
+
+        # Check existing transaction
+        existing = await transaction_service.get_transaction(sessionId, user_id)
         if existing:
-            return JSONResponse(
-                status_code=200,
-                content=jsonable_encoder({
-                    "success": True,
-                    "message": "Payment already processed",
-                    "transaction": convert_objectids(existing)
-                })
-            )
-        credits_to_add = float(session.metadata.get("credit", 0))
-        if not credits_to_add or credits_to_add <= 0:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "error": "Invalid credits",
-                    "message": "Invalid credits in payment session"
-                }
-            )
-        # Update user credits and subscription type to premium
-        try:
-            txn = await db["creditTransaction"].insert_one({
-                "userId": user_id,
-                "type": "purchase",
-                "credits": credits_to_add,
-                "amount": session.amount_total / 100,
-                "stripeSessionId": sessionId,
-                "description": f"Purchase of {credits_to_add} credits",
-                "status": "success",
-                "createdAt": datetime.now(timezone.utc)
+            return success_response({
+                "message": "Payment already processed",
+                "transaction": existing  # Already serialized
             })
-        except DuplicateKeyError:
-            # Transaction already exists, so don't add credits again
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "success": True,
-                    "message": "Payment already processed",
-                    "transaction": await db["creditTransaction"].find_one({"stripeSessionId": sessionId, "userId": user_id})
-                }
-            )
-        result = await db["users"].update_one(
-            {"_id": ObjectId(user_id)},
-            {"$inc": {"credits": credits_to_add}, "$set": {"subscription.type": "premium", "subscription.status": "active"}}
-        )
-        if result.modified_count == 0:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "error": "User not found",
-                    "message": "User not found"
-                }
-            )
-        logger.info(f"Successfully processed payment verification for user {user_id}. Added {credits_to_add} credits")
-        return JSONResponse(
-            status_code=200,
-            content={
-                "success": True,
-                "message": "Payment verified and processed successfully",
-                "transaction": str(txn.inserted_id),
-                "user": {
-                    "credits": user.get("credits", 0) + credits_to_add,
-                    "subscription": {"type": "premium", "status": "active"}
-                }
-            }
-        )
-    except Exception as error:
-        logger.error(f"Payment verification error: {str(error)}")
-        from os import getenv
-        message = "An error occurred while verifying payment" if getenv("NODE_ENV") == "production" else str(error)
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "Server error",
-                "message": message
-            }
+
+        # Verify Stripe session
+        session_data = await stripe_service.verify_session(sessionId, user_id)
+        
+        # Create transaction and update user credits
+        transaction = await transaction_service.create_transaction(
+            user_id=user_id,
+            credits=session_data["credits"],
+            amount=session_data["amount"],
+            session_id=sessionId,
+            description=f"Purchase of {session_data['credits']} credits ({session_data['pack_name']})"
         )
 
-async def handle_checkout_completed(session):
-    try:
-        existing_txn = await db["creditTransaction"].find_one({
-            "stripeSessionId": session["id"]
+        # Update user credits
+        user_update = await transaction_service.update_user_credits(
+            user_id, 
+            session_data["credits"]
+        )
+        
+        return success_response({
+            "message": "Payment verified and processed successfully",
+            "transaction": transaction,  # Already serialized
+            "user": user_update,  # Already serialized
+            "session": {
+                "credits": session_data["credits"],
+                "amount": session_data["amount"],
+                "pack_name": session_data["pack_name"],
+                "discount": session_data["discount_percentage"]
+            }
         })
 
-        if existing_txn:
-            print("Transaction already recorded.")
-            return  # or handle however you prefer
-        
-        logger.info(f"Processing checkout.session.completed for session: {session['id']}")
-        user_id = session['metadata'].get('userId')
-        credits_to_add = float(session['metadata'].get('credit', 0))
-        if not user_id:
-            logger.error(f"Missing userId in session metadata for session: {session['id']}")
-            return
-        if not credits_to_add or credits_to_add <= 0:
-            logger.error(f"Missing or invalid credits in session metadata for session: {session['id']}")
-            return
-        logger.info(f"Attempting to add {credits_to_add} credits to user: {user_id}")
-        # Update user credits and subscription type to premium
-        # Create transaction record
-        # await db["creditTransaction"].insert_one({
-        #     "userId": user_id,
-        #     "type": "purchase",
-        #     "credits": credits_to_add,
-        #     "amount": session["amount_total"] / 100,
-        #     "stripeSessionId": session["id"],
-        #     "description": f"Purchase of {credits_to_add} credits",
-        #     "status": "success",
-        #     "createdAt": datetime.now(timezone.utc)
-        # })
-        try:
-            txn = await db["creditTransaction"].insert_one({
-                "userId": user_id,
-                "type": "purchase",
-                "credits": credits_to_add,
-                "amount": session.amount_total / 100,
-                "stripeSessionId": session["id"],
-                "description": f"Purchase of {credits_to_add} credits",
-                "status": "success",
-                "createdAt": datetime.now(timezone.utc)
-            })
-        except DuplicateKeyError:
-            # Transaction already exists, so don't add credits again
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "success": True,
-                    "message": "Payment already processed",
-                    "transaction": await db["creditTransaction"].find_one({"stripeSessionId": session["id"], "userId": user_id})
-                }
-            )
-        result = await db["users"].update_one(
-            {"_id": ObjectId(user_id)},
-            {"$inc": {"credits": credits_to_add}, "$set": {"subscription.type": "premium", "subscription.status": "active"}}
-        )
-        if result.modified_count == 0:
-            logger.error(f"User not found: {user_id}")
-            return
-        logger.info(f"Successfully added {credits_to_add} credits to user {user_id}. Updated subscription type to premium.")
+    except HTTPException as he:
+        return error_response(str(he.detail), "Payment Verification Error", he.status_code)
     except Exception as error:
-        logger.error(f"Error handling checkout completed: {str(error)}")
-
-
+        logger.error(f"Payment verification error: {str(error)}")
+        return error_response(
+            "Failed to verify payment", 
+            "Internal Server Error", 
+            500
+        )
