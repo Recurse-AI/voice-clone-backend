@@ -2,7 +2,7 @@ import logging
 import shutil
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any
 
@@ -65,7 +65,7 @@ class VideoDownloadService:
                 "status": "downloading",
                 "progress": 0,
                 "message": "Starting download...",
-                "started_at": datetime.now().isoformat(),
+                "started_at": datetime.now(timezone.utc).isoformat(),
                 "url": url
             })
 
@@ -140,7 +140,7 @@ class VideoDownloadService:
                 "file_url": str(downloaded_file),
                 "original_filename": downloaded_file.name,
                 "file_size": file_size,
-                "completed_at": datetime.now().isoformat(),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
                 "video_info": {
                     "title": video_title,
                     "duration": video_duration,
@@ -162,7 +162,7 @@ class VideoDownloadService:
                     "filename": downloaded_file.name,
                     "file_size": file_size,
                     "local_path": str(downloaded_file),
-                    "downloaded_at": datetime.now().isoformat(),
+                    "downloaded_at": datetime.now(timezone.utc).isoformat(),
                 },
             }
         except Exception as e:

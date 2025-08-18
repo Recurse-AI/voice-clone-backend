@@ -1,7 +1,7 @@
 import boto3
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 import uuid
@@ -29,13 +29,13 @@ class R2Storage:
     
     def generate_job_id(self) -> str:
         """Generate unique audio processing ID"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         unique_id = str(uuid.uuid4())[:8]
         return f"job_{timestamp}_{unique_id}"
     
     def generate_file_path(self, audio_id: str, file_type: str, filename: str) -> str:
         """Generate R2 file path. If file_type is empty/None it is omitted to store files directly inside the job_id folder."""
-        date_prefix = datetime.now().strftime("%Y/%m/%d")
+        date_prefix = datetime.now(timezone.utc).strftime("%Y/%m/%d")
         # Omit file_type folder if it is None or an empty string
         file_type_part = f"/{file_type}" if file_type else ""
         return f"{self.base_path}/{date_prefix}/{audio_id}{file_type_part}/{filename}"
@@ -120,7 +120,7 @@ class R2Storage:
     
     def get_storage_info(self, audio_id: str) -> Dict[str, Any]:
         """Get storage information for an audio processing job"""
-        date_prefix = datetime.now().strftime("%Y/%m/%d")
+        date_prefix = datetime.now(timezone.utc).strftime("%Y/%m/%d")
         return {
             "bucket": self.bucket_name,
             "base_path": f"{self.base_path}/{date_prefix}/{audio_id}",

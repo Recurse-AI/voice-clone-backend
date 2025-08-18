@@ -5,7 +5,7 @@ import time
 import logging
 from typing import Dict, Any, Optional
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 from app.config.settings import settings
 from app.config.constants import AVERAGE_JOB_PROCESSING_MINUTES, PROCESSING_JOB_QUEUE_POSITION
 
@@ -118,7 +118,7 @@ class RunPodService:
                     "error": data.get('error'),
                     "queue_position": queue_position,
                     "delay_time": delay_time,  # preserve original delayTime for debugging
-                    "created_at": data.get('created_at') or datetime.now().isoformat(),
+                    "created_at": data.get('created_at') or datetime.now(timezone.utc).isoformat(),
                     "started_at": data.get('started_at'),
                     "completed_at": data.get('completed_at')
                 }

@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
 import os
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from app.schemas import UploadStatusResponse
 from app.utils.shared_memory import set_upload_status, update_upload_status, get_upload_status as get_upload_status_data, job_exists
 from app.config.constants import ALLOWED_VIDEO_EXTENSIONS, CHUNK_SIZE_UPLOAD, MSG_FILE_UPLOADED
@@ -29,7 +29,7 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
             "progress": 5,
             "message": "Saving uploaded file...",
             "original_filename": original_filename,
-            "started_at": datetime.now().isoformat()
+            "started_at": datetime.now(timezone.utc).isoformat()
         })
         total_size = 0
         with open(temp_file_path, "wb") as buffer:

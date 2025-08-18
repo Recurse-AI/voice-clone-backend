@@ -5,7 +5,7 @@ Data models for video export processing
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Union
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from .constants import DEFAULT_VIDEO_FORMAT
 
@@ -328,7 +328,7 @@ class ExportJob:
             job_id=str(uuid.uuid4()),
             status="STARTED",
             progress=0,
-            created_at=datetime.now(),
+            created_at=datetime.now(timezone.utc),
             export_data=export_data,
             processing_logs=["Export job created"]
         ) 

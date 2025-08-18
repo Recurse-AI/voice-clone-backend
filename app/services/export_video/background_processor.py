@@ -8,7 +8,7 @@ import asyncio
 from pathlib import Path
 from typing import Dict, Any, List
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import requests
 import soundfile as sf
 import numpy as np
@@ -155,7 +155,7 @@ class BackgroundProcessor:
             
             # Step 6: Upload to cloud storage (95%)
             try:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
                 video_filename = f"exported_video_{timestamp}_{job_id}.{export_data['format']}"
                 r2_key = f"exported-videos/{timestamp}/{video_filename}"
                 

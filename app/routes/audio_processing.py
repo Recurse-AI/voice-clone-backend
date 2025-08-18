@@ -9,7 +9,7 @@ from app.dependencies.auth import get_current_user
 from app.services.separation_job_service import separation_job_service
 from app.services.credit_service import credit_service, JobType
 from app.config.constants import MAX_ATTEMPTS_DEFAULT, POLLING_INTERVAL_SECONDS, MSG_PROCESSING_STARTED, ERROR_PROCESSING_FAILED
-from datetime import datetime
+from datetime import datetime, timezone
 from app.utils.logger import logger
 
 router = APIRouter()
@@ -83,7 +83,7 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                         vocal_url=vocal_url,
                         instrument_url=instrument_url,
                         details={
-                            "completed_at": datetime.now().isoformat(),
+                            "completed_at": datetime.now(timezone.utc).isoformat(),
                             "processing_time_seconds": attempt * 10,
                             "result_data": status.get("result", {})
                         }
