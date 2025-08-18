@@ -47,7 +47,10 @@ FRONTEND_URL = settings.FRONTEND_URL
 STRIPE_WEBHOOK_SECRET = settings.STRIPE_WEBHOOK_SECRET
 
 class Checkout(BaseModel):
-    id: str
+    planName: str
+
+class CustomCheckout(BaseModel):
+    price: float
 
 def mongo_json(data):
     return jsonable_encoder(
@@ -89,25 +92,76 @@ async def get_pricing_plans(request: Request):
             })
         )
 
+@stripe_route.post("/create-checkout-session-custom", dependencies=[Depends(auth_protect)])
+async def create_checkout_session_custom(
+    request: CustomCheckout, 
+    current_user: TokenUser = Security(get_current_user)
+):  
+    try:
+        user = await get_user_id(current_user.id)
+        if not user:
+            return error_response(ERROR_USER_NOT_FOUND, "User not found")
+        
+        # Create Stripe session
+        price = request.price
+        final_price = price
+        discount_percentage = 0
+        credits = stripe_service.custom_credit_amount(price)
+        name = "custom"
+
+        if not credits and not price:
+            return error_response(
+                "Failed to create checkout session",
+                "Need credits and price",
+                500
+            )
+
+        session = await stripe_service.get_session_info(user, str(current_user.id), price, final_price, discount_percentage, credits, name)
+        
+        return success_response({
+            "sessionId": session.id,
+            "url": session.url,
+            "credits": credits,
+            "price": final_price,
+            "originalPrice": price,
+            "discount": discount_percentage,
+            "name": name
+        })
+    except HTTPException as he:
+        return error_response(str(he.detail), "Checkout Error", he.status_code)
+    except Exception as e:
+        logger.error(f"Checkout session error: {str(e)}")
+        return error_response(
+            "Failed to create checkout session",
+            "Internal Server Error",
+            500
+        )
+  
+
 @stripe_route.post("/create-checkout-session", dependencies=[Depends(auth_protect)])
 async def create_checkout_session(
     request: Checkout, 
     current_user: TokenUser = Security(get_current_user)
 ):
     try:
-        logger.info(f"Creating checkout session for plan ID: {request.id}")
         user = await get_user_id(current_user.id)
         if not user:
             return error_response(ERROR_USER_NOT_FOUND, "User not found")
         # Get credit pack details
-        pack_details = await pricing_service.get_credit_pack_details(request.id)
+        pack_details = await pricing_service.get_credit_pack_details_by_name(request.planName)
         if not pack_details:
             return error_response(
                 "Credit pack not found", 
                 "The requested pricing plan was not found or is inactive"
             )
         # Create Stripe session
-        session = await stripe_service.get_session_info(user, str(current_user.id), pack_details)
+        price = pack_details["original_price"]
+        final_price = pack_details["final_price"]
+        discount_percentage = pack_details["discount_percentage"]
+        credits = pack_details["credits"]
+        name = pack_details["name"]  
+
+        session = await stripe_service.get_session_info(user, str(current_user.id), price, final_price, discount_percentage, credits, name)
         
         return success_response({
             "sessionId": session.id,
@@ -118,7 +172,6 @@ async def create_checkout_session(
             "discount": pack_details["discount_percentage"],
             "name": pack_details["name"]
         })
-
     except HTTPException as he:
         return error_response(str(he.detail), "Checkout Error", he.status_code)
     except Exception as e:
@@ -225,8 +278,6 @@ async def verify_payment(
             user_id, 
             session_data["credits"]
         )
-
-        logger.info(f"Successfully processed payment verification for user {user_id}. Added {session_data['credits']} credits")
         
         return success_response({
             "message": "Payment verified and processed successfully",

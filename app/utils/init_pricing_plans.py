@@ -15,38 +15,22 @@ async def init_pricing_plans():
 
     pricing_plans: List[dict] = [
         {
-            "name": "free",
-            "description": "Start with free credits and explore our features",
-            "features": [
-                "25 free credits upon signup",
-                "Basic audio processing",
-                "Standard support",
-                "Common file formats supported",
-                "Standard processing queue"
-            ],
-            "creditPack": None,  
-            "isActive": True,
-            "displayOrder": 0,
-            "createdAt": datetime.now(),
-            "updatedAt": datetime.now()
-        },
-        {
             "name": "small",
             "description": "Perfect for small projects",
             "features": [
-                "75 credits",
+                "150 credits",
                 "All basic features",
                 "Priority support",
                 "Extended format support",
-                "17% savings on credits"
+                "20% savings on credits"
             ],
             "creditPack": {
                 "name": "Small",
-                "credits": 75,
+                "credits": 150,
                 "originalPrice": 6.00,
-                "discountedPrice": 4.99,
-                "pricePerCredit": 0.0665,
-                "savingsPercentage": 17,
+                "discountedPrice": 5.00,
+                "pricePerCredit": 0.033,
+                "savingsPercentage": 20,
                 "stripePriceId": "price_small_pack"
             },
             "isActive": True,
@@ -58,20 +42,20 @@ async def init_pricing_plans():
             "name": "medium",
             "description": "Most popular choice for regular users",
             "features": [
-                "400 credits",
+                "350 credits",
                 "All features included",
                 "Priority support",
                 "Batch processing",
-                "38% savings on credits",
+                "40% savings on credits",
                 "Extended file format support"
             ],
             "creditPack": {
                 "name": "Medium",
-                "credits": 400,
-                "originalPrice": 16.00,
-                "discountedPrice": 9.99,
-                "pricePerCredit": 0.0249,
-                "savingsPercentage": 38,
+                "credits": 350,
+                "originalPrice": 14.00,
+                "discountedPrice": 10.00,
+                "pricePerCredit": 0.028,
+                "savingsPercentage": 40,
                 "stripePriceId": "price_medium_pack"
             },
             "isActive": True,
@@ -83,21 +67,20 @@ async def init_pricing_plans():
             "name": "special",
             "description": "Best value for regular users",
             "features": [
-                "1000 credits",
+                "850 credits",
                 "All premium features",
                 "Priority support",
                 "Advanced batch processing",
-                "50% savings on credits",
-                "Premium file format support",
+                "70% savings on credits",
                 "Priority processing queue"
             ],
             "creditPack": {
                 "name": "Special",
-                "credits": 1000,
-                "originalPrice": 40.00,
-                "discountedPrice": 19.99,
-                "pricePerCredit": 0.0199,
-                "savingsPercentage": 50,
+                "credits": 850,
+                "originalPrice": 34.00,
+                "discountedPrice": 20.00,
+                "pricePerCredit": 0.023,
+                "savingsPercentage": 70,
                 "stripePriceId": "price_special_pack"
             },
             "isActive": True,
@@ -109,22 +92,21 @@ async def init_pricing_plans():
             "name": "limited",
             "description": "Best savings for power users",
             "features": [
-                "2500 credits",
+                "1800 credits",
                 "All premium features",
                 "Priority support",
                 "Advanced batch processing",
-                "60% savings on credits",
-                "Premium file format support",
+                "85% savings on credits",
                 "Highest priority queue",
                 "Dedicated account manager"
             ],
             "creditPack": {
                 "name": "Limited",
-                "credits": 2500,
-                "originalPrice": 100.00,
-                "discountedPrice": 39.99,
-                "pricePerCredit": 0.0159,
-                "savingsPercentage": 60,
+                "credits": 1850,
+                "originalPrice": 72.00,
+                "discountedPrice": 40.00,
+                "pricePerCredit": 0.02,
+                "savingsPercentage": 85,
                 "stripePriceId": "price_limited_pack"
             },
             "isActive": True,

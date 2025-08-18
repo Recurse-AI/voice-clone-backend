@@ -80,6 +80,26 @@ class PricingService:
         except Exception as e:
             logger.error(f"Failed to get credit pack details: {e}")
             return None
+    async def get_credit_pack_details_by_name(self, plan_name: str) -> dict:
+        """Get credit pack details from a plan"""
+        try:
+            plan = await self.get_plan_by_name(plan_name)
+            if not plan or "creditPack" not in plan:
+                return None
+
+            credit_pack = plan["creditPack"]
+            return {
+                "name": credit_pack["name"],
+                "credits": credit_pack["credits"],
+                "original_price": credit_pack["originalPrice"],
+                "final_price": credit_pack["discountedPrice"],
+                "discount_percentage": credit_pack["savingsPercentage"],
+                "stripe_price_id": credit_pack["stripePriceId"],
+                "price_per_credit": credit_pack["pricePerCredit"]
+            }
+        except Exception as e:
+            logger.error(f"Failed to get credit pack details: {e}")
+            return None
 
 
 

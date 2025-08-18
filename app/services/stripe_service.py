@@ -53,14 +53,8 @@ class StripeService:
             logger.error(f"Error handling Stripe customer: {e}")
             raise HTTPException(status_code=400, detail="Failed to create/retrieve Stripe customer")
 
-    async def get_session_info(self, user: TokenUser, user_id: str, pack_details: Dict[str, Any]) -> stripe.checkout.Session:
+    async def get_session_info(self, user: TokenUser, user_id: str, price: float, final_price: float, discount_percentage: float, credits: int, name: str) -> stripe.checkout.Session:
         try:
-            price = pack_details["original_price"]
-            final_price = pack_details["final_price"]
-            discount_percentage = pack_details["discount_percentage"]
-            credits = pack_details["credits"]
-            name = pack_details["name"]  # Add name to use in product description
-
             customer_id = await self.handle_stripe_customer(user, user_id)
             if not customer_id:
                 raise HTTPException(status_code=400, detail="Failed to create/retrieve Stripe customer")
@@ -89,8 +83,7 @@ class StripeService:
                     "price": final_price,
                     "originalPrice": price,
                     "discountPercentage": discount_percentage,
-                    "packName": name,  
-                    "priceId": pack_details.get("stripe_price_id")  
+                    "packName": name
                 }
             )
             return session
@@ -155,6 +148,28 @@ class StripeService:
                 status_code=500, 
                 detail="Failed to verify payment session"
             )
+
+    def custom_credit_amount(self, amount: float) -> float:
+        custom_price = amount
+
+        # Set discount based on price
+        if custom_price >= 40.00:
+            discount = 85.00
+        elif custom_price >= 20.00:
+            discount = 70.00
+        elif custom_price >= 10.00:
+            discount = 40.00
+        elif custom_price >= 5.00:
+            discount = 20.00
+        else:
+            discount = 0.00
+
+        credit_per_unit = 25
+        custom_credits = credit_per_unit * custom_price
+        total_credits = custom_credits + (custom_credits * discount / 100)
+
+        return total_credits
+
 
 
 stripe_service = StripeService()

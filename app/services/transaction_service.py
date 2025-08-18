@@ -3,13 +3,13 @@ from datetime import datetime, timezone
 from bson import ObjectId
 from fastapi import HTTPException
 from pymongo.errors import DuplicateKeyError
-from app.config.database import db
+from app.config.database import db, transaction_collection
 from app.utils.logger import logger
 from fastapi.encoders import jsonable_encoder
 
 class TransactionService:
     def __init__(self):
-        self.collection = db["creditTransaction"]
+        self.collection = transaction_collection
         self.users_collection = db["users"]
 
     def serialize_transaction(self, transaction: Dict[str, Any]) -> Dict[str, Any]:
@@ -71,9 +71,6 @@ class TransactionService:
 
             except DuplicateKeyError:
                 # If concurrent request created the transaction, get and return it
-                existing = await self.get_transaction(session_id, user_id)
-                if existing:
-                    return existing
                 raise HTTPException(status_code=400, detail="Transaction creation failed due to duplicate entry")
 
         except Exception as e:
