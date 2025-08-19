@@ -67,14 +67,14 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to cleanup old directories on startup: {cleanup_error}")
     
     # Initialize Fish Speech service
-    # try:
-    #     from app.services.dub.fish_speech_service import initialize_fish_speech
-    #     if initialize_fish_speech():
-    #         logger.info("✅ Fish Speech service initialized successfully")
-    #     else:
-    #         logger.warning("⚠️ Fish Speech service initialization failed")
-    # except Exception as e:
-    #     logger.error(f"❌ Failed to initialize Fish Speech: {e}")
+    try:
+        from app.services.dub.fish_speech_service import initialize_fish_speech
+        if initialize_fish_speech():
+            logger.info("✅ Fish Speech service initialized successfully")
+        else:
+            logger.warning("⚠️ Fish Speech service initialization failed")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Fish Speech: {e}")
     
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     
