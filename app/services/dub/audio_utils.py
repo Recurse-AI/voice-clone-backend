@@ -69,35 +69,8 @@ class AudioUtils:
     
     def _get_ffmpeg_path(self):
         """Get FFmpeg executable path based on platform"""
-        # Check if ffmpeg is in PATH
-        try:
-            result = subprocess.run(['ffmpeg', '-version'], 
-                                  capture_output=True, text=True)
-            if result.returncode == 0:
-                return 'ffmpeg'
-        except FileNotFoundError:
-            pass
-
-        # Check local FFmpeg installation in project directory
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        local_ffmpeg_paths = [
-            os.path.join(project_root, 'ffmpeg-master-latest-win64-gpl', 'ffmpeg-master-latest-win64-gpl', 'bin', 'ffmpeg.exe'),
-            os.path.join(project_root, 'ffmpeg-master-latest-win64-gpl', 'bin', 'ffmpeg.exe'),
-            os.path.join(project_root, 'ffmpeg', 'bin', 'ffmpeg.exe'),
-            os.path.join(project_root, 'ffmpeg.exe')
-        ]
-        
-        for ffmpeg_path in local_ffmpeg_paths:
-            if os.path.exists(ffmpeg_path):
-                return ffmpeg_path
-
-        # Check if ffmpeg is in the same directory as the script
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        ffmpeg_path = os.path.join(script_dir, 'ffmpeg.exe')
-        if os.path.exists(ffmpeg_path):
-            return ffmpeg_path
-        
-        return None
+        from app.utils.ffmpeg_helper import get_ffmpeg_path
+        return get_ffmpeg_path()
     
     
     @staticmethod

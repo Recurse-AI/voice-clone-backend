@@ -11,7 +11,13 @@ import time
 from app.config.settings import settings
 from .assembly_transcription import TranscriptionService
 from .fish_speech_service import get_fish_speech_service
-from app.utils.r2_storage import R2Storage
+from app.services.r2_service import get_r2_service
+from .manifest_service import (
+    build_manifest,
+    save_manifest_to_dir,
+    upload_process_dir_to_r2,
+    enrich_and_reupload_manifest_with_urls,
+)
 import numpy as np
 from .audio_utils import AudioUtils
 from typing import Optional, Dict, Any
@@ -21,6 +27,10 @@ import threading
 
 
 logger = logging.getLogger(__name__)
+
+# Global singleton instance  
+_simple_dubbed_api_instance = None
+_api_lock = threading.Lock()
 
 import re
 
@@ -82,15 +92,8 @@ def smart_chunk(text: str, chunk_size: int = 200, min_size: int = 180) -> list[s
     return [c for c in final_chunks if c]
 
 
-# Supported languages for dubbing and Fish Speech voice synthesis
-SUPPORTED_LANGUAGE_NAMES = {
-    "english", "chinese", "japanese", "german", "french", "spanish",
-    "korean", "arabic", "russian", "dutch", "italian", "polish", "portuguese"
-}
-SUPPORTED_LANGUAGE_CODES = {
-    "en", "zh", "ja", "de", "fr", "es",
-    "ko", "ar", "ru", "nl", "it", "pl", "pt"
-}
+# Import centralized language service
+from app.services.language_service import language_service
 
 class SimpleDubbedAPI:
     """Simple clean API for dubbed audio processing"""
@@ -99,9 +102,19 @@ class SimpleDubbedAPI:
         # Use existing services from dub folder
         self.transcription_service = TranscriptionService()
         self.fish_speech = get_fish_speech_service()  # Use global singleton instance
-        self.r2_storage = R2Storage()
-        self.temp_dir = settings.TEMP_DIR
-        os.makedirs(self.temp_dir, exist_ok=True)
+        self._r2_storage = None
+    
+    @property
+    def r2_storage(self):
+        """Get R2Service instance with lazy initialization"""
+        if self._r2_storage is None:
+            self._r2_storage = get_r2_service()
+        return self._r2_storage
+    
+    @property  
+    def temp_dir(self):
+        """Get temp directory from settings"""
+        return settings.TEMP_DIR
     
     def _update_status_non_blocking(self, job_id: str, status: ProcessingStatus, progress: int, details: dict, job_type: str = "dub"):
         """Update dub job status using common utility"""
@@ -137,254 +150,126 @@ class SimpleDubbedAPI:
                 "Segments (with target duration):\n"
                 f"{joined_texts}"
             )
-            response = self.transcription_service.openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.3,
-                max_tokens=2000
-            )
-            output = response.choices[0].message.content.strip()
-            all_dubbed.extend([seg.strip() for seg in output.split("|||")])
+            try:
+                response = self.transcription_service.openai_client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.3,
+                    max_tokens=2048
+                )
+                output = response.choices[0].message.content.strip()
+                all_dubbed.extend([seg.strip() for seg in output.split("|||")])
+            except ConnectionResetError as e:
+                logger.warning(f"Connection reset error during OpenAI call, retrying batch {i//batch_size + 1}: {e}")
+                # Retry once with a shorter delay
+                try:
+                    time.sleep(1)
+                    response = self.transcription_service.openai_client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        temperature=0.3,
+                        max_tokens=2048
+                    )
+                    output = response.choices[0].message.content.strip()
+                    all_dubbed.extend([seg.strip() for seg in output.split("|||")])
+                except Exception as retry_error:
+                    logger.error(f"Failed to process batch {i//batch_size + 1} after retry: {retry_error}")
+                    # Add placeholder translations to maintain segment count
+                    all_dubbed.extend([f"[Translation Error for segment {j+1}]" for j in range(len(batch))])
+            except Exception as e:
+                logger.error(f"Error processing batch {i//batch_size + 1}: {e}")
+                # Add placeholder translations to maintain segment count
+                all_dubbed.extend([f"[Translation Error for segment {j+1}]" for j in range(len(batch))])
         return all_dubbed
 
-    def process_dubbed_audio(self, audio_url: str, job_id: str, target_language: str, speakers_count: int = 1, source_video_language: str = None, output_dir: str = None, instrument_path: str = None, video_path: str = None, subtitle: bool = False, instrument: bool = False) -> dict:
-        """Complete dubbed audio processing with job_id, expected_speaker, source_video_language, output_dir, instrument mix, subtitle, video merge.
+    def _setup_processing_directory(self, job_id: str, output_dir: str = None) -> str:
+        """Setup and ensure processing directory exists."""
+        if not output_dir:
+            output_dir = os.path.join(self.temp_dir, f"dub_{job_id}")
+        os.makedirs(output_dir, exist_ok=True)
+        return output_dir
 
-        target_language must be one of the supported languages defined in SUPPORTED_LANGUAGE_NAMES / SUPPORTED_LANGUAGE_CODES.
+    def process_dubbed_audio(self, audio_url: str, job_id: str, target_language: str, 
+                           speakers_count: int = 1, source_video_language: str = None, 
+                           output_dir: str = None, review_mode: bool = False, 
+                           manifest_override: Optional[Dict[str, Any]] = None) -> dict:
         """
-        # Validate target language early to avoid unnecessary processing
-        if target_language.lower() not in SUPPORTED_LANGUAGE_NAMES and target_language.lower() not in SUPPORTED_LANGUAGE_CODES:
-            error_msg = f"Unsupported target language: {target_language}"
-            # Validation failed - let video_processing handle status update
+        Complete dubbed audio processing with clean, modular approach.
+        Always generates SRT file. No audio mixing or conditional processing.
+        """
+        # 1. Validate and normalize language
+        if not language_service.is_dubbing_supported(target_language):
+            supported_langs = language_service.get_supported_dubbing_languages()
+            error_msg = f"Unsupported target language: {target_language}. Supported languages: {', '.join(sorted(supported_langs))}"
             logger.error(error_msg)
             return {"success": False, "error": error_msg}
+        
+        target_language_code = language_service.normalize_language_input(target_language)
+        logger.info(f"Processing with target language: {target_language} -> {target_language_code}")
 
         try:
-            # Update progress during dubbing pipeline (non-blocking)
-            self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 45, {"message": "Transcribing audio..."}, "dub")
-            logger.info("Starting transcription...")
-            # Define a dedicated folder for this job inside the TEMP_DIR
-            if not output_dir:
-                output_dir = os.path.join(self.temp_dir, job_id)
-            process_temp_dir = output_dir  # We now keep all generated files inside this folder
-            os.makedirs(process_temp_dir, exist_ok=True)
-            paragraphs_result = self.transcription_service.get_paragraphs_and_split_audio(
-                audio_url=audio_url,
-                output_dir=output_dir,
-                speakers_count=speakers_count,
-                source_video_language=source_video_language
+            # 2. Setup processing environment
+            process_temp_dir = self._setup_processing_directory(job_id, output_dir)
+            
+            # Get transcription data
+            raw_paragraphs, transcript_id = self._get_transcription_data(
+                job_id, audio_url, manifest_override, process_temp_dir, speakers_count, source_video_language
             )
-            if not paragraphs_result["success"]:
-                # Error will be returned and handled by video_processing
-                logger.error(f"Transcription failed: {paragraphs_result.get('error')}")
-                # Clean up temp directory on failure
-                AudioUtils.remove_temp_dir(folder_path=process_temp_dir)
-                return {"success": False, "error": paragraphs_result.get("error", "Transcription failed")}
-            raw_paragraphs = paragraphs_result["segments"]
-            logger.info(f"Found {len(raw_paragraphs)} segments")
-            self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 55, {"message": "Batch dubbing text..."}, "dub")
-            logger.info("Starting batch dubbing...")
-            # Prepare texts for batch dubbing
-            segments_to_dub = []
-            segment_indices = []
-            for i, segment in enumerate(raw_paragraphs):
-                original_text = segment.get("text", "")
-                start_ms = segment.get("start", 0)
-                end_ms = segment.get("end", 0)
-                if original_text.strip():
-                    segments_to_dub.append({
-                        "text": original_text,
-                        "duration_ms": end_ms - start_ms,
-                        "id": f"seg_{i+1:03d}"
-                    })
-                    segment_indices.append(i)
-            dubbed_texts = self.dub_text_batch(segments_to_dub, target_language, batch_size=10)
-            self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 65, {"message": "Voice cloning segments..."}, "dub")
-            logger.info("Starting voice cloning...")
-            # Assign dubbed texts back to segments and process audio
-            dubbed_segments = []
-            dub_idx = 0
-            for i, segment in enumerate(raw_paragraphs):
-                seg_id = f"seg_{i+1:03d}"
-                start_ms = segment.get("start", 0)
-                end_ms = segment.get("end", 0)
-                original_text = segment.get("text", "")
-                speaker_label = segment.get("speaker_label")
-                original_audio_path = segment.get("output_path", "")
-                if not original_text.strip():
-                    continue
-                dubbed_text = dubbed_texts[dub_idx]
-                dub_idx += 1
-                clone_result = self._voice_clone_segment(
-                    dubbed_text,
-                    original_audio_path,
-                    seg_id,
-                    original_text,
-                    speaker_label,
-                    job_id=job_id,
-                    process_temp_dir=process_temp_dir,
-                )
-                if clone_result:
-                    cloned_audio_path = clone_result.get("path")
-                    cloned_duration_ms = clone_result.get("duration_ms", end_ms - start_ms)
-                else:
-                    cloned_audio_path = None
-                    cloned_duration_ms = end_ms - start_ms
-                info_filename = f"segment_{job_id}_{i:03d}_info.json"
-                info_path = os.path.join(process_temp_dir, info_filename).replace('\\', '/')
-                segment_json = {
-                    "id": seg_id,
-                    "segment_index": i + 1,
-                    "start": start_ms,
-                    "end": start_ms + cloned_duration_ms,
-                    "duration_ms": cloned_duration_ms,
-                    "original_text": original_text,
-                    "dubbed_text": dubbed_text,
-                    "original_audio_file": f"segment_{i:03d}.wav" if original_audio_path else None,
-                    "cloned_audio_file": f"cloned_{job_id}_{i:03d}.wav" if cloned_audio_path else None,
-                    "voice_cloned": bool(cloned_audio_path),
-                    "original_audio_path": original_audio_path,
-                    "cloned_audio_path": cloned_audio_path,
-                    "speaker_label": speaker_label,
+            # Process text dubbing and voice cloning
+            dubbed_segments = self._process_dubbing_and_cloning(
+                job_id, raw_paragraphs, target_language, manifest_override, review_mode, process_temp_dir
+            )
+            
+            if review_mode:
+                # Build and save manifest
+                manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments)
+                manifest_path = save_manifest_to_dir(manifest, process_temp_dir, job_id)
+                folder_upload_result, manifest_url, manifest_key = upload_process_dir_to_r2(job_id, process_temp_dir, self.r2_storage)
+
+                # best-effort enrich and re-upload
+                try:
+                    files_map = {}
+                    if isinstance(folder_upload_result, dict):
+                        for fname, res in folder_upload_result.items():
+                            if res.get("success"):
+                                files_map[fname] = {"url": res.get("url"), "r2_key": res.get("r2_key")}
+                    enriched_url = enrich_and_reupload_manifest_with_urls(manifest, manifest_path, files_map, manifest_key)
+                    if enriched_url:
+                        manifest_url = enriched_url
+                except Exception:
+                    pass
+
+                # Ensure manifest_url is available before returning
+                if not manifest_url:
+                    logger.error(f"Failed to get manifest URL for review mode job {job_id}")
+                    return {"success": False, "error": "Failed to generate manifest URL for review"}
+
+                # Don't remove temp directory in review mode - needed for segments access
+                logger.info(f"Review mode: preserving temp directory for segments access: {process_temp_dir}")
+                return {
+                    "success": True,
+                    "job_id": job_id,
+                    "review": {
+                        "segments_manifest_url": manifest_url,
+                        "segments_manifest_key": manifest_key,
+                        "segments_count": len(dubbed_segments),
+                        "transcript_id": transcript_id
+                    },
+                    "folder_upload": folder_upload_result
                 }
-                try:
-                    with open(info_path, 'w', encoding='utf-8') as f:
-                        json.dump(segment_json, f, ensure_ascii=False, indent=2)
-                    logger.info(f"Saved segment info: {info_filename}")
-                except Exception as e:
-                    logger.error(f"Failed to save JSON for {seg_id}: {str(e)}")
-                dubbed_segments.append(segment_json)
-            self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 75, {"message": "Reconstructing final audio..."}, "dub")
-            logger.info("Reconstructing final audio...")
-            # Step 3: Reconstruct final audio
-            final_audio_path = self._reconstruct_final_audio(dubbed_segments, paragraphs_result.get("original_audio"), job_id=job_id, process_temp_dir=process_temp_dir)
-            final_mixed_audio_path = final_audio_path
-            if instrument and instrument_path and os.path.exists(instrument_path):
-                final_mixed_audio_path = os.path.join(process_temp_dir, f"final_mixed_{job_id}.wav")
-                AudioUtils.mix_audio_files(final_audio_path, instrument_path, final_mixed_audio_path, ratio1=0.75, ratio2=0.25)
-                logger.info(f"Instrument mixed audio saved: {final_mixed_audio_path}")
-            self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 85, {"message": "Generating subtitles..."}, "dub")
-            logger.info("Generating subtitles...")
-            # Step 5: Subtitle generation (if subtitle True)
-            # --- Always generate SRT file ---
-            from .video_processor import VideoProcessor
-            processor = VideoProcessor(temp_dir=process_temp_dir)
-            subtitle_data = []
-            for seg in dubbed_segments:
-                text = seg["dubbed_text"]
-                start = seg["start"] / 1000.0
-                end = seg["end"] / 1000.0
 
-                # Use the same smart_chunk utility to create subtitle lines (smaller length).
-                chunks = smart_chunk(text, chunk_size=60, min_size=40)
-                total_chars = sum(len(c) for c in chunks) or 1
-
-                char_count_before = 0
-                for chunk in chunks:
-                    chunk_len = len(chunk)
-                    chunk_start = start + (end - start) * (char_count_before / total_chars)
-                    char_count_before += chunk_len
-                    chunk_end = start + (end - start) * (char_count_before / total_chars)
-                    subtitle_data.append({"start": chunk_start, "end": min(chunk_end, end), "text": chunk})
-            subtitle_path = os.path.join(process_temp_dir, f"subtitles_{job_id}.srt")
-            processor.create_srt_file(subtitle_data, subtitle_path)
-            logger.info(f"Subtitle file saved: {subtitle_path}")
-            self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 90, {"message": "Creating final video..."}, "dub")
-            logger.info("Creating video...")
-            final_video_path = None
-            video_error = None
-            if video_path and os.path.exists(video_path):
-                from .video_processor import VideoProcessor
-                processor = VideoProcessor(temp_dir=process_temp_dir)
-                if subtitle and subtitle_path and os.path.exists(subtitle_path):
-                    result = processor.create_video_with_subtitles(
-                        video_path=video_path,
-                        audio_path=final_mixed_audio_path,
-                        segments_dir=process_temp_dir,
-                        audio_id=job_id,
-                        instruments_path=instrument_path if instrument else None
-                    )
-                else:
-                    result = processor.create_video_with_audio(
-                        video_path=video_path,
-                        audio_path=final_mixed_audio_path,
-                        audio_id=job_id,
-                        instruments_path=instrument_path if instrument else None,
-                        segments_dir=process_temp_dir
-                    )
-                if result.get("success"):
-                    final_video_path = result.get("video_path")
-                    logger.info(f"Final video created: {final_video_path}")
-                else:
-                    video_error = result.get('error')
-                    logger.error(f"Video creation failed: {video_error}")
-            process_summary = {
-                "success": True,
-                "job_id": job_id,
-                "segments_count": len(dubbed_segments),
-                "audio_url": audio_url,
-                "target_language": target_language,
-                "speakers_count": speakers_count,
-                "final_audio_file": os.path.basename(final_mixed_audio_path) if final_mixed_audio_path else None,
-                "subtitle_file": os.path.basename(subtitle_path) if subtitle_path else None,
-                "final_video_file": os.path.basename(final_video_path) if final_video_path else None,
-                "processing_timestamp": int(time.time()),
-                "segments": dubbed_segments
-            }
-            summary_filename = f"dubbing_process_summary_{job_id}.json"
-            summary_path = os.path.join(process_temp_dir, summary_filename).replace('\\', '/')
-            try:
-                with open(summary_path, 'w', encoding='utf-8') as f:
-                    json.dump(process_summary, f, ensure_ascii=False, indent=2)
-                logger.info(f"Process summary saved: {summary_filename}")
-            except Exception as e:
-                logger.error(f"Failed to save process summary: {str(e)}")
-            # Remove original video before uploading folder to R2
-            if video_path and os.path.exists(video_path):
-                try:
-                    os.remove(video_path)
-                    logger.info(f"Original video deleted before R2 upload: {video_path}")
-                except Exception as e:
-                    logger.warning(f"Failed to delete original video {video_path}: {e}")
-
-            # --- R2 Upload Section ---
-            folder_upload_result = self.r2_storage.upload_audio_segments(job_id, process_temp_dir)
-
-            video_upload_res = None
-            if final_video_path and os.path.exists(final_video_path):
-                r2_video_key = self.r2_storage.generate_file_path(job_id, "", os.path.basename(final_video_path))
-                video_upload_res = self.r2_storage.upload_file(final_video_path, r2_video_key, content_type="video/mp4")
-
-            result_urls = {}
-            if video_upload_res and video_upload_res.get("success"):
-                result_urls["final_video"] = video_upload_res["url"]
-
-            # Final status completion will be handled by video_processing
-            # Just update progress to 95% here (video_processing will set to 100% completed)
-            self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 95, {"message": "Upload and finalization..."}, "dub")
-            logger.info("Dubbed processing completed successfully")
-
-            # Optionally, clean up local temp directory
-            try:
-                AudioUtils.remove_temp_dir(folder_path=process_temp_dir)
-            except Exception:
-                pass
-
-            return {
-                "success": True,
-                "job_id": job_id,
-                "result_url": result_urls.get("final_video"),
-                "result_urls": result_urls,
-                "folder_upload": folder_upload_result,
-                "video_upload": video_upload_res,
-                "video_error": video_error
-            }
+            # Generate final audio and files
+            return self._generate_final_output(
+                job_id, dubbed_segments, process_temp_dir, 
+                target_language, audio_url, speakers_count, transcript_id
+            )
         except Exception as e:
-            logger.error(f"Dubbed processing failed: {str(e)}")
-            # Error status will be handled by video_processing
             logger.error(f"Dubbed processing failed: {str(e)}")
             # Clean up temp directory on exception
             if locals().get("process_temp_dir"):
@@ -470,21 +355,384 @@ class SimpleDubbedAPI:
             logger.error(f"Voice cloning error for {segment_id}: {str(e)}")
             return None
     
+    def _get_transcription_data(self, job_id: str, audio_url: str, manifest_override: Optional[Dict[str, Any]], 
+                               process_temp_dir: str, speakers_count: int, source_video_language: str) -> tuple:
+        """Get transcription data either from manifest override or by transcribing audio"""
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 45, {"message": "Transcribing audio..."}, "dub")
+        logger.info("Starting transcription...")
+        
+        transcript_id = None
+        
+        if manifest_override:
+            logger.info("Using manifest override data instead of re-transcribing")
+            raw_paragraphs = []
+            for idx, seg in enumerate(manifest_override.get("segments", [])):
+                raw_paragraphs.append({
+                    "text": seg.get("original_text", ""),
+                    "start": seg.get("start", 0),
+                    "end": seg.get("end", 0),
+                    "speaker_label": seg.get("speaker_label"),
+                    "output_path": os.path.join(process_temp_dir, seg.get("original_audio_file", f"segment_{idx:03d}.wav")).replace('\\', '/')
+                })
+            transcript_id = manifest_override.get("transcript_id")
+            
+            # Download original segment audios to temp dir if URLs available
+            self._download_segment_audios(manifest_override, process_temp_dir)
+            
+        else:
+            logger.info("Starting fresh transcription")
+            paragraphs_result = self.transcription_service.get_paragraphs_and_split_audio(
+                audio_url=audio_url,
+                output_dir=process_temp_dir,
+                speakers_count=speakers_count,
+                source_video_language=source_video_language
+            )
+            
+            if not paragraphs_result["success"]:
+                logger.error(f"Transcription failed: {paragraphs_result.get('error')}")
+                AudioUtils.remove_temp_dir(folder_path=process_temp_dir)
+                raise Exception(paragraphs_result.get("error", "Transcription failed"))
+                
+            raw_paragraphs = paragraphs_result["segments"]
+            transcript_id = paragraphs_result.get("transcript_id")
+            logger.info(f"Found {len(raw_paragraphs)} segments")
+        
+        return raw_paragraphs, transcript_id
+    
+    def _process_dubbing_and_cloning(self, job_id: str, raw_paragraphs: list, target_language: str,
+                                     manifest_override: Optional[Dict[str, Any]], review_mode: bool, 
+                                     process_temp_dir: str) -> list:
+        """Process text dubbing and voice cloning for all segments"""
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 55, {"message": "Batch dubbing text..."}, "dub")
+        logger.info("Starting batch dubbing...")
+        
+        # Prepare texts for batch dubbing
+        segments_to_dub = []
+        segment_indices = []
+        for i, segment in enumerate(raw_paragraphs):
+            original_text = segment.get("text", "")
+            start_ms = segment.get("start", 0)
+            end_ms = segment.get("end", 0)
+            if original_text.strip():
+                segments_to_dub.append({
+                    "text": original_text,
+                    "duration_ms": end_ms - start_ms,
+                    "id": f"seg_{i+1:03d}"
+                })
+                segment_indices.append(i)
+        
+        # Normalize target language for consistent processing
+        target_language_code = language_service.normalize_language_input(target_language)
+        dubbed_texts = self.dub_text_batch(segments_to_dub, target_language_code, batch_size=15)
+        
+        # Apply edited text overrides if present (only for same target language)
+        edited_map = {}
+        if manifest_override:
+            # Check if this is a redub with language change
+            is_redub = bool(manifest_override.get("redub_target_language"))
+            manifest_target_lang = manifest_override.get("target_language")
+            current_target_lang = language_service.normalize_language_input(target_language)
+            
+            if is_redub:
+                # For redub: compare original manifest language with current target
+                if manifest_target_lang:
+                    manifest_target_lang = language_service.normalize_language_input(manifest_target_lang)
+                    
+                    # Only apply overrides if it's same language redub (corrections)
+                    if manifest_target_lang == current_target_lang:
+                        for seg in manifest_override.get("segments", []):
+                            if seg.get("id") and seg.get("dubbed_text"):
+                                edited_map[seg["id"]] = seg["dubbed_text"]
+            else:
+                # Fresh job or continuation: always apply any edited text
+                for seg in manifest_override.get("segments", []):
+                    if seg.get("id") and seg.get("dubbed_text"):
+                        edited_map[seg["id"]] = seg["dubbed_text"]
+        
+        # Start voice cloning phase at 80% to align with UI mapping
+        self._update_status_non_blocking(
+            job_id,
+            ProcessingStatus.PROCESSING,
+            80,
+            {"message": "Voice cloning and reconstructing final audio"},
+            "dub",
+        )
+        logger.info("Starting voice cloning...")
+        
+        # Process voice cloning for each segment
+        dubbed_segments = []
+        dub_idx = 0
+
+        # Calculate dynamic progress range for voice cloning updates (80..89)
+        cloneable_count = sum(1 for s in raw_paragraphs if s.get("text", "").strip()) if not review_mode else 0
+        completed_clones = 0
+
+        for i, segment in enumerate(raw_paragraphs):
+            seg_id = f"seg_{i+1:03d}"
+            start_ms = segment.get("start", 0)
+            end_ms = segment.get("end", 0)
+            original_text = segment.get("text", "")
+            speaker_label = segment.get("speaker_label")
+            original_audio_path = segment.get("output_path", "")
+            
+            if not original_text.strip():
+                continue
+                
+            dubbed_text = dubbed_texts[dub_idx]
+            dub_idx += 1
+            
+            # Apply edited text override if present
+            if seg_id in edited_map:
+                dubbed_text = edited_map[seg_id]
+            
+            # Voice clone if not in review mode
+            cloned_audio_path = None
+            cloned_duration_ms = end_ms - start_ms
+            if not review_mode:
+                clone_result = self._voice_clone_segment(
+                    dubbed_text, original_audio_path, seg_id, original_text, 
+                    speaker_label, job_id=job_id, process_temp_dir=process_temp_dir
+                )
+                if clone_result:
+                    cloned_audio_path = clone_result.get("path")
+                    cloned_duration_ms = clone_result.get("duration_ms", end_ms - start_ms)
+                # Update progress incrementally across 80..89 as cloning advances
+                try:
+                    if cloneable_count > 0:
+                        completed_clones += 1
+                        # Spread progress over 9 steps (80..89)
+                        progress_span = 9
+                        progress_value = 80 + min(
+                            progress_span,
+                            int((completed_clones / max(1, cloneable_count)) * progress_span)
+                        )
+                        self._update_status_non_blocking(
+                            job_id,
+                            ProcessingStatus.PROCESSING,
+                            progress_value,
+                            {
+                                "message": "Voice cloning and reconstructing final audio",
+                                "cloned_segments": completed_clones,
+                                "total_segments": cloneable_count,
+                            },
+                            "dub",
+                        )
+                except Exception:
+                    # Best-effort progress update; ignore errors
+                    pass
+            
+            # Create segment info and save to JSON
+            segment_json = self._create_segment_info(
+                seg_id, i, start_ms, cloned_duration_ms, original_text, dubbed_text,
+                original_audio_path, cloned_audio_path, speaker_label, job_id, process_temp_dir
+            )
+            dubbed_segments.append(segment_json)
+        
+        return dubbed_segments
+    
+    def _create_segment_info(self, seg_id: str, segment_index: int, start_ms: int, cloned_duration_ms: int,
+                           original_text: str, dubbed_text: str, original_audio_path: str, 
+                           cloned_audio_path: str, speaker_label: str, job_id: str, process_temp_dir: str) -> dict:
+        """Create and save segment information JSON"""
+        info_filename = f"segment_{job_id}_{segment_index:03d}_info.json"
+        info_path = os.path.join(process_temp_dir, info_filename).replace('\\', '/')
+        
+        segment_json = {
+            "id": seg_id,
+            "segment_index": segment_index + 1,
+            "start": start_ms,
+            "end": start_ms + cloned_duration_ms,
+            "duration_ms": cloned_duration_ms,
+            "original_text": original_text,
+            "dubbed_text": dubbed_text,
+            "original_audio_file": f"segment_{segment_index:03d}.wav" if original_audio_path else None,
+            "cloned_audio_file": f"cloned_{job_id}_{segment_index:03d}.wav" if cloned_audio_path else None,
+            "voice_cloned": bool(cloned_audio_path),
+            "original_audio_path": original_audio_path,
+            "cloned_audio_path": cloned_audio_path,
+            "speaker_label": speaker_label,
+        }
+        
+        try:
+            with open(info_path, 'w', encoding='utf-8') as f:
+                json.dump(segment_json, f, ensure_ascii=False, indent=2)
+            logger.info(f"Saved segment info: {info_filename}")
+        except Exception as e:
+            logger.error(f"Failed to save JSON for {seg_id}: {str(e)}")
+        
+        return segment_json
+
+    def _download_segment_audios(self, manifest_override: Dict[str, Any], process_temp_dir: str) -> None:
+        """Download original segment audios from manifest URLs"""
+        for seg in manifest_override.get("segments", []):
+            url = seg.get("original_audio_url")
+            fname = seg.get("original_audio_file")
+            if url and fname:
+                try:
+                    import requests
+                    resp = requests.get(url, timeout=60)
+                    resp.raise_for_status()
+                    with open(os.path.join(process_temp_dir, fname), 'wb') as fw:
+                        fw.write(resp.content)
+                    logger.info(f"Downloaded segment audio: {fname}")
+                except Exception as e:
+                    logger.warning(f"Failed to download original segment {fname}: {e}")
+
+    def _generate_final_output(self, job_id: str, dubbed_segments: list, process_temp_dir: str, 
+                              target_language: str, audio_url: str, speakers_count: int, transcript_id: str) -> dict:
+        """Generate final audio, SRT file, and upload to R2"""
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 75, {"message": "Reconstructing final audio..."}, "dub")
+        logger.info("Reconstructing final audio...")
+        
+        # Reconstruct final audio
+        final_audio_path = self._reconstruct_final_audio(dubbed_segments, None, job_id=job_id, process_temp_dir=process_temp_dir)
+        
+        # Generate SRT file
+        subtitle_path = self._generate_srt_file(job_id, dubbed_segments, process_temp_dir)
+        
+        # Files are already in correct location from runpod download
+        
+        # Create process summary
+        self._create_process_summary(job_id, dubbed_segments, final_audio_path, subtitle_path, 
+                                   process_temp_dir, target_language, audio_url, speakers_count, transcript_id)
+        
+        # Upload to R2 and get results
+        return self._upload_and_finalize(job_id, process_temp_dir, final_audio_path)
+    
+    def _generate_srt_file(self, job_id: str, dubbed_segments: list, process_temp_dir: str) -> str:
+        """Generate SRT subtitle file"""
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 85, {"message": "Generating SRT file..."}, "dub")
+        logger.info("Generating SRT file...")
+        
+        from .video_processor import VideoProcessor
+        processor = VideoProcessor(temp_dir=process_temp_dir)
+        subtitle_data = []
+        
+        for seg in dubbed_segments:
+            text = seg["dubbed_text"]
+            start = seg["start"] / 1000.0
+            end = seg["end"] / 1000.0
+
+            # Use smart_chunk utility to create subtitle lines
+            chunks = smart_chunk(text, chunk_size=60, min_size=40)
+            total_chars = sum(len(c) for c in chunks) or 1
+
+            char_count_before = 0
+            for chunk in chunks:
+                chunk_len = len(chunk)
+                chunk_start = start + (end - start) * (char_count_before / total_chars)
+                char_count_before += chunk_len
+                chunk_end = start + (end - start) * (char_count_before / total_chars)
+                subtitle_data.append({"start": chunk_start, "end": min(chunk_end, end), "text": chunk})
+        
+        subtitle_path = os.path.join(process_temp_dir, f"subtitles_{job_id}.srt")
+        processor.create_srt_file(subtitle_data, subtitle_path)
+        logger.info(f"Subtitle file saved: {subtitle_path}")
+        return subtitle_path
+    
+    def _create_process_summary(self, job_id: str, dubbed_segments: list, final_audio_path: str, 
+                               subtitle_path: str, process_temp_dir: str, target_language: str, 
+                               audio_url: str, speakers_count: int, transcript_id: str) -> None:
+        """Create and save process summary JSON"""
+        # Check for instrument and vocal files
+        instrument_file = f"instruments_{job_id}.wav"
+        vocal_file = f"vocals_{job_id}.wav"
+        
+        if not os.path.exists(os.path.join(process_temp_dir, instrument_file)):
+            instrument_file = None
+            
+        if not os.path.exists(os.path.join(process_temp_dir, vocal_file)):
+            vocal_file = None
+        
+        process_summary = {
+            "success": True,
+            "job_id": job_id,
+            "segments_count": len(dubbed_segments),
+            "audio_url": audio_url,
+            "target_language": target_language,
+            "speakers_count": speakers_count,
+            "final_audio_file": os.path.basename(final_audio_path) if final_audio_path else None,
+            "subtitle_file": os.path.basename(subtitle_path) if subtitle_path else None,
+            "instrument_file": instrument_file,
+            "vocal_file": vocal_file,
+            "final_video_file": None,  # Video creation disabled
+            "processing_timestamp": int(time.time()),
+            "segments": dubbed_segments,
+            "transcript_id": transcript_id
+        }
+        
+        summary_filename = f"dubbing_process_summary_{job_id}.json"
+        summary_path = os.path.join(process_temp_dir, summary_filename).replace('\\', '/')
+        
+        try:
+            with open(summary_path, 'w', encoding='utf-8') as f:
+                json.dump(process_summary, f, ensure_ascii=False, indent=2)
+            logger.info(f"Process summary saved: {summary_filename}")
+        except Exception as e:
+            logger.error(f"Failed to save process summary: {str(e)}")
+    
+    def _upload_and_finalize(self, job_id: str, process_temp_dir: str, final_audio_path: str) -> dict:
+        """Upload files to R2 and return final results"""
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 90, {"message": "Uploading files to R2..."}, "dub")
+        
+        # Upload entire directory to R2
+        folder_upload_result = self.r2_storage.upload_directory(job_id, process_temp_dir)
+        
+        # Note: Vocal/instrument files use runpod URLs directly, no R2 upload needed
+        
+        # All files (including vocals/instruments) are available via folder_upload_result
+        
+        # Update progress
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 95, {"message": "Upload and finalization..."}, "dub")
+        logger.info("Dubbed processing completed successfully")
+        
+        # Do not remove temp dir here; caller handles cleanup after final status update
+        
+        return {
+            "success": True,
+            "job_id": job_id,
+            "result_url": None,  # No video result
+            "result_urls": {},
+            "folder_upload": folder_upload_result,
+            "video_upload": None,
+            "video_error": None
+        }
+    
+    # Removed specialized URL extraction; clients should use files list from folder_upload
+
+
+
     def _reconstruct_final_audio(self, segments: list, original_audio_path: str, job_id: str = None, process_temp_dir: str = None) -> str:
-        """Reconstruct final audio with transcript_id in filename"""
+        """Reconstruct final audio with transcript_id in filename.
+        If original_audio_path is missing, derive sample rate from first cloned segment or fallback to 44100 Hz.
+        """
         try:
             import soundfile as sf
             if not segments:
                 return None
-            if not original_audio_path or not os.path.exists(original_audio_path):
-                logger.error("Original audio file not found for reconstruction")
-                return None
-            audio, sample_rate = sf.read(original_audio_path)
-            if len(audio.shape) > 1:
-                audio = audio[:, 0]
+            sample_rate = None
+            base_dtype = np.float32
+            base_length = 0
+            if original_audio_path and os.path.exists(original_audio_path):
+                audio, sample_rate = sf.read(original_audio_path)
+                if len(audio.shape) > 1:
+                    audio = audio[:, 0]
+                base_dtype = audio.dtype if hasattr(audio, 'dtype') else np.float32
+                base_length = len(audio)
+            else:
+                # Try to get sample rate from first available cloned segment
+                for segment in segments:
+                    cloned_path = segment.get("cloned_audio_path")
+                    if cloned_path and os.path.exists(cloned_path):
+                        cloned_audio, sr = sf.read(cloned_path)
+                        sample_rate = sr
+                        base_dtype = cloned_audio.dtype if hasattr(cloned_audio, 'dtype') else np.float32
+                        break
+                if not sample_rate:
+                    sample_rate = 44100
             total_duration = int(max([s["end"] for s in segments]) / 1000.0 * sample_rate)
-            total_samples = max(total_duration, len(audio))
-            final_audio = np.zeros(total_samples, dtype=audio.dtype)
+            total_samples = max(total_duration, base_length)
+            final_audio = np.zeros(total_samples, dtype=base_dtype)
             for segment in segments:
                 cloned_path = segment["cloned_audio_path"]
                 if not cloned_path or not os.path.exists(cloned_path):
@@ -523,3 +771,13 @@ class SimpleDubbedAPI:
         except Exception as e:
             logger.error(f"Failed to reconstruct final audio: {str(e)}")
             return None
+
+
+def get_simple_dubbed_api() -> SimpleDubbedAPI:
+    """Get or create global SimpleDubbedAPI instance (thread-safe)"""
+    global _simple_dubbed_api_instance
+    if _simple_dubbed_api_instance is None:
+        with _api_lock:
+            if _simple_dubbed_api_instance is None:
+                _simple_dubbed_api_instance = SimpleDubbedAPI()
+    return _simple_dubbed_api_instance

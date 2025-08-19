@@ -11,6 +11,8 @@ separation_jobs_collection: AsyncIOMotorCollection = db.separation_jobs
 dub_jobs_collection: AsyncIOMotorCollection = db.dub_jobs
 users_collection: AsyncIOMotorCollection = db.users
 pricing_collection: AsyncIOMotorCollection = db.pricing
+upload_status_collection: AsyncIOMotorCollection = db.upload_status
+export_jobs_collection: AsyncIOMotorCollection = db.export_jobs
 
 async def verify_connection():
     try:
@@ -27,5 +29,7 @@ __all__ = [
     "dub_jobs_collection", 
     "users_collection", 
     "pricing_collection",
+    "upload_status_collection",
+    "export_jobs_collection",
     "verify_connection"
 ]

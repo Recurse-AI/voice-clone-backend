@@ -13,23 +13,68 @@ logger = logging.getLogger(__name__)
 
 class ExportJobManager:
     """
-    Manages export jobs with in-memory storage
-    In production, this should use Redis or a database
+    Manages export jobs with database storage for production safety.
+    Uses cache for performance + database for persistence.
     """
     
     def __init__(self):
-        self._jobs: Dict[str, ExportJob] = {}
+        self._jobs_cache: Dict[str, ExportJob] = {}
+        from app.config.database import db
+        self.collection = db.export_jobs
     
-    def create_job(self, export_data: Dict) -> ExportJob:
-        """Create a new export job"""
+    async def create_job(self, export_data: Dict) -> ExportJob:
+        """Create a new export job with database persistence"""
         job = ExportJob.create_new(export_data)
-        self._jobs[job.job_id] = job
+        
+        # Cache for fast access
+        self._jobs_cache[job.job_id] = job
+        
+        # Persist to database for cross-worker access
+        try:
+            job_dict = {
+                "job_id": job.job_id,
+                "status": job.status,
+                "progress": job.progress,
+                "created_at": job.created_at,
+                "export_data": job.export_data,
+                "processing_logs": job.processing_logs,
+                "download_url": job.download_url,
+                "error": job.error
+            }
+            await self.collection.insert_one(job_dict)
+        except Exception as e:
+            logger.warning(f"Failed to persist export job to database: {e}")
+        
         logger.info(f"Created export job {job.job_id}")
         return job
     
-    def get_job(self, job_id: str) -> Optional[ExportJob]:
-        """Get job by ID"""
-        return self._jobs.get(job_id)
+    async def get_job(self, job_id: str) -> Optional[ExportJob]:
+        """Get job by ID with cache + database fallback"""
+        # Check cache first
+        if job_id in self._jobs_cache:
+            return self._jobs_cache[job_id]
+        
+        # Fallback to database
+        try:
+            job_data = await self.collection.find_one({"job_id": job_id})
+            if job_data:
+                job = ExportJob(
+                    job_id=job_data["job_id"],
+                    status=job_data["status"],
+                    progress=job_data["progress"],
+                    created_at=job_data["created_at"],
+                    export_data=job_data["export_data"],
+                    processing_logs=job_data["processing_logs"],
+                    download_url=job_data.get("download_url"),
+                    error=job_data.get("error")
+                )
+                # Cache for future access
+                self._jobs_cache[job_id] = job
+                return job
+        except Exception as e:
+            logger.error(f"Failed to load export job from database: {e}")
+        
+        return None
     
     def update_status(self, job_id: str, status: str, progress: int = None):
         """Update job status and progress"""

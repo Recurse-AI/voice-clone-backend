@@ -26,10 +26,11 @@ from app.middleware.auth_middleware import AuthMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 
 from app.config.settings import settings
-from app.utils.r2_storage import R2Storage
-# Status management is now handled by individual services (dub_job_service, separation_job_service)
+# R2 Storage service - will be initialized in lifespan
+
+
 from app.utils.video_downloader import video_download_service
-from app.schemas import StatusResponse, ExportVideoRequest, ExportJobResponse, ExportStatusResponse, ProcessingLogs, AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, VideoDownloadRequest, VideoDownloadResponse, UploadStatusResponse, VideoDubRequest, VideoDubResponse, VideoDubStatusResponse, VoiceCloneRequest, VoiceCloneResponse
+from app.schemas import StatusResponse
 
 # Configure logging
 setup_logging()
@@ -47,27 +48,44 @@ async def lifespan(app: FastAPI):
     await verify_connection()
     await init_pricing_plans()
     
+    # Initialize database indexes for duplicate prevention (safe for multiple workers)
+    try:
+        from app.utils.init_db_indexes import init_database_indexes
+        await init_database_indexes()
+    except Exception as e:
+        logger.warning(f"Database indexes init failed (might be duplicate): {e}")
+    
     # Create temp directory
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
     
-    # Initialize Fish Speech service
+    # Cleanup old dubbing temp directories on startup
     try:
-        from app.services.dub.fish_speech_service import initialize_fish_speech
-        if initialize_fish_speech():
-            logger.info("✅ Fish Speech service initialized successfully")
-        else:
-            logger.warning("⚠️ Fish Speech service initialization failed")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize Fish Speech: {e}")
+        from app.utils.video_downloader import video_download_service
+        video_download_service.cleanup_old_files()
+        logger.info("🧹 Old dubbing temp directories cleaned up on startup")
+    except Exception as cleanup_error:
+        logger.warning(f"Failed to cleanup old directories on startup: {cleanup_error}")
+    
+    # Initialize Fish Speech service
+    # try:
+    #     from app.services.dub.fish_speech_service import initialize_fish_speech
+    #     if initialize_fish_speech():
+    #         logger.info("✅ Fish Speech service initialized successfully")
+    #     else:
+    #         logger.warning("⚠️ Fish Speech service initialization failed")
+    # except Exception as e:
+    #     logger.error(f"❌ Failed to initialize Fish Speech: {e}")
     
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     
-    # Start periodic cleanup task (runs every hour)
-    async def _cleanup_loop():
-        while True:
-            video_download_service.cleanup_old_files()
-            await asyncio.sleep(3600)
-    asyncio.create_task(_cleanup_loop())
+    # Initialize R2 service in lifespan
+    try:
+        from app.services.r2_service import get_r2_service, reset_r2_service
+        reset_r2_service()  # Clear any cached instance
+        r2_service = get_r2_service()  # Initialize with new service
+        logger.info("✅ R2 service initialized successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize R2 service: {e}")
     
     yield
     
@@ -81,6 +99,20 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Fish Speech service cleaned up")
     except Exception as e:
         logger.error(f"❌ Failed to cleanup Fish Speech: {e}")
+    
+    # Cleanup ThreadPoolExecutors
+    try:
+        from app.routes.video_processing import get_dub_executor
+        from app.routes.audio_processing import get_separation_executor
+        
+        dub_executor = get_dub_executor()
+        separation_executor = get_separation_executor()
+        
+        dub_executor.shutdown(wait=True)
+        separation_executor.shutdown(wait=True)
+        logger.info("✅ ThreadPoolExecutors cleaned up")
+    except Exception as e:
+        logger.error(f"❌ Failed to cleanup ThreadPoolExecutors: {e}")
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -118,7 +150,7 @@ app.include_router(video_processing_router, prefix="/api", tags=["video-processi
 app.include_router(user_jobs_router, prefix="/api/jobs", tags=["user-jobs"])
 
 # Global instances
-r2_storage = R2Storage()
+# R2Service is now handled by service utility
 
 @app.get("/", response_model=StatusResponse)
 async def root():
@@ -135,6 +167,6 @@ if __name__ == "__main__":
         "main:app",
         host=settings.HOST,
         port=settings.PORT,
-        workers=settings.WORKERS,
+        workers=1,  # Use single worker to avoid child process issues
         reload=False
     ) 

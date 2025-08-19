@@ -4,8 +4,8 @@ All hardcoded values should be defined here for maintainability and configurabil
 """
 
 # Processing Constants
-MAX_ATTEMPTS_DEFAULT = 180  # Default max attempts for background jobs (30 minutes with 10s intervals)
-POLLING_INTERVAL_SECONDS = 10  # Default polling interval for background jobs
+MAX_ATTEMPTS_DEFAULT = 90  # Default max attempts for background jobs (30 minutes with 20s intervals)
+POLLING_INTERVAL_SECONDS = 20  # Default polling interval for background jobs
 TIMEOUT_MINUTES = 30  # Default timeout for long-running jobs
 
 # Credit Calculation Constants  
@@ -58,7 +58,7 @@ MAX_THREAD_RETRY_ATTEMPTS = 3
 
 # Cache/Memory Constants
 SHARED_MEMORY_TTL_SECONDS = 3600  # 1 hour TTL for shared memory
-MAX_CONCURRENT_JOBS = 10  # Maximum concurrent processing jobs
+MAX_CONCURRENT_JOBS = 6  # Maximum concurrent processing jobs
 
 # Audio Processing Constants
 AUDIO_SAMPLE_RATE = 44100

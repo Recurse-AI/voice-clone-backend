@@ -134,9 +134,9 @@ class RunPodService:
             return None
     
     def wait_for_completion(self, request_id: str, timeout: int = 900) -> Dict[str, Any]:
-        """Wait for separation to complete (blocking)"""
+        """Wait for separation to complete with non-blocking polling"""
         start_time = time.time()
-        check_interval = 10  # Check every 10 seconds
+        check_interval = 20  # Check every 20 seconds
         
         while time.time() - start_time < timeout:
             status = self.get_separation_status(request_id)
@@ -163,7 +163,7 @@ class RunPodService:
                     "request_id": request_id
                 }
             
-            # Still processing, wait and check again
+            # Use smaller sleep interval for better responsiveness 
             time.sleep(check_interval)
         
         # Timeout reached

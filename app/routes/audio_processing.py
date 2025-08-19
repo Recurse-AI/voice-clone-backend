@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from fastapi.responses import JSONResponse
 import logging
 import os
@@ -14,6 +15,19 @@ from app.utils.logger import logger
 
 router = APIRouter()
 # logger = logging.getLogger(__name__)
+
+# Global ThreadPoolExecutor for separation processing
+_separation_executor = None
+_executor_lock = threading.Lock()
+
+def get_separation_executor():
+    """Get or create global ThreadPoolExecutor for separation processing"""
+    global _separation_executor
+    if _separation_executor is None:
+        with _executor_lock:
+            if _separation_executor is None:
+                _separation_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="separation_worker")
+    return _separation_executor
 
 def _update_separation_status_non_blocking(job_id: str, status: str, progress: int = None, **kwargs):
     """Update separation status using common utility"""
@@ -195,8 +209,8 @@ async def start_audio_separation(
         
         logger.info(f"---> local url {local_audio_path}")
         # Upload audio to R2 storage for separation processing
-        from app.utils.r2_storage import R2Storage
-        r2_storage = R2Storage()
+        from app.services.r2_service import get_r2_service
+        r2_service = get_r2_service()
         
         # Get original filename from upload data or fallback to local path basename
         original_filename = upload_data.get("original_filename", os.path.basename(local_audio_path))
@@ -205,7 +219,7 @@ async def start_audio_separation(
         audio_extension = os.path.splitext(original_filename)[1] if original_filename else ".wav"
         r2_audio_key = f"audio_separation/{job_id}/{original_filename}"
         
-        audio_upload_result = r2_storage.upload_file(local_audio_path, r2_audio_key)
+        audio_upload_result = r2_service.upload_file(local_audio_path, r2_audio_key)
         if not audio_upload_result.get("success"):
             raise HTTPException(status_code=500, detail=f"Audio upload failed: {audio_upload_result.get('error')}")
         
@@ -249,9 +263,9 @@ async def start_audio_separation(
         status = runpod_service.get_separation_status(runpod_request_id)
         queue_position = status.get("queue_position") if status else None
         
-        # Run separation monitoring in separate thread
-        thread = threading.Thread(target=process_audio_separation_background, args=(separation_job_id, runpod_request_id, user_id, request.duration), daemon=True)
-        thread.start()
+        # Run separation monitoring in ThreadPoolExecutor for better resource management
+        executor = get_separation_executor()
+        future = executor.submit(process_audio_separation_background, separation_job_id, runpod_request_id, user_id, request.duration)
         
         logger.info(f"Started audio separation job {separation_job_id} (RunPod: {runpod_request_id}) for user {user_id} (duration: {request.duration}s)")
         
@@ -283,11 +297,11 @@ async def voice_clone_segment(request: VoiceCloneRequest):
     4. Returns public URL of cloned audio.
     """
     try:
-        from app.utils.r2_storage import R2Storage
+        from app.services.r2_service import get_r2_service
         from app.config.settings import settings
         
-        r2_storage = R2Storage()
-        job_id = r2_storage.generate_job_id()
+        r2_service = get_r2_service()
+        job_id = r2_service.generate_job_id()
         job_dir = os.path.join(settings.TEMP_DIR, f"voice_clone_{job_id}")
         os.makedirs(job_dir, exist_ok=True)
 
@@ -326,8 +340,8 @@ async def voice_clone_segment(request: VoiceCloneRequest):
             f.write(result["audio_data"])
 
         # Upload to R2
-        r2_key = r2_storage.generate_file_path(job_id, "", f"{job_id}.wav")
-        upload_res = r2_storage.upload_file(cloned_path, r2_key, content_type="audio/wav")
+        r2_key = r2_service.generate_file_path(job_id, "", f"{job_id}.wav")
+        upload_res = r2_service.upload_file(cloned_path, r2_key, content_type="audio/wav")
 
         if not upload_res.get("success"):
             raise HTTPException(status_code=500, detail=upload_res.get("error", "Upload failed"))

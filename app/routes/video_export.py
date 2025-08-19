@@ -12,15 +12,15 @@ async def start_video_export(request: ExportVideoRequest, background_tasks: Back
         from app.services.export_video.job_manager import export_job_manager
         from app.services.export_video.background_processor import BackgroundProcessor
         from app.config.settings import settings
-        from app.utils.r2_storage import R2Storage
+        from app.services.r2_service import get_r2_service
         
-        r2_storage = R2Storage()
+        r2_service = get_r2_service()
         
         job = export_job_manager.create_job(request.dict())
         timeline_duration = request.timeline.get("duration", 0)
         estimated_duration = export_job_manager.estimate_duration(timeline_duration)
         
-        background_processor = BackgroundProcessor(settings, r2_storage)
+        background_processor = BackgroundProcessor(settings, r2_service)
         background_tasks.add_task(background_processor.process_video_export_background, job.job_id, request.dict())
         
         return ExportJobResponse(

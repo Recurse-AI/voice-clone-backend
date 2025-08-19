@@ -182,7 +182,8 @@ class VideoRenderer:
                 'ffmpeg', '-y',
                 '-i', video_path,
                 '-i', final_audio_path,
-                '-vf', f"subtitles='{subtitle_path}':force_style='Fontname=Arial-Bold,Fontsize=18,Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV=30'",
+                # Cross-platform path escaping for FFmpeg
+                '-vf', f"subtitles='{subtitle_path.replace(chr(92), '/').replace(':', chr(92)+':').replace(chr(39), chr(92)+chr(39))}':force_style='Fontname=Arial-Bold,Fontsize=18,Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV=30'",
                 '-c:v', 'libx264',
                 '-preset', 'medium',
                 '-b:v', '2000k',  # Default - should be updated to use settings
@@ -345,8 +346,10 @@ class VideoRenderer:
             # Add subtitle filter if provided
             if subtitle_path:
                 next_ref = "final"
+                # Cross-platform path escaping for subtitle filter
+                subtitle_path_escaped = subtitle_path.replace('\\', '/').replace(':', '\\:').replace("'", "\\'")
                 subtitle_filter = (
-                    f"[{last_video_ref}]subtitles='{subtitle_path}':force_style="
+                    f"[{last_video_ref}]subtitles='{subtitle_path_escaped}':force_style="
                     f"'Fontname=Arial-Bold,Fontsize=18,Bold=1,PrimaryColour=&H00ffffff,"
                     f"OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV=30'[{next_ref}]"
                 )

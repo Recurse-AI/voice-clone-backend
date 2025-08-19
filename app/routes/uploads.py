@@ -13,11 +13,11 @@ logger = logging.getLogger(__name__)
 @router.post("/upload-file")
 async def upload_file(video_file: UploadFile = File(...), background_tasks: BackgroundTasks = BackgroundTasks()):
     """Upload media file (video/audio) with background processing"""
-    from app.utils.r2_storage import R2Storage
+    from app.services.r2_service import get_r2_service
     from app.config.settings import settings
     
-    r2_storage = R2Storage()
-    job_id = r2_storage.generate_job_id()
+    r2_service = get_r2_service()
+    job_id = r2_service.generate_job_id()
     original_filename = video_file.filename
     try:
         # Change: save as tmp/voice_cloning/dub_{job_id}/{original_filename}
@@ -38,7 +38,7 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
                 total_size += len(chunk)
         file_size = os.path.getsize(temp_file_path)
         update_upload_status(job_id, {
-            "progress": 15,
+            "progress": 8,
             "message": f"File saved ({file_size // (1024*1024)} MB), starting background processing..."
         })
         background_tasks.add_task(process_file_background_only, job_id, temp_file_path, original_filename, file_size)
@@ -52,18 +52,23 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
             "estimated_time": "2-10 minutes"
         }
     except Exception as e:
-        job_dir = os.path.join(settings.TEMP_DIR, f"dub_{job_id}")
-        temp_file_path = os.path.join(job_dir, original_filename)
-        if os.path.exists(temp_file_path):
-            os.remove(temp_file_path)
-        if job_exists(job_id):
-            update_upload_status(job_id, {
-                "status": "failed",
-                "progress": 0,
-                "message": f"File save failed: {str(e)}"
-            })
-        from app.services.dub.audio_utils import AudioUtils
-        AudioUtils.remove_temp_dir(folder_path=job_dir)
+        # Cleanup on error
+        try:
+            job_dir = os.path.join(settings.TEMP_DIR, f"dub_{job_id}")
+            temp_file_path = os.path.join(job_dir, original_filename)
+            if os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            if job_exists(job_id):
+                update_upload_status(job_id, {
+                    "status": "failed",
+                    "progress": 0,
+                    "message": f"File save failed: {str(e)}"
+                })
+            from app.services.dub.audio_utils import AudioUtils
+            AudioUtils.remove_temp_dir(folder_path=job_dir)
+        except Exception as cleanup_error:
+            logging.error(f"Error during cleanup: {cleanup_error}")
+        
         raise HTTPException(status_code=500, detail=f"Failed to start upload: {str(e)}")
 
 # --- Background process for upload ---
@@ -72,7 +77,7 @@ async def process_file_background_only(job_id: str, temp_file_path: str, filenam
     job_dir = os.path.dirname(temp_file_path)
     try:
         update_upload_status(job_id, {
-            "progress": 20, 
+            "progress": 9, 
             "message": "Validating uploaded file...",
             "status": "uploading"
         })
@@ -80,7 +85,7 @@ async def process_file_background_only(job_id: str, temp_file_path: str, filenam
             raise Exception("Temporary file not found")
         if file_size == 0:
             raise Exception("Uploaded file is empty")
-        update_upload_status(job_id, {"progress": 30, "message": "Checking file format...", "status": "uploading"})
+        update_upload_status(job_id, {"progress": 9, "message": "Checking file format...", "status": "uploading"})
         
         # Import audio formats from settings
         from app.config.settings import settings
@@ -102,8 +107,8 @@ async def process_file_background_only(job_id: str, temp_file_path: str, filenam
             AudioUtils.remove_temp_dir(folder_path=job_dir)
             return
         update_upload_status(job_id, {
-            "progress": 100,
-            "message": "Media file saved locally.",
+            "progress": 10,
+            "message": "File uploaded successfully. You can now start dubbing.",
             "status": "done",
             "file_url": temp_file_path
         })

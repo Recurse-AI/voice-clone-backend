@@ -74,9 +74,42 @@ class SyncDBOperations:
             sync_db = sync_client[settings.DB_NAME]
             sync_collection = sync_db.dub_jobs
             
+            # Read current job to apply monotonic progress clamp
+            current_doc = sync_collection.find_one({"job_id": job_id}, {"progress": 1, "status": 1}) or {}
+            current_progress = current_doc.get("progress")
+
+            # Monotonic progress: never decrease progress, with sensible floors per status
+            adjusted_progress = progress
+            try:
+                if status == 'completed':
+                    adjusted_progress = 100
+                elif status == 'awaiting_review':
+                    # Ensure at least 75, but never less than current
+                    min_review_progress = 75
+                    adjusted_progress = max(min_review_progress, (progress if progress is not None else min_review_progress))
+                    if isinstance(current_progress, int):
+                        adjusted_progress = max(current_progress, adjusted_progress)
+                elif status == 'reviewing':
+                    # Ensure at least 80, but never less than current
+                    min_reviewing_progress = 80
+                    adjusted_progress = max(min_reviewing_progress, (progress if progress is not None else min_reviewing_progress))
+                    if isinstance(current_progress, int):
+                        adjusted_progress = max(current_progress, adjusted_progress)
+                elif status in ['failed']:
+                    # Keep current progress to avoid backward jumps; status conveys failure
+                    if isinstance(current_progress, int):
+                        adjusted_progress = max(current_progress, (progress if progress is not None else current_progress))
+                else:
+                    # Default: clamp to never go backwards
+                    if isinstance(current_progress, int) and progress is not None:
+                        adjusted_progress = max(current_progress, progress)
+            except Exception:
+                # If any issue in adjustment, fall back to provided progress
+                adjusted_progress = progress
+
             update_data = {
                 "status": status,
-                "progress": progress,
+                "progress": adjusted_progress,
                 "updated_at": datetime.now(timezone.utc)
             }
             
@@ -92,16 +125,58 @@ class SyncDBOperations:
             # Add details
             if details:
                 update_data["details"] = details
+                
+                # Extract manifest fields from details to top-level fields for easier access
+                if "segments_manifest_url" in details:
+                    update_data["segments_manifest_url"] = details["segments_manifest_url"]
+                if "segments_manifest_key" in details:
+                    update_data["segments_manifest_key"] = details["segments_manifest_key"]
+                if "segments_count" in details:
+                    update_data["segments_count"] = details["segments_count"]
+                if "transcript_id" in details:
+                    update_data["transcript_id"] = details["transcript_id"]
+                if "review_required" in details:
+                    update_data["review_required"] = details["review_required"]
+                if "review_status" in details:
+                    update_data["review_status"] = details["review_status"]
+                if "edited_segments_version" in details:
+                    update_data["edited_segments_version"] = details["edited_segments_version"]
+            
+            # Use $set with $currentDate for atomic timestamp update
+            # and add version check to prevent race conditions
+            update_query = {"job_id": job_id}
+            
+            # For critical status transitions, ensure we're not overwriting newer status
+            if status in ['awaiting_review', 'reviewing', 'completed', 'failed']:
+                current_status = current_doc.get("status")
+                
+                # Prevent backwards status transitions (except explicit overrides)
+                status_hierarchy = {
+                    'pending': 0, 'downloading': 1, 'separating': 2, 'transcribing': 3,
+                    'processing': 4, 'awaiting_review': 5, 'reviewing': 6, 
+                    'completed': 7, 'failed': 7  # failed and completed are terminal
+                }
+                
+                current_level = status_hierarchy.get(current_status, 0)
+                new_level = status_hierarchy.get(status, 0)
+                
+                # Allow backwards transition only for specific valid cases
+                if current_level > new_level and not (
+                    current_status == 'reviewing' and status == 'awaiting_review'  # Allow re-review
+                ):
+                    logger.warning(f"Prevented backwards status transition for {job_id}: {current_status} -> {status}")
+                    sync_client.close()
+                    return False
             
             result = sync_collection.update_one(
-                {"job_id": job_id},
+                update_query,
                 {"$set": update_data}
             )
             
             sync_client.close()
             
             if result.modified_count > 0:
-                logger.info(f"Updated dub job {job_id}: {status} ({progress}%)")
+                logger.info(f"Updated dub job {job_id}: {status} ({adjusted_progress}%)")
                 return True
             else:
                 logger.warning(f"No documents updated for dub job {job_id}")
