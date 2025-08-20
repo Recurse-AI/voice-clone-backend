@@ -17,71 +17,22 @@ from openai import OpenAI
 
 from app.config.settings import settings
 from .audio_utils import AudioUtils
+from app.services.language_service import language_service
 
 logger = logging.getLogger(__name__)
 
 class TranscriptionService:
     """Enhanced transcription service with speaker diarization"""
 
-    # Mapping of common language names to ISO 639-1 codes accepted by AssemblyAI
-    LANGUAGE_NAME_TO_CODE = {
-        # Generic / global
-        "auto detect": None,
-        "arabic": "ar",
-        "azerbaijani": "az",
-        "chinese": "zh",
-        "czech": "cs",
-        "danish": "da",
-        "dutch": "nl",
-        "english": "en",
-        "english_global": "en",
-        "english_us": "en-us",
-        "english_au": "en-au",
-        "english_uk": "en",
-        "finnish": "fi",
-        "french": "fr",
-        "german": "de",
-        "hebrew": "he",
-        "hindi": "hi",
-        "hungarian": "hu",
-        "indonesian": "id",
-        "italian": "it",
-        "japanese": "ja",
-        "korean": "ko",
-        "norwegian": "no",
-        "polish": "pl",
-        "portuguese": "pt",
-        "romanian": "ro",
-        "russian": "ru",
-        "spanish": "es",
-        "swedish": "sv",
-        "turkish": "tr",
-        "ukrainian": "uk",
-        "vietnamese": "vi",
-    }
+    # Using centralized language service (removed duplicate mapping)
 
     @classmethod
     def _normalize_language_code(cls, language: Optional[str]) -> Optional[str]:
         """
         Convert a human-readable language name to a valid AssemblyAI ISO code.
-        If the given language is already a 2-letter code, it is returned in lower-case.
+        Uses centralized language service for consistency.
         """
-        if not language:
-            return None
-        language = language.strip()
-        # If already a 2-letter ISO code, return lower-case.
-        if len(language) == 2 and language.isalpha():
-            return language.lower()
-
-        # If provided in pattern like en-US or en_US, map to 2-letter base code when possible.
-        if (len(language) == 5 or len(language) == 5) and ("-" in language or "_" in language):
-            base = language.split("-" if "-" in language else "_")[0].lower()
-            # If base code is supported, use it; otherwise fall back to None for auto-detect.
-            if base in cls.LANGUAGE_NAME_TO_CODE.values():
-                return base
-            return None
-
-        return cls.LANGUAGE_NAME_TO_CODE.get(language.lower())
+        return language_service.get_language_code_for_transcription(language)
     
     def __init__(self):
         self.openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
@@ -142,7 +93,7 @@ class TranscriptionService:
                 
                 # Update progress
                 self._update_transcription_progress(audio_id, elapsed)
-                time.sleep(5)  # Check every 5 seconds
+                time.sleep(20)  # Check every 20 seconds
                 transcript = transcriber.get_transcript(transcript.id)
             
             if transcript.status == aai.TranscriptStatus.error:
@@ -172,9 +123,17 @@ class TranscriptionService:
         try:
             logger.info(f"Starting paragraph extraction and audio splitting for audio: {audio_url}")
             
+            # Better URL validation and filename extraction
+            if not audio_url or not audio_url.startswith(('http://', 'https://')):
+                raise Exception(f"Invalid audio URL: {audio_url}")
+            
             # Download audio file first
             audio_filename = audio_url.split('/')[-1]
-            if not audio_filename.endswith('.wav'):
+            # Remove query parameters if any
+            audio_filename = audio_filename.split('?')[0]
+            if not audio_filename or not audio_filename.strip():
+                audio_filename = f"audio_{int(time.time())}.wav"
+            elif not audio_filename.endswith(('.wav', '.mp3', '.m4a', '.flac', '.aac')):
                 audio_filename = f"{audio_filename}.wav"
             
             # Store downloaded audio inside the provided output directory (or TEMP_DIR if None)
@@ -293,7 +252,7 @@ class TranscriptionService:
                 elapsed = time.time() - start_time
                 if elapsed > 300:  # 5 minute timeout
                     raise Exception("Transcription timeout")
-                time.sleep(3)
+                time.sleep(20)
                 transcript = transcriber.get_transcript(transcript.id)
             
             if transcript.status != aai.TranscriptStatus.completed:

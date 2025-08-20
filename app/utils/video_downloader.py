@@ -14,7 +14,7 @@ from app.services.export_video.constants import (
     PLATFORM_VIDEO_QUALITY,
 )
 from app.config.settings import settings
-from app.utils.r2_storage import R2Storage
+from app.services.r2_service import get_r2_service
 from app.utils.shared_memory import set_upload_status, update_upload_status
 
 logger = logging.getLogger(__name__)
@@ -31,8 +31,15 @@ class VideoDownloadService:
     """
 
     def __init__(self) -> None:
-        # Re-use the same ID generator used elsewhere for a consistent format
-        self.r2_storage = R2Storage()
+        # R2Service will be initialized lazily when needed
+        self._r2_service = None
+    
+    @property
+    def r2_service(self):
+        """Get R2Service instance with lazy initialization"""
+        if self._r2_service is None:
+            self._r2_service = get_r2_service()
+        return self._r2_service
 
     # ---------------------------------------------------------------------
     # Helper utilities
@@ -56,7 +63,7 @@ class VideoDownloadService:
             # than our hardcoded list
 
             # Generate a unique job ID and matching storage directory
-            job_id = self.r2_storage.generate_job_id()
+            job_id = self.r2_service.generate_job_id()
             job_dir = Path(settings.TEMP_DIR) / f"dub_{job_id}"
             job_dir.mkdir(parents=True, exist_ok=True)
 

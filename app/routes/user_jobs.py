@@ -61,6 +61,9 @@ async def get_user_separations(
         
         jobs, total_count = await separation_job_service.get_user_jobs(str(user_id), page, limit)
         
+        # Get job statistics
+        statistics = await separation_job_service.get_user_job_statistics(str(user_id))
+        
         # Convert to response format
         user_jobs = []
         pending_jobs_count = 0
@@ -98,7 +101,9 @@ async def get_user_separations(
             total=total_count,
             page=page,
             limit=actual_limit,
-            total_pages=total_pages
+            total_pages=total_pages,
+            total_completed=statistics["completed"],
+            total_processing=statistics["processing"]
         )
         
     except HTTPException:
@@ -171,6 +176,9 @@ async def get_user_dubs(
         
         jobs, total_count = await dub_job_service.get_user_jobs(str(user_id), page, limit)
         
+        # Get job statistics
+        statistics = await dub_job_service.get_user_job_statistics(str(user_id))
+        
         # Format jobs using service
         user_jobs = job_response_service.format_dub_jobs(jobs)
         
@@ -185,7 +193,9 @@ async def get_user_dubs(
             total=total_count,
             page=page,
             limit=actual_limit,
-            total_pages=total_pages
+            total_pages=total_pages,
+            total_completed=statistics["completed"],
+            total_processing=statistics["processing"]
         )
         
     except HTTPException:

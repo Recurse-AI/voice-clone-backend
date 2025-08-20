@@ -21,6 +21,8 @@ class ProcessingStatus(Enum):
     UPLOADING = "uploading"
     COMPLETED = "completed"
     FAILED = "failed"
+    AWAITING_REVIEW = "awaiting_review"
+    REVIEWING = "reviewing"
 
 
 class StatusManager:
@@ -34,7 +36,10 @@ class StatusManager:
         self.final_states = {"completed", "failed"}
         
         # Processing states that use local cache
-        self.processing_states = {"pending", "downloading", "separating", "transcribing", "processing", "uploading"}
+        self.processing_states = {
+            "pending", "downloading", "separating", "transcribing",
+            "processing", "uploading", "awaiting_review", "reviewing"
+        }
     
     def _get_status_message(self, status: ProcessingStatus) -> str:
         """Get status message"""
@@ -46,7 +51,9 @@ class StatusManager:
             ProcessingStatus.PROCESSING: "Processing audio and video...",
             ProcessingStatus.UPLOADING: "Uploading results...",
             ProcessingStatus.COMPLETED: "Processing completed successfully",
-            ProcessingStatus.FAILED: "Processing failed"
+            ProcessingStatus.FAILED: "Processing failed",
+            ProcessingStatus.AWAITING_REVIEW: "Awaiting human review...",
+            ProcessingStatus.REVIEWING: "Applying human edits..."
         }
         return messages.get(status, "Unknown status")
     

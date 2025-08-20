@@ -10,6 +10,7 @@ import sys
 import torch
 import logging
 import numpy as np
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, Generator, Union
 
@@ -215,14 +216,17 @@ class FishSpeechService:
 
 # Global service instance
 fish_speech_service = None
+_service_lock = threading.Lock()
 
 
 def get_fish_speech_service() -> FishSpeechService:
-    """Get or create global Fish Speech service instance"""
+    """Get or create global Fish Speech service instance (thread-safe)"""
     global fish_speech_service
     
     if fish_speech_service is None:
-        fish_speech_service = FishSpeechService()
+        with _service_lock:
+            if fish_speech_service is None:
+                fish_speech_service = FishSpeechService()
     
     return fish_speech_service
 

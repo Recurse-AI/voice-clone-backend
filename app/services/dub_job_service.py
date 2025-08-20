@@ -2,36 +2,34 @@ import logging
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime, timezone
 from bson import ObjectId
+
 from app.models.dub_job import DubJob
 from app.config.database import dub_jobs_collection
-from app.config.constants import MAX_QUERY_LIMIT
+from app.config.constants import DEFAULT_QUERY_LIMIT, MAX_QUERY_LIMIT
+from app.services.base_job_service import BaseJobService
 
 logger = logging.getLogger(__name__)
 
-class DubJobService:
-    """Service for managing dub jobs in MongoDB"""
+
+class DubJobService(BaseJobService[DubJob]):
+    """
+    Service for managing dub jobs in MongoDB.
+    Inherits duplicate prevention and common operations from BaseJobService.
+    """
     
     def __init__(self):
-        self.collection = dub_jobs_collection
+        super().__init__(dub_jobs_collection)
+    
+    def _create_job_model(self, job_data: Dict[str, Any]) -> DubJob:
+        """Create DubJob model instance from data"""
+        return DubJob(**job_data)
     
     async def create_job(self, job_data: Dict[str, Any]) -> Optional[DubJob]:
-        """Create a new dub job"""
-        try:
-            dub_job = DubJob(**job_data)
-            
-            # Convert to dict for MongoDB
-            job_dict = dub_job.dict(exclude={'id'})
-            
-            # Insert into database
-            result = await self.collection.insert_one(job_dict)
-            dub_job.id = str(result.inserted_id)
-            
-            logger.info(f"Created dub job: {dub_job.job_id}")
-            return dub_job
-            
-        except Exception as e:
-            logger.error(f"Failed to create dub job: {e}")
-            return None
+        """
+        Create a new dub job with duplicate prevention.
+        Uses BaseJobService for comprehensive safety.
+        """
+        return await self.create_job_safe(job_data)
     
     async def get_job(self, job_id: str) -> Optional[DubJob]:
         """Get dub job by job_id"""
@@ -48,38 +46,15 @@ class DubJobService:
             return None
     
     async def update_job_status(self, job_id: str, status: str, progress: int = None, **kwargs) -> bool:
-        """Update job status and progress"""
-        try:
-            update_data = {
-                "status": status,
-                "updated_at": datetime.now(timezone.utc)
-            }
-            
-            if progress is not None:
-                update_data["progress"] = progress
-                
-            # Set timestamps based on status
-            if status in ['downloading', 'processing'] and not await self._has_started(job_id):
-                update_data["started_at"] = datetime.now(timezone.utc)
-            elif status in ['completed', 'failed']:
-                update_data["completed_at"] = datetime.now(timezone.utc)
-            
-            # Add additional fields
-            update_data.update(kwargs)
-            
-            result = await self.collection.update_one(
-                {"job_id": job_id},
-                {"$set": update_data}
-            )
-            
-            success = result.modified_count > 0
-            if success:
-                logger.info(f"Updated dub job {job_id}: {status} ({progress}%)")
-            return success
-            
-        except Exception as e:
-            logger.error(f"Failed to update dub job {job_id}: {e}")
-            return False
+        """Update job status and progress with automatic timestamp handling"""
+        # Add timestamp fields based on status
+        if status in ['downloading', 'processing'] and not await self._has_started(job_id):
+            kwargs["started_at"] = datetime.now(timezone.utc)
+        elif status in ['completed', 'failed']:
+            kwargs["completed_at"] = datetime.now(timezone.utc)
+        
+        # Use base class method for consistent handling
+        return await self.update_job_status_safe(job_id, status, progress, **kwargs)
     
     async def _has_started(self, job_id: str) -> bool:
         """Check if job has started_at timestamp"""
@@ -121,6 +96,36 @@ class DubJobService:
         except Exception as e:
             logger.error(f"Failed to get user dub jobs: {e}")
             return [], 0
+    
+    async def get_user_job_statistics(self, user_id: str) -> dict:
+        """Get job statistics for a user"""
+        try:
+            query_filter = {"user_id": user_id}
+            
+            # Get total count
+            total_count = await self.collection.count_documents(query_filter)
+            
+            # Get completed count
+            completed_count = await self.collection.count_documents({
+                **query_filter,
+                "status": "completed"
+            })
+            
+            # Get processing count (pending, downloading, separating, transcribing, processing, uploading, awaiting_review, reviewing statuses)
+            processing_count = await self.collection.count_documents({
+                **query_filter,
+                "status": {"$in": ["pending", "downloading", "separating", "transcribing", "processing", "uploading", "awaiting_review", "reviewing"]}
+            })
+            
+            return {
+                "total": total_count,
+                "completed": completed_count,
+                "processing": processing_count
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get user dub job statistics: {e}")
+            return {"total": 0, "completed": 0, "processing": 0}
     
     async def get_jobs_by_status(self, status: str, limit: int = 100) -> List[DubJob]:
         """Get jobs by status (for monitoring/cleanup)"""

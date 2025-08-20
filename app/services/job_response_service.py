@@ -52,11 +52,34 @@ class JobResponseService:
                 file_info = FileInfo(
                     filename=filename,
                     url=upload_data.get("url"),
-                    size=upload_data.get("file_size"),
+                    # Prefer 'file_size' but fallback to 'size' (R2Service returns 'size')
+                    size=upload_data.get("file_size") if upload_data.get("file_size") is not None else upload_data.get("size"),
                     type=JobResponseService._get_file_type(filename)
                 )
                 files_info.append(file_info)
         
+        # Backward-compat: include older-style instrument/vocal URLs if present in details
+        try:
+            # Build a set of existing filenames for de-duplication
+            existing_names = set(f.filename for f in files_info)
+            # Older jobs may have saved direct URLs in details
+            if job.details.get("vocal_url") and f"vocals_{job.job_id}.wav" not in existing_names:
+                files_info.append(FileInfo(
+                    filename=f"vocals_{job.job_id}.wav",
+                    url=job.details.get("vocal_url"),
+                    size=None,
+                    type='audio'
+                ))
+            if job.details.get("instrument_url") and f"instruments_{job.job_id}.wav" not in existing_names:
+                files_info.append(FileInfo(
+                    filename=f"instruments_{job.job_id}.wav",
+                    url=job.details.get("instrument_url"),
+                    size=None,
+                    type='audio'
+                ))
+        except Exception:
+            pass
+
         # Sort files by type and name for better organization
         if files_info:
             files_info.sort(key=lambda x: (x.type, x.filename))
@@ -75,8 +98,6 @@ class JobResponseService:
             target_language=job.target_language,
             source_video_language=job.source_video_language,
             expected_speaker=job.expected_speaker,
-            subtitle=job.subtitle,
-            instrument=job.instrument,
             result_url=JobResponseService._extract_result_url(job),
             files=JobResponseService._extract_files_info(job),
             error=job.error,
