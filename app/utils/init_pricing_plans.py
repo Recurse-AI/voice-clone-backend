@@ -1,12 +1,12 @@
 from typing import List
 from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from app.models.pricing import Pricing  # adjust this import path as needed
+from app.models.pricing import Pricing  
 from app.utils.logger import logger
 from app.config.database import db
 
 async def init_pricing_plans():
-    collection = db.get_collection("pricings")
+    collection = db["pricings"]
 
     existing_plans = await collection.count_documents({})
     if existing_plans > 0:
@@ -15,136 +15,104 @@ async def init_pricing_plans():
 
     pricing_plans: List[dict] = [
         {
-            "name": "registered",
-            "description": "Ideal for regular users who need more processing time and better features",
+            "name": "small",
+            "description": "Perfect for small projects",
             "features": [
-                "25 minutes of total processing time",
-                "High-quality audio output",
-                "Extended file format support (MP3, WAV, FLAC, M4A)",
-                "Priority email support",
-                "No ads",
-                "Batch processing (up to 3 files)",
-                "Processing history and management"
+                "150 credits",
+                "All basic features",
+                "Priority support",
+                "Extended format support",
+                "20% savings on credits"
             ],
-            "isFree": True,
-            "freeCreditGift": 0,
-            "creditBased": False,
-            "limits": {
-                "maxDuration": 25,
-                "maxFileSize": 250,
-                "maxConcurrentJobs": 2,
-                "requiresCaptcha": False,
-                "showsAds": False,
-                "priority": "medium",
-                "batchProcessing": True
+            "creditPack": {
+                "name": "Small",
+                "credits": 150,
+                "originalPrice": 6.00,
+                "discountedPrice": 5.00,
+                "pricePerCredit": 0.033,
+                "savingsPercentage": 20,
+                "stripePriceId": "price_small_pack"
             },
-            "outputFormats": ["mp3", "wav", "flac", "m4a"],
+            "isActive": True,
+            "displayOrder": 1,
+            "createdAt": datetime.now(),
+            "updatedAt": datetime.now()
+        },
+        {
+            "name": "medium",
+            "description": "Most popular choice for regular users",
+            "features": [
+                "350 credits",
+                "All features included",
+                "Priority support",
+                "Batch processing",
+                "40% savings on credits",
+                "Extended file format support"
+            ],
+            "creditPack": {
+                "name": "Medium",
+                "credits": 350,
+                "originalPrice": 14.00,
+                "discountedPrice": 10.00,
+                "pricePerCredit": 0.028,
+                "savingsPercentage": 40,
+                "stripePriceId": "price_medium_pack"
+            },
             "isActive": True,
             "displayOrder": 2,
-            "createdAt": datetime.now(timezone.utc),
-            "updatedAt": datetime.now(timezone.utc)
+            "createdAt": datetime.now(),
+            "updatedAt": datetime.now()
         },
         {
-            "name": "starter",
-            "description": "Perfect for users who need more than free but not full premium",
+            "name": "special",
+            "description": "Best value for regular users",
             "features": [
-                "500 credits (≈ 8+ hours processing)",
-                "Premium audio quality",
-                "Priority processing queue",
-                "Credits never expire",
-                "All file formats supported",
-                "Email support"
+                "850 credits",
+                "All premium features",
+                "Priority support",
+                "Advanced batch processing",
+                "70% savings on credits",
+                "Priority processing queue"
             ],
-            "isFree": False,
-            "creditBased": True,
-            "creditsPerMinute": 1,
-            "pricing": {
-                "basePackage": {
-                    "price": 20.00,
-                    "credits": 500
-                }
+            "creditPack": {
+                "name": "Special",
+                "credits": 850,
+                "originalPrice": 34.00,
+                "discountedPrice": 20.00,
+                "pricePerCredit": 0.023,
+                "savingsPercentage": 70,
+                "stripePriceId": "price_special_pack"
             },
-            "stripePriceIds": {
-                "basePackage": "price_starter_20_credits"
-            },
-            "limits": {
-                "maxFileSize": 500,
-                "maxConcurrentJobs": 3,
-                "requiresCaptcha": False,
-                "showsAds": False,
-                "priority": "high",
-                "batchProcessing": True,
-                "fullApiAccess": True
-            },
-            "outputFormats": ["mp3", "wav", "flac", "m4a", "aac"],
-            "isActive": True,
-            "displayOrder": 4,
-            "createdAt": datetime.now(timezone.utc),
-            "updatedAt": datetime.now(timezone.utc)
-        },
-        {
-            "name": "premium",
-            "description": "Best for professionals and heavy users with unlimited access and premium features",
-            "features": [
-                "Pay-per-use credit system (1 credit = 1 minute)",
-                "Premium audio quality with AI enhancement",
-                "All file formats supported",
-                "Priority processing queue",
-                "24/7 priority support",
-                "Advanced AI models and separation algorithms",
-                "API access for automation",
-                "Custom output formats and settings",
-                "Credits never expire",
-                "Bulk processing discounts"
-            ],
-            "isFree": False,
-            "creditBased": True,
-            "creditsPerMinute": 1,
-            "pricing": {
-                "creditPacks": [
-                    {"credits": 25, "price": 1.00, "discountPercentage": 0},
-                    {"credits": 250, "price": 9.00, "discountPercentage": 10},
-                    {"credits": 500, "price": 20.00, "discountPercentage": 0},
-                    {"credits": 625, "price": 20.00, "discountPercentage": 20},
-                    {"credits": 1250, "price": 37.50, "discountPercentage": 25},
-                    {"credits": 2500, "price": 70.00, "discountPercentage": 30},
-                    {"credits": 5000, "price": 130.00, "discountPercentage": 35}
-                ],
-                "basePackage": {
-                    "price": 1.00,
-                    "credits": 25
-                },
-                "customCredits": {
-                    "minPrice": 100.00,
-                    "minCredits": 2500,
-                    "pricePerCredit": 0.04
-                }
-            },
-            "stripePriceIds": {
-                "creditPack25": "price_premium_25_credits",
-                "creditPack250": "price_premium_250_credits",
-                "creditPack500": "price_premium_500_credits",
-                "creditPack625": "price_premium_625_credits",
-                "creditPack1250": "price_premium_1250_credits",
-                "creditPack2500": "price_premium_2500_credits",
-                "creditPack5000": "price_premium_5000_credits",
-                "customCredits": "price_premium_custom_credits"
-            },
-            "limits": {
-                "maxFileSize": 1000,
-                "maxConcurrentJobs": 10,
-                "requiresCaptcha": False,
-                "showsAds": False,
-                "priority": "high",
-                "hasLimitedApiAccess": False,
-                "batchProcessing": True,
-                "fullApiAccess": True
-            },
-            "outputFormats": ["mp3", "wav", "flac", "m4a", "aiff", "ogg"],
             "isActive": True,
             "displayOrder": 3,
-            "createdAt": datetime.now(timezone.utc),
-            "updatedAt": datetime.now(timezone.utc)
+            "createdAt": datetime.now(),
+            "updatedAt": datetime.now()
+        },
+        {
+            "name": "limited",
+            "description": "Best savings for power users",
+            "features": [
+                "1800 credits",
+                "All premium features",
+                "Priority support",
+                "Advanced batch processing",
+                "85% savings on credits",
+                "Highest priority queue",
+                "Dedicated account manager"
+            ],
+            "creditPack": {
+                "name": "Limited",
+                "credits": 1850,
+                "originalPrice": 72.00,
+                "discountedPrice": 40.00,
+                "pricePerCredit": 0.02,
+                "savingsPercentage": 85,
+                "stripePriceId": "price_limited_pack"
+            },
+            "isActive": True,
+            "displayOrder": 4,
+            "createdAt": datetime.now(),
+            "updatedAt": datetime.now()
         }
     ]
 
@@ -160,4 +128,3 @@ async def init_pricing_plans():
             logger.error(f"Failed to upsert pricing plan {plan['name']}: {e}")
 
     logger.info("Successfully initialized pricing plans")
-

@@ -11,6 +11,7 @@ separation_jobs_collection: AsyncIOMotorCollection = db.separation_jobs
 dub_jobs_collection: AsyncIOMotorCollection = db.dub_jobs
 users_collection: AsyncIOMotorCollection = db.users
 pricing_collection: AsyncIOMotorCollection = db.pricing
+transaction_collection: AsyncIOMotorCollection = db.creditTransaction
 upload_status_collection: AsyncIOMotorCollection = db.upload_status
 export_jobs_collection: AsyncIOMotorCollection = db.export_jobs
 
@@ -21,6 +22,17 @@ async def verify_connection():
     except Exception as e:
         logger.info(f"MongoDB connection failed: {e}")
 
+async def create_unique_indexes():
+    """Create unique indexes for collections"""
+    try:
+        await db.creditTransaction.create_index("stripeSessionId", unique=True)
+        logger.info("Created unique index for stripeSessionId in creditTransaction collection")
+        await db.users.create_index("email", unique=True)
+        
+    except Exception as e:
+        logger.warning(f"Failed to create unique indexes: {e}")
+
+
 # Export collections for easy import
 __all__ = [
     "client", 
@@ -29,6 +41,7 @@ __all__ = [
     "dub_jobs_collection", 
     "users_collection", 
     "pricing_collection",
+    "transaction_collection",
     "upload_status_collection",
     "export_jobs_collection",
     "verify_connection"

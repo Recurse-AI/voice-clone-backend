@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 import asyncio
 
 # App routes and configuration
-from app.config.database import verify_connection
+from app.config.database import verify_connection, create_unique_indexes
 from app.utils.logger import logger as app_logger
 from app.utils.logging_config import setup_logging
 from app.routes.auth import auth
@@ -47,6 +47,7 @@ async def lifespan(app: FastAPI):
     app_logger.info("Starting up — checking MongoDB connection...")
     await verify_connection()
     await init_pricing_plans()
+    await create_unique_indexes()
     
     # Initialize database indexes for duplicate prevention (safe for multiple workers)
     try:
