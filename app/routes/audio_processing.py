@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 import asyncio
 import threading
+import gc
 from concurrent.futures import ThreadPoolExecutor
 from fastapi.responses import JSONResponse
 import logging
@@ -182,12 +183,23 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                         }
                     )
                     
-                    # Auto-deduct credits on successful completion (non-blocking)
-                    _deduct_separation_credits_non_blocking(
-                        user_id=user_id,
-                        job_id=job_id,
-                        duration_seconds=duration_seconds
-                    )
+                    # Memory cleanup after separation completion
+                    del status, vocal_url, instrument_url
+                    gc.collect()
+                    
+                    # Confirm credit usage
+                    try:
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        credit_result = loop.run_until_complete(
+                            credit_service.confirm_credit_usage(job_id, JobType.SEPARATION)
+                        )
+                        loop.close()
+                        if not credit_result["success"]:
+                            logger.warning(f"Credit confirmation failed for separation {job_id}: {credit_result.get('error')}")
+                    except Exception as e:
+                        logger.error(f"Credit confirmation error for separation {job_id}: {e}")
                     
                     # Cleanup temp files after successful completion
                     _cleanup_separation_files_non_blocking(job_id)
@@ -203,6 +215,20 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                         error=error_msg
                     )
                     logger.error(f"Separation job {job_id} (RunPod: {runpod_request_id}) failed: {error_msg}")
+                    
+                    # Refund credits on failure
+                    try:
+                        import asyncio
+                        loop = asyncio.new_event_loop()
+                        asyncio.set_event_loop(loop)
+                        refund_result = loop.run_until_complete(
+                            credit_service.refund_reserved_credits(job_id, JobType.SEPARATION, "job_failed")
+                        )
+                        loop.close()
+                        if refund_result["success"]:
+                            logger.info(f"Refunded {refund_result['credits_refunded']} credits for failed separation {job_id}")
+                    except Exception:
+                        pass
                     
                     # Cleanup temp files even on failure
                     _cleanup_separation_files_non_blocking(job_id)
@@ -229,6 +255,20 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 error="Job monitoring timed out"
             )
             
+            # Refund credits on timeout
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                refund_result = loop.run_until_complete(
+                    credit_service.refund_reserved_credits(job_id, JobType.SEPARATION, "timeout")
+                )
+                loop.close()
+                if refund_result["success"]:
+                    logger.info(f"Refunded {refund_result['credits_refunded']} credits for timed out separation {job_id}")
+            except Exception:
+                pass
+            
             # Cleanup temp files on timeout
             _cleanup_separation_files_non_blocking(job_id)
             
@@ -241,6 +281,20 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 progress=0,
                 error=f"Background monitoring error: {str(e)}"
             )
+            
+            # Refund credits on error
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                refund_result = loop.run_until_complete(
+                    credit_service.refund_reserved_credits(job_id, JobType.SEPARATION, "monitoring_error")
+                )
+                loop.close()
+                if refund_result["success"]:
+                    logger.info(f"Refunded {refund_result['credits_refunded']} credits for error in separation {job_id}")
+            except Exception:
+                pass
             
             # Cleanup temp files on error
             _cleanup_separation_files_non_blocking(job_id)
@@ -257,23 +311,6 @@ async def start_audio_separation(
     try:
         user_id = current_user.id
         job_id = request.job_id
-        # Pre-check: Verify user has sufficient credits
-        credit_check = await credit_service.check_sufficient_credits(
-            user_id=user_id,
-            job_type=JobType.SEPARATION,
-            duration_seconds=request.duration
-        )
-        
-        if not credit_check["sufficient"]:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "success": False,
-                    "message": credit_check["message"],
-                    "required_credits": credit_check["required"],
-                    "available_credits": credit_check["available"]
-                }
-            )
         
         # Get uploaded file path from upload status
         from app.utils.shared_memory import get_upload_status as get_upload_status_data, job_exists
@@ -328,7 +365,7 @@ async def start_audio_separation(
         # Use upload job_id as separation job_id for consistency
         separation_job_id = job_id
         
-        # Create separation job in MongoDB for tracking
+        # Create separation job data
         job_data = {
             "job_id": separation_job_id,
             "user_id": user_id,
@@ -336,21 +373,30 @@ async def start_audio_separation(
             "original_filename": upload_data.get("original_filename", os.path.basename(local_audio_path)),
             "caller_info": request.callerInfo or "audio_separation_api",
             "runpod_request_id": runpod_request_id,
-            "details": {
-                "duration": request.duration,
-                "required_credits": credit_check["required"],
-                "upload_job_id": job_id,
-                "local_audio_path": local_audio_path
-            }
+            "status": "pending",
+            "progress": 0,
+            "upload_job_id": job_id,
+            "local_audio_path": local_audio_path
         }
         
-        # Save to MongoDB
-        job = await separation_job_service.create_job(job_data)
-        if not job:
-            logger.error(f"Failed to create separation job in MongoDB for {separation_job_id}")
+        # Atomic credit reservation + job creation
+        result = await credit_service.atomic_reserve_and_create_job(
+            user_id=user_id,
+            job_data=job_data,
+            job_type=JobType.SEPARATION,
+            duration_seconds=request.duration,
+            collection_name="separation_jobs"
+        )
         
-        # Set initial pending status
-        await separation_job_service.update_job_status(separation_job_id, "pending", 0)
+        if not result["success"]:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": "Insufficient credits",
+                    "error": result.get("error", "Credit reservation failed")
+                }
+            )
         
         status = runpod_service.get_separation_status(runpod_request_id)
         queue_position = status.get("queue_position") if status else None

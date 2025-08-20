@@ -1,7 +1,7 @@
 import logging
 from typing import Optional, Dict, Any
 from enum import Enum
-from app.config.database import users_collection
+from app.config.database import users_collection, client, db
 from app.services.dub_job_service import dub_job_service
 from app.services.separation_job_service import separation_job_service
 from bson import ObjectId
@@ -46,6 +46,159 @@ class CreditCalculator:
 
 class CreditService:
     """Common credit management service for all job types"""
+    
+    @staticmethod
+    async def atomic_reserve_and_create_job(
+        user_id: str, 
+        job_data: Dict[str, Any],
+        job_type: JobType, 
+        duration_seconds: float,
+        collection_name: str
+    ) -> Dict[str, Any]:
+        """Atomically reserve credits and create job (transaction-safe)"""
+        required_credits = CreditCalculator.calculate_credits(job_type, duration_seconds)
+        job_id = job_data["job_id"]
+        
+        async with await client.start_session() as session:
+            async with session.start_transaction():
+                try:
+                    # Check and reserve credits atomically
+                    user_result = await users_collection.find_one_and_update(
+                        {
+                            "_id": ObjectId(user_id),
+                            "credits": {"$gte": required_credits}
+                        },
+                        {
+                            "$inc": {"credits": -required_credits},
+                            "$set": {"updated_at": datetime.now(timezone.utc)}
+                        },
+                        session=session,
+                        return_document=True
+                    )
+                    
+                    if not user_result:
+                        raise ValueError("Insufficient credits")
+                    
+                    # Create job with credit info
+                    job_data.update({
+                        "credits_required": required_credits,
+                        "credits_reserved": True,
+                        "created_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc)
+                    })
+                    
+                    await db[collection_name].insert_one(job_data, session=session)
+                    await session.commit_transaction()
+                    
+                    logger.info(f"Reserved {required_credits} credits for {job_type.value} job {job_id}")
+                    return {
+                        "success": True,
+                        "credits_reserved": required_credits,
+                        "remaining_credits": user_result.get("credits", 0) - required_credits
+                    }
+                    
+                except Exception as e:
+                    await session.abort_transaction()
+                    logger.error(f"Credit reservation failed for job {job_id}: {e}")
+                    return {"success": False, "error": str(e)}
+    
+    @staticmethod
+    async def confirm_credit_usage(job_id: str, job_type: JobType) -> Dict[str, Any]:
+        """Mark credits as confirmed (no refund after this)"""
+        try:
+            collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
+            result = await db[collection_name].update_one(
+                {"job_id": job_id, "credits_reserved": True},
+                {
+                    "$set": {
+                        "credits_confirmed": True,
+                        "credits_confirmed_at": datetime.now(timezone.utc)
+                    },
+                    "$unset": {"credits_reserved": ""}
+                }
+            )
+            
+            if result.modified_count > 0:
+                logger.info(f"Confirmed credits for {job_type.value} job {job_id}")
+                return {"success": True}
+            else:
+                return {"success": False, "error": "Job not found or credits already confirmed"}
+                
+        except Exception as e:
+            logger.error(f"Credit confirmation failed for job {job_id}: {e}")
+            return {"success": False, "error": str(e)}
+    
+    @staticmethod
+    async def refund_reserved_credits(job_id: str, job_type: JobType, reason: str = "job_failed") -> Dict[str, Any]:
+        """Refund reserved credits (only if not confirmed)"""
+        async with await client.start_session() as session:
+            async with session.start_transaction():
+                try:
+                    collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
+                    
+                    # Get job with reserved credits
+                    job = await db[collection_name].find_one(
+                        {"job_id": job_id, "credits_reserved": True},
+                        session=session
+                    )
+                    
+                    if not job:
+                        return {"success": False, "error": "No reserved credits found"}
+                    
+                    credits_to_refund = job.get("credits_required", 0)
+                    user_id = job.get("user_id")
+                    
+                    # Refund credits to user
+                    await users_collection.update_one(
+                        {"_id": ObjectId(user_id)},
+                        {
+                            "$inc": {"credits": credits_to_refund},
+                            "$set": {"updated_at": datetime.now(timezone.utc)}
+                        },
+                        session=session
+                    )
+                    
+                    # Mark job as refunded
+                    await db[collection_name].update_one(
+                        {"job_id": job_id},
+                        {
+                            "$set": {
+                                "credits_refunded": True,
+                                "credits_refunded_at": datetime.now(timezone.utc),
+                                "refund_reason": reason
+                            },
+                            "$unset": {"credits_reserved": ""}
+                        },
+                        session=session
+                    )
+                    
+                    await session.commit_transaction()
+                    
+                    logger.info(f"Refunded {credits_to_refund} credits for {job_type.value} job {job_id} (reason: {reason})")
+                    return {"success": True, "credits_refunded": credits_to_refund}
+                    
+                except Exception as e:
+                    await session.abort_transaction()
+                    logger.error(f"Credit refund failed for job {job_id}: {e}")
+                    return {"success": False, "error": str(e)}
+    
+    @staticmethod
+    async def check_credits_simple(user_id: str, job_type: JobType, duration_seconds: float) -> Dict[str, Any]:
+        """Simple credit check (for backward compatibility)"""
+        required_credits = CreditCalculator.calculate_credits(job_type, duration_seconds)
+        try:
+            user = await users_collection.find_one({"_id": ObjectId(user_id)}, {"credits": 1})
+            if not user:
+                return {"sufficient": False, "error": "User not found"}
+            
+            available_credits = user.get("credits", 0)
+            return {
+                "sufficient": available_credits >= required_credits,
+                "required": required_credits,
+                "available": available_credits
+            }
+        except Exception as e:
+            return {"sufficient": False, "error": str(e)}
     
     @staticmethod
     async def check_sufficient_credits(user_id: str, job_type: JobType, duration_seconds: float) -> Dict[str, Any]:

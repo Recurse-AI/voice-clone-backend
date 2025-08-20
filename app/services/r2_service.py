@@ -26,35 +26,104 @@ class R2Service:
         logger.info(f"✅ R2Service initialized - bucket: {self.bucket_name}")
     
     def upload_file(self, local_path: str, r2_key: str, content_type: str = "application/octet-stream") -> Dict[str, Any]:
-        """Upload file to R2 storage"""
+        """Upload file to R2 storage with automatic optimization for large files"""
         try:
-            with open(local_path, 'rb') as file:
-                self.client.upload_fileobj(
-                    file,
-                    self.bucket_name,
-                    r2_key,
-                    ExtraArgs={'ContentType': content_type}
-                )
-            
-            # Generate public URL
-            public_url = f"{settings.R2_PUBLIC_URL}/{r2_key}" if settings.R2_PUBLIC_URL else f"https://{self.bucket_name}.r2.cloudflarestorage.com/{r2_key}"
-            
             file_size = os.path.getsize(local_path)
-            logger.info(f"✅ Uploaded: {r2_key} ({file_size} bytes)")
             
-            return {
-                "success": True,
-                "r2_key": r2_key,
-                "url": public_url,
-                "size": file_size
-            }
+            # Use chunked upload for files larger than 100MB
+            from app.config.constants import LARGE_FILE_THRESHOLD_MB
+            threshold_bytes = LARGE_FILE_THRESHOLD_MB * 1024 * 1024
             
+            if file_size > threshold_bytes:
+                return self._chunked_upload(local_path, r2_key, content_type)
+            else:
+                return self._standard_upload(local_path, r2_key, content_type)
+                
         except Exception as e:
             logger.error(f"❌ Upload failed: {r2_key} → {e}")
             return {
                 "success": False,
                 "error": str(e)
             }
+    
+    def _standard_upload(self, local_path: str, r2_key: str, content_type: str) -> Dict[str, Any]:
+        """Standard upload for smaller files"""
+        with open(local_path, 'rb') as file:
+            self.client.upload_fileobj(
+                file,
+                self.bucket_name,
+                r2_key,
+                ExtraArgs={'ContentType': content_type}
+            )
+        
+        # Generate public URL
+        public_url = f"{settings.R2_PUBLIC_URL}/{r2_key}" if settings.R2_PUBLIC_URL else f"https://{self.bucket_name}.r2.cloudflarestorage.com/{r2_key}"
+        
+        file_size = os.path.getsize(local_path)
+        logger.info(f"✅ Standard upload: {r2_key} ({file_size} bytes)")
+        
+        return {
+            "success": True,
+            "r2_key": r2_key,
+            "url": public_url,
+            "size": file_size
+        }
+    
+    def _chunked_upload(self, local_path: str, r2_key: str, content_type: str) -> Dict[str, Any]:
+        """Memory-efficient upload for large files using streaming"""
+        file_size = os.path.getsize(local_path)
+        
+        # Custom file reader that streams in chunks
+        class ChunkedReader:
+            def __init__(self, file_path, chunk_size=50*1024*1024):  # 50MB chunks
+                self.file_path = file_path
+                self.chunk_size = chunk_size
+                self._file = None
+                self._total_read = 0
+                
+            def __enter__(self):
+                self._file = open(self.file_path, 'rb')
+                return self
+                
+            def __exit__(self, exc_type, exc_val, exc_tb):
+                if self._file:
+                    self._file.close()
+                    
+            def read(self, size=-1):
+                if size == -1:
+                    return self._file.read()
+                
+                # Read in optimized chunks
+                chunk = self._file.read(min(size, self.chunk_size))
+                self._total_read += len(chunk)
+                
+                # Memory cleanup every 100MB read
+                if self._total_read % (100 * 1024 * 1024) == 0:
+                    import gc
+                    gc.collect()
+                    
+                return chunk
+        
+        # Upload with streaming
+        with ChunkedReader(local_path) as reader:
+            self.client.upload_fileobj(
+                reader,
+                self.bucket_name,
+                r2_key,
+                ExtraArgs={'ContentType': content_type}
+            )
+        
+        # Generate public URL
+        public_url = f"{settings.R2_PUBLIC_URL}/{r2_key}" if settings.R2_PUBLIC_URL else f"https://{self.bucket_name}.r2.cloudflarestorage.com/{r2_key}"
+        
+        logger.info(f"✅ Chunked upload: {r2_key} ({file_size} bytes)")
+        
+        return {
+            "success": True,
+            "r2_key": r2_key,
+            "url": public_url,
+            "size": file_size
+        }
     
     def delete_file(self, r2_key: str) -> Dict[str, Any]:
         """Delete file from R2 storage"""

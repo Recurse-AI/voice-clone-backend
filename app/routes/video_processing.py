@@ -23,7 +23,9 @@ from app.services.dub_job_service import dub_job_service
 from app.config.database import users_collection
 from app.services.credit_service import credit_service, JobType
 from app.utils.status_manager import status_manager, ProcessingStatus
+from app.utils.runpod_url_manager import RunPodURLManager
 import asyncio
+import gc
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
@@ -72,42 +74,37 @@ async def start_video_dub(
     try:
         user_id = current_user.id
         
-        credit_check = await credit_service.check_sufficient_credits(
-            user_id=user_id,
-            job_type=JobType.DUB,
-            duration_seconds=request.duration
-        )
-        
-        if not credit_check["sufficient"]:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "success": False,
-                    "message": credit_check["message"],
-                    "required_credits": credit_check["required"],
-                    "available_credits": credit_check["available"]
-                }
-            )
-        
         job_data = {
             "job_id": request.job_id,
-            "user_id": user_id, 
+            "user_id": user_id,
             "target_language": request.target_language,
             "original_filename": request.project_title,
             "source_video_language": request.source_video_language,
             "expected_speaker": request.expected_speaker,
             "duration": request.duration,
-            "details": {
-                "duration": request.duration,
-                "required_credits": credit_check["required"]
-            }
+            "status": "pending",
+            "progress": 0
         }
         
-        job = await dub_job_service.create_job(job_data)
-        if not job:
-            logger.error(f"Failed to create dub job in MongoDB for {request.job_id}")
+        # Atomic credit reservation + job creation
+        result = await credit_service.atomic_reserve_and_create_job(
+            user_id=user_id,
+            job_data=job_data,
+            job_type=JobType.DUB,
+            duration_seconds=request.duration,
+            collection_name="dub_jobs"
+        )
         
-        await dub_job_service.update_job_status(request.job_id, "pending", 0)
+        if not result["success"]:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": "Insufficient credits",
+                    "error": result.get("error", "Credit reservation failed")
+                }
+            )
+        
         enqueue_dub_job(request, user_id)
         
         logger.info(f"Started video dub job {request.job_id} for user {user_id}")
@@ -287,25 +284,39 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                 "error": f"Audio separation job submission failed: {str(e)}"
             }, "dub")
             return
-        vocal_url = status['output'].get('vocal_audio')
-        instrument_url = status['output'].get('instrument_audio')
+        runpod_urls = RunPodURLManager.extract_urls_from_runpod_response(status['output'])
+        is_valid, error_msg = RunPodURLManager.validate_urls(runpod_urls)
+        if not is_valid:
+            _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {
+                "message": "Invalid RunPod URLs received", 
+                "error": error_msg
+            }, "dub")
+            return
+        
         vocal_path = os.path.join(job_dir, f"vocals_{job_id}.wav")
         instrument_path = os.path.join(job_dir, f"instruments_{job_id}.wav")
         
-        runpod_urls = {}
-        if vocal_url:
-            download_result = AudioUtils().download_audio_file(vocal_url, vocal_path)
+        if runpod_urls.get(RunPodURLManager.VOCALS_KEY):
+            download_result = AudioUtils().download_audio_file(
+                runpod_urls[RunPodURLManager.VOCALS_KEY], vocal_path
+            )
             if not download_result["success"]:
-                _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {"message": "Vocal audio download failed.", "error": download_result.get("error")}, "dub")
+                _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {
+                    "message": "Vocal audio download failed.", 
+                    "error": download_result.get("error")
+                }, "dub")
                 return
-            runpod_urls["vocals"] = vocal_url
             
-        if instrument_url:
-            download_result = AudioUtils().download_audio_file(instrument_url, instrument_path)
+        if runpod_urls.get(RunPodURLManager.INSTRUMENTS_KEY):
+            download_result = AudioUtils().download_audio_file(
+                runpod_urls[RunPodURLManager.INSTRUMENTS_KEY], instrument_path
+            )
             if not download_result["success"]:
-                _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {"message": "Instrument audio download failed.", "error": download_result.get("error")}, "dub")
+                _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {
+                    "message": "Instrument audio download failed.", 
+                    "error": download_result.get("error")
+                }, "dub")
                 return
-            runpod_urls["instruments"] = instrument_url
             
         if is_job_cancelled(job_id):
             _update_status_non_blocking(job_id, ProcessingStatus.CANCELLED, 0, {
@@ -363,6 +374,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                 "edited_segments_version": 0,
                 "message": "Human review mode: segments ready for review"
             }
+            details = RunPodURLManager.store_urls_in_details(details, runpod_urls)
             _update_status_non_blocking(job_id, ProcessingStatus.AWAITING_REVIEW, 75, details, "dub")
             
             from app.utils.shared_memory import unmark_job_cancelled
@@ -375,18 +387,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         result_url = pipeline_result.get("result_url") or (pipeline_result.get("result_urls", {}) or {}).get("final_video")
         
         folder_upload = pipeline_result.get("folder_upload", {})
-        if runpod_urls.get("vocals"):
-            folder_upload[f"vocals_{job_id}.wav"] = {
-                "success": True,
-                "url": runpod_urls["vocals"],
-                "size": None
-            }
-        if runpod_urls.get("instruments"):
-            folder_upload[f"instruments_{job_id}.wav"] = {
-                "success": True,
-                "url": runpod_urls["instruments"], 
-                "size": None
-            }
+        folder_upload = RunPodURLManager.add_urls_to_folder_upload(folder_upload, runpod_urls, job_id)
         
         _update_status_non_blocking(job_id, ProcessingStatus.COMPLETED, 100, {
             "message": "Video dubbing completed.", 
@@ -397,15 +398,26 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             "video_upload": pipeline_result.get("video_upload")
         }, "dub")
         
+        # Memory cleanup after processing completion
+        del pipeline_result, folder_upload, runpod_urls
+        gc.collect()
+        
         from app.utils.shared_memory import unmark_job_cancelled
         unmark_job_cancelled(job_id)
         
-        if request.duration:
-            credit_result = job_utils.handle_credit_operations_sync(
-                user_id, job_id, request.duration, "deduct"
+        # Confirm credit usage
+        try:
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            credit_result = loop.run_until_complete(
+                credit_service.confirm_credit_usage(job_id, JobType.DUB)
             )
+            loop.close()
             if not credit_result["success"]:
-                logger.warning(f"Credit deduction failed for job {job_id}: {credit_result['message']}")
+                logger.warning(f"Credit confirmation failed for job {job_id}: {credit_result.get('error')}")
+        except Exception as e:
+            logger.error(f"Credit confirmation error for job {job_id}: {e}")
         
         if r2_audio_path.get("r2_key"):
             r2_service.delete_file(r2_audio_path["r2_key"])
@@ -417,6 +429,20 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             logger.info(f"Job {job_id} was cancelled - not overriding with failed status on exception")
         else:
             _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {"message": f"Processing failed: {str(e)}", "error": str(e)}, "dub")
+        
+        # Refund credits on failure
+        try:
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            refund_result = loop.run_until_complete(
+                credit_service.refund_reserved_credits(job_id, JobType.DUB, "job_failed")
+            )
+            loop.close()
+            if refund_result["success"]:
+                logger.info(f"Refunded {refund_result['credits_refunded']} credits for failed job {job_id}")
+        except Exception as refund_error:
+            logger.error(f"Credit refund error for job {job_id}: {refund_error}")
         
         try:
             if r2_audio_path.get("r2_key"):
@@ -540,6 +566,8 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
     if not manifest_url:
         raise HTTPException(status_code=400, detail="No manifest available for this job")
     manifest = _load_manifest_json(manifest_url)
+    
+    stored_runpod_urls = RunPodURLManager.retrieve_urls_from_job(job)
 
     # Kick off background resume
     from app.utils.job_utils import job_utils
@@ -573,26 +601,40 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
                 return
             result_url = result.get("result_url") or (result.get("result_urls", {}) or {}).get("final_video")
             
+            folder_upload = result.get("folder_upload", {})
+            folder_upload = RunPodURLManager.add_urls_to_folder_upload(folder_upload, stored_runpod_urls, job_id)
+            
             _update_status_non_blocking(job_id, ProcessingStatus.COMPLETED, 100, {
                 "message": "Dubbing completed after review.",
                 "result_url": result_url,
                 "result_urls": result.get("result_urls"),
-                "folder_upload": result.get("folder_upload"),
+                "folder_upload": folder_upload,
+                "runpod_urls": stored_runpod_urls,
                 "review_status": "completed"
             }, "dub")
+            
+            # Memory cleanup after approve completion
+            del result, folder_upload, stored_runpod_urls
+            gc.collect()
             
             # ✅ Successfully completed after review - safe to unmark cancellation
             from app.utils.shared_memory import unmark_job_cancelled
             unmark_job_cancelled(job_id)
             logger.info(f"✅ Job {job_id} completed after review - unmarked cancellation")
-            # Get duration from direct field first, fallback to details
-            duration = job.duration or ((job.details or {}).get("duration") if job.details else None) or 0
-            if duration:
-                credit_result = job_utils.handle_credit_operations_sync(
-                    job.user_id, job_id, duration, "deduct"
+            
+            # Confirm credit usage
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                credit_result = loop.run_until_complete(
+                    credit_service.confirm_credit_usage(job_id, JobType.DUB)
                 )
+                loop.close()
                 if not credit_result["success"]:
-                    logger.warning(f"Credit deduction failed for job {job_id}: {credit_result['message']}")
+                    logger.warning(f"Credit confirmation failed for job {job_id}: {credit_result.get('error')}")
+            except Exception as e:
+                logger.error(f"Credit confirmation error for job {job_id}: {e}")
             
             # Cleanup old dub directories after approval completion
             job_utils.cleanup_job_directories()
@@ -603,6 +645,20 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
                 "review_status": "failed",
                 "error": str(e)
             }, "dub")
+            
+            # Refund credits on failure
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                refund_result = loop.run_until_complete(
+                    credit_service.refund_reserved_credits(job_id, JobType.DUB, "approval_failed")
+                )
+                loop.close()
+                if refund_result["success"]:
+                    logger.info(f"Refunded {refund_result['credits_refunded']} credits for failed approval {job_id}")
+            except Exception:
+                pass
     executor.submit(_resume)
     return {"success": True, "message": "Resume started", "job_id": job_id}
 
@@ -641,36 +697,17 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     r2_service = get_r2_service()
     new_job_id = r2_service.generate_job_id()
     
-    # Check credits for redub
+    # Get job details for redub
     user_id = current_user.id
-    # Get duration from direct field first, fallback to details
     duration = original_job.duration or (original_job.details or {}).get("duration", 0)
     
-    # Validate duration for redub
     if not duration or duration <= 0:
         raise HTTPException(
             status_code=400, 
             detail="Original job missing duration information. Cannot proceed with redub."
         )
     
-    credit_check = await credit_service.check_sufficient_credits(
-        user_id=user_id,
-        job_type=JobType.DUB,
-        duration_seconds=duration
-    )
-    
-    if not credit_check["sufficient"]:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "success": False,
-                "message": credit_check["message"],
-                "required_credits": credit_check["required"],
-                "available_credits": credit_check["available"]
-            }
-        )
-    
-    # Create new job data (copy from original)
+    # Create new job data
     new_job_data = {
         "job_id": new_job_id,
         "user_id": user_id,
@@ -678,24 +715,31 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
         "original_filename": f"Redub - {original_job.original_filename}",
         "source_video_language": original_job.source_video_language,
         "expected_speaker": original_job.expected_speaker,
-        "duration": duration,  # Save duration as proper field
-        "details": {
-            "duration": duration,  # Keep in details for backward compatibility
-            "required_credits": credit_check["required"],
-            "parent_job_id": original_job_id,
-            "redub_from": original_job.target_language,
-            "redub_type": "language_change"
-        }
+        "duration": duration,
+        "status": "pending",
+        "progress": 0,
+        "parent_job_id": original_job_id,
+        "redub_from": original_job.target_language
     }
     
-    # Create new job in MongoDB
-    new_job = await dub_job_service.create_job(new_job_data)
-    if not new_job:
-        logger.error(f"Failed to create redub job in MongoDB for {new_job_id}")
-        raise HTTPException(status_code=500, detail="Failed to create redub job")
+    # Atomic credit reservation + job creation
+    result = await credit_service.atomic_reserve_and_create_job(
+        user_id=user_id,
+        job_data=new_job_data,
+        job_type=JobType.DUB,
+        duration_seconds=duration,
+        collection_name="dub_jobs"
+    )
     
-    # Set initial pending status
-    await dub_job_service.update_job_status(new_job_id, "pending", 0)
+    if not result["success"]:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "message": "Insufficient credits for redub",
+                "error": result.get("error", "Credit reservation failed")
+            }
+        )
     
     # Setup job directory using utility function
     try:
@@ -757,7 +801,6 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
                     review = result["review"]
                     details = {
                         "duration": duration,
-                        "required_credits": credit_check["required"],
                         "review_required": True,
                         "review_status": "awaiting",
                         "segments_manifest_url": review.get("segments_manifest_url"),
@@ -767,6 +810,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
                         "edited_segments_version": 0,
                         "parent_job_id": original_job_id
                     }
+                    details = RunPodURLManager.copy_urls_from_original_job(original_job, details)
                     _update_status_non_blocking(new_job_id, ProcessingStatus.AWAITING_REVIEW, 75, details, "dub")
                     
                     # ✅ Redub successfully reached review stage - safe to unmark cancellation
@@ -793,13 +837,19 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             unmark_job_cancelled(new_job_id)
             logger.info(f"✅ Redub job {new_job_id} completed - unmarked cancellation")
             
-            # Auto-deduct credits on successful completion (sync version)
-            if duration:
-                credit_result = job_utils.handle_credit_operations_sync(
-                    user_id, new_job_id, duration, "deduct"
+            # Confirm credit usage
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                credit_result = loop.run_until_complete(
+                    credit_service.confirm_credit_usage(new_job_id, JobType.DUB)
                 )
+                loop.close()
                 if not credit_result["success"]:
-                    logger.warning(f"Credit deduction failed for redub {new_job_id}: {credit_result['message']}")
+                    logger.warning(f"Credit confirmation failed for redub {new_job_id}: {credit_result.get('error')}")
+            except Exception as e:
+                logger.error(f"Credit confirmation error for redub {new_job_id}: {e}")
             
             # Cleanup old dub directories after redub completion
             job_utils.cleanup_job_directories()
@@ -812,7 +862,19 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
                 "original_job_id": original_job_id
             }, "dub")
             
-            # Note: Credits are only deducted on successful completion, so no refund needed
+            # Refund credits on failure
+            try:
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                refund_result = loop.run_until_complete(
+                    credit_service.refund_reserved_credits(new_job_id, JobType.DUB, "redub_failed")
+                )
+                loop.close()
+                if refund_result["success"]:
+                    logger.info(f"Refunded {refund_result['credits_refunded']} credits for failed redub {new_job_id}")
+            except Exception:
+                pass
     
     # Enqueue redub job with proper background runner (like existing dub API)
     _dub_queue_manager.enqueue(new_job_id, _run_redub)

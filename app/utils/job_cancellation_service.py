@@ -12,6 +12,7 @@ from app.utils.shared_memory import mark_job_cancelled, delete_upload_status_asy
 from app.utils.db_sync_operations import cleanup_separation_files
 from app.services.separation_job_service import separation_job_service
 from app.services.dub_job_service import dub_job_service
+from app.services.credit_service import credit_service, JobType
 from app.services.dub.audio_utils import AudioUtils
 from app.config.settings import settings
 import os
@@ -72,14 +73,24 @@ class JobCancellationService:
             except Exception as e:
                 logger.warning(f"File cleanup failed for separation job {job_id}: {e}")
             
-            # 6. Clear upload status
+            # 6. Refund credits
+            try:
+                refund_result = await credit_service.refund_reserved_credits(
+                    job_id, JobType.SEPARATION, "user_cancelled"
+                )
+                if refund_result["success"]:
+                    logger.info(f"💰 Refunded {refund_result['credits_refunded']} credits for cancelled separation {job_id}")
+            except Exception as e:
+                logger.warning(f"Credit refund failed for separation {job_id}: {e}")
+            
+            # 7. Clear upload status
             try:
                 await delete_upload_status_async(job_id)
                 logger.info(f"🧹 Cleared upload status for job {job_id}")
             except Exception as e:
                 logger.warning(f"Upload status cleanup failed for {job_id}: {e}")
             
-            # 7. Database handling based on hard_delete option
+            # 8. Database handling based on hard_delete option
             if hard_delete:
                 # Complete database deletion (default)
                 success = await separation_job_service.delete_job(job_id, user_id)
@@ -169,14 +180,24 @@ class JobCancellationService:
             except Exception as e:
                 logger.warning(f"File cleanup failed for dub job {job_id}: {e}")
             
-            # 5. Clear upload status 
+            # 5. Refund credits
+            try:
+                refund_result = await credit_service.refund_reserved_credits(
+                    job_id, JobType.DUB, "user_cancelled"
+                )
+                if refund_result["success"]:
+                    logger.info(f"💰 Refunded {refund_result['credits_refunded']} credits for cancelled dub {job_id}")
+            except Exception as e:
+                logger.warning(f"Credit refund failed for dub {job_id}: {e}")
+            
+            # 6. Clear upload status 
             try:
                 await delete_upload_status_async(job_id)
                 logger.info(f"🧹 Cleared upload status for job {job_id}")
             except Exception as e:
                 logger.warning(f"Upload status cleanup failed for {job_id}: {e}")
             
-            # 6. Database handling based on hard_delete option
+            # 7. Database handling based on hard_delete option
             if hard_delete:
                 # Complete database deletion (default)
                 success = await dub_job_service.delete_job(job_id, user_id)

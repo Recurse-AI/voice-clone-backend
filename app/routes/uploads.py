@@ -1,11 +1,15 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi.responses import JSONResponse
 import os
 import logging
 from pathlib import Path
 from datetime import datetime, timezone
 from app.schemas import UploadStatusResponse
 from app.utils.shared_memory import set_upload_status, update_upload_status, get_upload_status as get_upload_status_data, job_exists
-from app.config.constants import ALLOWED_VIDEO_EXTENSIONS, CHUNK_SIZE_UPLOAD, MSG_FILE_UPLOADED
+from app.config.constants import (
+    ALLOWED_VIDEO_EXTENSIONS, CHUNK_SIZE_UPLOAD, MSG_FILE_UPLOADED,
+    MAX_SAFE_PROCESSING_SIZE_MB, ERROR_FILE_TOO_LARGE
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -19,6 +23,37 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
     r2_service = get_r2_service()
     job_id = r2_service.generate_job_id()
     original_filename = video_file.filename
+    
+    # File size validation for memory safety
+    try:
+        # Check content-length header for file size
+        content_length = None
+        if hasattr(video_file, 'size') and video_file.size:
+            content_length = video_file.size
+        elif hasattr(video_file, 'file') and hasattr(video_file.file, 'seek'):
+            # Get file size by seeking to end
+            current_pos = video_file.file.tell()
+            video_file.file.seek(0, 2)  # Seek to end
+            content_length = video_file.file.tell()
+            video_file.file.seek(current_pos)  # Reset position
+        
+        # Validate file size before processing
+        if content_length:
+            size_mb = content_length / (1024 * 1024)
+            if size_mb > MAX_SAFE_PROCESSING_SIZE_MB:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "success": False,
+                        "error": ERROR_FILE_TOO_LARGE,
+                        "max_size_mb": MAX_SAFE_PROCESSING_SIZE_MB,
+                        "file_size_mb": round(size_mb, 2)
+                    }
+                )
+    except Exception:
+        # If size check fails, continue with processing (fallback behavior)
+        pass
+    
     try:
         # Change: save as tmp/voice_cloning/dub_{job_id}/{original_filename}
         job_dir = os.path.join(settings.TEMP_DIR, f"dub_{job_id}")
@@ -37,6 +72,26 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
                 buffer.write(chunk)
                 total_size += len(chunk)
         file_size = os.path.getsize(temp_file_path)
+        
+        # Final file size validation after upload
+        size_mb = file_size / (1024 * 1024)
+        if size_mb > MAX_SAFE_PROCESSING_SIZE_MB:
+            # Clean up uploaded file
+            try:
+                os.remove(temp_file_path)
+                os.rmdir(job_dir)
+            except:
+                pass
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "error": ERROR_FILE_TOO_LARGE,
+                    "max_size_mb": MAX_SAFE_PROCESSING_SIZE_MB,
+                    "file_size_mb": round(size_mb, 2)
+                }
+            )
+        
         update_upload_status(job_id, {
             "progress": 8,
             "message": f"File saved ({file_size // (1024*1024)} MB), starting background processing..."

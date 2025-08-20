@@ -60,6 +60,11 @@ class AudioUtils:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
+            # Memory cleanup after download
+            del response
+            import gc
+            gc.collect()
+            
             return {"success": True, "audio_path": output_path}
          
         except requests.exceptions.RequestException as e:
