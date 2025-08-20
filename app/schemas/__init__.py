@@ -102,54 +102,7 @@ class RegenerateSegmentResponse(BaseModel):
     version: int
     segment: SegmentItem
 
-# Export Video Schemas
-class ExportVideoRequest(BaseModel):
-    audioId: str = Field(..., min_length=1, description="Audio ID for the processed video")
-    format: str = Field("mp4", pattern="^(mp4|avi|mov|mkv)$", description="Video output format")
-    settings: Dict[str, Any] = Field(..., description="Export settings including quality, resolution, etc.")
-    timeline: Dict[str, Any] = Field(..., description="Timeline data with items and configuration")
-    editingChanges: Dict[str, Any] = Field(..., description="Changes applied during editing")
-    voiceCloneData: Dict[str, Any] = Field(..., description="Voice cloning data and segments")
-    exportMetadata: Dict[str, Any] = Field(..., description="Export metadata like title, description")
-    instrumentsUrl: Optional[str] = Field(None, description="Optional instruments audio URL")
-    subtitlesUrl: Optional[str] = Field(None, description="Optional SRT subtitle file URL")
-    
-    @validator('timeline')
-    def validate_timeline(cls, v):
-        required_fields = ['duration', 'fps', 'size', 'items']
-        for field in required_fields:
-            if field not in v:
-                raise ValueError(f"Timeline missing required field: {field}")
-        
-        if not isinstance(v['items'], list):
-            raise ValueError("Timeline items must be a list")
-        
-        return v
-    
-    @validator('settings')
-    def validate_settings(cls, v):
-        # Validate quality settings
-        if 'quality' in v and v['quality'] not in ['low', 'medium', 'high', 'ultra']:
-            raise ValueError("Quality must be one of: low, medium, high, ultra")
-        
-        return v
 
-class ExportJobResponse(BaseModel):
-    jobId: str
-    status: str
-    message: str
-    estimatedDuration: Optional[int] = None
-
-class ProcessingLogs(BaseModel):
-    logs: list[str]
-
-class ExportStatusResponse(BaseModel):
-    jobId: str
-    status: str
-    progress: int
-    downloadUrl: Optional[str] = None
-    error: Optional[str] = None
-    processingLogs: Optional[ProcessingLogs] = None
 
 # Audio Separation API Schemas
 class AudioSeparationRequest(BaseModel):
@@ -182,7 +135,10 @@ class SeparationStatusResponse(BaseModel):
 # Video Download Schemas
 class VideoDownloadRequest(BaseModel):
     url: str = Field(..., min_length=1, description="Video URL from supported platforms")
-    quality: Optional[str] = Field(None, description="Video quality preference (e.g., 'best', 'worst', 'best[height<=720]')")
+    quality: Optional[str] = Field(
+        "best", 
+        description="Video quality preference. Options: 'best', 'worst', 'best[height<=720]', 'best[height<=480]', 'best[height<=1080]', 'best[ext=mp4]', 'best[filesize<50M]'"
+    )
     
     @validator('url')
     def validate_url(cls, v):
@@ -199,6 +155,21 @@ class VideoDownloadRequest(BaseModel):
         if not url_pattern.match(v):
             raise ValueError("Invalid URL format")
         return v
+    
+    @validator('quality')
+    def validate_quality(cls, v):
+        if v is None:
+            return "best"
+        # Allow common quality formats
+        valid_patterns = [
+            r'^best$', r'^worst$', r'^bestvideo\+bestaudio$',
+            r'^best\[height<=\d+\]$', r'^worst\[height>=\d+\]$',
+            r'^best\[ext=\w+\]$', r'^best\[filesize<\d+[MG]\]$'
+        ]
+        if not any(re.match(pattern, v) for pattern in valid_patterns):
+            # If doesn't match patterns, assume it's a custom yt-dlp format
+            pass
+        return v
 
 class VideoDownloadResponse(BaseModel):
     success: bool
@@ -206,6 +177,16 @@ class VideoDownloadResponse(BaseModel):
     job_id: Optional[str] = None       # New field for consistency with other APIs
     video_info: Optional[Dict[str, Any]] = None
     cloudflare: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+# File Delete Schemas  
+class FileDeleteRequest(BaseModel):
+    job_id: str = Field(..., min_length=1, description="Job ID of the downloaded file to delete")
+
+class FileDeleteResponse(BaseModel):
+    success: bool
+    message: str
+    deleted_files: Optional[List[str]] = None
     error: Optional[str] = None
 
 # Upload Status Schema

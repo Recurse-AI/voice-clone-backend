@@ -260,15 +260,32 @@ class AudioUtils:
         Returns True if deletion attempted (regardless of existing), False if
         parameters were invalid.
         """
-
+        import logging
+        logger = logging.getLogger(__name__)
+        
         if not job_id and not folder_path:
+            logger.warning("AudioUtils.remove_temp_dir: No job_id or folder_path provided")
             return False
         if folder_path is None:
             folder_path = os.path.join(settings.TEMP_DIR, job_id)
+        
         try:
             import shutil
-            shutil.rmtree(folder_path, ignore_errors=True)
-            return True
-        except Exception:
+            import os
+            
+            if os.path.exists(folder_path):
+                # Count files before deletion for logging
+                file_count = 0
+                for root, dirs, files in os.walk(folder_path):
+                    file_count += len(files)
+                
+                shutil.rmtree(folder_path, ignore_errors=True)
+                logger.info(f"🧹 Successfully removed temp directory: {folder_path} ({file_count} files)")
+                return True
+            else:
+                logger.debug(f"🧹 Temp directory already deleted or doesn't exist: {folder_path}")
+                return True
+        except Exception as e:
+            logger.error(f"🧹 Failed to remove temp directory {folder_path}: {e}")
             return False
     

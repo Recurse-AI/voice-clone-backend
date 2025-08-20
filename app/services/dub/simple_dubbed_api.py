@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Simple Dubbed API - Clean Implementation using existing dub folder
-Audio URL → Download → Assembly AI → Dub → Voice Clone → Reconstruct → R2 Upload
-"""
-
 import os
 import json
 import logging
@@ -22,28 +16,14 @@ import numpy as np
 from .audio_utils import AudioUtils
 from typing import Optional, Dict, Any
 from app.utils.status_manager import status_manager, ProcessingStatus
-import asyncio
 import threading
-
+import re
 
 logger = logging.getLogger(__name__)
 
-# Global singleton instance  
 _simple_dubbed_api_instance = None
 _api_lock = threading.Lock()
-
-import re
-
-# Utility to split text into chunks that respect punctuation across multiple languages.
-# Supports Unicode punctuation like Chinese, Japanese, Arabic, etc.
 def smart_chunk(text: str, chunk_size: int = 200, min_size: int = 180) -> list[str]:
-    """
-    Split text into chunks suitable for TTS/voice cloning, respecting sentence boundaries.
-
-    1. Try to break on punctuation (including Unicode punctuation) so sentences remain intact.
-    2. Ensure each chunk length is between `min_size` and `chunk_size` when possible.
-    3. Fallback to character-length slicing for text with no discernible punctuation.
-    """
     if not text:
         return []
 
@@ -51,7 +31,6 @@ def smart_chunk(text: str, chunk_size: int = 200, min_size: int = 180) -> list[s
     if len(text) <= chunk_size:
         return [text]
 
-    # Regex to split after both ASCII and common Unicode punctuation marks.
     sentence_break_re = re.compile(r"(?<=[\.\!\?。！？؟؛…])")
     sentences = sentence_break_re.split(text)
 
@@ -69,18 +48,15 @@ def smart_chunk(text: str, chunk_size: int = 200, min_size: int = 180) -> list[s
     if current.strip():
         chunks.append(current.strip())
 
-    # Final fallback: ensure no chunk exceeds chunk_size and never split inside a word
     final_chunks: list[str] = []
     for ch in chunks:
         if len(ch) <= chunk_size:
             final_chunks.append(ch)
             continue
 
-        # Break long chunk while preserving words
         words = ch.split()
         curr_chunk = words[0]
         for word in words[1:]:
-            # +1 for the space that will be added before the word
             if len(curr_chunk) + 1 + len(word) > chunk_size:
                 final_chunks.append(curr_chunk)
                 curr_chunk = word
@@ -91,50 +67,50 @@ def smart_chunk(text: str, chunk_size: int = 200, min_size: int = 180) -> list[s
 
     return [c for c in final_chunks if c]
 
-
-# Import centralized language service
 from app.services.language_service import language_service
 
 class SimpleDubbedAPI:
-    """Simple clean API for dubbed audio processing"""
-    
     def __init__(self):
-        # Use existing services from dub folder
         self.transcription_service = TranscriptionService()
-        self.fish_speech = get_fish_speech_service()  # Use global singleton instance
+        self.fish_speech = get_fish_speech_service()
         self._r2_storage = None
     
     @property
     def r2_storage(self):
-        """Get R2Service instance with lazy initialization"""
         if self._r2_storage is None:
             self._r2_storage = get_r2_service()
         return self._r2_storage
     
     @property  
     def temp_dir(self):
-        """Get temp directory from settings"""
         return settings.TEMP_DIR
     
     def _update_status_non_blocking(self, job_id: str, status: ProcessingStatus, progress: int, details: dict, job_type: str = "dub"):
-        """Update dub job status using common utility"""
         from app.utils.db_sync_operations import update_dub_status
         status_str = status.value if hasattr(status, 'value') else str(status)
         update_dub_status(job_id, status_str, progress, details)
     
-    def dub_text_batch(self, segments: list, target_language: str = "English", batch_size: int = 10) -> list:
-        """
-        Batch dub text using OpenAI with enhanced prompt and batching for large input.
-        Each segment: {"text": ..., "duration_ms": ..., "id": ...}
-        """
+    def _check_cancellation(self, job_id: str) -> bool:
+        from app.utils.shared_memory import is_job_cancelled
+        if is_job_cancelled(job_id):
+            self._update_status_non_blocking(job_id, ProcessingStatus.CANCELLED, 0, {
+                "message": "Job cancelled by user", "error": "Job cancelled by user"
+            }, "dub")
+            return True
+        return False
+    
+    def dub_text_batch(self, segments: list, target_language: str = "English", batch_size: int = 10, job_id: str = None) -> list:
         all_dubbed = []
         for i in range(0, len(segments), batch_size):
+            if job_id and self._check_cancellation(job_id):
+                return []
+                
             batch = segments[i:i+batch_size]
-            # Prepare prompt with duration info
             prompt_lines = []
             for idx, seg in enumerate(batch):
                 prompt_lines.append(f"[{idx+1}] (Target duration: {seg['duration_ms']} ms) {seg['text']}")
             joined_texts = "\n".join(prompt_lines)
+            
             system_prompt = (
                 f"You are assisting in creating dubbing scripts for the Fish Audio OpenAudio-S1 TTS model.\n"
                 f"Translate each input segment into {target_language} (keeping meaning accurate).\n"
@@ -145,6 +121,7 @@ class SimpleDubbedAPI:
                 f"4. Do NOT add any explanatory text, numbering, or comments — only the final translated sentences.\n"
                 f"5. Return the translated segments in the same order, separated by ||| on a single line."
             )
+            
             user_prompt = (
                 "Translate each segment below. Return only the translated segments, in order, separated by |||.\n"
                 "Segments (with target duration):\n"
@@ -217,10 +194,19 @@ class SimpleDubbedAPI:
             # 2. Setup processing environment
             process_temp_dir = self._setup_processing_directory(job_id, output_dir)
             
+            # 🛡️ Check cancellation before transcription
+            if self._check_cancellation(job_id):
+                return {"success": False, "error": "Job cancelled by user"}
+            
             # Get transcription data
             raw_paragraphs, transcript_id = self._get_transcription_data(
                 job_id, audio_url, manifest_override, process_temp_dir, speakers_count, source_video_language
             )
+            
+            # 🛡️ Check cancellation before dubbing and voice cloning
+            if self._check_cancellation(job_id):
+                return {"success": False, "error": "Job cancelled by user"}
+            
             # Process text dubbing and voice cloning
             dubbed_segments = self._process_dubbing_and_cloning(
                 job_id, raw_paragraphs, target_language, manifest_override, review_mode, process_temp_dir
@@ -264,6 +250,10 @@ class SimpleDubbedAPI:
                     "folder_upload": folder_upload_result
                 }
 
+            # 🛡️ Check cancellation before final output generation
+            if self._check_cancellation(job_id):
+                return {"success": False, "error": "Job cancelled by user"}
+            
             # Generate final audio and files
             return self._generate_final_output(
                 job_id, dubbed_segments, process_temp_dir, 
@@ -385,7 +375,8 @@ class SimpleDubbedAPI:
                 audio_url=audio_url,
                 output_dir=process_temp_dir,
                 speakers_count=speakers_count,
-                source_video_language=source_video_language
+                source_video_language=source_video_language,
+                job_id=job_id
             )
             
             if not paragraphs_result["success"]:
@@ -423,7 +414,7 @@ class SimpleDubbedAPI:
         
         # Normalize target language for consistent processing
         target_language_code = language_service.normalize_language_input(target_language)
-        dubbed_texts = self.dub_text_batch(segments_to_dub, target_language_code, batch_size=15)
+        dubbed_texts = self.dub_text_batch(segments_to_dub, target_language_code, batch_size=15, job_id=job_id)
         
         # Apply edited text overrides if present (only for same target language)
         edited_map = {}
@@ -468,6 +459,10 @@ class SimpleDubbedAPI:
         completed_clones = 0
 
         for i, segment in enumerate(raw_paragraphs):
+            # 🛡️ Check cancellation in voice cloning loop
+            if self._check_cancellation(job_id):
+                return []  # Return empty list to stop processing
+            
             seg_id = f"seg_{i+1:03d}"
             start_ms = segment.get("start", 0)
             end_ms = segment.get("end", 0)
@@ -698,7 +693,6 @@ class SimpleDubbedAPI:
             "video_error": None
         }
     
-    # Removed specialized URL extraction; clients should use files list from folder_upload
 
 
 

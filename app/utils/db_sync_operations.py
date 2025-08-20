@@ -42,7 +42,7 @@ class SyncDBOperations:
                 existing_job = sync_collection.find_one({"job_id": job_id}, {"started_at": 1})
                 if existing_job and not existing_job.get("started_at"):
                     update_data["started_at"] = datetime.now(timezone.utc)
-            elif status in ['completed', 'failed']:
+            elif status in ['completed', 'failed', 'cancelled']:
                 update_data["completed_at"] = datetime.now(timezone.utc)
             
             # Add additional fields
@@ -77,6 +77,13 @@ class SyncDBOperations:
             # Read current job to apply monotonic progress clamp
             current_doc = sync_collection.find_one({"job_id": job_id}, {"progress": 1, "status": 1}) or {}
             current_progress = current_doc.get("progress")
+            current_status = current_doc.get("status")
+            
+            # 🛑 CRITICAL: Prevent overriding cancelled jobs (soft delete protection)
+            if current_status == "cancelled" and status != "cancelled":
+                logger.warning(f"🛑 Prevented status override for cancelled job {job_id}: cancelled -> {status}")
+                sync_client.close()
+                return False
 
             # Monotonic progress: never decrease progress, with sensible floors per status
             adjusted_progress = progress
@@ -119,7 +126,7 @@ class SyncDBOperations:
                 existing_job = sync_collection.find_one({"job_id": job_id}, {"started_at": 1})
                 if existing_job and not existing_job.get("started_at"):
                     update_data["started_at"] = datetime.now(timezone.utc)
-            elif status in ['completed', 'failed']:
+            elif status in ['completed', 'failed', 'cancelled']:
                 update_data["completed_at"] = datetime.now(timezone.utc)
             
             # Add details
@@ -147,14 +154,14 @@ class SyncDBOperations:
             update_query = {"job_id": job_id}
             
             # For critical status transitions, ensure we're not overwriting newer status
-            if status in ['awaiting_review', 'reviewing', 'completed', 'failed']:
+            if status in ['awaiting_review', 'reviewing', 'completed', 'failed', 'cancelled']:
                 current_status = current_doc.get("status")
                 
                 # Prevent backwards status transitions (except explicit overrides)
                 status_hierarchy = {
                     'pending': 0, 'downloading': 1, 'separating': 2, 'transcribing': 3,
                     'processing': 4, 'awaiting_review': 5, 'reviewing': 6, 
-                    'completed': 7, 'failed': 7  # failed and completed are terminal
+                    'completed': 7, 'failed': 7, 'cancelled': 7  # terminal states
                 }
                 
                 current_level = status_hierarchy.get(current_status, 0)
@@ -253,3 +260,51 @@ def update_dub_status(job_id: str, status: str, progress: int, details: Dict[str
 def deduct_credits(user_id: str, job_id: str, duration_seconds: float, job_type: str = "separation"):
     """Convenience function to deduct user credits"""
     return SyncDBOperations.deduct_user_credits(user_id, job_id, duration_seconds, job_type)
+
+def cleanup_separation_files(job_id: str):
+    """Cleanup separation temp files synchronously"""
+    try:
+        from app.services.dub.audio_utils import AudioUtils
+        from app.config.settings import settings
+        import os
+        
+        # Get job details from database  
+        sync_client = SyncDBOperations._get_sync_client()
+        sync_db = sync_client[settings.DB_NAME]
+        separation_jobs_collection = sync_db.separation_jobs
+        
+        try:
+            job_data = separation_jobs_collection.find_one({"job_id": job_id})
+            
+            if job_data and job_data.get("details"):
+                local_audio_path = job_data["details"].get("local_audio_path")
+                
+                if local_audio_path and os.path.exists(local_audio_path):
+                    # Remove local audio file
+                    try:
+                        os.remove(local_audio_path)
+                        logger.info(f"🧹 Removed local audio file: {local_audio_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to remove local audio file {local_audio_path}: {e}")
+                
+                # Clean up any temp directories related to this job
+                temp_patterns = [
+                    f"dub_{job_id}",           # Main job folder
+                    f"voice_clone_{job_id}",
+                    f"separation_{job_id}",
+                    f"audio_{job_id}",
+                    f"processing_{job_id}",
+                    f"voice_cloning/dub_job_{job_id}"  # Nested voice cloning folder
+                ]
+                
+                for pattern in temp_patterns:
+                    temp_dir = os.path.join(settings.TEMP_DIR, pattern)
+                    if os.path.exists(temp_dir):
+                        AudioUtils.remove_temp_dir(folder_path=temp_dir)
+                        logger.info(f"🧹 Removed temp directory: {temp_dir}")
+                        
+        finally:
+            sync_client.close()
+            
+    except Exception as e:
+        logger.error(f"Separation cleanup error for job {job_id}: {e}")

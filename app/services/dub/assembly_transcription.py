@@ -59,7 +59,7 @@ class TranscriptionService:
     
     def transcribe_audio(self, audio_path: str, language_code: Optional[str], 
                         speakers_expected: Optional[int], audio_id: str, 
-                        original_duration: float) -> Dict[str, Any]:
+                        original_duration: float, job_id: Optional[str] = None) -> Dict[str, Any]:
         """Transcribe audio with speaker diarization using AssemblyAI"""
         try:
             logger.info(f"Starting AssemblyAI transcription for {audio_id}")
@@ -87,6 +87,19 @@ class TranscriptionService:
             # Wait for completion with progress tracking
             start_time = time.time()
             while transcript.status in [aai.TranscriptStatus.queued, aai.TranscriptStatus.processing]:
+                # 🛡️ Check cancellation if job_id provided
+                if job_id:
+                    from app.utils.shared_memory import is_job_cancelled
+                    if is_job_cancelled(job_id):
+                        logger.info(f"🛑 AssemblyAI transcription cancelled for job {job_id}")
+                        # Update database status to cancelled before raising exception
+                        try:
+                            from app.utils.db_sync_operations import update_dub_status
+                            update_dub_status(job_id, "cancelled", 0, {"error": "Job cancelled by user"})
+                        except Exception as e:
+                            logger.warning(f"Failed to update status during cancellation: {e}")
+                        raise Exception("Job cancelled by user")
+                
                 elapsed = time.time() - start_time
                 if elapsed > 600:  # 10 minute timeout
                     raise Exception("Transcription timeout - took longer than 10 minutes")
@@ -118,7 +131,7 @@ class TranscriptionService:
             logger.error(f"Transcription failed for {audio_id}: {str(e)}")
             raise Exception(f"Transcription service error: {str(e)}")
     
-    def get_paragraphs_and_split_audio(self, audio_url: str, output_dir: str = None, speakers_count: int = 1, source_video_language: str = None, max_paragraphs: int = None) -> Dict[str, Any]:
+    def get_paragraphs_and_split_audio(self, audio_url: str, output_dir: str = None, speakers_count: int = 1, source_video_language: str = None, max_paragraphs: int = None, job_id: Optional[str] = None) -> Dict[str, Any]:
         """Get paragraphs from AssemblyAI API and split audio into segments, with language and speaker control"""
         try:
             logger.info(f"Starting paragraph extraction and audio splitting for audio: {audio_url}")
@@ -152,7 +165,7 @@ class TranscriptionService:
             speakers_count = int(speakers_count) if speakers_count else 1
             
             # Create transcription for the audio
-            transcript_result = self._create_transcription_for_audio(temp_audio_path, speakers_count, language_code, language_detection)
+            transcript_result = self._create_transcription_for_audio(temp_audio_path, speakers_count, language_code, language_detection, job_id)
             transcript_id = transcript_result["transcript_id"]
             logger.info(f"Created transcript with ID: {transcript_id}")
             
@@ -232,7 +245,7 @@ class TranscriptionService:
             logger.error(f"Paragraph extraction and audio splitting failed: {str(e)}")
             raise Exception(f"Service error: {str(e)}")
     
-    def _create_transcription_for_audio(self, audio_path: str, speakers_count: int = 2, language_code: str = None, language_detection: bool = True) -> Dict[str, Any]:
+    def _create_transcription_for_audio(self, audio_path: str, speakers_count: int = 2, language_code: str = None, language_detection: bool = True, job_id: Optional[str] = None) -> Dict[str, Any]:
         """Create a new transcription for audio file with speaker diarization and language control"""
         try:
             transcriber = aai.Transcriber()
@@ -249,6 +262,19 @@ class TranscriptionService:
             # Wait for completion
             start_time = time.time()
             while transcript.status in [aai.TranscriptStatus.queued, aai.TranscriptStatus.processing]:
+                # 🛡️ Check cancellation if job_id provided
+                if job_id:
+                    from app.utils.shared_memory import is_job_cancelled
+                    if is_job_cancelled(job_id):
+                        logger.info(f"🛑 AssemblyAI transcription cancelled for job {job_id}")
+                        # Update database status to cancelled before raising exception
+                        try:
+                            from app.utils.db_sync_operations import update_dub_status
+                            update_dub_status(job_id, "cancelled", 0, {"error": "Job cancelled by user"})
+                        except Exception as e:
+                            logger.warning(f"Failed to update status during cancellation: {e}")
+                        raise Exception("Job cancelled by user")
+                
                 elapsed = time.time() - start_time
                 if elapsed > 300:  # 5 minute timeout
                     raise Exception("Transcription timeout")

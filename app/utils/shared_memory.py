@@ -167,6 +167,8 @@ class StatusManager:
         self.config = config or CacheConfig()
         self.cache = MemoryCache(self.config)
         self.db = DatabaseManager()
+        # Track cancelled jobs to signal background threads
+        self.cancelled_jobs: set = set()
     
     async def get_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get status with cache-first strategy"""
@@ -212,6 +214,9 @@ class StatusManager:
         """Delete status from cache and database"""
         # Remove from cache
         cache_deleted = self.cache.delete(job_id)
+        
+        # Remove from cancelled jobs tracking
+        self.cancelled_jobs.discard(job_id)
         
         # Remove from database
         db_deleted = await self.db.delete_status(job_id)
@@ -277,3 +282,20 @@ async def delete_upload_status_async(job_id: str) -> bool:
 async def job_exists_async(job_id: str) -> bool:
     """Modern async function with database fallback"""
     return await _status_manager.exists_async(job_id)
+
+# Job Cancellation Management
+def mark_job_cancelled(job_id: str) -> None:
+    """Mark a job as cancelled to signal background threads"""
+    _status_manager.cancelled_jobs.add(job_id)
+    logger.info(f"🛑 Marked job {job_id} as cancelled | Total cancelled: {len(_status_manager.cancelled_jobs)} | List: {_status_manager.cancelled_jobs}")
+
+def is_job_cancelled(job_id: str) -> bool:
+    """Check if a job has been cancelled"""
+    is_cancelled = job_id in _status_manager.cancelled_jobs
+    logger.debug(f"🔍 Checking cancellation for {job_id}: {is_cancelled}")
+    return is_cancelled
+
+def unmark_job_cancelled(job_id: str) -> None:
+    """Remove job from cancelled list"""
+    _status_manager.cancelled_jobs.discard(job_id)
+    logger.info(f"Unmarked job {job_id} as cancelled")

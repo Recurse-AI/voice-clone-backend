@@ -97,6 +97,9 @@ class RunPodService:
                 elif runpod_status == 'FAILED':
                     status = "failed"
                     progress = 0
+                elif runpod_status == 'CANCELLED':
+                    status = "cancelled"
+                    progress = 0
                 
                 # Calculate queue position from delayTime (if available)
                 delay_time = data.get('delayTime')  # in milliseconds
@@ -172,6 +175,26 @@ class RunPodService:
             "error": f"Request timed out after {timeout} seconds",
             "request_id": request_id
         }
+    
+    def cancel_job(self, request_id: str) -> bool:
+        """Cancel a running RunPod job"""
+        try:
+            response = requests.post(
+                f"{self.base_url}/cancel/{request_id}",
+                headers=self.headers,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"Successfully cancelled RunPod job {request_id}")
+                return True
+            else:
+                logger.warning(f"Failed to cancel RunPod job {request_id}: {response.status_code} - {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to cancel RunPod job {request_id}: {e}")
+            return False
 
 
 # Global service instance

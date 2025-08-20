@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Query
 import logging
 from typing import Optional
 from app.schemas import (
@@ -239,63 +239,74 @@ async def get_dub_job_detail(
 @router.delete("/separation/{job_id}")
 async def delete_separation_job(
     job_id: str,
+    hard_delete: bool = Query(True, description="If true, completely remove from database. If false, mark as cancelled"),
     current_user = Depends(get_current_user)
 ):
-    """Delete a specific separation job"""
+    """Cancel and delete a specific separation job comprehensively"""
     try:
         user_id = current_user.id
         
-        # Delete the job using service
-        success = await separation_job_service.delete_job(job_id, user_id)
+        # Use comprehensive cancellation service
+        from app.utils.job_cancellation_service import job_cancellation_service
+        result = await job_cancellation_service.cancel_separation_job(job_id, user_id, hard_delete)
         
-        if not success:
-            # Check if job exists but doesn't belong to user
-            job = await separation_job_service.get_job(job_id)
-            if job and job.user_id != user_id:
-                raise HTTPException(status_code=403, detail="Access denied")
+        if not result["success"]:
+            error_msg = result.get("error", "Unknown error")
+            if "not found" in error_msg.lower():
+                raise HTTPException(status_code=404, detail=error_msg)
+            elif "access denied" in error_msg.lower():
+                raise HTTPException(status_code=403, detail=error_msg)
             else:
-                raise HTTPException(status_code=404, detail="Separation job not found")
+                raise HTTPException(status_code=500, detail=error_msg)
         
         return {
             "success": True,
-            "message": "Separation job deleted successfully",
-            "job_id": job_id
+            "message": result["message"],
+            "job_id": job_id,
+            "runpod_cancelled": result.get("runpod_cancelled", False),
+            "cleanup_completed": result.get("cleanup_completed", False),
+            "database_action": result.get("database_action", "deleted")
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to delete separation job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to delete job")
+        logger.error(f"Failed to cancel separation job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to cancel job")
 
 @router.delete("/dub/{job_id}")
 async def delete_dub_job(
     job_id: str,
+    hard_delete: bool = Query(True, description="If true, completely remove from database. If false, mark as cancelled"),
     current_user = Depends(get_current_user)
 ):
-    """Delete a specific dub job"""
+    """Cancel and delete a specific dub job comprehensively"""
     try:
         user_id = current_user.id
         
-        # Delete the job using service
-        success = await dub_job_service.delete_job(job_id, user_id)
+        # Use comprehensive cancellation service
+        from app.utils.job_cancellation_service import job_cancellation_service
+        result = await job_cancellation_service.cancel_dub_job(job_id, user_id, hard_delete)
         
-        if not success:
-            # Check if job exists but doesn't belong to user
-            job = await dub_job_service.get_job(job_id)
-            if job and job.user_id != user_id:
-                raise HTTPException(status_code=403, detail="Access denied")
+        if not result["success"]:
+            error_msg = result.get("error", "Unknown error")
+            if "not found" in error_msg.lower():
+                raise HTTPException(status_code=404, detail=error_msg)
+            elif "access denied" in error_msg.lower():
+                raise HTTPException(status_code=403, detail=error_msg)
             else:
-                raise HTTPException(status_code=404, detail="Dub job not found")
+                raise HTTPException(status_code=500, detail=error_msg)
         
         return {
             "success": True,
-            "message": "Dub job deleted successfully",
-            "job_id": job_id
+            "message": result["message"],
+            "job_id": job_id,
+            "cleanup_completed": result.get("cleanup_completed", False),
+            "database_action": result.get("database_action", "deleted")
         }
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to delete dub job {job_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to delete job")
+        logger.error(f"Failed to cancel dub job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to cancel job")

@@ -39,6 +39,15 @@ def _deduct_separation_credits_non_blocking(user_id: str, job_id: str, duration_
     from app.utils.db_sync_operations import deduct_credits
     deduct_credits(user_id, job_id, duration_seconds, "separation")
 
+def _cleanup_separation_files_non_blocking(job_id: str):
+    """Cleanup separation temp files using common utility"""
+    try:
+        from app.utils.db_sync_operations import cleanup_separation_files
+        cleanup_separation_files(job_id)
+        logger.info(f"🧹 Cleaned up separation temp files for job {job_id}")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup separation files for {job_id}: {e}")
+
 # Background Task Functions
 def process_audio_separation_background(job_id: str, runpod_request_id: str, user_id: str, duration_seconds: float):
     """Background task to monitor audio separation progress and auto-deduct credits on completion (sync - runs in separate thread)"""
@@ -52,6 +61,25 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
         attempt = 0
         
         while attempt < max_attempts:
+            # Check if job was cancelled by user
+            from app.utils.shared_memory import is_job_cancelled, _status_manager
+            is_cancelled = is_job_cancelled(job_id)
+            logger.debug(f"🔍 Cancellation check for {job_id}: {is_cancelled} | Cancelled jobs: {_status_manager.cancelled_jobs}")
+            
+            if is_cancelled:
+                logger.info(f"🛑 Separation job {job_id} (RunPod: {runpod_request_id}) was cancelled by user")
+                _update_separation_status_non_blocking(
+                    job_id=job_id,
+                    status="cancelled",
+                    progress=0,
+                    error="Job cancelled by user"
+                )
+                _cleanup_separation_files_non_blocking(job_id)
+                # Unmark as cancelled since monitoring is stopping
+                from app.utils.shared_memory import unmark_job_cancelled
+                unmark_job_cancelled(job_id)
+                break
+            
             try:
                 # Check job status from RunPod using RunPod request ID
                 status = runpod_service.get_separation_status(runpod_request_id)
@@ -66,7 +94,58 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 job_status = status.get("status", "unknown")
                 progress = status.get("progress", 0)
                 
-
+                # 🔍 DEBUG: Log exactly what we got from RunPod
+                logger.info(f"🔍 RunPod status for {runpod_request_id}: status='{job_status}', progress={progress}")
+                
+                # Check for cancelled status from RunPod
+                if job_status.upper() == "CANCELLED":
+                    logger.info(f"🛑 RunPod job {runpod_request_id} was CANCELLED - force stopping monitoring")
+                    
+                    # Try to update status (but don't fail if it doesn't work)
+                    try:
+                        _update_separation_status_non_blocking(
+                            job_id=job_id,
+                            status="cancelled",
+                            progress=0,
+                            error="Job cancelled by user"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to update cancelled status for {job_id}: {e}")
+                    
+                    # Try cleanup (but don't fail if it doesn't work)
+                    try:
+                        _cleanup_separation_files_non_blocking(job_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup files for {job_id}: {e}")
+                    
+                    # Always unmark and break regardless of database update success
+                    from app.utils.shared_memory import unmark_job_cancelled
+                    unmark_job_cancelled(job_id)
+                    logger.info(f"🚫 FORCE STOPPED monitoring for {job_id} due to RunPod CANCELLED")
+                    break  # Force stop monitoring
+                
+                # Only update status if job is not cancelled
+                # 🔍 DEBUG: What are we about to update?
+                logger.info(f"🔍 About to update {job_id}: status='{job_status}', progress={progress}")
+                
+                # 🛡️ CRITICAL: Check if job is already cancelled in database (soft delete protection)
+                try:
+                    from app.utils.db_sync_operations import SyncDBOperations
+                    from pymongo import MongoClient
+                    from app.config.settings import settings
+                    
+                    sync_client = MongoClient(settings.MONGODB_URI)
+                    sync_collection = sync_client[settings.DB_NAME]["separation_jobs"]
+                    current_job = sync_collection.find_one({"job_id": job_id})
+                    sync_client.close()
+                    
+                    if current_job and current_job.get("status") == "cancelled":
+                        logger.info(f"🛡️ Job {job_id} already cancelled in database - stopping background monitoring")
+                        from app.utils.shared_memory import unmark_job_cancelled
+                        unmark_job_cancelled(job_id)
+                        break
+                except Exception as e:
+                    logger.warning(f"Failed to check job status in database: {e}")
                 
                 # Update MongoDB status (non-blocking) using our job_id
                 _update_separation_status_non_blocking(
@@ -110,6 +189,9 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                         duration_seconds=duration_seconds
                     )
                     
+                    # Cleanup temp files after successful completion
+                    _cleanup_separation_files_non_blocking(job_id)
+                    
                     break
                     
                 elif job_status == "failed":
@@ -121,6 +203,10 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                         error=error_msg
                     )
                     logger.error(f"Separation job {job_id} (RunPod: {runpod_request_id}) failed: {error_msg}")
+                    
+                    # Cleanup temp files even on failure
+                    _cleanup_separation_files_non_blocking(job_id)
+                    
                     break
                     
                 # Wait before next check
@@ -143,6 +229,9 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 error="Job monitoring timed out"
             )
             
+            # Cleanup temp files on timeout
+            _cleanup_separation_files_non_blocking(job_id)
+            
     except Exception as e:
         logger.error(f"Background separation monitoring failed for job {job_id} (RunPod: {runpod_request_id}): {e}")
         try:
@@ -152,6 +241,9 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 progress=0,
                 error=f"Background monitoring error: {str(e)}"
             )
+            
+            # Cleanup temp files on error
+            _cleanup_separation_files_non_blocking(job_id)
         except:
             pass  # Avoid double error
 

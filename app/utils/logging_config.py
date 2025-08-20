@@ -1,18 +1,8 @@
 import os
 import logging
 from logging.config import dictConfig
-from logging.handlers import RotatingFileHandler
 
 def setup_logging():
-    """
-    Setup logging with file rotation to prevent large log files.
-    
-    Configuration:
-    - Maximum file size: 5MB per log file
-    - Backup count: 2 (keeps total 3 files: current + 2 backups)
-    - Files: info.log, debug.log, error.log
-    - When limit reached: info.log → info.log.1 → info.log.2 → deleted
-    """
     os.makedirs("app/logs", exist_ok=True)
 
     logging_config = {
@@ -35,8 +25,8 @@ def setup_logging():
                 "filename": "app/logs/info.log",
                 "formatter": "customFormatter",
                 "level": "INFO",
-                "maxBytes": 5242880,  # 5MB = 5 * 1024 * 1024 bytes
-                "backupCount": 2,     # Keep 2 backup files, total 3 files max
+                "maxBytes": 5242880,
+                "backupCount": 2,
                 "encoding": "utf-8"
             },
             "debug_file_handler": {
@@ -44,8 +34,8 @@ def setup_logging():
                 "filename": "app/logs/debug.log",
                 "formatter": "customFormatter",
                 "level": "DEBUG",
-                "maxBytes": 5242880,  # 5MB
-                "backupCount": 2,     # Keep 2 backup files
+                "maxBytes": 5242880,
+                "backupCount": 2,
                 "encoding": "utf-8"
             },
             "error_file_handler": {
@@ -53,8 +43,8 @@ def setup_logging():
                 "filename": "app/logs/error.log",
                 "formatter": "customFormatter",
                 "level": "ERROR",
-                "maxBytes": 5242880,  # 5MB
-                "backupCount": 2,     # Keep 2 backup files
+                "maxBytes": 5242880,
+                "backupCount": 2,
                 "encoding": "utf-8"
             },
         },

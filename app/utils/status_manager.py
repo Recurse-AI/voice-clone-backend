@@ -21,6 +21,7 @@ class ProcessingStatus(Enum):
     UPLOADING = "uploading"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
     AWAITING_REVIEW = "awaiting_review"
     REVIEWING = "reviewing"
 
@@ -33,7 +34,7 @@ class StatusManager:
         self.processing_cache = {}
         
         # Final states that go directly to MongoDB
-        self.final_states = {"completed", "failed"}
+        self.final_states = {"completed", "failed", "cancelled"}
         
         # Processing states that use local cache
         self.processing_states = {
@@ -48,6 +49,7 @@ class StatusManager:
             ProcessingStatus.DOWNLOADING: "Downloading video...",
             ProcessingStatus.SEPARATING: "Separating audio tracks...",
             ProcessingStatus.TRANSCRIBING: "Transcribing audio...",
+            ProcessingStatus.CANCELLED: "Job cancelled by user",
             ProcessingStatus.PROCESSING: "Processing audio and video...",
             ProcessingStatus.UPLOADING: "Uploading results...",
             ProcessingStatus.COMPLETED: "Processing completed successfully",
