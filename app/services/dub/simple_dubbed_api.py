@@ -15,7 +15,7 @@ from .manifest_service import (
 import numpy as np
 from .audio_utils import AudioUtils
 from typing import Optional, Dict, Any
-from app.utils.status_manager import status_manager, ProcessingStatus
+from app.utils.unified_status_manager import get_unified_status_manager, ProcessingStatus, JobType
 import threading
 import re
 
@@ -86,9 +86,23 @@ class SimpleDubbedAPI:
         return settings.TEMP_DIR
     
     def _update_status_non_blocking(self, job_id: str, status: ProcessingStatus, progress: int, details: dict, job_type: str = "dub"):
-        from app.utils.db_sync_operations import update_dub_status
-        status_str = status.value if hasattr(status, 'value') else str(status)
-        update_dub_status(job_id, status_str, progress, details)
+        import asyncio
+        manager = get_unified_status_manager()
+        job_type_enum = JobType.DUB if job_type == "dub" else JobType.SEPARATION
+        
+        # Run async update in thread pool for non-blocking execution
+        def run_update():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(
+                    manager.update_status(job_id, job_type_enum, status, progress, details)
+                )
+            finally:
+                loop.close()
+        
+        import threading
+        threading.Thread(target=run_update, daemon=True).start()
     
     def _check_cancellation(self, job_id: str) -> bool:
         from app.utils.shared_memory import is_job_cancelled
@@ -199,7 +213,7 @@ class SimpleDubbedAPI:
                 return {"success": False, "error": "Job cancelled by user"}
             
             # Get transcription data
-            raw_paragraphs, transcript_id = self._get_transcription_data(
+            raw_sentences, transcript_id = self._get_transcription_data(
                 job_id, audio_url, manifest_override, process_temp_dir, speakers_count, source_video_language
             )
             
@@ -209,7 +223,7 @@ class SimpleDubbedAPI:
             
             # Process text dubbing and voice cloning
             dubbed_segments = self._process_dubbing_and_cloning(
-                job_id, raw_paragraphs, target_language, manifest_override, review_mode, process_temp_dir
+                job_id, raw_sentences, target_language, manifest_override, review_mode, process_temp_dir
             )
             
             if review_mode:
@@ -361,12 +375,12 @@ class SimpleDubbedAPI:
         logger.info("Starting transcription...")
         
         transcript_id = None
+        raw_sentences = []
         
         if manifest_override:
             logger.info("Using manifest override data instead of re-transcribing")
-            raw_paragraphs = []
             for idx, seg in enumerate(manifest_override.get("segments", [])):
-                raw_paragraphs.append({
+                raw_sentences.append({
                     "text": seg.get("original_text", ""),
                     "start": seg.get("start", 0),
                     "end": seg.get("end", 0),
@@ -399,7 +413,7 @@ class SimpleDubbedAPI:
         
         return raw_sentences, transcript_id
     
-    def _process_dubbing_and_cloning(self, job_id: str, raw_paragraphs: list, target_language: str,
+    def _process_dubbing_and_cloning(self, job_id: str, raw_sentences: list, target_language: str,
                                      manifest_override: Optional[Dict[str, Any]], review_mode: bool, 
                                      process_temp_dir: str) -> list:
         """Process text dubbing and voice cloning for all segments"""
@@ -409,7 +423,7 @@ class SimpleDubbedAPI:
         # Prepare texts for batch dubbing
         segments_to_dub = []
         segment_indices = []
-        for i, segment in enumerate(raw_paragraphs):
+        for i, segment in enumerate(raw_sentences):
             original_text = segment.get("text", "")
             start_ms = segment.get("start", 0)
             end_ms = segment.get("end", 0)
@@ -474,10 +488,11 @@ class SimpleDubbedAPI:
         dub_idx = 0
 
         # Calculate dynamic progress range for voice cloning updates (80..89)
-        cloneable_count = sum(1 for s in raw_paragraphs if s.get("text", "").strip()) if not review_mode else 0
+        cloneable_count = sum(1 for s in raw_sentences if s.get("text", "").strip()) if not review_mode else 0
         completed_clones = 0
+        last_progress_update = 80  # Track last progress to avoid frequent updates
 
-        for i, segment in enumerate(raw_paragraphs):
+        for i, segment in enumerate(raw_sentences):
             # 🛡️ Check cancellation in voice cloning loop
             if self._check_cancellation(job_id):
                 return []  # Return empty list to stop processing
@@ -510,27 +525,31 @@ class SimpleDubbedAPI:
                 if clone_result:
                     cloned_audio_path = clone_result.get("path")
                     cloned_duration_ms = clone_result.get("duration_ms", end_ms - start_ms)
-                # Update progress incrementally across 80..89 as cloning advances
+                
+                # Update progress only at significant intervals (every 10% of cloning or every 5 segments)
                 try:
                     if cloneable_count > 0:
                         completed_clones += 1
-                        # Spread progress over 9 steps (80..89)
-                        progress_span = 9
-                        progress_value = 80 + min(
-                            progress_span,
-                            int((completed_clones / max(1, cloneable_count)) * progress_span)
-                        )
-                        self._update_status_non_blocking(
-                            job_id,
-                            ProcessingStatus.PROCESSING,
-                            progress_value,
-                            {
-                                "message": "Voice cloning and reconstructing final audio",
-                                "cloned_segments": completed_clones,
-                                "total_segments": cloneable_count,
-                            },
-                            "dub",
-                        )
+                        # Calculate progress but only update at meaningful intervals
+                        progress_value = 80 + min(9, int((completed_clones / max(1, cloneable_count)) * 9))
+                        
+                        # Only update if progress increased by at least 2% or every 5 segments
+                        if (progress_value - last_progress_update >= 2 or 
+                            completed_clones % 5 == 0 or 
+                            completed_clones == cloneable_count):
+                            
+                            self._update_status_non_blocking(
+                                job_id,
+                                ProcessingStatus.PROCESSING,
+                                progress_value,
+                                {
+                                    "message": "Voice cloning and reconstructing final audio",
+                                    "cloned_segments": completed_clones,
+                                    "total_segments": cloneable_count,
+                                },
+                                "dub",
+                            )
+                            last_progress_update = progress_value
                 except Exception:
                     # Best-effort progress update; ignore errors
                     pass
@@ -601,10 +620,10 @@ class SimpleDubbedAPI:
         # Reconstruct final audio
         final_audio_path = self._reconstruct_final_audio(dubbed_segments, None, job_id=job_id, process_temp_dir=process_temp_dir)
         
-        # Generate SRT file
-        subtitle_path = self._generate_srt_file(job_id, dubbed_segments, process_temp_dir)
+        # Generate SRT file and finalize (combining multiple close steps)
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 92, {"message": "Finalizing output files..."}, "dub")
         
-        # Files are already in correct location from runpod download
+        subtitle_path = self._generate_srt_file(job_id, dubbed_segments, process_temp_dir)
         
         # Create process summary
         self._create_process_summary(job_id, dubbed_segments, final_audio_path, subtitle_path, 
@@ -615,7 +634,6 @@ class SimpleDubbedAPI:
     
     def _generate_srt_file(self, job_id: str, dubbed_segments: list, process_temp_dir: str) -> str:
         """Generate SRT subtitle file"""
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 92, {"message": "Generating SRT file..."}, "dub")
         logger.info("Generating SRT file...")
         
         from .video_processor import VideoProcessor
@@ -687,7 +705,7 @@ class SimpleDubbedAPI:
     
     def _upload_and_finalize(self, job_id: str, process_temp_dir: str, final_audio_path: str) -> dict:
         """Upload files to R2 and return final results"""
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 94, {"message": "Uploading files to R2..."}, "dub")
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 95, {"message": "Uploading and finalizing..."}, "dub")
         
         # Upload entire directory to R2
         folder_upload_result = self.r2_storage.upload_directory(job_id, process_temp_dir)
@@ -696,8 +714,6 @@ class SimpleDubbedAPI:
         
         # All files (including vocals/instruments) are available via folder_upload_result
         
-        # Update progress
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 96, {"message": "Upload and finalization..."}, "dub")
         logger.info("Dubbed processing completed successfully")
         
         # Do not remove temp dir here; caller handles cleanup after final status update

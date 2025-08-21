@@ -21,8 +21,9 @@ from fastapi import UploadFile, File
 from app.dependencies.auth import get_current_user
 from app.services.dub_job_service import dub_job_service
 from app.config.database import users_collection
-from app.services.credit_service import credit_service, JobType
-from app.utils.status_manager import status_manager, ProcessingStatus
+from app.services.credit_service import credit_service
+from app.services.credit_service import JobType as CreditJobType
+from app.utils.unified_status_manager import ProcessingStatus
 from app.utils.runpod_url_manager import RunPodURLManager
 import asyncio
 import gc
@@ -51,10 +52,27 @@ def get_dub_executor():
     return _dub_queue_manager._get_executor()
 
 def _update_status_non_blocking(job_id: str, status: ProcessingStatus, progress: int, details: dict, job_type: str = "dub"):
-    """Update dub job status using common utility"""
-    from app.utils.db_sync_operations import update_dub_status
-    status_str = status.value if hasattr(status, 'value') else str(status)
-    update_dub_status(job_id, status_str, progress, details)
+    """Update job status using unified status manager"""
+    import asyncio
+    from app.utils.unified_status_manager import get_unified_status_manager
+    from app.utils.unified_status_manager import JobType as UnifiedJobType
+    
+    manager = get_unified_status_manager()
+    job_type_enum = UnifiedJobType.DUB if job_type == "dub" else UnifiedJobType.SEPARATION
+    
+    # Run async update in thread pool for non-blocking execution
+    def run_update():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(
+                manager.update_status(job_id, job_type_enum, status, progress, details)
+            )
+        finally:
+            loop.close()
+    
+    import threading
+    threading.Thread(target=run_update, daemon=True).start()
 
 def enqueue_dub_job(request: VideoDubRequest, user_id: str) -> None:
     # Inject runner to avoid circular imports inside manager
@@ -90,7 +108,7 @@ async def start_video_dub(
         result = await credit_service.atomic_reserve_and_create_job(
             user_id=user_id,
             job_data=job_data,
-            job_type=JobType.DUB,
+            job_type=CreditJobType.DUB,
             duration_seconds=request.duration,
             collection_name="dub_jobs"
         )
@@ -124,70 +142,40 @@ async def start_video_dub(
 @router.get("/video-dub-status/{job_id}", response_model=VideoDubStatusResponse)
 async def get_video_dub_status(job_id: str):
     try:
-        job = await dub_job_service.get_job(job_id)
-        if not job:
+        from app.utils.unified_status_manager import get_unified_status_manager
+        from app.utils.unified_status_manager import JobType as UnifiedJobType
+        
+        # Get status from unified manager (includes queue position and proper caching)  
+        manager = get_unified_status_manager()
+        status_data = await manager.get_status(job_id, UnifiedJobType.DUB)
+        
+        if not status_data:
             raise HTTPException(status_code=404, detail="Job ID not found")
         
-        from app.services.job_response_service import job_response_service
-        formatted_job = job_response_service.format_dub_job(job)
-        
-        def get_progress_message(status: str, progress: int) -> str:
-            if status == "failed":
-                return "Processing failed"
-            elif status == "completed":
-                return "Video dubbing completed successfully"
-            elif status == "awaiting_review":
-                return "Awaiting human review - Please review dubbed text"
-            elif status == "reviewing":
-                return "Applying human edits and continuing dubbing"
-            elif status == "processing":
-                if progress <= 10:
-                    return "Starting dubbing process"
-                elif progress <= 30:
-                    return "Separating audio tracks"
-                elif progress <= 45:
-                    return "Transcribing audio with AI"
-                elif progress <= 55:
-                    return "Dubbing text with AI translation"
-                elif progress <= 75:
-                    return "Reviewing and editing with AI"
-                elif progress <= 79:
-                    return "Preparing review files"
-                elif progress <= 89:
-                    return "Voice cloning and reconstructing final audio"
-                elif progress <= 93:
-                    return "Generating final output"
-                elif progress <= 96:
-                    return "Uploading results"
-                else:
-                    return "Finalizing"
-            elif status == "pending":
-                return "Processing queued"
-            else:
-                return f"Job is {status}"
-        
-        descriptive_message = get_progress_message(
-            formatted_job.status, 
-            formatted_job.progress
-        )
-        
-        queue_position = None
-        if formatted_job.status in [ProcessingStatus.PENDING.value, ProcessingStatus.PROCESSING.value]:
-            try:
-                queue_position = get_dub_queue_position(job_id)
-            except Exception:
-                queue_position = None
+        # Get additional job details for files
+        job = await dub_job_service.get_job(job_id)
+        if job:
+            from app.services.job_response_service import job_response_service
+            formatted_job = job_response_service.format_dub_job(job)
+            files = formatted_job.files
+            result_url = formatted_job.result_url
+            error = formatted_job.error
+        else:
+            files = {}
+            result_url = None
+            error = status_data.details.get("error")
 
         return VideoDubStatusResponse(
             job_id=job_id,
-            status=formatted_job.status,
-            progress=formatted_job.progress,
-            message=descriptive_message,
-            result_url=formatted_job.result_url,
-            error=formatted_job.error,
+            status=status_data.status.value,
+            progress=status_data.progress,
+            message=status_data.message,
+            result_url=result_url,
+            error=error,
             details={
-                "files": formatted_job.files,
-                "queue_position": queue_position
+                "files": files,
+                "queue_position": status_data.queue_position,
+                "updated_at": status_data.updated_at.isoformat()
             }
         )
     except HTTPException:
@@ -377,7 +365,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                 "message": "Human review mode: segments ready for review"
             }
             details = RunPodURLManager.store_urls_in_details(details, runpod_urls)
-            _update_status_non_blocking(job_id, ProcessingStatus.AWAITING_REVIEW, 80, details, "dub")
+            _update_status_non_blocking(job_id, ProcessingStatus.AWAITING_REVIEW, 77, details, "dub")
             
             from app.utils.shared_memory import unmark_job_cancelled
             unmark_job_cancelled(job_id)
@@ -408,7 +396,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         unmark_job_cancelled(job_id)
         
         # Confirm credit usage
-        credit_service.confirm_credit_usage_sync(job_id, JobType.DUB)
+        credit_service.confirm_credit_usage_sync(job_id, CreditJobType.DUB)
         
         if r2_audio_path.get("r2_key"):
             r2_service.delete_file(r2_audio_path["r2_key"])
@@ -422,7 +410,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {"message": f"Processing failed: {str(e)}", "error": str(e)}, "dub")
         
         # Refund credits on failure
-        credit_service.refund_reserved_credits_sync(job_id, JobType.DUB, "job_failed")
+        credit_service.refund_reserved_credits_sync(job_id, CreditJobType.DUB, "job_failed")
         
         try:
             if r2_audio_path.get("r2_key"):
@@ -507,7 +495,7 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
         res = r2.upload_file(manifest_path, r2_key, content_type="application/json")
         manifest_url_out = res.get("url") if res.get("success") else manifest_url
     # Update DB details and status reviewing
-    await dub_job_service.update_job_status(job_id, ProcessingStatus.REVIEWING.value, 80, details={
+    await dub_job_service.update_job_status(job_id, ProcessingStatus.REVIEWING.value, 79, details={
         "review_required": True,
         "review_status": "in_progress",
         "segments_manifest_url": manifest_url_out,
@@ -560,7 +548,7 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
                 logger.warning(f"No stored RunPod URLs found for job {job_id}")
                 stored_runpod_urls = {}  # Provide fallback
             # Update status to reviewing with proper review_status
-            _update_status_non_blocking(job_id, ProcessingStatus.REVIEWING, 80, {
+            _update_status_non_blocking(job_id, ProcessingStatus.REVIEWING, 79, {
                 "message": "Resuming with human edits...",
                 "review_status": "approved"
             }, "dub")
@@ -608,7 +596,7 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             logger.info(f"✅ Job {job_id} completed after review - unmarked cancellation")
             
             # Confirm credit usage
-            credit_service.confirm_credit_usage_sync(job_id, JobType.DUB)
+            credit_service.confirm_credit_usage_sync(job_id, CreditJobType.DUB)
             
             # Cleanup old dub directories after approval completion
             job_utils.cleanup_job_directories()
@@ -621,7 +609,7 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             }, "dub")
             
             # Refund credits on failure
-            credit_service.refund_reserved_credits_sync(job_id, JobType.DUB, "approval_failed")
+            credit_service.refund_reserved_credits_sync(job_id, CreditJobType.DUB, "approval_failed")
     executor.submit(_resume)
     return {"success": True, "message": "Resume started", "job_id": job_id}
 
@@ -689,7 +677,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     result = await credit_service.atomic_reserve_and_create_job(
         user_id=user_id,
         job_data=new_job_data,
-        job_type=JobType.DUB,
+        job_type=CreditJobType.DUB,
         duration_seconds=duration,
         collection_name="dub_jobs"
     )
@@ -774,7 +762,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
                         "parent_job_id": original_job_id
                     }
                     details = RunPodURLManager.copy_urls_from_original_job(original_job, details)
-                    _update_status_non_blocking(new_job_id, ProcessingStatus.AWAITING_REVIEW, 80, details, "dub")
+                    _update_status_non_blocking(new_job_id, ProcessingStatus.AWAITING_REVIEW, 77, details, "dub")
                     
                     # ✅ Redub successfully reached review stage - safe to unmark cancellation
                     from app.utils.shared_memory import unmark_job_cancelled
@@ -806,7 +794,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             logger.info(f"✅ Redub job {new_job_id} completed - unmarked cancellation")
             
             # Confirm credit usage
-            credit_service.confirm_credit_usage_sync(new_job_id, JobType.DUB)
+            credit_service.confirm_credit_usage_sync(new_job_id, CreditJobType.DUB)
             
             # Cleanup old dub directories after redub completion
             job_utils.cleanup_job_directories()
@@ -825,7 +813,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 refund_result = loop.run_until_complete(
-                    credit_service.refund_reserved_credits(new_job_id, JobType.DUB, "redub_failed")
+                    credit_service.refund_reserved_credits(new_job_id, CreditJobType.DUB, "redub_failed")
                 )
                 loop.close()
                 if refund_result["success"]:

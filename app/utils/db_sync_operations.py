@@ -91,14 +91,14 @@ class SyncDBOperations:
                 if status == 'completed':
                     adjusted_progress = 100
                 elif status == 'awaiting_review':
-                    # Ensure at least 80, but never less than current (review files ready)
-                    min_review_progress = 80
+                    # Ensure at least 77, but never less than current (review files ready)
+                    min_review_progress = 77
                     adjusted_progress = max(min_review_progress, (progress if progress is not None else min_review_progress))
                     if isinstance(current_progress, int):
                         adjusted_progress = max(current_progress, adjusted_progress)
                 elif status == 'reviewing':
-                    # Ensure at least 80, but never less than current (applying human edits)
-                    min_reviewing_progress = 80
+                    # Ensure at least 79, but never less than current (applying human edits)
+                    min_reviewing_progress = 79
                     adjusted_progress = max(min_reviewing_progress, (progress if progress is not None else min_reviewing_progress))
                     if isinstance(current_progress, int):
                         adjusted_progress = max(current_progress, adjusted_progress)
@@ -248,13 +248,18 @@ class SyncDBOperations:
             logger.error(f"Credit deduction failed for {job_type} job {job_id}: {e}")
             return False
 
-# Convenience functions for easier usage
+# Convenience functions for easier usage - DEPRECATED: Use unified_status_manager instead
+# These are kept only for legacy compatibility and will be removed in future versions
 def update_separation_status(job_id: str, status: str, progress: int = None, **kwargs):
-    """Convenience function to update separation job status"""
+    """DEPRECATED: Use unified_status_manager instead"""
+    import logging
+    logging.warning(f"DEPRECATED: update_separation_status called for {job_id}. Use unified_status_manager instead.")
     return SyncDBOperations.update_separation_job_status(job_id, status, progress, **kwargs)
 
 def update_dub_status(job_id: str, status: str, progress: int, details: Dict[str, Any] = None):
-    """Convenience function to update dub job status"""
+    """DEPRECATED: Use unified_status_manager instead"""
+    import logging
+    logging.warning(f"DEPRECATED: update_dub_status called for {job_id}. Use unified_status_manager instead.")
     return SyncDBOperations.update_dub_job_status(job_id, status, progress, details)
 
 def deduct_credits(user_id: str, job_id: str, duration_seconds: float, job_type: str = "separation"):

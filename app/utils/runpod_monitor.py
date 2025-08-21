@@ -11,7 +11,7 @@ class RunPodMonitor:
                  runpod_request_id: str, 
                  job_id: str, 
                  timeout_seconds: int = 600,
-                 poll_interval: int = 1):
+                 poll_interval: int = 10):
         self.runpod_request_id = runpod_request_id
         self.job_id = job_id
         self.timeout_seconds = timeout_seconds
@@ -103,7 +103,8 @@ class RunPodMonitor:
 def monitor_runpod_job(runpod_request_id: str, 
                       job_id: str, 
                       timeout_seconds: int = 600,
+                      poll_interval: int = 10,
                       on_progress: Optional[Callable[[str, int], None]] = None,
                       on_cancelled: Optional[Callable[[], None]] = None) -> Dict[str, Any]:
-    monitor = RunPodMonitor(runpod_request_id, job_id, timeout_seconds)
+    monitor = RunPodMonitor(runpod_request_id, job_id, timeout_seconds, poll_interval)
     return monitor.monitor_until_completion(on_progress, on_cancelled)

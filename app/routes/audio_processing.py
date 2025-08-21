@@ -9,7 +9,8 @@ import os
 from app.schemas import AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, VoiceCloneRequest, VoiceCloneResponse
 from app.dependencies.auth import get_current_user
 from app.services.separation_job_service import separation_job_service
-from app.services.credit_service import credit_service, JobType
+from app.services.credit_service import credit_service
+from app.services.credit_service import JobType as CreditJobType
 from app.config.constants import MAX_ATTEMPTS_DEFAULT, POLLING_INTERVAL_SECONDS, MSG_PROCESSING_STARTED, ERROR_PROCESSING_FAILED
 from datetime import datetime, timezone
 from app.utils.logger import logger
@@ -31,9 +32,33 @@ def get_separation_executor():
     return _separation_executor
 
 def _update_separation_status_non_blocking(job_id: str, status: str, progress: int = None, **kwargs):
-    """Update separation status using common utility"""
-    from app.utils.db_sync_operations import update_separation_status
-    update_separation_status(job_id, status, progress, **kwargs)
+    """Update separation job status using unified status manager"""
+    import asyncio
+    from app.utils.unified_status_manager import get_unified_status_manager, ProcessingStatus
+    
+    manager = get_unified_status_manager()
+    
+    # Convert string status to enum
+    try:
+        status_enum = ProcessingStatus(status)
+    except ValueError:
+        logger.warning(f"Unknown status: {status}, defaulting to processing")
+        status_enum = ProcessingStatus.PROCESSING
+    
+    # Run async update in thread pool for non-blocking execution
+    def run_update():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            from app.utils.unified_status_manager import JobType as UnifiedJobType
+            loop.run_until_complete(
+                manager.update_status(job_id, UnifiedJobType.SEPARATION, status_enum, progress, kwargs)
+            )
+        finally:
+            loop.close()
+    
+    import threading
+    threading.Thread(target=run_update, daemon=True).start()
 
 def _deduct_separation_credits_non_blocking(user_id: str, job_id: str, duration_seconds: float):
     """Deduct credits using common utility"""
@@ -188,7 +213,7 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                     gc.collect()
                     
                     # Confirm credit usage
-                    credit_service.confirm_credit_usage_sync(job_id, JobType.SEPARATION)
+                    credit_service.confirm_credit_usage_sync(job_id, CreditJobType.SEPARATION)
                     
                     # Cleanup temp files after successful completion
                     _cleanup_separation_files_non_blocking(job_id)
@@ -211,7 +236,7 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                         loop = asyncio.new_event_loop()
                         asyncio.set_event_loop(loop)
                         refund_result = loop.run_until_complete(
-                            credit_service.refund_reserved_credits(job_id, JobType.SEPARATION, "job_failed")
+                            credit_service.refund_reserved_credits(job_id, CreditJobType.SEPARATION, "job_failed")
                         )
                         loop.close()
                         if refund_result["success"]:
@@ -250,7 +275,7 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 refund_result = loop.run_until_complete(
-                    credit_service.refund_reserved_credits(job_id, JobType.SEPARATION, "timeout")
+                    credit_service.refund_reserved_credits(job_id, CreditJobType.SEPARATION, "timeout")
                 )
                 loop.close()
                 if refund_result["success"]:
@@ -277,7 +302,7 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 refund_result = loop.run_until_complete(
-                    credit_service.refund_reserved_credits(job_id, JobType.SEPARATION, "monitoring_error")
+                    credit_service.refund_reserved_credits(job_id, CreditJobType.SEPARATION, "monitoring_error")
                 )
                 loop.close()
                 if refund_result["success"]:
@@ -372,7 +397,7 @@ async def start_audio_separation(
         result = await credit_service.atomic_reserve_and_create_job(
             user_id=user_id,
             job_data=job_data,
-            job_type=JobType.SEPARATION,
+            job_type=CreditJobType.SEPARATION,
             duration_seconds=request.duration,
             collection_name="separation_jobs"
         )
