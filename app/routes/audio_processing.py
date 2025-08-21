@@ -188,18 +188,7 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                     gc.collect()
                     
                     # Confirm credit usage
-                    try:
-                        import asyncio
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-                        credit_result = loop.run_until_complete(
-                            credit_service.confirm_credit_usage(job_id, JobType.SEPARATION)
-                        )
-                        loop.close()
-                        if not credit_result["success"]:
-                            logger.warning(f"Credit confirmation failed for separation {job_id}: {credit_result.get('error')}")
-                    except Exception as e:
-                        logger.error(f"Credit confirmation error for separation {job_id}: {e}")
+                    credit_service.confirm_credit_usage_sync(job_id, JobType.SEPARATION)
                     
                     # Cleanup temp files after successful completion
                     _cleanup_separation_files_non_blocking(job_id)

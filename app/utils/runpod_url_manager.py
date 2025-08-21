@@ -41,20 +41,30 @@ class RunPodURLManager:
     @classmethod
     def add_urls_to_folder_upload(cls, folder_upload: Dict[str, Any], runpod_urls: Dict[str, str], job_id: str) -> Dict[str, Any]:
         """Add RunPod URLs to folder_upload structure"""
+        if not folder_upload:
+            folder_upload = {}
+            
         if not runpod_urls:
+            logger.warning(f"No RunPod URLs provided for job {job_id}")
             return folder_upload
             
         if runpod_urls.get(cls.VOCALS_KEY):
-            folder_upload[f"vocals_{job_id}.wav"] = {
+            vocal_filename = f"vocals_{job_id}.wav"
+            folder_upload[vocal_filename] = {
                 "url": runpod_urls[cls.VOCALS_KEY],
-                "type": "audio"
+                "type": "audio",
+                "success": True
             }
+            logger.info(f"Added vocal URL to folder upload for job {job_id}: {vocal_filename}")
             
         if runpod_urls.get(cls.INSTRUMENTS_KEY):
-            folder_upload[f"instruments_{job_id}.wav"] = {
+            instrument_filename = f"instruments_{job_id}.wav"
+            folder_upload[instrument_filename] = {
                 "url": runpod_urls[cls.INSTRUMENTS_KEY], 
-                "type": "audio"
+                "type": "audio",
+                "success": True
             }
+            logger.info(f"Added instrument URL to folder upload for job {job_id}: {instrument_filename}")
             
         return folder_upload
     

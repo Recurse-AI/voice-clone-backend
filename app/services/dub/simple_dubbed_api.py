@@ -213,6 +213,15 @@ class SimpleDubbedAPI:
             )
             
             if review_mode:
+                # Preparing review files - update to 80%
+                self._update_status_non_blocking(
+                    job_id,
+                    ProcessingStatus.PROCESSING,
+                    80,
+                    {"message": "Preparing review files"},
+                    "dub",
+                )
+                logger.info("Preparing review files for human review...")
                 # Build and save manifest
                 manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments)
                 manifest_path = save_manifest_to_dir(manifest, process_temp_dir, job_id)
@@ -416,6 +425,16 @@ class SimpleDubbedAPI:
         target_language_code = language_service.normalize_language_input(target_language)
         dubbed_texts = self.dub_text_batch(segments_to_dub, target_language_code, batch_size=15, job_id=job_id)
         
+        # OpenAI dubbing completed - update to 75%
+        self._update_status_non_blocking(
+            job_id,
+            ProcessingStatus.PROCESSING,
+            75,
+            {"message": "Reviewing and editing with AI"},
+            "dub",
+        )
+        logger.info("OpenAI dubbing completed, starting voice processing...")
+        
         # Apply edited text overrides if present (only for same target language)
         edited_map = {}
         if manifest_override:
@@ -440,7 +459,7 @@ class SimpleDubbedAPI:
                     if seg.get("id") and seg.get("dubbed_text"):
                         edited_map[seg["id"]] = seg["dubbed_text"]
         
-        # Start voice cloning phase at 80% to align with UI mapping
+        # Start voice cloning phase at 80% (after review preparation)
         self._update_status_non_blocking(
             job_id,
             ProcessingStatus.PROCESSING,
@@ -576,7 +595,7 @@ class SimpleDubbedAPI:
     def _generate_final_output(self, job_id: str, dubbed_segments: list, process_temp_dir: str, 
                               target_language: str, audio_url: str, speakers_count: int, transcript_id: str) -> dict:
         """Generate final audio, SRT file, and upload to R2"""
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 75, {"message": "Reconstructing final audio..."}, "dub")
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 90, {"message": "Reconstructing final audio..."}, "dub")
         logger.info("Reconstructing final audio...")
         
         # Reconstruct final audio
@@ -596,7 +615,7 @@ class SimpleDubbedAPI:
     
     def _generate_srt_file(self, job_id: str, dubbed_segments: list, process_temp_dir: str) -> str:
         """Generate SRT subtitle file"""
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 85, {"message": "Generating SRT file..."}, "dub")
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 92, {"message": "Generating SRT file..."}, "dub")
         logger.info("Generating SRT file...")
         
         from .video_processor import VideoProcessor
@@ -668,7 +687,7 @@ class SimpleDubbedAPI:
     
     def _upload_and_finalize(self, job_id: str, process_temp_dir: str, final_audio_path: str) -> dict:
         """Upload files to R2 and return final results"""
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 90, {"message": "Uploading files to R2..."}, "dub")
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 94, {"message": "Uploading files to R2..."}, "dub")
         
         # Upload entire directory to R2
         folder_upload_result = self.r2_storage.upload_directory(job_id, process_temp_dir)
@@ -678,7 +697,7 @@ class SimpleDubbedAPI:
         # All files (including vocals/instruments) are available via folder_upload_result
         
         # Update progress
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 95, {"message": "Upload and finalization..."}, "dub")
+        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 96, {"message": "Upload and finalization..."}, "dub")
         logger.info("Dubbed processing completed successfully")
         
         # Do not remove temp dir here; caller handles cleanup after final status update

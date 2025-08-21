@@ -91,13 +91,13 @@ class SyncDBOperations:
                 if status == 'completed':
                     adjusted_progress = 100
                 elif status == 'awaiting_review':
-                    # Ensure at least 75, but never less than current
-                    min_review_progress = 75
+                    # Ensure at least 80, but never less than current (review files ready)
+                    min_review_progress = 80
                     adjusted_progress = max(min_review_progress, (progress if progress is not None else min_review_progress))
                     if isinstance(current_progress, int):
                         adjusted_progress = max(current_progress, adjusted_progress)
                 elif status == 'reviewing':
-                    # Ensure at least 80, but never less than current
+                    # Ensure at least 80, but never less than current (applying human edits)
                     min_reviewing_progress = 80
                     adjusted_progress = max(min_reviewing_progress, (progress if progress is not None else min_reviewing_progress))
                     if isinstance(current_progress, int):

@@ -149,11 +149,15 @@ async def get_video_dub_status(job_id: str):
                     return "Transcribing audio with AI"
                 elif progress <= 55:
                     return "Dubbing text with AI translation"
-                elif progress <= 74:
+                elif progress <= 75:
                     return "Reviewing and editing with AI"
+                elif progress <= 79:
+                    return "Preparing review files"
                 elif progress <= 89:
                     return "Voice cloning and reconstructing final audio"
-                elif progress <= 95:
+                elif progress <= 93:
+                    return "Generating final output"
+                elif progress <= 96:
                     return "Uploading results"
                 else:
                     return "Finalizing"
@@ -404,18 +408,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         unmark_job_cancelled(job_id)
         
         # Confirm credit usage
-        try:
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            credit_result = loop.run_until_complete(
-                credit_service.confirm_credit_usage(job_id, JobType.DUB)
-            )
-            loop.close()
-            if not credit_result["success"]:
-                logger.warning(f"Credit confirmation failed for job {job_id}: {credit_result.get('error')}")
-        except Exception as e:
-            logger.error(f"Credit confirmation error for job {job_id}: {e}")
+        credit_service.confirm_credit_usage_sync(job_id, JobType.DUB)
         
         if r2_audio_path.get("r2_key"):
             r2_service.delete_file(r2_audio_path["r2_key"])
@@ -429,18 +422,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {"message": f"Processing failed: {str(e)}", "error": str(e)}, "dub")
         
         # Refund credits on failure
-        try:
-            import asyncio
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            refund_result = loop.run_until_complete(
-                credit_service.refund_reserved_credits(job_id, JobType.DUB, "job_failed")
-            )
-            loop.close()
-            if refund_result["success"]:
-                logger.info(f"Refunded {refund_result['credits_refunded']} credits for failed job {job_id}")
-        except Exception as refund_error:
-            logger.error(f"Credit refund error for job {job_id}: {refund_error}")
+        credit_service.refund_reserved_credits_sync(job_id, JobType.DUB, "job_failed")
         
         try:
             if r2_audio_path.get("r2_key"):
@@ -570,7 +552,7 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
     executor = get_dub_executor()
     def _resume():
         # Initialize variable to avoid scoping issues
-        stored_runpod_urls = None
+        stored_runpod_urls = {}
         try:
             # Retrieve URLs inside the function to avoid scoping issues
             stored_runpod_urls = RunPodURLManager.retrieve_urls_from_job(job)
@@ -626,18 +608,7 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             logger.info(f"✅ Job {job_id} completed after review - unmarked cancellation")
             
             # Confirm credit usage
-            try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                credit_result = loop.run_until_complete(
-                    credit_service.confirm_credit_usage(job_id, JobType.DUB)
-                )
-                loop.close()
-                if not credit_result["success"]:
-                    logger.warning(f"Credit confirmation failed for job {job_id}: {credit_result.get('error')}")
-            except Exception as e:
-                logger.error(f"Credit confirmation error for job {job_id}: {e}")
+            credit_service.confirm_credit_usage_sync(job_id, JobType.DUB)
             
             # Cleanup old dub directories after approval completion
             job_utils.cleanup_job_directories()
@@ -650,18 +621,7 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             }, "dub")
             
             # Refund credits on failure
-            try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                refund_result = loop.run_until_complete(
-                    credit_service.refund_reserved_credits(job_id, JobType.DUB, "approval_failed")
-                )
-                loop.close()
-                if refund_result["success"]:
-                    logger.info(f"Refunded {refund_result['credits_refunded']} credits for failed approval {job_id}")
-            except Exception:
-                pass
+            credit_service.refund_reserved_credits_sync(job_id, JobType.DUB, "approval_failed")
     executor.submit(_resume)
     return {"success": True, "message": "Resume started", "job_id": job_id}
 
@@ -826,6 +786,11 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             result_url = result.get("result_url") or (result.get("result_urls", {}) or {}).get("final_video")
             folder_upload = result.get("folder_upload", {})
             
+            # Add stored RunPod URLs to folder upload for redub
+            original_urls = RunPodURLManager.retrieve_urls_from_job(original_job)
+            if original_urls:
+                folder_upload = RunPodURLManager.add_urls_to_folder_upload(folder_upload, original_urls, new_job_id)
+            
             _update_status_non_blocking(new_job_id, ProcessingStatus.COMPLETED, 100, {
                 "message": "Redub completed successfully",
                 "result_url": result_url,
@@ -841,18 +806,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             logger.info(f"✅ Redub job {new_job_id} completed - unmarked cancellation")
             
             # Confirm credit usage
-            try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                credit_result = loop.run_until_complete(
-                    credit_service.confirm_credit_usage(new_job_id, JobType.DUB)
-                )
-                loop.close()
-                if not credit_result["success"]:
-                    logger.warning(f"Credit confirmation failed for redub {new_job_id}: {credit_result.get('error')}")
-            except Exception as e:
-                logger.error(f"Credit confirmation error for redub {new_job_id}: {e}")
+            credit_service.confirm_credit_usage_sync(new_job_id, JobType.DUB)
             
             # Cleanup old dub directories after redub completion
             job_utils.cleanup_job_directories()
