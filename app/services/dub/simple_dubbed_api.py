@@ -380,7 +380,7 @@ class SimpleDubbedAPI:
             
         else:
             logger.info("Starting fresh transcription")
-            paragraphs_result = self.transcription_service.get_paragraphs_and_split_audio(
+            sentences_result = self.transcription_service.get_sentences_and_split_audio(
                 audio_url=audio_url,
                 output_dir=process_temp_dir,
                 speakers_count=speakers_count,
@@ -388,16 +388,16 @@ class SimpleDubbedAPI:
                 job_id=job_id
             )
             
-            if not paragraphs_result["success"]:
-                logger.error(f"Transcription failed: {paragraphs_result.get('error')}")
+            if not sentences_result["success"]:
+                logger.error(f"Transcription failed: {sentences_result.get('error')}")
                 AudioUtils.remove_temp_dir(folder_path=process_temp_dir)
-                raise Exception(paragraphs_result.get("error", "Transcription failed"))
+                raise Exception(sentences_result.get("error", "Transcription failed"))
                 
-            raw_paragraphs = paragraphs_result["segments"]
-            transcript_id = paragraphs_result.get("transcript_id")
-            logger.info(f"Found {len(raw_paragraphs)} segments")
+            raw_sentences = sentences_result["segments"]
+            transcript_id = sentences_result.get("transcript_id")
+            logger.info(f"Found {len(raw_sentences)} sentence segments")
         
-        return raw_paragraphs, transcript_id
+        return raw_sentences, transcript_id
     
     def _process_dubbing_and_cloning(self, job_id: str, raw_paragraphs: list, target_language: str,
                                      manifest_override: Optional[Dict[str, Any]], review_mode: bool, 
@@ -716,70 +716,99 @@ class SimpleDubbedAPI:
 
 
     def _reconstruct_final_audio(self, segments: list, original_audio_path: str, job_id: str = None, process_temp_dir: str = None) -> str:
-        """Reconstruct final audio with transcript_id in filename.
-        If original_audio_path is missing, derive sample rate from first cloned segment or fallback to 44100 Hz.
+        """Reconstruct final audio with exact original duration.
+        Missing segments will have silent audio automatically.
         """
         try:
             import soundfile as sf
             if not segments:
                 return None
+                
             sample_rate = None
             base_dtype = np.float32
-            base_length = 0
+            original_duration_samples = 0
+            
+            # Get original audio properties for exact duration matching
             if original_audio_path and os.path.exists(original_audio_path):
-                audio, sample_rate = sf.read(original_audio_path)
-                if len(audio.shape) > 1:
-                    audio = audio[:, 0]
-                base_dtype = audio.dtype if hasattr(audio, 'dtype') else np.float32
-                base_length = len(audio)
+                original_audio, sample_rate = sf.read(original_audio_path)
+                if len(original_audio.shape) > 1:
+                    original_audio = original_audio[:, 0]
+                base_dtype = original_audio.dtype if hasattr(original_audio, 'dtype') else np.float32
+                original_duration_samples = len(original_audio)
             else:
-                # Try to get sample rate from first available cloned segment
+                # Fallback: derive sample rate from cloned segments
                 for segment in segments:
                     cloned_path = segment.get("cloned_audio_path")
                     if cloned_path and os.path.exists(cloned_path):
-                        cloned_audio, sr = sf.read(cloned_path)
-                        sample_rate = sr
+                        cloned_audio, sample_rate = sf.read(cloned_path)
                         base_dtype = cloned_audio.dtype if hasattr(cloned_audio, 'dtype') else np.float32
                         break
                 if not sample_rate:
                     sample_rate = 44100
-            total_duration = int(max([s["end"] for s in segments]) / 1000.0 * sample_rate)
-            total_samples = max(total_duration, base_length)
-            final_audio = np.zeros(total_samples, dtype=base_dtype)
+                # Calculate duration from segments if no original audio
+                segment_end_times = [s.get("end", 0) for s in segments if s.get("end")]
+                if segment_end_times:
+                    max_end_time_ms = max(segment_end_times)
+                    original_duration_samples = int((max_end_time_ms / 1000.0) * sample_rate)
+                else:
+                    # Fallback to 0 if no valid segments
+                    original_duration_samples = 0
+            
+            # Create final audio array with exact original duration (filled with silence)
+            if original_duration_samples <= 0:
+                logger.warning("No valid duration found, creating minimal audio")
+                original_duration_samples = int(sample_rate)  # 1 second fallback
+            final_audio = np.zeros(original_duration_samples, dtype=base_dtype)
+            # Place cloned audio segments at their exact positions
             for segment in segments:
-                cloned_path = segment["cloned_audio_path"]
+                cloned_path = segment.get("cloned_audio_path")
                 if not cloned_path or not os.path.exists(cloned_path):
                     continue
+                    
                 try:
                     cloned_audio, _ = sf.read(cloned_path)
                     if len(cloned_audio.shape) > 1:
-                        cloned_audio = np.mean(cloned_audio, axis=1)
-                    start_ms = segment["start"]
-                    end_ms = segment["end"]
+                        cloned_audio = np.mean(cloned_audio, axis=1)  # Convert to mono
+                    
+                    start_ms = segment.get("start", 0)
+                    end_ms = segment.get("end", 0)
+                    
+                    # Validate timing values
+                    if start_ms < 0 or end_ms <= start_ms:
+                        logger.warning(f"Invalid timing for segment {segment.get('id', 'unknown')}: {start_ms}ms-{end_ms}ms")
+                        continue
+                        
                     start_sample = int((start_ms / 1000.0) * sample_rate)
-                    segment_duration_samples = int(((end_ms - start_ms) / 1000.0) * sample_rate)
-                    # If cloned audio is longer than the original slot, allow it to spill over
-                    # rather than hard-truncating (which caused words to be cut mid-way).
-                    if len(cloned_audio) < segment_duration_samples:
-                        padding = segment_duration_samples - len(cloned_audio)
+                    expected_duration_samples = int(((end_ms - start_ms) / 1000.0) * sample_rate)
+                    
+                    # Ensure cloned audio fits the expected segment duration
+                    if len(cloned_audio) > expected_duration_samples:
+                        # Truncate if too long
+                        cloned_audio = cloned_audio[:expected_duration_samples]
+                    elif len(cloned_audio) < expected_duration_samples:
+                        # Pad with silence if too short
+                        padding = expected_duration_samples - len(cloned_audio)
                         cloned_audio = np.pad(cloned_audio, (0, padding), mode="constant")
-
+                    
+                    # Calculate end position
                     end_sample = start_sample + len(cloned_audio)
-                    # Expand final_audio length if needed
-                    if end_sample > len(final_audio):
-                        extra_len = end_sample - len(final_audio)
-                        final_audio = np.pad(final_audio, (0, extra_len), mode="constant")
-                        total_samples = len(final_audio)
-
-                    final_audio[start_sample:end_sample] = cloned_audio[: end_sample - start_sample]
-                    logger.info(f"Placed {segment['id']} at {start_ms}ms")
+                    
+                    # Only place audio if it fits within original duration
+                    if start_sample >= 0 and end_sample <= original_duration_samples:
+                        final_audio[start_sample:end_sample] = cloned_audio
+                        logger.info(f"Placed segment {segment.get('id', 'unknown')} at {start_ms}ms-{end_ms}ms")
+                    else:
+                        logger.warning(f"Segment {segment.get('id', 'unknown')} exceeds original audio duration, skipping")
+                        
                 except Exception as e:
-                    logger.error(f"Failed to process segment {segment['id']}: {str(e)}")
+                    logger.error(f"Failed to process segment {segment.get('id', 'unknown')}: {str(e)}")
                     continue
-            # Save final audio (with transcript_id)
+            # Save final audio with exact original duration
             final_path = os.path.join(process_temp_dir, f"final_dubbed_{job_id}.wav").replace('\\', '/')
             sf.write(final_path, final_audio, sample_rate)
-            logger.info(f"Final audio reconstructed: {final_path}")
+            
+            duration_seconds = len(final_audio) / sample_rate
+            logger.info(f"Final audio reconstructed: {final_path} (duration: {duration_seconds:.2f}s, {len(final_audio)} samples)")
             return final_path
         except Exception as e:
             logger.error(f"Failed to reconstruct final audio: {str(e)}")

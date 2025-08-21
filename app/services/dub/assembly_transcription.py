@@ -131,10 +131,10 @@ class TranscriptionService:
             logger.error(f"Transcription failed for {audio_id}: {str(e)}")
             raise Exception(f"Transcription service error: {str(e)}")
     
-    def get_paragraphs_and_split_audio(self, audio_url: str, output_dir: str = None, speakers_count: int = 1, source_video_language: str = None, max_paragraphs: int = None, job_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get paragraphs from AssemblyAI API and split audio into segments, with language and speaker control"""
+    def get_sentences_and_split_audio(self, audio_url: str, output_dir: str = None, speakers_count: int = 1, source_video_language: str = None, max_sentences: int = None, job_id: Optional[str] = None) -> Dict[str, Any]:
+        """Get sentences from AssemblyAI API, split long sentences, and split audio into segments"""
         try:
-            logger.info(f"Starting paragraph extraction and audio splitting for audio: {audio_url}")
+            logger.info(f"Starting sentence extraction and audio splitting for audio: {audio_url}")
             
             # Better URL validation and filename extraction
             if not audio_url or not audio_url.startswith(('http://', 'https://')):
@@ -169,34 +169,32 @@ class TranscriptionService:
             transcript_id = transcript_result["transcript_id"]
             logger.info(f"Created transcript with ID: {transcript_id}")
             
-            # Get paragraphs from AssemblyAI API
-            # paragraphs_data = self._get_paragraphs_from_api(transcript_id)
-            
-            # if not paragraphs_data or "paragraphs" not in paragraphs_data:
-            #     raise Exception("No paragraphs found in transcription response")
-            
-            # paragraphs = paragraphs_data["paragraphs"]
-            # logger.info(f"Found {len(paragraphs)} paragraphs in transcript")
-
-            paragraphs_data = self._get_sentences_from_api(transcript_id)
-            if isinstance(paragraphs_data, dict) and "sentences" in paragraphs_data:
-                paragraphs = paragraphs_data["sentences"]
-            elif isinstance(paragraphs_data, list):
-                paragraphs = paragraphs_data
+            # Get sentences from Assembly AI
+            sentences_data = self._get_sentences_from_api(transcript_id)
+            if isinstance(sentences_data, dict) and "sentences" in sentences_data:
+                raw_sentences = sentences_data["sentences"]
+            elif isinstance(sentences_data, list):
+                raw_sentences = sentences_data
             else:
-                raise Exception(f"Unexpected response format from AssemblyAI sentences API: {paragraphs_data}")
-            logger.info(f"Found {len(paragraphs)} sentences in transcript")
+                raise Exception(f"Unexpected response format from AssemblyAI sentences API: {sentences_data}")
             
+            logger.info(f"Found {len(raw_sentences)} raw sentences from Assembly AI")
             
-            # Extract start, end, text from paragraphs
+            # Split long sentences (>20 seconds) into smaller segments
+            processed_sentences = self._split_long_sentences(raw_sentences, max_duration_ms=20000)
+            logger.info(f"After splitting: {len(processed_sentences)} sentences (was {len(raw_sentences)})")
+            
+            # Apply max limit if specified
+            sentences_to_process = processed_sentences[:max_sentences] if max_sentences else processed_sentences
+            
+            # Convert sentences to segments for audio splitting
             segments_to_split = []
-            paragraphs_to_process = paragraphs[:max_paragraphs] if max_paragraphs else paragraphs
-            for i, paragraph in enumerate(paragraphs_to_process):
+            for i, sentence in enumerate(sentences_to_process):
                 segments_to_split.append({
-                    "start": paragraph["start"],
-                    "end": paragraph["end"],
-                    "text": paragraph["text"],
-                    "speaker_label": paragraph["words"][0]["speaker"] if paragraph.get("words") else None
+                    "start": sentence["start"],
+                    "end": sentence["end"], 
+                    "text": sentence["text"],
+                    "speaker_label": sentence.get("speaker", sentence["words"][0]["speaker"] if sentence.get("words") else "A")
                 })
 
 
@@ -234,7 +232,8 @@ class TranscriptionService:
                 "success": True,
                 "transcript_id": transcript_id,
                 "audio_url": audio_url,
-                "paragraphs_count": len(paragraphs),
+                "raw_sentences_count": len(raw_sentences),
+                "processed_sentences_count": len(processed_sentences),
                 "segments_processed": len(enhanced_segments),
                 "original_audio": temp_audio_path,
                 "split_result": split_result,
@@ -242,7 +241,7 @@ class TranscriptionService:
             }
             
         except Exception as e:
-            logger.error(f"Paragraph extraction and audio splitting failed: {str(e)}")
+            logger.error(f"Sentence extraction and audio splitting failed: {str(e)}")
             raise Exception(f"Service error: {str(e)}")
     
     def _create_transcription_for_audio(self, audio_path: str, speakers_count: int = 2, language_code: str = None, language_detection: bool = True, job_id: Optional[str] = None) -> Dict[str, Any]:
@@ -266,8 +265,6 @@ class TranscriptionService:
                 if job_id:
                     from app.utils.shared_memory import is_job_cancelled
                     if is_job_cancelled(job_id):
-                        logger.info(f"🛑 AssemblyAI transcription cancelled for job {job_id}")
-                        # Update database status to cancelled before raising exception
                         try:
                             from app.utils.db_sync_operations import update_dub_status
                             update_dub_status(job_id, "cancelled", 0, {"error": "Job cancelled by user"})
@@ -289,23 +286,7 @@ class TranscriptionService:
         except Exception as e:
             raise Exception(f"Failed to create transcription: {str(e)}")
     
-    def _get_paragraphs_from_api(self, transcript_id: str) -> Dict[str, Any]:
-        """Get paragraphs from AssemblyAI API using direct HTTP request"""
-        try:
-            url = f"https://api.assemblyai.com/v2/transcript/{transcript_id}/paragraphs"
-            headers = {
-                "Authorization": settings.ASSEMBLYAI_API_KEY
-            }
-            
-            response = requests.get(url, headers=headers, timeout=30)
-            response.raise_for_status()
-            
-            return response.json()
-            
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Failed to get paragraphs from API: {str(e)}")
-        except json.JSONDecodeError as e:
-            raise Exception(f"Failed to parse API response: {str(e)}")
+   
     
     def _get_sentences_from_api(self, transcript_id: str) -> Dict[str, Any]:
         """Get sentences from AssemblyAI API using direct HTTP request"""
@@ -324,6 +305,111 @@ class TranscriptionService:
             raise Exception(f"Failed to get sentences from API: {str(e)}")
         except json.JSONDecodeError as e:
             raise Exception(f"Failed to parse API response: {str(e)}")
+    
+    def _split_long_sentences(self, sentences: List[Dict[str, Any]], max_duration_ms: int = 20000) -> List[Dict[str, Any]]:
+        """Split sentences longer than max_duration_ms into smaller segments based on punctuation"""
+        
+        # Multi-language punctuation endpoints for sentence splitting
+        punctuation_patterns = {
+            'period': ['.', '।', '。', '۔', '፡'],  # English, Hindi, Chinese, Urdu, Amharic
+            'comma': [',', '،', '、', '，'],        # English, Arabic, Chinese  
+            'semicolon': [';', '؛'],               # English, Arabic
+            'question': ['?', '؟', '？'],          # English, Arabic, Chinese
+            'exclamation': ['!', '！'],            # English, Chinese
+            'pipe': ['|']                          # Custom delimiter
+        }
+        
+        def find_split_points(words_list):
+            """Find good split points in words list"""
+            split_points = []
+            
+            for i, word in enumerate(words_list):
+                word_text = word.get('text', '').strip()
+                
+                # Check for punctuation at word end only
+                for punct_list in punctuation_patterns.values():
+                    if any(word_text.endswith(p) for p in punct_list):
+                        split_points.append(i + 1)  # Split after punctuation
+                        break  # Found punctuation, no need to check other patterns
+            
+            return split_points
+        
+        result_sentences = []
+        
+        for sentence in sentences:
+            duration_ms = sentence['end'] - sentence['start']
+            
+            # If sentence is within limit, keep as is
+            if duration_ms <= max_duration_ms:
+                result_sentences.append(sentence)
+                continue
+            
+            # Need to split long sentence
+            words = sentence.get('words', [])
+            if not words:
+                result_sentences.append(sentence)
+                continue
+            
+            split_points = find_split_points(words)
+            
+            # If no good split points found, split by duration evenly
+            if not split_points:
+                words_per_segment = max(1, len(words) // (duration_ms // max_duration_ms + 1))
+                split_points = list(range(words_per_segment, len(words), words_per_segment))
+            
+            # Create segments
+            start_idx = 0
+            segment_num = 0
+            
+            for split_point in split_points + [len(words)]:
+                if split_point <= start_idx:
+                    continue
+                
+                segment_words = words[start_idx:split_point]
+                if not segment_words:
+                    break
+                
+                segment_start = segment_words[0]['start']
+                segment_end = segment_words[-1]['end']
+                segment_duration = segment_end - segment_start
+                
+                # Skip very short segments (less than 1 second)
+                if segment_duration < 1000:
+                    start_idx = split_point
+                    continue
+                
+                # If this segment is still too long, force split
+                if segment_duration > max_duration_ms and len(segment_words) > 1:
+                    mid_point = len(segment_words) // 2
+                    segment_words = segment_words[:mid_point]
+                    split_point = start_idx + mid_point
+                    segment_end = segment_words[-1]['end']
+                
+                segment_text = ' '.join(word['text'] for word in segment_words)
+                
+                # Get speaker from first word
+                speaker = segment_words[0].get('speaker') if segment_words else sentence.get('speaker', 'A')
+                
+                new_segment = {
+                    'text': segment_text,
+                    'start': segment_start,
+                    'end': segment_end,
+                    'words': segment_words,
+                    'confidence': sentence.get('confidence', 0.9),
+                    'speaker': speaker,
+                    'original_sentence_id': sentence.get('id', f"sentence_{segment_num}"),
+                    'segment_index': segment_num
+                }
+                
+                result_sentences.append(new_segment)
+                start_idx = split_point
+                segment_num += 1
+                
+                # If we've split enough, break
+                if segment_end >= sentence['end']:
+                    break
+        
+        return result_sentences
 
 
     

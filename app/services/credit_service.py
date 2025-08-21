@@ -324,24 +324,13 @@ class CreditService:
 
     @staticmethod
     def run_async_safely(async_func, timeout: int = 30):
-        """Safely run async function in any thread context"""
+        """Safely run async function in sync context"""
         import asyncio
-        import concurrent.futures
         
         try:
-            try:
-                # Try to get existing loop
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # If loop is running, use thread executor
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, async_func)
-                        return future.result(timeout=timeout)
-                else:
-                    return loop.run_until_complete(async_func)
-            except RuntimeError:
-                # No event loop in current thread, create new one
-                return asyncio.run(async_func)
+            # Always use asyncio.run to create a fresh event loop
+            # This avoids any event loop conflicts
+            return asyncio.run(async_func)
         except Exception as e:
             logger.error(f"Async function execution failed: {e}")
             return {"success": False, "error": str(e)}
