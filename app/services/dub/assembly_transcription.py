@@ -94,22 +94,11 @@ class TranscriptionService:
                         logger.info(f"🛑 AssemblyAI transcription cancelled for job {job_id}")
                         # Update database status to cancelled before raising exception
                         try:
-                            import asyncio
                             from app.utils.unified_status_manager import get_unified_status_manager, ProcessingStatus, JobType
                             manager = get_unified_status_manager()
                             
-                            def run_update():
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                try:
-                                    loop.run_until_complete(
-                                        manager.update_status(job_id, JobType.DUB, ProcessingStatus.CANCELLED, 0, {"error": "Job cancelled by user"})
-                                    )
-                                finally:
-                                    loop.close()
-                            
-                            import threading
-                            threading.Thread(target=run_update, daemon=True).start()
+                            # Use sync version to avoid event loop issues
+                            manager.update_status_sync(job_id, JobType.DUB, ProcessingStatus.CANCELLED, 0, {"error": "Job cancelled by user"})
                         except Exception as e:
                             logger.warning(f"Failed to update status during cancellation: {e}")
                         raise Exception("Job cancelled by user")
@@ -280,22 +269,11 @@ class TranscriptionService:
                     from app.utils.shared_memory import is_job_cancelled
                     if is_job_cancelled(job_id):
                         try:
-                            import asyncio
                             from app.utils.unified_status_manager import get_unified_status_manager, ProcessingStatus, JobType
                             manager = get_unified_status_manager()
                             
-                            def run_update():
-                                loop = asyncio.new_event_loop()
-                                asyncio.set_event_loop(loop)
-                                try:
-                                    loop.run_until_complete(
-                                        manager.update_status(job_id, JobType.DUB, ProcessingStatus.CANCELLED, 0, {"error": "Job cancelled by user"})
-                                    )
-                                finally:
-                                    loop.close()
-                            
-                            import threading
-                            threading.Thread(target=run_update, daemon=True).start()
+                            # Use sync version to avoid event loop issues
+                            manager.update_status_sync(job_id, JobType.DUB, ProcessingStatus.CANCELLED, 0, {"error": "Job cancelled by user"})
                         except Exception as e:
                             logger.warning(f"Failed to update status during cancellation: {e}")
                         raise Exception("Job cancelled by user")

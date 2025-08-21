@@ -179,7 +179,7 @@ async def profile(
     ):
     try:
         user = await get_user_id(current_user.id)
-        logger.info(f"getting get user. {current_user.id}")
+        # Reduced logging - only log when there's an issue
         if user is None:
             return JSONResponse(
                 status_code=404,

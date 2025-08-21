@@ -139,7 +139,7 @@ class UnifiedStatusManager:
             ProcessingStatus.COMPLETED, ProcessingStatus.FAILED, ProcessingStatus.CANCELLED
         }
         
-        # Progress validation rules - Fixed conflicts at same progress points
+        # Progress validation rules - Minimum progress for each status
         self._progress_floors = {
             ProcessingStatus.PENDING: 0,
             ProcessingStatus.DOWNLOADING: 5,
@@ -149,8 +149,50 @@ class UnifiedStatusManager:
             ProcessingStatus.UPLOADING: 90,
             ProcessingStatus.COMPLETED: 100,
             ProcessingStatus.AWAITING_REVIEW: 77,  # Human review needed
-            ProcessingStatus.REVIEWING: 79         # Applying human edits before voice cloning
+            ProcessingStatus.REVIEWING: 79,        # Applying human edits before voice cloning
+            ProcessingStatus.FAILED: 0,            # Can fail at any progress
+            ProcessingStatus.CANCELLED: 0          # Can cancel at any progress
         }
+        
+
+    
+    def _ensure_timezone_aware(self, dt: datetime) -> datetime:
+        """Ensure datetime is timezone-aware (UTC)"""
+        if dt and dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+    
+    def _job_to_dict(self, job) -> Dict[str, Any]:
+        """Convert job object to dictionary with timezone-aware handling"""
+        updated_at = self._ensure_timezone_aware(
+            getattr(job, 'updated_at', datetime.now(timezone.utc))
+        )
+        created_at = self._ensure_timezone_aware(
+            getattr(job, 'created_at', datetime.now(timezone.utc))
+        )
+        
+        return {
+            "job_id": job.job_id,
+            "status": job.status,
+            "progress": job.progress,
+            "details": getattr(job, 'details', None) or {},
+            "user_id": job.user_id,
+            "updated_at": updated_at,
+            "created_at": created_at,
+            "error": getattr(job, 'error', None)
+        }
+    
+    async def _get_jobs_from_service(self, job_type: JobType, user_id: str, 
+                                   page: int = 1, limit: int = 50) -> Tuple[List, int]:
+        """Get jobs from appropriate service based on job type"""
+        if job_type == JobType.DUB:
+            from app.services.dub_job_service import dub_job_service
+            return await dub_job_service.get_user_jobs(user_id, page=page, limit=limit)
+        elif job_type == JobType.SEPARATION:
+            from app.services.separation_job_service import separation_job_service
+            return await separation_job_service.get_user_jobs(user_id, page=page, limit=limit)
+        else:
+            return [], 0
     
     async def update_status(self, job_id: str, job_type: JobType, status: ProcessingStatus,
                            progress: Optional[int] = None, details: Optional[Dict[str, Any]] = None,
@@ -213,10 +255,13 @@ class UnifiedStatusManager:
                 # Update cache immediately (fast UI updates)
                 self._cache[job_id] = status_data
                 
-                # For final states, persist to database and clean cache
+                # Always persist to database for reliability
+                await self._persist_status_to_database(status_data)
+                
+                # For final states, clean cache after short delay (will auto-expire)
                 if status in self._final_states:
-                    await self._persist_final_status(status_data)
                     # Keep in cache briefly for immediate reads, will auto-expire
+                    pass
                 
                 logger.info(f"Status updated: {job_id} -> {status.value} ({validated_progress}%)")
                 return True
@@ -225,6 +270,78 @@ class UnifiedStatusManager:
             logger.error(f"Failed to update status for {job_id}: {e}")
             return False
     
+    def update_status_sync(self, job_id: str, job_type: JobType, status: ProcessingStatus,
+                          progress: Optional[int] = None, details: Optional[Dict[str, Any]] = None,
+                          user_id: Optional[str] = None) -> bool:
+        """
+        Synchronous version of update_status to avoid event loop conflicts
+        Safe to call from any thread without async context
+        """
+        try:
+            with self._cache_lock:
+                # Get current status for validation
+                current_data = self._cache.get(job_id)
+                
+                # Validate progress (monotonic + status-based floors)
+                validated_progress = self._validate_progress(
+                    status, progress, current_data
+                )
+                
+                # Prevent unnecessary updates (same status + progress)
+                if current_data:
+                    if (current_data.status == status and 
+                        current_data.progress == validated_progress and
+                        status in self._processing_states):
+                        logger.debug(f"Skipped duplicate update for {job_id}: {status.value} ({validated_progress}%)")
+                        return True
+                
+                # Smart progress grouping to reduce updates
+                if current_data and status in self._processing_states:
+                    progress_diff = abs(validated_progress - current_data.progress)
+                    if progress_diff < 5 and current_data.status == status:
+                        logger.debug(f"Skipped minor progress update for {job_id}: {progress_diff}%")
+                        return True
+                
+                # Create new status data
+                status_data = StatusData(
+                    job_id=job_id,
+                    job_type=job_type,
+                    status=status,
+                    progress=validated_progress,
+                    details=details,
+                    queue_position=None,  # Skip queue position for sync version
+                    user_id=user_id
+                )
+                
+                # Update cache immediately (fast UI updates)
+                self._cache[job_id] = status_data
+                
+                # Persist to database synchronously
+                self._persist_status_to_database_sync(status_data)
+                
+                logger.info(f"Status updated (sync): {job_id} -> {status.value} ({validated_progress}%)")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Failed to update status (sync) for {job_id}: {e}")
+            return False
+    
+    def _persist_status_to_database_sync(self, status_data: StatusData) -> bool:
+        """Synchronous database persistence using sync operations"""
+        try:
+            from app.utils.db_sync_operations import update_job_status_sync
+            
+            return update_job_status_sync(
+                job_id=status_data.job_id,
+                job_type=status_data.job_type.value,
+                status=status_data.status.value,
+                progress=status_data.progress,
+                details=status_data.details
+            )
+        except Exception as e:
+            logger.error(f"Failed to persist status (sync) for {status_data.job_id}: {e}")
+            return False
+
     async def get_status(self, job_id: str, job_type: Optional[JobType] = None) -> Optional[StatusData]:
         """
         Get current job status with smart caching
@@ -279,29 +396,13 @@ class UnifiedStatusManager:
             List of StatusData objects
         """
         try:
-            # Get jobs from database with pagination
-            if job_type == JobType.DUB:
-                from app.services.dub_job_service import dub_job_service
-                jobs, _ = await dub_job_service.get_user_jobs(user_id, page=page, limit=limit)
-            elif job_type == JobType.SEPARATION:
-                from app.services.separation_job_service import separation_job_service
-                jobs, _ = await separation_job_service.get_user_jobs(user_id, page=page, limit=limit)
-            else:
+            # Get jobs from database with pagination using reusable method
+            jobs, _ = await self._get_jobs_from_service(job_type, user_id, page, limit)
+            if not jobs:
                 return []
             
-            # Convert jobs to dict format
-            jobs_data = []
-            for job in jobs:
-                jobs_data.append({
-                    "job_id": job.job_id,
-                    "status": job.status,
-                    "progress": job.progress,
-                    "details": getattr(job, 'details', None) or {},
-                    "user_id": job.user_id,
-                    "updated_at": getattr(job, 'updated_at', datetime.now(timezone.utc)),
-                    "created_at": getattr(job, 'created_at', datetime.now(timezone.utc)),
-                    "error": getattr(job, 'error', None)
-                })
+            # Convert jobs to dict format using reusable method
+            jobs_data = [self._job_to_dict(job) for job in jobs]
             
             # Enrich with cache data and queue positions
             enriched_jobs = []
@@ -311,9 +412,15 @@ class UnifiedStatusManager:
                 # Check if we have fresher cache data
                 with self._cache_lock:
                     cached = self._cache.get(job_id)
-                    if cached and cached.updated_at > job_data.get("updated_at", datetime.min.replace(tzinfo=timezone.utc)):
-                        enriched_jobs.append(cached)
-                        continue
+                    if cached:
+                        # Ensure timezone-aware comparison using reusable method
+                        db_updated_at = self._ensure_timezone_aware(
+                            job_data.get("updated_at", datetime.min.replace(tzinfo=timezone.utc))
+                        )
+                        
+                        if cached.updated_at > db_updated_at:
+                            enriched_jobs.append(cached)
+                            continue
                 
                 # Create StatusData from DB data
                 status_data = self._status_data_from_db(job_data, job_type)
@@ -346,18 +453,33 @@ class UnifiedStatusManager:
         status_floor = self._progress_floors.get(status, 0)
         progress = max(progress, status_floor)
         
-        # Monotonic protection (never go backwards)
+        # Monotonic protection (never go backwards except for valid cases)
         if current_data and current_data.progress > progress:
-            # Only allow backwards movement for status changes or cancelled jobs
-            if (status == current_data.status and 
-                status != ProcessingStatus.CANCELLED):
-                logger.warning(
-                    f"Monotonic protection: keeping progress {current_data.progress}% "
-                    f"instead of reducing to {progress}%"
-                )
+            # Allow backward progress only for specific valid transitions
+            if self._is_valid_backward_transition(current_data.status, status):
+                logger.info(f"Valid transition: {current_data.status.value}({current_data.progress}%) → {status.value}({progress}%)")
+                return progress
+            
+            # Block invalid backward progress
+            if status != ProcessingStatus.CANCELLED:
+                logger.warning(f"🛑 Blocked backward transition: {current_data.status.value}({current_data.progress}%) → {status.value}({progress}%)")
                 return current_data.progress
         
         return progress
+    
+    def _is_valid_backward_transition(self, current_status: ProcessingStatus, new_status: ProcessingStatus) -> bool:
+        """Check if backward progress is allowed for this status transition"""
+        # Allow transitions to terminal states from anywhere
+        if new_status in {ProcessingStatus.FAILED, ProcessingStatus.CANCELLED}:
+            return True
+        
+        # Allow review workflow transitions
+        valid_review_transitions = {
+            (ProcessingStatus.PROCESSING, ProcessingStatus.AWAITING_REVIEW),
+            (ProcessingStatus.REVIEWING, ProcessingStatus.PROCESSING)
+        }
+        
+        return (current_status, new_status) in valid_review_transitions
     
     async def _get_queue_position(self, job_id: str, job_type: JobType, 
                                  status: ProcessingStatus) -> Optional[int]:
@@ -406,8 +528,8 @@ class UnifiedStatusManager:
         
         return None
     
-    async def _persist_final_status(self, status_data: StatusData) -> bool:
-        """Persist final status to database"""
+    async def _persist_status_to_database(self, status_data: StatusData) -> bool:
+        """Persist status to database for all status types"""
         try:
             if status_data.job_type == JobType.DUB:
                 from app.services.dub_job_service import dub_job_service
@@ -426,10 +548,14 @@ class UnifiedStatusManager:
                     details=status_data.details
                 )
         except Exception as e:
-            logger.error(f"Failed to persist final status for {status_data.job_id}: {e}")
+            logger.error(f"Failed to persist status for {status_data.job_id}: {e}")
             return False
         
         return False
+    
+    async def _persist_final_status(self, status_data: StatusData) -> bool:
+        """Persist final status to database - wrapper for backwards compatibility"""
+        return await self._persist_status_to_database(status_data)
     
     async def _load_from_database(self, job_id: str, job_type: JobType) -> Optional[StatusData]:
         """Load status from database and update cache"""
@@ -468,32 +594,15 @@ class UnifiedStatusManager:
     
     async def _get_user_jobs_from_db(self, user_id: str, job_type: JobType, 
                                     limit: int) -> List[Dict[str, Any]]:
-        """Get user jobs from database"""
+        """Get user jobs from database using reusable methods"""
         try:
-            if job_type == JobType.DUB:
-                from app.services.dub_job_service import dub_job_service
-                jobs, _ = await dub_job_service.get_user_jobs(user_id, page=1, limit=limit)
-            elif job_type == JobType.SEPARATION:
-                from app.services.separation_job_service import separation_job_service
-                jobs, _ = await separation_job_service.get_user_jobs(user_id, page=1, limit=limit)
-            else:
+            # Get jobs using reusable service method
+            jobs, _ = await self._get_jobs_from_service(job_type, user_id, page=1, limit=limit)
+            if not jobs:
                 return []
             
-            # Convert to dict format
-            jobs_data = []
-            for job in jobs:
-                jobs_data.append({
-                    "job_id": job.job_id,
-                    "status": job.status,
-                    "progress": job.progress,
-                    "details": getattr(job, 'details', None) or {},
-                    "user_id": job.user_id,
-                    "updated_at": getattr(job, 'updated_at', datetime.now(timezone.utc)),
-                    "created_at": getattr(job, 'created_at', datetime.now(timezone.utc)),
-                    "error": getattr(job, 'error', None)
-                })
-            
-            return jobs_data
+            # Convert to dict format using reusable method
+            return [self._job_to_dict(job) for job in jobs]
             
         except Exception as e:
             logger.error(f"Failed to get user jobs from DB: {e}")
@@ -501,7 +610,7 @@ class UnifiedStatusManager:
     
     def _status_data_from_db(self, job_data: Dict[str, Any], job_type: JobType) -> StatusData:
         """Create StatusData from database job data"""
-        return StatusData(
+        status_data = StatusData(
             job_id=job_data["job_id"],
             job_type=job_type,
             status=ProcessingStatus(job_data["status"]),
@@ -509,6 +618,14 @@ class UnifiedStatusManager:
             details=job_data.get("details", {}),
             user_id=job_data["user_id"]
         )
+        
+        # Use actual database updated_at instead of current time
+        db_updated_at = job_data.get("updated_at")
+        if db_updated_at:
+            # Ensure timezone-aware datetime using reusable method
+            status_data.updated_at = self._ensure_timezone_aware(db_updated_at)
+        
+        return status_data
     
     def clear_cache(self, job_id: Optional[str] = None) -> None:
         """Clear cache - specific job or all"""

@@ -315,6 +315,7 @@ class UserDubJob(BaseModel):
     job_id: str
     status: str
     progress: int
+    queuePosition: Optional[int] = None
     original_filename: Optional[str] = None
     target_language: str
     source_video_language: Optional[str] = None

@@ -94,6 +94,7 @@ class JobResponseService:
             job_id=job.job_id,
             status=job.status,
             progress=job.progress,
+            queuePosition=None,  # Will be overridden with actual queue position if available
             original_filename=job.original_filename,
             target_language=job.target_language,
             source_video_language=job.source_video_language,

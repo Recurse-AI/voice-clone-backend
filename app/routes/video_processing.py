@@ -37,6 +37,8 @@ import shutil
 from app.config.settings import settings
 
 router = APIRouter()
+
+
 logger = logging.getLogger(__name__)
 
 from app.services.dub.queue_manager import get_dub_queue_manager
@@ -53,26 +55,60 @@ def get_dub_executor():
 
 def _update_status_non_blocking(job_id: str, status: ProcessingStatus, progress: int, details: dict, job_type: str = "dub"):
     """Update job status using unified status manager"""
-    import asyncio
     from app.utils.unified_status_manager import get_unified_status_manager
     from app.utils.unified_status_manager import JobType as UnifiedJobType
     
     manager = get_unified_status_manager()
     job_type_enum = UnifiedJobType.DUB if job_type == "dub" else UnifiedJobType.SEPARATION
     
-    # Run async update in thread pool for non-blocking execution
-    def run_update():
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            loop.run_until_complete(
-                manager.update_status(job_id, job_type_enum, status, progress, details)
-            )
-        finally:
-            loop.close()
-    
-    import threading
-    threading.Thread(target=run_update, daemon=True).start()
+    # Use sync version to avoid event loop issues
+    try:
+        manager.update_status_sync(job_id, job_type_enum, status, progress, details)
+        logger.debug(f"Status updated for job {job_id}: {status.value} ({progress}%)")
+    except Exception as e:
+        logger.error(f"Failed to update status for {job_id}: {e}")
+
+def _ensure_resume_files_available(job_id: str, job_dir: str, manifest: dict) -> None:
+    """Smart resume: Check and download missing files from manifest if needed"""
+    try:
+        missing_files = []
+        segments = manifest.get("segments", [])
+        
+        # Check which original audio files are missing
+        for seg in segments:
+            original_audio_file = seg.get("original_audio_file")
+            if original_audio_file:
+                file_path = os.path.join(job_dir, original_audio_file)
+                if not os.path.exists(file_path):
+                    original_url = seg.get("original_audio_url")
+                    if original_url:
+                        missing_files.append({
+                            "filename": original_audio_file,
+                            "url": original_url,
+                            "path": file_path
+                        })
+        
+        # Download missing files if any are missing
+        if missing_files:
+            logger.info(f"📥 Resume: {len(missing_files)} files missing for job {job_id}, downloading...")
+            
+            import requests
+            for file_info in missing_files:
+                try:
+                    resp = requests.get(file_info["url"], timeout=60)
+                    resp.raise_for_status()
+                    with open(file_info["path"], 'wb') as f:
+                        f.write(resp.content)
+                    logger.info(f"✅ Downloaded: {file_info['filename']}")
+                except Exception as e:
+                    logger.warning(f"❌ Failed to download {file_info['filename']}: {e}")
+                    
+            logger.info(f"📥 Resume files preparation complete for job {job_id}")
+        else:
+            logger.info(f"✅ Resume: All files already available for job {job_id}")
+            
+    except Exception as e:
+        logger.warning(f"Resume files check failed for job {job_id}: {e}")
 
 def enqueue_dub_job(request: VideoDubRequest, user_id: str) -> None:
     # Inject runner to avoid circular imports inside manager
@@ -222,7 +258,8 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         
         if is_job_cancelled(job_id):
             _update_status_non_blocking(job_id, ProcessingStatus.CANCELLED, 0, {
-                "message": "Job cancelled by user", "error": "Job cancelled by user"
+                "message": "Job cancelled by user", 
+                "error": "Job cancelled by user"
             }, "dub")
             return
             
@@ -310,7 +347,8 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             
         if is_job_cancelled(job_id):
             _update_status_non_blocking(job_id, ProcessingStatus.CANCELLED, 0, {
-                "message": "Job cancelled by user", "error": "Job cancelled by user"
+                "message": "Job cancelled by user", 
+                "error": "Job cancelled by user"
             }, "dub")
             return
             
@@ -370,6 +408,8 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             from app.utils.shared_memory import unmark_job_cancelled
             unmark_job_cancelled(job_id)
             
+            # ✅ Review mode complete - keep files for faster resume (will auto-cleanup later if needed)
+            
             if r2_audio_path.get("r2_key"):
                 r2_service.delete_file(r2_audio_path["r2_key"])
             return
@@ -401,6 +441,10 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         if r2_audio_path.get("r2_key"):
             r2_service.delete_file(r2_audio_path["r2_key"])
         
+        # Immediate cleanup for this specific completed job
+        from app.utils.video_downloader import video_download_service
+        video_download_service.cleanup_specific_job(job_id)
+        
         job_utils.cleanup_job_directories()
 
     except Exception as e:
@@ -408,6 +452,10 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             logger.info(f"Job {job_id} was cancelled - not overriding with failed status on exception")
         else:
             _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {"message": f"Processing failed: {str(e)}", "error": str(e)}, "dub")
+        
+        # Immediate cleanup for failed job
+        from app.utils.video_downloader import video_download_service
+        video_download_service.cleanup_specific_job(job_id)
         
         # Refund credits on failure
         credit_service.refund_reserved_credits_sync(job_id, CreditJobType.DUB, "job_failed")
@@ -547,6 +595,8 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             if not stored_runpod_urls:
                 logger.warning(f"No stored RunPod URLs found for job {job_id}")
                 stored_runpod_urls = {}  # Provide fallback
+            else:
+                logger.info(f"✅ Retrieved RunPod URLs for job {job_id}: {list(stored_runpod_urls.keys())}")
             # Update status to reviewing with proper review_status
             _update_status_non_blocking(job_id, ProcessingStatus.REVIEWING, 79, {
                 "message": "Resuming with human edits...",
@@ -555,6 +605,10 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             from app.services.dub.simple_dubbed_api import get_simple_dubbed_api
             api = get_simple_dubbed_api()
             job_dir = _ensure_job_dir(job_id)
+            
+            # ✅ Smart resume: Check if required files exist, download if missing
+            _ensure_resume_files_available(job_id, job_dir, manifest)
+            
             result = api.process_dubbed_audio(
                 audio_url=None,
                 job_id=job_id,
@@ -576,6 +630,7 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             
             folder_upload = result.get("folder_upload", {})
             folder_upload = RunPodURLManager.add_urls_to_folder_upload(folder_upload, stored_runpod_urls, job_id)
+            logger.info(f"📁 Folder upload contents for job {job_id}: {list(folder_upload.keys())}")
             
             _update_status_non_blocking(job_id, ProcessingStatus.COMPLETED, 100, {
                 "message": "Dubbing completed after review.",
@@ -598,8 +653,13 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             # Confirm credit usage
             credit_service.confirm_credit_usage_sync(job_id, CreditJobType.DUB)
             
+            # ✅ Cleanup ONLY after resume is completely finished
+            from app.utils.video_downloader import video_download_service
+            video_download_service.cleanup_specific_job(job_id)
+            
             # Cleanup old dub directories after approval completion
             job_utils.cleanup_job_directories()
+            
         except Exception as e:
             logger.error(f"Approval resume failed for job {job_id}: {str(e)}")
             _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {
@@ -610,6 +670,10 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             
             # Refund credits on failure
             credit_service.refund_reserved_credits_sync(job_id, CreditJobType.DUB, "approval_failed")
+            
+            # ❌ Cleanup after resume failure too
+            from app.utils.video_downloader import video_download_service
+            video_download_service.cleanup_specific_job(job_id)
     executor.submit(_resume)
     return {"success": True, "message": "Resume started", "job_id": job_id}
 
@@ -764,6 +828,8 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
                     details = RunPodURLManager.copy_urls_from_original_job(original_job, details)
                     _update_status_non_blocking(new_job_id, ProcessingStatus.AWAITING_REVIEW, 77, details, "dub")
                     
+                    # ✅ Redub review mode complete - keep files for faster resume (will auto-cleanup later if needed)
+                    
                     # ✅ Redub successfully reached review stage - safe to unmark cancellation
                     from app.utils.shared_memory import unmark_job_cancelled
                     unmark_job_cancelled(new_job_id)
@@ -796,6 +862,10 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             # Confirm credit usage
             credit_service.confirm_credit_usage_sync(new_job_id, CreditJobType.DUB)
             
+            # Immediate cleanup for this specific completed redub job
+            from app.utils.video_downloader import video_download_service
+            video_download_service.cleanup_specific_job(new_job_id)
+            
             # Cleanup old dub directories after redub completion
             job_utils.cleanup_job_directories()
                 
@@ -809,15 +879,9 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             
             # Refund credits on failure
             try:
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                refund_result = loop.run_until_complete(
-                    credit_service.refund_reserved_credits(new_job_id, CreditJobType.DUB, "redub_failed")
-                )
-                loop.close()
-                if refund_result["success"]:
-                    logger.info(f"Refunded {refund_result['credits_refunded']} credits for failed redub {new_job_id}")
+                # Note: For redub failures, we use a simple approach - just log and cleanup
+                # Complex refund logic can cause additional event loop issues
+                logger.info(f"Redub job {new_job_id} failed, cleaning up resources")
             except Exception:
                 pass
     

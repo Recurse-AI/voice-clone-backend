@@ -368,6 +368,32 @@ class VideoDownloadService:
                     continue
         except Exception:
             pass
+    
+    def cleanup_specific_job(self, job_id: str) -> None:
+        """Immediately clean up folders for specific completed/failed/cancelled job"""
+        try:
+            from app.services.dub.audio_utils import AudioUtils
+            import os
+            
+            # Clean up specific job directories
+            temp_patterns = [
+                f"dub_{job_id}",                    # Main job folder  
+                f"voice_cloning/dub_job_{job_id}"   # Voice cloning folder
+            ]
+            
+            for pattern in temp_patterns:
+                temp_dir = os.path.join(settings.TEMP_DIR, pattern)
+                if os.path.exists(temp_dir):
+                    AudioUtils.remove_temp_dir(folder_path=temp_dir)
+                    logger.info(f"🧹 Immediately removed {job_id} directory: {temp_dir}")
+            
+            # Remove from tracking if present
+            if job_id in self._downloaded_files:
+                del self._downloaded_files[job_id]
+                logger.info(f"🧹 Removed {job_id} from tracking")
+                
+        except Exception as e:
+            logger.warning(f"Failed to cleanup job {job_id}: {e}")
 
 
 # Shared singleton instance

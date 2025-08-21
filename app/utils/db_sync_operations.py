@@ -266,6 +266,24 @@ def deduct_credits(user_id: str, job_id: str, duration_seconds: float, job_type:
     """Convenience function to deduct user credits"""
     return SyncDBOperations.deduct_user_credits(user_id, job_id, duration_seconds, job_type)
 
+def update_job_status_sync(job_id: str, job_type: str, status: str, progress: int = None, details: Dict[str, Any] = None) -> bool:
+    """
+    Generic sync function to update job status for any job type
+    Used by unified_status_manager to avoid event loop issues
+    """
+    try:
+        if job_type.lower() == "dub":
+            return SyncDBOperations.update_dub_job_status(job_id, status, progress, details)
+        elif job_type.lower() == "separation":
+            kwargs = details or {}
+            return SyncDBOperations.update_separation_job_status(job_id, status, progress, **kwargs)
+        else:
+            logger.warning(f"Unknown job type: {job_type}")
+            return False
+    except Exception as e:
+        logger.error(f"Failed to update job status (sync) for {job_id}: {e}")
+        return False
+
 def cleanup_separation_files(job_id: str):
     """Cleanup separation temp files synchronously"""
     try:
@@ -292,21 +310,24 @@ def cleanup_separation_files(job_id: str):
                     except Exception as e:
                         logger.warning(f"Failed to remove local audio file {local_audio_path}: {e}")
                 
-                # Clean up any temp directories related to this job
+                # Clean up temp directories only for this specific job
                 temp_patterns = [
                     f"dub_{job_id}",           # Main job folder
                     f"voice_clone_{job_id}",
                     f"separation_{job_id}",
                     f"audio_{job_id}",
                     f"processing_{job_id}",
-                    f"voice_cloning/dub_job_{job_id}"  # Nested voice cloning folder
+                    f"voice_cloning/dub_job_{job_id}"  # Nested voice cloning folder - ONLY this job
                 ]
                 
                 for pattern in temp_patterns:
                     temp_dir = os.path.join(settings.TEMP_DIR, pattern)
                     if os.path.exists(temp_dir):
-                        AudioUtils.remove_temp_dir(folder_path=temp_dir)
-                        logger.info(f"🧹 Removed temp directory: {temp_dir}")
+                        try:
+                            AudioUtils.remove_temp_dir(folder_path=temp_dir)
+                            logger.info(f"🧹 Removed separation job directory: {temp_dir}")
+                        except Exception as e:
+                            logger.warning(f"Failed to remove {temp_dir}: {e}")
                         
         finally:
             sync_client.close()

@@ -86,23 +86,14 @@ class SimpleDubbedAPI:
         return settings.TEMP_DIR
     
     def _update_status_non_blocking(self, job_id: str, status: ProcessingStatus, progress: int, details: dict, job_type: str = "dub"):
-        import asyncio
         manager = get_unified_status_manager()
         job_type_enum = JobType.DUB if job_type == "dub" else JobType.SEPARATION
         
-        # Run async update in thread pool for non-blocking execution
-        def run_update():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(
-                    manager.update_status(job_id, job_type_enum, status, progress, details)
-                )
-            finally:
-                loop.close()
-        
-        import threading
-        threading.Thread(target=run_update, daemon=True).start()
+        # Use sync version to avoid event loop issues
+        try:
+            manager.update_status_sync(job_id, job_type_enum, status, progress, details)
+        except Exception as e:
+            logger.error(f"Failed to update status for {job_id}: {e}")
     
     def _check_cancellation(self, job_id: str) -> bool:
         from app.utils.shared_memory import is_job_cancelled
@@ -227,15 +218,7 @@ class SimpleDubbedAPI:
             )
             
             if review_mode:
-                # Preparing review files - update to 80%
-                self._update_status_non_blocking(
-                    job_id,
-                    ProcessingStatus.PROCESSING,
-                    80,
-                    {"message": "Preparing review files"},
-                    "dub",
-                )
-                logger.info("Preparing review files for human review...")
+             
                 # Build and save manifest
                 manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments)
                 manifest_path = save_manifest_to_dir(manifest, process_temp_dir, job_id)
@@ -254,10 +237,25 @@ class SimpleDubbedAPI:
                 except Exception:
                     pass
 
-                # Ensure manifest_url is available before returning
+                # Ensure manifest_url is available before setting awaiting_review status
                 if not manifest_url:
                     logger.error(f"Failed to get manifest URL for review mode job {job_id}")
                     return {"success": False, "error": "Failed to generate manifest URL for review"}
+                
+                # Now set awaiting_review status with manifest details (77% with status change)
+                self._update_status_non_blocking(
+                    job_id,
+                    ProcessingStatus.AWAITING_REVIEW,
+                    77,
+                    {
+                        "message": "Awaiting human review - Please review dubbed text",
+                        "segments_manifest_url": manifest_url,
+                        "segments_manifest_key": manifest_key,
+                        "segments_count": len(dubbed_segments),
+                        "transcript_id": transcript_id
+                    },
+                    "dub",
+                )
 
                 # Don't remove temp directory in review mode - needed for segments access
                 logger.info(f"Review mode: preserving temp directory for segments access: {process_temp_dir}")
@@ -333,6 +331,11 @@ class SimpleDubbedAPI:
             if speaker_label:
                 seed_val = abs(hash(speaker_label)) % (2**32)
             for chunk in text_chunks:
+                # 🛡️ Check cancellation before each chunk processing
+                if job_id and self._check_cancellation(job_id):
+                    logger.info(f"🛑 Voice cloning cancelled for job {job_id} during chunk processing")
+                    return None
+                
                 result = self.fish_speech.generate_with_reference_audio(
                     text=chunk,
                     reference_audio_bytes=reference_audio_bytes,
@@ -342,7 +345,8 @@ class SimpleDubbedAPI:
                     repetition_penalty=1.2,
                     temperature=0.7,
                     seed=seed_val,
-                    chunk_length=200
+                    chunk_length=200,
+                    job_id=job_id  # Pass job_id for cancel checking inside fish speech
                 )
                 if result.get("success"):
                     import soundfile as sf
@@ -371,13 +375,12 @@ class SimpleDubbedAPI:
     def _get_transcription_data(self, job_id: str, audio_url: str, manifest_override: Optional[Dict[str, Any]], 
                                process_temp_dir: str, speakers_count: int, source_video_language: str) -> tuple:
         """Get transcription data either from manifest override or by transcribing audio"""
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 45, {"message": "Transcribing audio..."}, "dub")
-        logger.info("Starting transcription...")
         
         transcript_id = None
         raw_sentences = []
         
         if manifest_override:
+            # Use existing transcription data - no progress update needed
             logger.info("Using manifest override data instead of re-transcribing")
             for idx, seg in enumerate(manifest_override.get("segments", [])):
                 raw_sentences.append({
@@ -393,6 +396,8 @@ class SimpleDubbedAPI:
             self._download_segment_audios(manifest_override, process_temp_dir)
             
         else:
+            # Fresh transcription - update progress to 45%
+            self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 45, {"message": "Transcribing audio with AI"}, "dub")
             logger.info("Starting fresh transcription")
             sentences_result = self.transcription_service.get_sentences_and_split_audio(
                 audio_url=audio_url,
@@ -417,8 +422,13 @@ class SimpleDubbedAPI:
                                      manifest_override: Optional[Dict[str, Any]], review_mode: bool, 
                                      process_temp_dir: str) -> list:
         """Process text dubbing and voice cloning for all segments"""
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 55, {"message": "Batch dubbing text..."}, "dub")
-        logger.info("Starting batch dubbing...")
+        
+        # Only update progress if this is fresh dubbing (not resuming from review)
+        if not manifest_override:
+            self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 55, {"message": "Batch dubbing text..."}, "dub")
+            logger.info("Starting batch dubbing...")
+        else:
+            logger.info("Resuming dubbing with existing segments...")
         
         # Prepare texts for batch dubbing
         segments_to_dub = []
@@ -473,15 +483,16 @@ class SimpleDubbedAPI:
                     if seg.get("id") and seg.get("dubbed_text"):
                         edited_map[seg["id"]] = seg["dubbed_text"]
         
-        # Start voice cloning phase at 80% (after review preparation)
-        self._update_status_non_blocking(
-            job_id,
-            ProcessingStatus.PROCESSING,
-            80,
-            {"message": "Voice cloning and reconstructing final audio"},
-            "dub",
-        )
-        logger.info("Starting voice cloning...")
+        # Start voice cloning phase at 80% (only if not in review mode)
+        if not review_mode:
+            self._update_status_non_blocking(
+                job_id,
+                ProcessingStatus.PROCESSING,
+                80,
+                {"message": "Voice cloning and reconstructing final audio"},
+                "dub",
+            )
+            logger.info("Starting voice cloning...")
         
         # Process voice cloning for each segment
         dubbed_segments = []
@@ -614,20 +625,41 @@ class SimpleDubbedAPI:
     def _generate_final_output(self, job_id: str, dubbed_segments: list, process_temp_dir: str, 
                               target_language: str, audio_url: str, speakers_count: int, transcript_id: str) -> dict:
         """Generate final audio, SRT file, and upload to R2"""
+        
+        # 🛡️ Check cancellation before starting final output generation
+        if self._check_cancellation(job_id):
+            logger.info(f"🛑 Job {job_id} cancelled - skipping final output generation")
+            return {"success": False, "error": "Job cancelled by user"}
+        
         self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 90, {"message": "Reconstructing final audio..."}, "dub")
         logger.info("Reconstructing final audio...")
         
         # Reconstruct final audio
         final_audio_path = self._reconstruct_final_audio(dubbed_segments, None, job_id=job_id, process_temp_dir=process_temp_dir)
         
+        # 🛡️ Check cancellation again before generating files
+        if self._check_cancellation(job_id):
+            logger.info(f"🛑 Job {job_id} cancelled - skipping file generation")
+            return {"success": False, "error": "Job cancelled by user"}
+        
         # Generate SRT file and finalize (combining multiple close steps)
         self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 92, {"message": "Finalizing output files..."}, "dub")
         
         subtitle_path = self._generate_srt_file(job_id, dubbed_segments, process_temp_dir)
         
+        # 🛡️ Check cancellation before creating summary
+        if self._check_cancellation(job_id):
+            logger.info(f"🛑 Job {job_id} cancelled - skipping summary creation")
+            return {"success": False, "error": "Job cancelled by user"}
+        
         # Create process summary
         self._create_process_summary(job_id, dubbed_segments, final_audio_path, subtitle_path, 
                                    process_temp_dir, target_language, audio_url, speakers_count, transcript_id)
+        
+        # 🛡️ Check cancellation before upload
+        if self._check_cancellation(job_id):
+            logger.info(f"🛑 Job {job_id} cancelled - skipping upload")
+            return {"success": False, "error": "Job cancelled by user"}
         
         # Upload to R2 and get results
         return self._upload_and_finalize(job_id, process_temp_dir, final_audio_path)
@@ -666,31 +698,40 @@ class SimpleDubbedAPI:
                                subtitle_path: str, process_temp_dir: str, target_language: str, 
                                audio_url: str, speakers_count: int, transcript_id: str) -> None:
         """Create and save process summary JSON"""
-        # Check for instrument and vocal files
-        instrument_file = f"instruments_{job_id}.wav"
-        vocal_file = f"vocals_{job_id}.wav"
         
-        if not os.path.exists(os.path.join(process_temp_dir, instrument_file)):
-            instrument_file = None
-            
-        if not os.path.exists(os.path.join(process_temp_dir, vocal_file)):
-            vocal_file = None
+        # 🛡️ Check cancellation before creating summary
+        cancelled = self._check_cancellation(job_id)
+        if cancelled:
+            logger.info(f"🛑 Job {job_id} cancelled - creating cancelled summary")
+        
+        # Check for instrument and vocal files only if not cancelled
+        instrument_file = f"instruments_{job_id}.wav" if not cancelled else None
+        vocal_file = f"vocals_{job_id}.wav" if not cancelled else None
+        
+        if not cancelled:
+            if not os.path.exists(os.path.join(process_temp_dir, instrument_file)):
+                instrument_file = None
+                
+            if not os.path.exists(os.path.join(process_temp_dir, vocal_file)):
+                vocal_file = None
         
         process_summary = {
-            "success": True,
+            "success": not cancelled,  # Set to False if cancelled
             "job_id": job_id,
-            "segments_count": len(dubbed_segments),
-            "audio_url": audio_url,
+            "segments_count": len(dubbed_segments) if not cancelled else 0,
+            "audio_url": audio_url if not cancelled else None,
             "target_language": target_language,
             "speakers_count": speakers_count,
-            "final_audio_file": os.path.basename(final_audio_path) if final_audio_path else None,
-            "subtitle_file": os.path.basename(subtitle_path) if subtitle_path else None,
+            "final_audio_file": os.path.basename(final_audio_path) if final_audio_path and not cancelled else None,
+            "subtitle_file": os.path.basename(subtitle_path) if subtitle_path and not cancelled else None,
             "instrument_file": instrument_file,
             "vocal_file": vocal_file,
             "final_video_file": None,  # Video creation disabled
             "processing_timestamp": int(time.time()),
-            "segments": dubbed_segments,
-            "transcript_id": transcript_id
+            "segments": dubbed_segments if not cancelled else [],
+            "transcript_id": transcript_id,
+            "cancelled": cancelled,
+            "cancellation_reason": "Job cancelled by user" if cancelled else None
         }
         
         summary_filename = f"dubbing_process_summary_{job_id}.json"
@@ -735,6 +776,12 @@ class SimpleDubbedAPI:
         """Reconstruct final audio with exact original duration.
         Missing segments will have silent audio automatically.
         """
+        
+        # 🛡️ Check cancellation before audio reconstruction
+        if job_id and self._check_cancellation(job_id):
+            logger.info(f"🛑 Job {job_id} cancelled - skipping audio reconstruction")
+            return None
+        
         try:
             import soundfile as sf
             if not segments:

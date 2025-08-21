@@ -67,7 +67,7 @@ class JobCancellationService:
                 def cleanup_files():
                     cleanup_separation_files(job_id)
                 
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, cleanup_files)
                 logger.info(f"🧹 Cleaned up files for separation job {job_id}")
             except Exception as e:
@@ -153,30 +153,16 @@ class JobCancellationService:
                 error="Job cancelled by user"
             )
             
-            # 4. Cleanup dub files 
+            # 4. Immediate cleanup for cancelled job
             try:
-                def cleanup_dub_files():
-                    # Clean up dub temp directories - comprehensive patterns
-                    temp_patterns = [
-                        f"dub_{job_id}",                    # Main job folder  
-                        f"voice_clone_{job_id}",           # Voice cloning temp
-                        f"separation_{job_id}",            # Separation temp
-                        f"audio_{job_id}",                 # Audio processing temp
-                        f"processing_{job_id}",            # General processing temp
-                        f"voice_cloning/dub_job_{job_id}", # Nested voice cloning
-                        f"transcription_{job_id}",         # Transcription temp
-                        f"segments_{job_id}"               # Segments temp
-                    ]
-                    
-                    for pattern in temp_patterns:
-                        temp_dir = os.path.join(settings.TEMP_DIR, pattern)
-                        if os.path.exists(temp_dir):
-                            AudioUtils.remove_temp_dir(folder_path=temp_dir)
-                            logger.info(f"🧹 Removed dub temp directory: {temp_dir}")
+                from app.utils.video_downloader import video_download_service
                 
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, cleanup_dub_files)
-                logger.info(f"🧹 Cleaned up files for dub job {job_id}")
+                def cleanup_cancelled_job():
+                    video_download_service.cleanup_specific_job(job_id)
+                
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, cleanup_cancelled_job)
+                logger.info(f"🧹 Immediately cleaned up cancelled dub job {job_id}")
             except Exception as e:
                 logger.warning(f"File cleanup failed for dub job {job_id}: {e}")
             
