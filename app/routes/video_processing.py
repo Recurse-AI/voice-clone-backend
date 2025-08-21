@@ -149,10 +149,8 @@ async def get_video_dub_status(job_id: str):
                     return "Transcribing audio with AI"
                 elif progress <= 55:
                     return "Dubbing text with AI translation"
-                elif progress <= 75:
+                elif progress <= 74:
                     return "Reviewing and editing with AI"
-                elif progress <= 80:
-                    return "Voice cloning started"
                 elif progress <= 89:
                     return "Voice cloning and reconstructing final audio"
                 elif progress <= 95:
@@ -375,7 +373,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                 "message": "Human review mode: segments ready for review"
             }
             details = RunPodURLManager.store_urls_in_details(details, runpod_urls)
-            _update_status_non_blocking(job_id, ProcessingStatus.AWAITING_REVIEW, 75, details, "dub")
+            _update_status_non_blocking(job_id, ProcessingStatus.AWAITING_REVIEW, 80, details, "dub")
             
             from app.utils.shared_memory import unmark_job_cancelled
             unmark_job_cancelled(job_id)
@@ -567,13 +565,18 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
         raise HTTPException(status_code=400, detail="No manifest available for this job")
     manifest = _load_manifest_json(manifest_url)
     
-    stored_runpod_urls = RunPodURLManager.retrieve_urls_from_job(job)
-
     # Kick off background resume
     from app.utils.job_utils import job_utils
     executor = get_dub_executor()
     def _resume():
+        # Initialize variable to avoid scoping issues
+        stored_runpod_urls = None
         try:
+            # Retrieve URLs inside the function to avoid scoping issues
+            stored_runpod_urls = RunPodURLManager.retrieve_urls_from_job(job)
+            if not stored_runpod_urls:
+                logger.warning(f"No stored RunPod URLs found for job {job_id}")
+                stored_runpod_urls = {}  # Provide fallback
             # Update status to reviewing with proper review_status
             _update_status_non_blocking(job_id, ProcessingStatus.REVIEWING, 80, {
                 "message": "Resuming with human edits...",
@@ -596,7 +599,7 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
                 _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {
                     "message": "Resume failed", 
                     "error": result.get("error"),
-                    "review_status": "failed"
+                    "review_status": "rejected"
                 }, "dub")
                 return
             result_url = result.get("result_url") or (result.get("result_urls", {}) or {}).get("final_video")
@@ -642,7 +645,7 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             logger.error(f"Approval resume failed for job {job_id}: {str(e)}")
             _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {
                 "message": f"Approval resume failed: {str(e)}",
-                "review_status": "failed",
+                "review_status": "rejected",
                 "error": str(e)
             }, "dub")
             
@@ -811,7 +814,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
                         "parent_job_id": original_job_id
                     }
                     details = RunPodURLManager.copy_urls_from_original_job(original_job, details)
-                    _update_status_non_blocking(new_job_id, ProcessingStatus.AWAITING_REVIEW, 75, details, "dub")
+                    _update_status_non_blocking(new_job_id, ProcessingStatus.AWAITING_REVIEW, 80, details, "dub")
                     
                     # ✅ Redub successfully reached review stage - safe to unmark cancellation
                     from app.utils.shared_memory import unmark_job_cancelled
@@ -1012,7 +1015,13 @@ async def download_media(request: VideoDownloadRequest):
 
         result = await video_download_service.download_video(
             url=request.url,
-            quality=request.quality
+            quality=request.quality,
+            resolution=request.resolution,
+            max_filesize=request.max_filesize,
+            format_preference=request.format_preference,
+            audio_quality=request.audio_quality,
+            prefer_free_formats=request.prefer_free_formats,
+            include_subtitles=request.include_subtitles
         )
 
         if result["success"]:
@@ -1021,7 +1030,9 @@ async def download_media(request: VideoDownloadRequest):
                 success=True,
                 message="Download successful",
                 job_id=result["job_id"],
-                video_info=result["video_info"]
+                video_info=result["video_info"],
+                download_info=result.get("download_info"),
+                available_formats=result.get("available_formats")
             )
         else:
             logger.error(f"Media download failed: {result['error']}")

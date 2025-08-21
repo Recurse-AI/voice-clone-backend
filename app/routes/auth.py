@@ -54,8 +54,10 @@ async def register(user: UserCreate, background_tasks: BackgroundTasks):
             raise HTTPException(status_code=400, detail="Email already registered")
 
         token = generate_url_safe_token()
+        expiry = datetime.now(timezone.utc) + timedelta(milliseconds=settings.EMAIL_VERIFICATION_EXPIRES)
         user_dict = user.model_dump()
-        user_dict["emailVerificationToken"] = token 
+        user_dict["emailVerificationToken"] = token
+        user_dict["emailVerificationExpiry"] = expiry
         created_user = await create_user(user_dict) 
         logger.info(f"user : ${created_user}")
 
@@ -83,6 +85,11 @@ async def verify_email(token: str):
         if user_doc is None:
             raise HTTPException(status_code=404, detail="Invalid verification token")
         
+        # Check if token has expired
+        if user_doc.get("emailVerificationExpiry"):
+            if datetime.now(timezone.utc) > user_doc["emailVerificationExpiry"]:
+                raise HTTPException(status_code=400, detail="Verification token has expired")
+        
         if user_doc.get("isEmailVerified", False):
             return JSONResponse(status_code=200, content={
                 "message": "Email already verified"
@@ -97,7 +104,8 @@ async def verify_email(token: str):
                     "updatedAt": datetime.now(timezone.utc)
                 },
                 "$unset": {
-                    "emailVerificationToken": ""
+                    "emailVerificationToken": "",
+                    "emailVerificationExpiry": ""
                 }
             }
         )
@@ -456,8 +464,14 @@ async def google_callback(request: Request):
         try:
             # Try to find user by email
             user = await get_user_email(user_info['email'])
-            user = user.dict()
+            user_data = {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name,
+                "isEmailVerified": user.isEmailVerified
+            }
         except HTTPException:
+            # User doesn't exist, create new one
             new_user = {
                 "email": user_info['email'],
                 "name": user_info.get('name'),
@@ -466,13 +480,14 @@ async def google_callback(request: Request):
                 "isEmailVerified": True,
             }
 
-            user = await create_user(new_user)
+            created_user = await create_user(new_user)
+            user_data = {
+                "id": created_user["id"],
+                "email": created_user["email"]
+            }
 
         # Generate JWT token
-        jwt_token = create_jwt_token({
-            "id": user["id"],
-            "email": user["email"]
-        })
+        jwt_token = create_jwt_token(user_data)
 
         # Redirect to frontend with token
         redirect_url = f"{settings.FRONTEND_URL}/auth/google/callback?token={jwt_token}"

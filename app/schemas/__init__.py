@@ -137,7 +137,31 @@ class VideoDownloadRequest(BaseModel):
     url: str = Field(..., min_length=1, description="Video URL from supported platforms")
     quality: Optional[str] = Field(
         "best", 
-        description="Video quality preference. Options: 'best', 'worst', 'best[height<=720]', 'best[height<=480]', 'best[height<=1080]', 'best[ext=mp4]', 'best[filesize<50M]'"
+        description="Video quality preference. Supports yt-dlp format selectors like 'best', 'worst', 'best[height<=720]', etc."
+    )
+    resolution: Optional[str] = Field(
+        None,
+        description="Preferred resolution (e.g., '1080', '720', '480', '360'). Will try to get best quality at this resolution."
+    )
+    max_filesize: Optional[str] = Field(
+        None,
+        description="Maximum file size (e.g., '100M', '500M', '1G'). Downloads will be limited to this size."
+    )
+    format_preference: Optional[str] = Field(
+        "mp4",
+        description="Preferred video format (mp4, webm, mkv, etc.). Default is mp4 for better compatibility."
+    )
+    audio_quality: Optional[str] = Field(
+        "best",
+        description="Audio quality preference: 'best', 'worst', or specific codec like 'aac', 'opus', 'm4a'"
+    )
+    prefer_free_formats: Optional[bool] = Field(
+        False,
+        description="Prefer free/open formats (webm, ogg) over proprietary ones (mp4, m4a)"
+    )
+    include_subtitles: Optional[bool] = Field(
+        False,
+        description="Download available subtitles/captions if available"
     )
     
     @validator('url')
@@ -160,15 +184,50 @@ class VideoDownloadRequest(BaseModel):
     def validate_quality(cls, v):
         if v is None:
             return "best"
-        # Allow common quality formats
-        valid_patterns = [
-            r'^best$', r'^worst$', r'^bestvideo\+bestaudio$',
-            r'^best\[height<=\d+\]$', r'^worst\[height>=\d+\]$',
-            r'^best\[ext=\w+\]$', r'^best\[filesize<\d+[MG]\]$'
-        ]
-        if not any(re.match(pattern, v) for pattern in valid_patterns):
-            # If doesn't match patterns, assume it's a custom yt-dlp format
+        # Allow any yt-dlp format selector for flexibility
+        return v
+    
+    @validator('resolution')
+    def validate_resolution(cls, v):
+        if v is None:
+            return v
+        # Common resolution heights
+        valid_resolutions = ['144', '240', '360', '480', '720', '1080', '1440', '2160', '4320']
+        if v not in valid_resolutions:
+            # Allow any numeric value for custom resolutions
+            try:
+                int(v)
+            except ValueError:
+                raise ValueError(f"Resolution must be numeric (height in pixels) or one of: {', '.join(valid_resolutions)}")
+        return v
+    
+    @validator('max_filesize')
+    def validate_max_filesize(cls, v):
+        if v is None:
+            return v
+        # Validate filesize format (e.g., 100M, 1.5G, 500K)
+        import re
+        pattern = r'^\d+(\.\d+)?[KMG]$'
+        if not re.match(pattern, v, re.IGNORECASE):
+            raise ValueError("File size must be in format like '100M', '1.5G', '500K'")
+        return v
+    
+    @validator('format_preference')
+    def validate_format_preference(cls, v):
+        if v is None:
+            return "mp4"
+        # Common video formats
+        valid_formats = ['mp4', 'webm', 'mkv', 'avi', 'mov', 'flv', 'm4v']
+        if v.lower() not in valid_formats:
+            # Allow any format for flexibility
             pass
+        return v.lower()
+    
+    @validator('audio_quality')
+    def validate_audio_quality(cls, v):
+        if v is None:
+            return "best"
+        # Allow any audio quality specification
         return v
 
 class VideoDownloadResponse(BaseModel):
@@ -176,6 +235,8 @@ class VideoDownloadResponse(BaseModel):
     message: str
     job_id: Optional[str] = None       # New field for consistency with other APIs
     video_info: Optional[Dict[str, Any]] = None
+    download_info: Optional[Dict[str, Any]] = None  # Extended download details
+    available_formats: Optional[List[Dict[str, Any]]] = None  # Available quality options
     cloudflare: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 

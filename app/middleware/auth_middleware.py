@@ -97,7 +97,7 @@ class AuthMiddleware:
                 payload = jwt.decode(
                     token, 
                     settings.SECRET_KEY, 
-                    algorithms=["HS256"]
+                    algorithms=[settings.ALGORITHM]
                 )
                 user_id = payload.get("sub")
                 if not user_id:
