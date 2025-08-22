@@ -91,8 +91,7 @@ class DubJobService(BaseJobService[DubJob]):
                     job_data['id'] = str(job_data['_id'])
                     del job_data['_id']
                     
-                    # Debug log for validation issues
-                    logger.debug(f"Processing job_data: {job_data.get('job_id')} with keys: {list(job_data.keys())}")
+
                     
                     job = DubJob(**job_data)
                     jobs.append(job)

@@ -76,10 +76,7 @@ class RunPodService:
             if response.status_code == 200:
                 data = response.json()
                 
-                # Log RunPod response structure for debugging queue position
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"RunPod status response for {request_id}: {data}")
-                
+
                 # Map RunPod status to our simplified status
                 runpod_status = data.get('status')
                 progress = 0

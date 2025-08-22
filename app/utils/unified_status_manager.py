@@ -227,7 +227,7 @@ class UnifiedStatusManager:
                         current_data.progress == validated_progress and
                         status in self._processing_states):
                         # Skip if same status and progress for processing states
-                        logger.debug(f"Skipped duplicate update for {job_id}: {status.value} ({validated_progress}%)")
+
                         return True
                 
                 # 🛡️ Smart progress grouping to reduce updates
@@ -235,7 +235,7 @@ class UnifiedStatusManager:
                     progress_diff = abs(validated_progress - current_data.progress)
                     # Only update if significant progress change (min 5% or status change)
                     if progress_diff < 5 and current_data.status == status:
-                        logger.debug(f"Skipped minor progress update for {job_id}: {progress_diff}%")
+
                         return True
                 
                 # Get queue position if applicable
@@ -292,14 +292,14 @@ class UnifiedStatusManager:
                     if (current_data.status == status and 
                         current_data.progress == validated_progress and
                         status in self._processing_states):
-                        logger.debug(f"Skipped duplicate update for {job_id}: {status.value} ({validated_progress}%)")
+
                         return True
                 
                 # Smart progress grouping to reduce updates
                 if current_data and status in self._processing_states:
                     progress_diff = abs(validated_progress - current_data.progress)
                     if progress_diff < 5 and current_data.status == status:
-                        logger.debug(f"Skipped minor progress update for {job_id}: {progress_diff}%")
+
                         return True
                 
                 # Create new status data
@@ -494,7 +494,7 @@ class UnifiedStatusManager:
                 return await self._get_local_queue_position(job_id)
             
         except Exception as e:
-            logger.debug(f"Failed to get queue position for {job_id}: {e}")
+            pass
         
         return None
     
@@ -514,7 +514,7 @@ class UnifiedStatusManager:
                 return runpod_status.get("queue_position")
             
         except Exception as e:
-            logger.debug(f"RunPod queue position error for {job_id}: {e}")
+            pass
         
         return None
     
@@ -524,7 +524,7 @@ class UnifiedStatusManager:
             from app.routes.video_processing import get_dub_queue_position
             return get_dub_queue_position(job_id)
         except Exception as e:
-            logger.debug(f"Local queue position error for {job_id}: {e}")
+            pass
         
         return None
     

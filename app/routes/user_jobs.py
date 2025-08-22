@@ -34,7 +34,7 @@ def get_job_queue_position(job) -> Optional[int]:
             
             return queue_position
         else:
-            logger.debug(f"No RunPod status returned for job {job.job_id}")
+
             return None
     except Exception as e:
         logger.warning(f"Failed to get RunPod queue position for job {job.job_id}: {e}")

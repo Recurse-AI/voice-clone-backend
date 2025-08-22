@@ -152,7 +152,7 @@ class MemoryCache:
             del self._cache[job_id]
         
         if expired_keys:
-            logger.debug(f"Cleaned up {len(expired_keys)} expired cache entries")
+
         
         return len(expired_keys)
 
@@ -292,7 +292,7 @@ def mark_job_cancelled(job_id: str) -> None:
 def is_job_cancelled(job_id: str) -> bool:
     """Check if a job has been cancelled"""
     is_cancelled = job_id in _status_manager.cancelled_jobs
-    logger.debug(f"🔍 Checking cancellation for {job_id}: {is_cancelled}")
+
     return is_cancelled
 
 def unmark_job_cancelled(job_id: str) -> None:

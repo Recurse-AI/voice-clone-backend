@@ -118,7 +118,7 @@ class BaseJobService(Generic[JobModel], ABC):
                 logger.warning(f"Job {job_id} not found for status update")
                 return False
                 
-            logger.debug(f"Updated job {job_id}: status={status}, progress={progress}")
+
             return True
             
         except Exception as e:

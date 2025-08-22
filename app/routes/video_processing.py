@@ -64,7 +64,7 @@ def _update_status_non_blocking(job_id: str, status: ProcessingStatus, progress:
     # Use sync version to avoid event loop issues
     try:
         manager.update_status_sync(job_id, job_type_enum, status, progress, details)
-        logger.debug(f"Status updated for job {job_id}: {status.value} ({progress}%)")
+
     except Exception as e:
         logger.error(f"Failed to update status for {job_id}: {e}")
 
@@ -277,7 +277,9 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             request_id = runpod_service.submit_separation_request(r2_audio_path["url"], f"video_dub_{job_id}")
             
             def on_separation_progress(status: str, progress: int):
-                _update_status_non_blocking(job_id, ProcessingStatus.SEPARATING, 30 + (progress // 4), {
+                # Map RunPod progress (0-100) to separation range (45-55) to avoid backward transitions
+                separation_progress = 45 + int((progress / 100.0) * 10)
+                _update_status_non_blocking(job_id, ProcessingStatus.SEPARATING, separation_progress, {
                     "message": f"Audio separation in progress... ({status})"
                 }, "dub")
             
@@ -352,7 +354,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             }, "dub")
             return
             
-        _update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 40, {"message": "Starting AI dubbing pipeline..."}, "dub")
+        _update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 55, {"message": "Starting AI dubbing pipeline..."}, "dub")
         
         from app.services.dub.simple_dubbed_api import get_simple_dubbed_api
         simple_dubbed_api = get_simple_dubbed_api()

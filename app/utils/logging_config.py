@@ -18,7 +18,7 @@ def setup_logging():
             "console": {
                 "class": "logging.StreamHandler",
                 "formatter": "customFormatter",
-                "level": "DEBUG",
+                "level": "INFO",
             },
             "info_file_handler": {
                 "class": "logging.handlers.RotatingFileHandler",
@@ -29,15 +29,7 @@ def setup_logging():
                 "backupCount": 2,
                 "encoding": "utf-8"
             },
-            "debug_file_handler": {
-                "class": "logging.handlers.RotatingFileHandler",
-                "filename": "app/logs/debug.log",
-                "formatter": "customFormatter",
-                "level": "DEBUG",
-                "maxBytes": 5242880,
-                "backupCount": 2,
-                "encoding": "utf-8"
-            },
+
             "error_file_handler": {
                 "class": "logging.handlers.RotatingFileHandler",
                 "filename": "app/logs/error.log",
@@ -60,11 +52,10 @@ def setup_logging():
                 "propagate": False
             },
             "": {
-                "level": "DEBUG",
+                "level": "INFO",
                 "handlers": [
                     "console",
                     "info_file_handler",
-                    "debug_file_handler",
                     "error_file_handler"
                 ],
             },

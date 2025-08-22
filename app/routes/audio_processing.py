@@ -48,7 +48,7 @@ def _update_separation_status_non_blocking(job_id: str, status: str, progress: i
     # Use sync version to avoid event loop issues
     try:
         manager.update_status_sync(job_id, UnifiedJobType.SEPARATION, status_enum, progress, kwargs)
-        logger.debug(f"Separation status updated for job {job_id}: {status_enum.value} ({progress}%)")
+
     except Exception as e:
         logger.error(f"Failed to update separation status for {job_id}: {e}")
 
@@ -82,7 +82,7 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
             # Check if job was cancelled by user
             from app.utils.shared_memory import is_job_cancelled, _status_manager
             is_cancelled = is_job_cancelled(job_id)
-            logger.debug(f"🔍 Cancellation check for {job_id}: {is_cancelled} | Cancelled jobs: {_status_manager.cancelled_jobs}")
+
             
             if is_cancelled:
                 logger.info(f"🛑 Separation job {job_id} (RunPod: {runpod_request_id}) was cancelled by user")
@@ -112,8 +112,7 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 job_status = status.get("status", "unknown")
                 progress = status.get("progress", 0)
                 
-                # 🔍 DEBUG: Log exactly what we got from RunPod
-                logger.info(f"🔍 RunPod status for {runpod_request_id}: status='{job_status}', progress={progress}")
+
                 
                 # Check for cancelled status from RunPod
                 if job_status.upper() == "CANCELLED":
@@ -143,8 +142,7 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                     break  # Force stop monitoring
                 
                 # Only update status if job is not cancelled
-                # 🔍 DEBUG: What are we about to update?
-                logger.info(f"🔍 About to update {job_id}: status='{job_status}', progress={progress}")
+
                 
                 # 🛡️ CRITICAL: Check if job is already cancelled in database (soft delete protection)
                 try:

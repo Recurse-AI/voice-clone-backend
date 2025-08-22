@@ -7,12 +7,11 @@ logs_dir.mkdir(parents=True, exist_ok=True)
 
 info_log = logs_dir / "info.log"
 error_log = logs_dir / "error.log"
-debug_log = logs_dir / "debug.log"
 
 logger = logging.getLogger("app_logger")
 console_handler = logging.StreamHandler()
 
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 if logger.hasHandlers():
     logger.handlers.clear()
@@ -31,14 +30,7 @@ info_handler = RotatingFileHandler(
 info_handler.setLevel(logging.INFO)
 info_handler.setFormatter(formatter)
 
-debug_handler = RotatingFileHandler(
-    debug_log, 
-    maxBytes=5*1024*1024,
-    backupCount=2,
-    encoding='utf-8'
-)
-debug_handler.setLevel(logging.DEBUG)
-debug_handler.setFormatter(formatter)
+# Debug handler removed to reduce log verbosity
 
 error_handler = RotatingFileHandler(
     error_log, 
@@ -50,6 +42,5 @@ error_handler.setLevel(logging.ERROR)
 error_handler.setFormatter(formatter)
 
 logger.addHandler(info_handler)
-logger.addHandler(debug_handler)
 logger.addHandler(error_handler)
 logger.addHandler(console_handler)

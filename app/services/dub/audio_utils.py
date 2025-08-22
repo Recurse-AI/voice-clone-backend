@@ -288,7 +288,7 @@ class AudioUtils:
                 logger.info(f"🧹 Successfully removed temp directory: {folder_path} ({file_count} files)")
                 return True
             else:
-                logger.debug(f"🧹 Temp directory already deleted or doesn't exist: {folder_path}")
+
                 return True
         except Exception as e:
             logger.error(f"🧹 Failed to remove temp directory {folder_path}: {e}")
