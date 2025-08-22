@@ -12,7 +12,7 @@ from app.routes.stripe import stripe_route
 
 from app.routes.audio_processing import router as audio_processing_router
 from app.routes.uploads import router as uploads_router
-from app.routes.video_processing import router as video_processing_router
+from app.routes.video import router as video_processing_router
 from app.routes.user_jobs import router as user_jobs_router
 from app.utils.init_pricing_plans import init_pricing_plans
 from app.middleware.auth_middleware import AuthMiddleware
@@ -45,16 +45,16 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to cleanup old directories: {cleanup_error}")
     
     # Initialize Fish Speech service
-    try:
-        from app.services.dub.fish_speech_service import initialize_fish_speech
-        if initialize_fish_speech():
-            logger.info("✅ Fish Speech service initialized successfully")
-        else:
-            logger.warning("⚠️ Fish Speech service initialization failed")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize Fish Speech: {e}")
+    # try:
+    #     from app.services.dub.fish_speech_service import initialize_fish_speech
+    #     if initialize_fish_speech():
+    #         logger.info("✅ Fish Speech service initialized successfully")
+    #     else:
+    #         logger.warning("⚠️ Fish Speech service initialization failed")
+    # except Exception as e:
+    #     logger.error(f"❌ Failed to initialize Fish Speech: {e}")
     
-    logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
+    # logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     
     try:
         from app.services.r2_service import get_r2_service, reset_r2_service
@@ -74,7 +74,7 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to cleanup Fish Speech: {e}")
     
     try:
-        from app.routes.video_processing import get_dub_executor
+        from app.routes.video.dub_routes import get_dub_executor
         from app.routes.audio_processing import get_separation_executor
         
         dub_executor = get_dub_executor()

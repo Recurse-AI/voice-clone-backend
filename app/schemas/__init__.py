@@ -349,3 +349,75 @@ class DubJobDetailResponse(BaseModel):
     job: Optional[UserDubJob] = None
     error: Optional[str] = None
 
+# Process Video Complete API Schemas
+class TimelineAudioSegment(BaseModel):
+    start: int = Field(..., description="Start time in milliseconds")
+    end: int = Field(..., description="End time in milliseconds") 
+    audio_url: str = Field(..., description="URL to audio segment")
+    
+    @validator('start')
+    def validate_start(cls, v):
+        if v < 0:
+            raise ValueError("Start time must be >= 0")
+        return v
+    
+    @validator('end')
+    def validate_end(cls, v, values):
+        if v < 0:
+            raise ValueError("End time must be >= 0")
+        if 'start' in values and v <= values['start']:
+            raise ValueError("End time must be greater than start time")
+        return v
+
+class VideoProcessingOptions(BaseModel):
+    class Config:
+        validate_by_name = True
+
+    resolution: Optional[str] = Field("1080p", description="Output resolution: 720p, 1080p, 4k")
+    format: Optional[str] = Field("mp4", description="Output format: mp4, webm, mov")
+    quality: Optional[str] = Field("high", description="Video quality: medium, high")
+    audio_quality: Optional[str] = Field("high", alias="audioQuality", description="Audio quality: medium, high")
+    instrument_volume: Optional[float] = Field(0.3, alias="instrumentVolume", ge=0.0, le=1.0, description="Instrument audio volume (0.0-1.0)")
+    include_subtitles: Optional[bool] = Field(True, alias="includeSubtitles", description="Include subtitles if subtitle_url provided")
+    audio_only: Optional[bool] = Field(False, alias="audioOnly", description="Output audio only (no video)")
+    audio_format: Optional[str] = Field("mp3", alias="audioFormat", description="Audio format for audio-only output: wav, mp3, aac")
+    target_duration: Optional[int] = Field(None, description="Target duration in milliseconds")
+    
+    @validator('resolution')
+    def validate_resolution(cls, v):
+        if v and v not in ['720p', '1080p', '4k']:
+            raise ValueError("Resolution must be: 720p, 1080p, or 4k")
+        return v
+    
+    @validator('format')
+    def validate_format(cls, v):
+        if v and v.lower() not in ['mp4', 'webm', 'mov']:
+            raise ValueError("Format must be: mp4, webm, or mov")
+        return v.lower() if v else v
+    
+    @validator('quality', 'audio_quality')
+    def validate_quality(cls, v):
+        if v and v not in ['medium', 'high']:
+            raise ValueError("Quality must be: medium or high")
+        return v
+    
+    @validator('audio_format')
+    def validate_audio_format(cls, v):
+        if v and v.lower() not in ['wav', 'mp3', 'aac']:
+            raise ValueError("Audio format must be: wav, mp3, or aac")
+        return v.lower() if v else v
+
+class VideoProcessingResponse(BaseModel):
+    success: bool
+    message: str
+    job_id: str
+    download_url: Optional[str] = None
+    output_filename: Optional[str] = None
+    output_type: str = Field("video", description="Output type: video or audio")
+    file_size_mb: Optional[float] = None
+    duration_seconds: Optional[float] = None
+    applied_options: Optional[VideoProcessingOptions] = None
+    error: Optional[str] = None
+    details: Optional[str] = None
+    error_code: Optional[str] = None
+
