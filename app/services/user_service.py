@@ -5,8 +5,10 @@ from app.utils.password_helper import hash_password
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from app.utils.password_helper import verify_password
-from app.utils.logger import logger
+import logging
 from bson import ObjectId
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 from pymongo import ReturnDocument
 

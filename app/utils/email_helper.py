@@ -2,9 +2,11 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from fastapi import HTTPException, BackgroundTasks
-from app.utils.logger import logger
+import logging
 from app.config.settings import settings
-import time 
+import time
+
+logger = logging.getLogger(__name__) 
 
 # Function to send HTML email using smtplib
 def send_email(sender_email: str, receiver_email: str, subject: str, body: str, password: str, is_html: bool = False):

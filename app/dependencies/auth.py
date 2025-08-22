@@ -1,9 +1,10 @@
 from fastapi import HTTPException, Depends, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.utils.token_helper import decode_jwt_token
-from app.utils.logger import logger 
+import logging 
 from app.schemas.user import TokenUser
 
+logger = logging.getLogger(__name__)
 security = HTTPBearer()
 
 async def get_current_user(

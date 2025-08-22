@@ -13,8 +13,10 @@ from app.services.transaction_service import transaction_service
 from app.utils.user_helper import *
 from app.utils.response_helper import error_response, success_response, not_found_response
 from app.dependencies.auth import get_current_user
-from app.utils.logger import logger
+import logging
 from app.utils.email_helper import *
+
+logger = logging.getLogger(__name__)
 from app.utils.token_helper import *
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel

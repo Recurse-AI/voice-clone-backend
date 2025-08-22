@@ -4,7 +4,9 @@ import os
 from datetime import datetime, timezone, timedelta
 from app.config.settings import settings
 import jwt
-from app.utils.logger import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def generate_url_safe_token(byte_length: int = 16) -> str:

@@ -3,6 +3,7 @@ import logging
 from logging.config import dictConfig
 
 def setup_logging():
+    from app.config.settings import settings
     os.makedirs("app/logs", exist_ok=True)
 
     logging_config = {

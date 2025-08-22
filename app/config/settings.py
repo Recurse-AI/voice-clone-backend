@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))
     WORKERS: int = int(os.getenv("WORKERS", "2"))  # Multiple workers with optimized R2 handling
+    DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
     NODE_ENV: str = os.getenv("NODE_ENV", "development")
     BACKEND_URL: str = os.getenv("BACKEND_URL", "http://localhost:8000")
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://clearvocals.io")

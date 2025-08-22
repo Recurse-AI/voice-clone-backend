@@ -1,6 +1,8 @@
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 from app.config.settings import settings  
-from app.utils.logger import logger
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Global MongoDB client and database
 client = AsyncIOMotorClient(settings.MONGODB_URI)

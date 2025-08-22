@@ -2,8 +2,10 @@ from typing import List
 from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.models.pricing import Pricing  
-from app.utils.logger import logger
+import logging
 from app.config.database import db
+
+logger = logging.getLogger(__name__)
 
 async def init_pricing_plans():
     collection = db["pricings"]

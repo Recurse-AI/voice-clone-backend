@@ -13,10 +13,10 @@ from app.services.credit_service import credit_service
 from app.services.credit_service import JobType as CreditJobType
 from app.config.constants import MAX_ATTEMPTS_DEFAULT, POLLING_INTERVAL_SECONDS, MSG_PROCESSING_STARTED, ERROR_PROCESSING_FAILED
 from datetime import datetime, timezone
-from app.utils.logger import logger
+# Removed custom logger import - using standard logging
 
 router = APIRouter()
-# logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 # Global ThreadPoolExecutor for separation processing
 _separation_executor = None

@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager
 
 # App routes and configuration
 from app.config.database import verify_connection, create_unique_indexes
-from app.utils.logger import logger as app_logger
 from app.utils.logging_config import setup_logging
 from app.routes.auth import auth
 from app.routes.stripe import stripe_route
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    app_logger.info("Starting up — checking MongoDB connection...")
+    logger.info("Starting up — checking MongoDB connection...")
     await verify_connection()
     await init_pricing_plans()
     await create_unique_indexes()
@@ -46,16 +45,16 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to cleanup old directories: {cleanup_error}")
     
     # Initialize Fish Speech service
-    # try:
-    #     from app.services.dub.fish_speech_service import initialize_fish_speech
-    #     if initialize_fish_speech():
-    #         logger.info("✅ Fish Speech service initialized successfully")
-    #     else:
-    #         logger.warning("⚠️ Fish Speech service initialization failed")
-    # except Exception as e:
-    #     logger.error(f"❌ Failed to initialize Fish Speech: {e}")
+    try:
+        from app.services.dub.fish_speech_service import initialize_fish_speech
+        if initialize_fish_speech():
+            logger.info("✅ Fish Speech service initialized successfully")
+        else:
+            logger.warning("⚠️ Fish Speech service initialization failed")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize Fish Speech: {e}")
     
-    # logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
+    logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     
     try:
         from app.services.r2_service import get_r2_service, reset_r2_service
@@ -66,7 +65,7 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    app_logger.info("Shutting down...")
+    logger.info("Shutting down...")
     
     try:
         from app.services.dub.fish_speech_service import cleanup_fish_speech

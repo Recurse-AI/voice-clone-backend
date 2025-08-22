@@ -4,8 +4,10 @@ from bson import ObjectId
 from fastapi import HTTPException
 from pymongo.errors import DuplicateKeyError
 from app.config.database import db, transaction_collection
-from app.utils.logger import logger
+import logging
 from fastapi.encoders import jsonable_encoder
+
+logger = logging.getLogger(__name__)
 
 class TransactionService:
     def __init__(self):

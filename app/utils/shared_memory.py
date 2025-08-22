@@ -152,7 +152,7 @@ class MemoryCache:
             del self._cache[job_id]
         
         if expired_keys:
-
+            logger.info(f"Cleaned up {len(expired_keys)} expired cache entries")
         
         return len(expired_keys)
 

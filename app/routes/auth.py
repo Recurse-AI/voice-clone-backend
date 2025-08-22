@@ -6,9 +6,11 @@ from app.config.database import db
 from app.services.user_service import *
 from app.utils.user_helper import *
 from app.dependencies.auth import get_current_user
-from app.utils.logger import logger
+import logging
 from app.utils.email_helper import *
 from app.utils.token_helper import *
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone, timedelta
 from app.services.google_auth import verify_google_token, handle_google_user
 from app.config.settings import settings
