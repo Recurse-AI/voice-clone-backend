@@ -64,6 +64,7 @@ class AuthMiddleware:
         skip_auth = [
             "/",
             "/api/download-video",  # Public download
+            "/api/process-video-complete",  # Public video processing
             "/docs",
             "/redoc",
             "/openapi.json",
