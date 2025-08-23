@@ -402,13 +402,13 @@ class StripeService:
         custom_price = amount
 
         # Set discount based on price
-        if custom_price >= 40.00:
+        if custom_price >= 39.99:
             discount = 85.00
-        elif custom_price >= 20.00:
+        elif custom_price >= 19.99:
             discount = 70.00
-        elif custom_price >= 10.00:
+        elif custom_price >= 9.99:
             discount = 40.00
-        elif custom_price >= 5.00:
+        elif custom_price >= 4.99:
             discount = 20.00
         else:
             discount = 0.00

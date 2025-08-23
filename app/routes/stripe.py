@@ -186,10 +186,8 @@ async def create_checkout_session(
 
 @stripe_route.get("/customer-portal", dependencies=[Depends(auth_protect)])
 async def get_customer_portal(user: TokenUser = Security(get_current_user)):
-    logger.info(f"============> > > > > >=============")
     try: 
         res = await stripe_service.create_customer_portal_session(user, str(user.id))
-        logger.info(f"=====> {res}")
         return success_response({
             "url": res
         })
