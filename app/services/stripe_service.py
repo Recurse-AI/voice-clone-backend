@@ -442,8 +442,7 @@ class StripeService:
             "payment_method_collection": "always",
             "payment_method_types": ["card"],
             "saved_payment_method_options": {
-                "allow_redisplay_filters": ["always"],
-                "payment_method_types": ["card"]
+                "allow_redisplay_filters": ["always"]
             },
             "subscription_data": {
                 "metadata": {
