@@ -356,17 +356,42 @@ class VideoDownloadService:
     # Cleanup helpers
     # ------------------------------------------------------------------
     def cleanup_old_files(self) -> None:
-        """Clean up any orphaned dub_* folders that might exist."""
+        """Clean up only truly orphaned dub_* folders that are older than 1 hour."""
         try:
+            from datetime import datetime, timezone, timedelta
+            
             root_dir = Path(settings.TEMP_DIR)
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=1)
+            
             for path in root_dir.glob("dub_*"):
                 try:
                     if path.is_dir():
-                        shutil.rmtree(path, ignore_errors=True)
-                        logger.info(f"🧹 Removed orphaned folder: {path}")
-                except Exception:
+                        # Get directory modification time
+                        dir_mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+                        
+                        # Only delete if directory is older than 1 hour
+                        if dir_mtime < cutoff_time:
+                            # Additional safety check: ensure no recent file activity
+                            has_recent_activity = False
+                            for file_path in path.rglob("*"):
+                                if file_path.is_file():
+                                    file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime, timezone.utc)
+                                    if file_mtime >= cutoff_time:
+                                        has_recent_activity = True
+                                        break
+                            
+                            if not has_recent_activity:
+                                shutil.rmtree(path, ignore_errors=True)
+                                logger.info(f"🧹 Removed orphaned folder (older than 1h): {path}")
+                            else:
+                                logger.debug(f"🧹 Skipping folder with recent activity: {path}")
+                        else:
+                            logger.debug(f"🧹 Skipping recent folder: {path}")
+                except Exception as e:
+                    logger.warning(f"🧹 Error checking folder {path}: {e}")
                     continue
-        except Exception:
+        except Exception as e:
+            logger.warning(f"🧹 Error during cleanup: {e}")
             pass
     
     def cleanup_specific_job(self, job_id: str) -> None:

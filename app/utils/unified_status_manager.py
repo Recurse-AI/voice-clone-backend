@@ -55,7 +55,7 @@ class StatusData:
     def _get_status_message(self) -> str:
         """Generate descriptive status message based on status and progress"""
         base_messages = {
-            ProcessingStatus.PENDING: "Processing queued",
+            ProcessingStatus.PENDING: "Job queued for processing",
             ProcessingStatus.DOWNLOADING: "Downloading video...",
             ProcessingStatus.SEPARATING: "Separating audio tracks...",
             ProcessingStatus.TRANSCRIBING: "Transcribing audio...",
@@ -73,27 +73,45 @@ class StatusData:
         return base_messages.get(self.status, f"Job is {self.status.value}")
     
     def _get_processing_message(self) -> str:
-        """Get detailed processing message based on progress"""
+        """Get detailed processing message based on progress - FIXED to match actual phases"""
+        # Check if phase is provided in details (more accurate)
+        phase = self.details.get("phase")
+        if phase:
+            phase_messages = {
+                "initialization": "Initializing dubbing process...",
+                "download": "Downloading and preparing audio...",
+                "separation": "Separating audio tracks...",
+                "transcription": "Transcribing audio with AI...",
+                "dubbing": "Dubbing text with AI translation...",
+                "review_prep": "Preparing for review...",
+                "voice_cloning": "Voice cloning with AI...",
+                "final_processing": "Generating final audio...",
+                "upload": "Uploading results...",
+                "queued": "Job queued for processing"
+            }
+            return phase_messages.get(phase, f"Processing ({phase})...")
+        
+        # Fallback to progress-based ranges (matching SimpleDubbedAPI.PROGRESS_PHASES)
         if self.progress <= 10:
-            return "Starting processing"
+            return "Initializing dubbing process..."  # initialization: 0-10%
         elif self.progress <= 30:
-            return "Separating audio tracks"
+            return "Downloading and preparing audio..."  # download: 10-30%
         elif self.progress <= 45:
-            return "Transcribing audio with AI"
-        elif self.progress <= 55:
-            return "Dubbing text with AI translation"
+            return "Separating audio tracks..."  # separation: 30-45%
+        elif self.progress <= 60:
+            return "Transcribing audio with AI..."  # transcription: 45-60% ← FIXED!
         elif self.progress <= 75:
-            return "Reviewing and editing with AI"
-        elif self.progress <= 79:
-            return "Preparing review files"
-        elif self.progress <= 89:
-            return "Voice cloning and reconstructing final audio"
-        elif self.progress <= 93:
-            return "Generating final output"
-        elif self.progress <= 96:
-            return "Uploading results"
+            return "Dubbing text with AI translation..."  # dubbing: 60-75% ← FIXED!
+        elif self.progress <= 80:
+            return "Preparing for review..."  # review_prep: 75-80%
+        elif self.progress <= 92:
+            return "Voice cloning with AI..."  # voice_cloning: 80-92%
+        elif self.progress <= 97:
+            return "Generating final audio..."  # final_processing: 92-97%
+        elif self.progress < 100:
+            return "Uploading results..."  # upload: 97-100%
         else:
-            return "Finalizing"
+            return "Processing completed successfully"
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API responses"""
@@ -139,17 +157,17 @@ class UnifiedStatusManager:
             ProcessingStatus.COMPLETED, ProcessingStatus.FAILED, ProcessingStatus.CANCELLED
         }
         
-        # Progress validation rules - Minimum progress for each status
+        # Progress validation rules - Minimum progress for each status (aligned with phases)
         self._progress_floors = {
             ProcessingStatus.PENDING: 0,
-            ProcessingStatus.DOWNLOADING: 5,
-            ProcessingStatus.SEPARATING: 10,
-            ProcessingStatus.TRANSCRIBING: 30,
-            ProcessingStatus.PROCESSING: 45,
-            ProcessingStatus.UPLOADING: 90,
+            ProcessingStatus.DOWNLOADING: 10,      # Download phase starts at 10%
+            ProcessingStatus.SEPARATING: 30,       # Separation phase starts at 30% 
+            ProcessingStatus.TRANSCRIBING: 45,     # Transcription phase starts at 45%
+            ProcessingStatus.PROCESSING: 45,       # Main processing starts at 45%
+            ProcessingStatus.UPLOADING: 97,        # Upload phase starts at 97%
             ProcessingStatus.COMPLETED: 100,
-            ProcessingStatus.AWAITING_REVIEW: 77,  # Human review needed
-            ProcessingStatus.REVIEWING: 79,        # Applying human edits before voice cloning
+            ProcessingStatus.AWAITING_REVIEW: 80,  # Review phase starts at 80%
+            ProcessingStatus.REVIEWING: 80,        # Applying human edits at 80%
             ProcessingStatus.FAILED: 0,            # Can fail at any progress
             ProcessingStatus.CANCELLED: 0          # Can cancel at any progress
         }
@@ -381,6 +399,33 @@ class UnifiedStatusManager:
             logger.error(f"Failed to get status for {job_id}: {e}")
             return None
     
+    def get_status_sync(self, job_id: str, job_type: Optional[JobType] = None) -> Optional[StatusData]:
+        """
+        Synchronous version of get_status for non-async contexts
+        
+        Args:
+            job_id: Job identifier
+            job_type: Job type hint for optimization
+            
+        Returns:
+            StatusData object or None if not found
+        """
+        try:
+            with self._cache_lock:
+                # Check cache first (fastest)
+                cached_data = self._cache.get(job_id)
+                if cached_data:
+                    return cached_data
+            
+            # Cache miss - need to check database synchronously
+            # Note: This simplified version doesn't update queue positions
+            # For full features, use the async version when possible
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get status sync for {job_id}: {e}")
+            return None
+    
     async def get_user_jobs_status(self, user_id: str, job_type: JobType, 
                                   limit: int = 50, page: int = 1) -> List[StatusData]:
         """
@@ -460,6 +505,11 @@ class UnifiedStatusManager:
                 logger.info(f"Valid transition: {current_data.status.value}({current_data.progress}%) → {status.value}({progress}%)")
                 return progress
             
+            # Special case: If current status is higher phase, don't go backwards
+            if self._is_phase_regression(current_data.status, status):
+                logger.warning(f"🛑 Phase regression blocked: {current_data.status.value}({current_data.progress}%) → {status.value}({progress}%)")
+                return current_data.progress
+            
             # Block invalid backward progress
             if status != ProcessingStatus.CANCELLED:
                 logger.warning(f"🛑 Blocked backward transition: {current_data.status.value}({current_data.progress}%) → {status.value}({progress}%)")
@@ -467,10 +517,39 @@ class UnifiedStatusManager:
         
         return progress
     
+    def _is_phase_regression(self, current_status: ProcessingStatus, new_status: ProcessingStatus) -> bool:
+        """Check if this is a phase regression (going from higher phase to lower phase)"""
+        # Define phase hierarchy
+        phase_order = {
+            ProcessingStatus.PENDING: 0,
+            ProcessingStatus.DOWNLOADING: 1,
+            ProcessingStatus.SEPARATING: 2,
+            ProcessingStatus.TRANSCRIBING: 3,
+            ProcessingStatus.PROCESSING: 4,  # Processing can be various phases
+            ProcessingStatus.UPLOADING: 5,
+            ProcessingStatus.AWAITING_REVIEW: 6,
+            ProcessingStatus.REVIEWING: 7,
+            ProcessingStatus.COMPLETED: 8,
+        }
+        
+        current_order = phase_order.get(current_status, 4)  # Default to PROCESSING level
+        new_order = phase_order.get(new_status, 4)
+        
+        # Block if trying to go from higher phase to lower phase
+        # Exception: PROCESSING can transition to SEPARATING if it's actually separation phase
+        if current_status == ProcessingStatus.PROCESSING and new_status == ProcessingStatus.SEPARATING:
+            return False  # This is valid - PROCESSING can be separation phase
+        
+        return new_order < current_order and new_status not in [ProcessingStatus.FAILED, ProcessingStatus.CANCELLED]
+
     def _is_valid_backward_transition(self, current_status: ProcessingStatus, new_status: ProcessingStatus) -> bool:
         """Check if backward progress is allowed for this status transition"""
         # Allow transitions to terminal states from anywhere
         if new_status in {ProcessingStatus.FAILED, ProcessingStatus.CANCELLED}:
+            return True
+        
+        # Allow PROCESSING → SEPARATING (separation callbacks during processing)
+        if current_status == ProcessingStatus.PROCESSING and new_status == ProcessingStatus.SEPARATING:
             return True
         
         # Allow review workflow transitions
@@ -521,12 +600,10 @@ class UnifiedStatusManager:
     async def _get_local_queue_position(self, job_id: str) -> Optional[int]:
         """Get queue position from local dub queue manager"""
         try:
-            from app.routes.video_processing import get_dub_queue_position
+            from app.routes.video.dub_routes import get_dub_queue_position
             return get_dub_queue_position(job_id)
-        except Exception as e:
-            pass
-        
-        return None
+        except Exception:
+            return None
     
     async def _persist_status_to_database(self, status_data: StatusData) -> bool:
         """Persist status to database for all status types"""

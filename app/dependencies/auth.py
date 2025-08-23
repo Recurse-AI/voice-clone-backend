@@ -1,18 +1,30 @@
-from fastapi import HTTPException, Depends, Security
+from fastapi import HTTPException, Depends, Security, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.utils.token_helper import decode_jwt_token
 import logging 
 from app.schemas.user import TokenUser
 
 logger = logging.getLogger(__name__)
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 async def get_current_user(
+    request: Request,
     credentials: HTTPAuthorizationCredentials = Security(security)
 ) -> TokenUser:
+    # Check if user was already set by middleware (share token or normal auth)
+    user = request.scope.get("user")
+    if user:
+        return TokenUser(id=user["id"], email=user["email"])
+    
+    # For normal auth, require credentials
+    if not credentials:
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required"
+        )
+    
     try:
         token = credentials.credentials
-        # Only log token validation errors, not every auth check
         if not token:
             raise HTTPException(
                 status_code=403,

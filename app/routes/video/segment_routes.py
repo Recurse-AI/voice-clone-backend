@@ -7,7 +7,7 @@ from app.schemas import (
     RegenerateSegmentRequest,
     RegenerateSegmentResponse,
 )
-from app.dependencies.auth import get_current_user
+from app.dependencies.share_token_auth import get_video_dub_user
 from app.services.dub_job_service import dub_job_service
 from app.utils.unified_status_manager import ProcessingStatus
 
@@ -19,7 +19,7 @@ from app.services.dub.manifest_service import load_manifest as _load_manifest_js
 from app.services.dub.manifest_service import write_json as _write_temp_json
 
 @router.get("/video-dub/{job_id}/segments", response_model=SegmentsResponse)
-async def get_segments(job_id: str, current_user = Depends(get_current_user)):
+async def get_segments(job_id: str, current_user = Depends(get_video_dub_user)):
     job = await dub_job_service.get_job(job_id)
     if not job or job.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -49,7 +49,7 @@ async def get_segments(job_id: str, current_user = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail=f"Failed to load manifest: {str(e)}")
 
 @router.put("/video-dub/{job_id}/segments", response_model=SegmentsResponse)
-async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, current_user = Depends(get_current_user)):
+async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, current_user = Depends(get_video_dub_user)):
     job = await dub_job_service.get_job(job_id)
     if not job or job.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -101,7 +101,7 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
     )
 
 @router.post("/video-dub/{job_id}/segments/{segment_id}/regenerate", response_model=RegenerateSegmentResponse)
-async def regenerate_segment(job_id: str, segment_id: str, request_body: RegenerateSegmentRequest, current_user = Depends(get_current_user)):
+async def regenerate_segment(job_id: str, segment_id: str, request_body: RegenerateSegmentRequest, current_user = Depends(get_video_dub_user)):
     job = await dub_job_service.get_job(job_id)
     if not job or job.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Job not found")

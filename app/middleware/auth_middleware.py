@@ -3,13 +3,14 @@ from fastapi.responses import JSONResponse
 import jwt
 import logging
 from typing import Optional, Dict, Any
+from datetime import datetime, timezone
 from app.config.settings import settings
-from app.config.database import users_collection
+from app.config.database import users_collection, db
 
 logger = logging.getLogger(__name__)
 
 class AuthMiddleware:
-    """Authentication middleware for user recognition from JWT token"""
+    """Enhanced authentication middleware that handles both JWT tokens and share tokens"""
     
     def __init__(self, app):
         self.app = app
@@ -24,6 +25,7 @@ class AuthMiddleware:
         # Check if this endpoint requires authentication
         if self._requires_auth(request.url.path):
             try:
+                # Get user (either from share token or JWT)
                 user = await self._get_user_from_token(request)
                 if not user:
                     response = JSONResponse(
@@ -51,7 +53,7 @@ class AuthMiddleware:
         """Check if the path requires authentication"""
         protected_paths = [
             "/api/jobs/",           # User job APIs
-            "/api/video-dub",       # Video dubbing
+            "/api/video-dub/",      # Video dubbing segments, actions
             "/api/audio-separation", # Audio separation
             "/upload-file",         # File uploads
             "/api/voice-clone-segment", # Voice cloning
@@ -83,10 +85,14 @@ class AuthMiddleware:
         
         return False
     
+
+    
+
+    
     async def _get_user_from_token(self, request: Request) -> Optional[Dict[str, Any]]:
         """Extract user from JWT token"""
         try:
-            # Get token from Authorization header
+            # JWT authentication only
             authorization = request.headers.get("Authorization")
             if not authorization or not authorization.startswith("Bearer "):
                 return None
@@ -112,11 +118,21 @@ class AuthMiddleware:
                 return None
             
             # Get user from database
+            return await self._get_user_by_id(user_id)
+            
+        except Exception as e:
+            logger.error(f"Error extracting user from token: {e}")
+            return None
+    
+
+    
+    async def _get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """Common user lookup logic - reusable"""
+        try:
             user = await users_collection.find_one({"_id": user_id})
             if not user:
-                logger.warning(f"User not found: {user_id}")
                 return None
-            
+                
             # Convert ObjectId to string for JSON serialization
             user["id"] = str(user["_id"])
             del user["_id"]
@@ -126,9 +142,7 @@ class AuthMiddleware:
                 del user["password"]
             
             return user
-            
-        except Exception as e:
-            logger.error(f"Error extracting user from token: {e}")
+        except Exception:
             return None
 
 # Helper function to get current user from request

@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import shutil
 from pathlib import Path
 from app.config.settings import settings
@@ -149,11 +149,37 @@ async def start_video_dub(
                 }
             )
         
+        # Initialize job status in unified status manager to prevent 404 errors
+        from app.utils.unified_status_manager import get_unified_status_manager, ProcessingStatus, JobType
+        manager = get_unified_status_manager()
+        
+        # Get queue position before enqueuing (to get proper position)
+        queue_position = _dub_queue_manager.get_next_position()  # Get position it will have
+        
+        # Enqueue job 
         enqueue_dub_job(request, user_id)
         
-        logger.info(f"Started video dub job {request.job_id} for user {user_id}")
+        # Verify queue position after enqueue
+        actual_position = get_dub_queue_position(request.job_id)
+        if actual_position is not None:
+            queue_position = actual_position
         
-        queue_position = get_dub_queue_position(request.job_id)
+        # Create status with queue information
+        await manager.update_status(
+            job_id=request.job_id,
+            job_type=JobType.DUB,
+            status=ProcessingStatus.PENDING,
+            progress=0,
+            details={
+                "user_id": user_id, 
+                "created_at": datetime.now().isoformat(),
+                "queue_position": queue_position,
+                "phase": "queued"
+            },
+            user_id=user_id
+        )
+        
+        logger.info(f"Started video dub job {request.job_id} for user {user_id}, queue position: {queue_position}")
         return VideoDubResponse(
             success=True,
             message="Video dub started successfully",
@@ -176,7 +202,26 @@ async def get_video_dub_status(job_id: str):
         status_data = await manager.get_status(job_id, UnifiedJobType.DUB)
         
         if not status_data:
-            raise HTTPException(status_code=404, detail="Job ID not found")
+            # Check if job exists in database but not yet in status manager
+            job = await dub_job_service.get_job(job_id)
+            if job:
+                # Job exists in database but not in status manager - return default pending status
+                logger.info(f"Job {job_id} found in database but not in status manager, returning default status")
+                return VideoDubStatusResponse(
+                    job_id=job_id,
+                    status="pending",
+                    progress=0,
+                    message="Job is being initialized...",
+                    result_url=None,
+                    error=None,
+                    details={
+                        "files": {},
+                        "queue_position": None,
+                        "updated_at": datetime.now().isoformat()
+                    }
+                )
+            else:
+                raise HTTPException(status_code=404, detail="Job ID not found")
         
         # Get additional job details for files
         job = await dub_job_service.get_job(job_id)
@@ -191,17 +236,36 @@ async def get_video_dub_status(job_id: str):
             result_url = None
             error = status_data.details.get("error")
 
+        # Enhanced queue position and status message for PENDING jobs
+        enhanced_message = status_data.message
+        enhanced_queue_position = status_data.queue_position
+        
+        if status_data.status == ProcessingStatus.PENDING:
+            # Get real-time queue position for PENDING jobs
+            current_queue_position = get_dub_queue_position(job_id)
+            if current_queue_position is not None:
+                enhanced_queue_position = current_queue_position
+                if current_queue_position == 1:
+                    enhanced_message = "Your job is next in line to start processing"
+                else:
+                    enhanced_message = f"Your job is #{current_queue_position} in queue, waiting to start"
+            else:
+                # Job not in queue, probably about to start
+                enhanced_message = "Job is being prepared for processing..."
+        
         return VideoDubStatusResponse(
             job_id=job_id,
             status=status_data.status.value,
             progress=status_data.progress,
-            message=status_data.message,
+            message=enhanced_message,
             result_url=result_url,
             error=error,
             details={
                 "files": files,
-                "queue_position": status_data.queue_position,
-                "updated_at": status_data.updated_at.isoformat()
+                "queue_position": enhanced_queue_position,
+                "updated_at": status_data.updated_at.isoformat(),
+                "phase": status_data.details.get("phase"),
+                "in_queue": status_data.status == ProcessingStatus.PENDING and enhanced_queue_position is not None
             }
         )
     except HTTPException:
@@ -224,15 +288,15 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
     job_dir = os.path.join(settings.TEMP_DIR, f"dub_{job_id}")
     
     try:
+        # Check cancellation first
         if is_job_cancelled(job_id):
             _update_status_non_blocking(job_id, ProcessingStatus.CANCELLED, 0, {
                 "message": "Job cancelled by user", 
                 "error": "Job cancelled by user"
             }, "dub")
             return
-            
-        _update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 10, {"message": "Starting dubbing process"}, "dub")
-        
+
+        # Job picked up from queue - validate first before changing status
         if not os.path.exists(job_dir):
             _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {"error": "Uploaded audio not found"}, "dub")
             return
@@ -246,6 +310,12 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             
         audio_path = os.path.join(job_dir, audio_candidates[0])
         
+        # NOW transition from PENDING to PROCESSING - validation successful
+        _update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 5, {
+            "message": "Starting dubbing process...", 
+            "phase": "initialization"
+        }, "dub")
+        
         if is_job_cancelled(job_id):
             _update_status_non_blocking(job_id, ProcessingStatus.CANCELLED, 0, {
                 "message": "Job cancelled by user", 
@@ -253,7 +323,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             }, "dub")
             return
             
-        _update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 30, {"message": "Separating audio tracks..."}, "dub")
+        _update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 25, {"message": "Preparing audio for separation...", "phase": "separation"}, "dub")
         # Use R2Service's proper path generation for consistency
         r2_key = r2_service.generate_file_path(job_id, "", f"{job_id}.wav")
         r2_audio_path = r2_service.upload_file(audio_path, r2_key)
@@ -267,10 +337,15 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             request_id = runpod_service.submit_separation_request(r2_audio_path["url"], f"video_dub_{job_id}")
             
             def on_separation_progress(status: str, progress: int):
-                # Map RunPod progress (0-100) to separation range (45-55) to avoid backward transitions
-                separation_progress = 45 + int((progress / 100.0) * 10)
+                # Map RunPod progress (0-100) to separation range (30-45) to fix overlap with transcription
+                separation_progress = 30 + int((progress / 100.0) * 15)  # 30-45% range
+                
+                # Add debug logging to understand backward transitions
+                logger.info(f"Separation progress update: RunPod {progress}% → App {separation_progress}% (status: {status})")
+                
                 _update_status_non_blocking(job_id, ProcessingStatus.SEPARATING, separation_progress, {
-                    "message": f"Audio separation in progress... ({status})"
+                    "message": f"Audio separation in progress... ({status})",
+                    "phase": "separation"
                 }, "dub")
             
             def on_separation_cancelled():
@@ -278,6 +353,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                     "message": "Job cancelled by user", "error": "Job cancelled by user"
                 }, "dub")
             
+            logger.info(f"🔄 Starting separation monitoring for RunPod job {request_id}")
             monitor_result = monitor_runpod_job(
                 runpod_request_id=request_id,
                 job_id=job_id,
@@ -285,6 +361,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                 on_progress=on_separation_progress,
                 on_cancelled=on_separation_cancelled
             )
+            logger.info(f"✅ Separation monitoring completed with result: {monitor_result.get('status')}")
             
             if not monitor_result["success"]:
                 if monitor_result["status"] == "CANCELLED":
@@ -344,12 +421,16 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             }, "dub")
             return
             
-        _update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 55, {"message": "Starting AI dubbing pipeline..."}, "dub")
+        # Wait for separation to complete before starting transcription
+        # This update happens AFTER separation monitor completes
+        logger.info(f"🚀 Separation completed successfully - now starting transcription phase for job {job_id}")
+        _update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 45, {"message": "Separation completed - starting transcription...", "phase": "transcription"}, "dub")
         
         from app.services.dub.simple_dubbed_api import get_simple_dubbed_api
         simple_dubbed_api = get_simple_dubbed_api()
         audio_url = r2_audio_path["url"]
         
+        logger.info(f"📝 Starting SimpleDubbedAPI.process_dubbed_audio for job {job_id}")
         pipeline_result = simple_dubbed_api.process_dubbed_audio(
             job_id=job_id,
             audio_url=audio_url,
@@ -395,7 +476,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                 "message": "Human review mode: segments ready for review"
             }
             details = RunPodURLManager.store_urls_in_details(details, runpod_urls)
-            _update_status_non_blocking(job_id, ProcessingStatus.AWAITING_REVIEW, 77, details, "dub")
+            _update_status_non_blocking(job_id, ProcessingStatus.AWAITING_REVIEW, 80, details, "dub")
             
             from app.utils.shared_memory import unmark_job_cancelled
             unmark_job_cancelled(job_id)
@@ -506,9 +587,10 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             else:
                 logger.info(f"✅ Retrieved RunPod URLs for job {job_id}: {list(stored_runpod_urls.keys())}")
             # Update status to reviewing with proper review_status
-            _update_status_non_blocking(job_id, ProcessingStatus.REVIEWING, 79, {
+            _update_status_non_blocking(job_id, ProcessingStatus.REVIEWING, 80, {
                 "message": "Resuming with human edits...",
-                "review_status": "approved"
+                "review_status": "approved",
+                "phase": "voice_cloning"
             }, "dub")
             from app.services.dub.simple_dubbed_api import get_simple_dubbed_api
             api = get_simple_dubbed_api()
@@ -698,7 +780,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     def _run_redub():  # ← Sync function like existing pattern
         from app.utils.job_utils import job_utils
         try:
-            _update_status_non_blocking(new_job_id, ProcessingStatus.PROCESSING, 10, {"message": f"Redubbing to {request_body.target_language}"}, "dub")
+            _update_status_non_blocking(new_job_id, ProcessingStatus.PROCESSING, 10, {"message": f"Redubbing to {request_body.target_language}", "phase": "initialization"}, "dub")
             
             result = api.process_dubbed_audio(
                 audio_url=None,  # Reuse existing files
@@ -734,7 +816,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
                         "parent_job_id": original_job_id
                     }
                     details = RunPodURLManager.copy_urls_from_original_job(original_job, details)
-                    _update_status_non_blocking(new_job_id, ProcessingStatus.AWAITING_REVIEW, 77, details, "dub")
+                    _update_status_non_blocking(new_job_id, ProcessingStatus.AWAITING_REVIEW, 80, details, "dub")
                     
                     # ✅ Redub review mode complete - keep files for faster resume (will auto-cleanup later if needed)
                     
@@ -810,3 +892,48 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             "status_check_url": f"/api/video-dub-status/{new_job_id}"
         }
     )
+
+@router.post("/video-dub/{job_id}/share")
+async def generate_share_link(
+    job_id: str,
+    expires_in_hours: int = 24,
+    current_user = Depends(get_current_user)
+):
+    """Generate a shareable link for review access"""
+    
+    # Verify job exists and user owns it
+    job = await dub_job_service.get_job(job_id)
+    if not job or job.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Only allow sharing for review-ready jobs
+    if job.status != "awaiting_review":
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Job must be in 'awaiting_review' status to share. Current status: {job.status}"
+        )
+    
+    # Generate share token
+    from app.utils.token_helper import generate_url_safe_token
+    from datetime import timedelta
+    from app.config.database import db
+    
+    share_token = generate_url_safe_token(32)  # 32-byte token
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+    
+    # Store token in database
+    share_tokens_collection = db["share_tokens"]
+    await share_tokens_collection.insert_one({
+        "token": share_token,
+        "job_id": job_id,
+        "user_id": current_user.id,
+        "expires_at": expires_at,
+        "created_at": datetime.now(timezone.utc)
+    })
+    
+    return {
+        "success": True,
+        "token": share_token,
+        "expires_at": expires_at.isoformat(),
+        "expires_in_hours": expires_in_hours
+    }

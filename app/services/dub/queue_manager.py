@@ -45,6 +45,11 @@ class DubQueueManager:
                 if task.get("job_id") == job_id:
                     return idx + 1
         return None
+    
+    def get_next_position(self) -> int:
+        """Get the position a new job would have if added to queue"""
+        with self._queue_lock:
+            return len(self._queue) + 1
 
     def _schedule_locked(self) -> None:
         executor = self._get_executor()
