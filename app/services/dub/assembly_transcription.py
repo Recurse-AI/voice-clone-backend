@@ -183,8 +183,8 @@ class TranscriptionService:
             
             logger.info(f"Found {len(raw_sentences)} raw sentences from Assembly AI")
             
-            # Split long sentences (>20 seconds) into smaller segments
-            processed_sentences = self._split_long_sentences(raw_sentences, max_duration_ms=20000)
+            # Split sentences based on natural punctuation points and enforce max duration
+            processed_sentences = self._split_long_sentences(raw_sentences, target_duration_ms=10000, max_duration_ms=15000)
             logger.info(f"After splitting: {len(processed_sentences)} sentences (was {len(raw_sentences)})")
             
             # Apply max limit if specified
@@ -312,8 +312,18 @@ class TranscriptionService:
         except json.JSONDecodeError as e:
             raise Exception(f"Failed to parse API response: {str(e)}")
     
-    def _split_long_sentences(self, sentences: List[Dict[str, Any]], max_duration_ms: int = 20000) -> List[Dict[str, Any]]:
-        """Split sentences longer than max_duration_ms into smaller segments based on punctuation"""
+    def _split_long_sentences(self, sentences: List[Dict[str, Any]], target_duration_ms: int = 10000, max_duration_ms: int = 15000) -> List[Dict[str, Any]]:
+        """Split sentences into segments based on natural punctuation breaks and enforce maximum duration
+        
+        Args:
+            target_duration_ms: Target duration for guidance (10 seconds)
+            max_duration_ms: Maximum allowed duration (15 seconds) - forces split even without punctuation
+        
+        Logic:
+            - First try to split at natural punctuation points
+            - If segment is longer than max_duration_ms, force split at word boundaries
+            - This balances natural speech flow with dubbing requirements
+        """
         
         # Multi-language punctuation endpoints for sentence splitting
         punctuation_patterns = {
@@ -343,25 +353,26 @@ class TranscriptionService:
         result_sentences = []
         
         for sentence in sentences:
-            duration_ms = sentence['end'] - sentence['start']
-            
-            # If sentence is within limit, keep as is
-            if duration_ms <= max_duration_ms:
-                result_sentences.append(sentence)
-                continue
-            
-            # Need to split long sentence
             words = sentence.get('words', [])
             if not words:
                 result_sentences.append(sentence)
                 continue
             
+            # Look for natural split points (punctuation)
             split_points = find_split_points(words)
             
-            # If no good split points found, split by duration evenly
+            # If no natural split points found, check if segment is too long and force split if needed
             if not split_points:
-                words_per_segment = max(1, len(words) // (duration_ms // max_duration_ms + 1))
-                split_points = list(range(words_per_segment, len(words), words_per_segment))
+                sentence_duration = sentence['end'] - sentence['start']
+                if sentence_duration <= max_duration_ms:
+                    # Short enough, keep as is
+                    result_sentences.append(sentence)
+                else:
+                    # Too long, force split at word boundaries
+                    logger.info(f"Forcing split for long segment: {sentence_duration}ms > {max_duration_ms}ms")
+                    forced_segments = self._force_split_by_duration(sentence, max_duration_ms)
+                    result_sentences.extend(forced_segments)
+                continue
             
             # Create segments
             start_idx = 0
@@ -379,17 +390,10 @@ class TranscriptionService:
                 segment_end = segment_words[-1]['end']
                 segment_duration = segment_end - segment_start
                 
-                # Skip very short segments (less than 1 second)
-                if segment_duration < 1000:
+                # Skip only extremely short segments (less than 0.5 seconds) which are likely errors
+                if segment_duration < 500:
                     start_idx = split_point
                     continue
-                
-                # If this segment is still too long, force split
-                if segment_duration > max_duration_ms and len(segment_words) > 1:
-                    mid_point = len(segment_words) // 2
-                    segment_words = segment_words[:mid_point]
-                    split_point = start_idx + mid_point
-                    segment_end = segment_words[-1]['end']
                 
                 segment_text = ' '.join(word['text'] for word in segment_words)
                 
@@ -411,11 +415,55 @@ class TranscriptionService:
                 start_idx = split_point
                 segment_num += 1
                 
-                # If we've split enough, break
+                # If we've processed all words, break
                 if segment_end >= sentence['end']:
                     break
         
         return result_sentences
+
+    def _force_split_by_duration(self, sentence: Dict[str, Any], max_duration_ms: int) -> List[Dict[str, Any]]:
+        """Force split a long sentence by duration when no punctuation is available"""
+        words = sentence.get('words', [])
+        if not words:
+            return [sentence]
+        
+        segments = []
+        current_words = []
+        current_start = words[0]['start']
+        segment_num = 0
+        
+        for i, word in enumerate(words):
+            current_words.append(word)
+            current_duration = word['end'] - current_start
+            
+            # If we've reached max duration or we're at the last word, create a segment
+            if current_duration >= max_duration_ms or i == len(words) - 1:
+                if current_words:
+                    segment_text = ' '.join(w['text'] for w in current_words)
+                    speaker = current_words[0].get('speaker', sentence.get('speaker', 'A'))
+                    
+                    segment = {
+                        'text': segment_text,
+                        'start': current_words[0]['start'],
+                        'end': current_words[-1]['end'],
+                        'words': current_words,
+                        'confidence': sentence.get('confidence', 0.9),
+                        'speaker': speaker,
+                        'original_sentence_id': sentence.get('id', f"forced_split_{segment_num}"),
+                        'segment_index': segment_num,
+                        'forced_split': True  # Mark as forced split for debugging
+                    }
+                    
+                    segments.append(segment)
+                    segment_num += 1
+                    
+                    # Start new segment if not at end
+                    if i < len(words) - 1:
+                        current_words = []
+                        current_start = words[i + 1]['start'] if i + 1 < len(words) else word['end']
+        
+        logger.info(f"Force split created {len(segments)} segments from 1 long segment")
+        return segments
 
 
     

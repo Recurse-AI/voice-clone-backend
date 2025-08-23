@@ -70,6 +70,18 @@ def smart_chunk(text: str, chunk_size: int = 200, min_size: int = 180) -> list[s
 from app.services.language_service import language_service
 
 class SimpleDubbedAPI:
+    PROGRESS_PHASES = {
+        "initialization": {"start": 0, "end": 10},
+        "download": {"start": 10, "end": 30},
+        "separation": {"start": 30, "end": 45},
+        "transcription": {"start": 45, "end": 60},
+        "dubbing": {"start": 60, "end": 75},
+        "review_prep": {"start": 75, "end": 80},
+        "voice_cloning": {"start": 80, "end": 92},
+        "final_processing": {"start": 92, "end": 97},
+        "upload": {"start": 97, "end": 100}
+    }
+    
     def __init__(self):
         self.transcription_service = TranscriptionService()
         self.fish_speech = get_fish_speech_service()
@@ -85,24 +97,43 @@ class SimpleDubbedAPI:
     def temp_dir(self):
         return settings.TEMP_DIR
     
-    def _update_status_non_blocking(self, job_id: str, status: ProcessingStatus, progress: int, details: dict, job_type: str = "dub"):
+    def _update_status(self, job_id: str, status: ProcessingStatus, progress: int, details: dict, smart: bool = True):
         manager = get_unified_status_manager()
-        job_type_enum = JobType.DUB if job_type == "dub" else JobType.SEPARATION
-        
-        # Use sync version to avoid event loop issues
         try:
-            manager.update_status_sync(job_id, job_type_enum, status, progress, details)
+            if smart:
+                current_data = manager.get_status_sync(job_id, JobType.DUB)
+                if (current_data and current_data.progress > progress and status == current_data.status and
+                    status not in [ProcessingStatus.AWAITING_REVIEW, ProcessingStatus.REVIEWING, 
+                                   ProcessingStatus.COMPLETED, ProcessingStatus.FAILED, ProcessingStatus.CANCELLED]):
+                    progress = current_data.progress
+            
+            manager.update_status_sync(job_id, JobType.DUB, status, progress, details)
         except Exception as e:
             logger.error(f"Failed to update status for {job_id}: {e}")
+    
+    def _update_phase_progress(self, job_id: str, phase: str, sub_progress: float, message: str):
+        if phase not in self.PROGRESS_PHASES:
+            logger.warning(f"Unknown phase '{phase}' for job {job_id}")
+            return
+        
+        sub_progress = min(1.0, max(0.0, sub_progress))
+        start, end = self.PROGRESS_PHASES[phase]["start"], self.PROGRESS_PHASES[phase]["end"]
+        progress = min(100, max(0, start + int((end - start) * sub_progress)))
+        
+        self._update_status(job_id, ProcessingStatus.PROCESSING, progress, 
+                          {"message": message, "phase": phase, "sub_progress": sub_progress})
     
     def _check_cancellation(self, job_id: str) -> bool:
         from app.utils.shared_memory import is_job_cancelled
         if is_job_cancelled(job_id):
-            self._update_status_non_blocking(job_id, ProcessingStatus.CANCELLED, 0, {
+            self._update_status(job_id, ProcessingStatus.CANCELLED, 0, {
                 "message": "Job cancelled by user", "error": "Job cancelled by user"
-            }, "dub")
+            }, smart=False)
             return True
         return False
+    
+    def _should_update_progress(self, completed: int, total: int) -> bool:
+        return (completed % max(1, total // 10) == 0 or completed == total or completed <= 3)
     
     def dub_text_batch(self, segments: list, target_language: str = "English", batch_size: int = 10, job_id: str = None) -> list:
         all_dubbed = []
@@ -218,7 +249,9 @@ class SimpleDubbedAPI:
             )
             
             if review_mode:
-             
+                # Update progress for review preparation
+                self._update_phase_progress(job_id, "review_prep", 0.5, "Preparing segments for human review")
+                
                 # Build and save manifest
                 manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments)
                 manifest_path = save_manifest_to_dir(manifest, process_temp_dir, job_id)
@@ -242,20 +275,18 @@ class SimpleDubbedAPI:
                     logger.error(f"Failed to get manifest URL for review mode job {job_id}")
                     return {"success": False, "error": "Failed to generate manifest URL for review"}
                 
-                # Now set awaiting_review status with manifest details (77% with status change)
-                self._update_status_non_blocking(
+                # Now set awaiting_review status with manifest details using phase system
+                self._update_status(
                     job_id,
                     ProcessingStatus.AWAITING_REVIEW,
-                    77,
+                    self.PROGRESS_PHASES["review_prep"]["end"],  # Use phase end (80%) for consistency
                     {
                         "message": "Awaiting human review - Please review dubbed text",
                         "segments_manifest_url": manifest_url,
                         "segments_manifest_key": manifest_key,
                         "segments_count": len(dubbed_segments),
                         "transcript_id": transcript_id
-                    },
-                    "dub",
-                )
+                    })
 
                 # Don't remove temp directory in review mode - needed for segments access
                 logger.info(f"Review mode: preserving temp directory for segments access: {process_temp_dir}")
@@ -396,8 +427,8 @@ class SimpleDubbedAPI:
             self._download_segment_audios(manifest_override, process_temp_dir)
             
         else:
-            # Fresh transcription - update progress to 45%
-            self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 45, {"message": "Transcribing audio with AI"}, "dub")
+            # Fresh transcription - use phase-based progress
+            self._update_phase_progress(job_id, "transcription", 0.0, "Starting AI transcription with Assembly AI")
             logger.info("Starting fresh transcription")
             sentences_result = self.transcription_service.get_sentences_and_split_audio(
                 audio_url=audio_url,
@@ -425,7 +456,7 @@ class SimpleDubbedAPI:
         
         # Only update progress if this is fresh dubbing (not resuming from review)
         if not manifest_override:
-            self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 55, {"message": "Batch dubbing text..."}, "dub")
+            self._update_phase_progress(job_id, "dubbing", 0.0, "Starting AI text translation with OpenAI")
             logger.info("Starting batch dubbing...")
         else:
             logger.info("Resuming dubbing with existing segments...")
@@ -449,17 +480,8 @@ class SimpleDubbedAPI:
         target_language_code = language_service.normalize_language_input(target_language)
         dubbed_texts = self.dub_text_batch(segments_to_dub, target_language_code, batch_size=15, job_id=job_id)
         
-        # OpenAI dubbing completed - update to 75%
-        self._update_status_non_blocking(
-            job_id,
-            ProcessingStatus.PROCESSING,
-            75,
-            {"message": "Reviewing and editing with AI"},
-            "dub",
-        )
+        self._update_phase_progress(job_id, "dubbing", 1.0, "Reviewing and editing with AI")
         logger.info("OpenAI dubbing completed, starting voice processing...")
-        
-        # Apply edited text overrides if present (only for same target language)
         edited_map = {}
         if manifest_override:
             # Check if this is a redub with language change
@@ -483,30 +505,22 @@ class SimpleDubbedAPI:
                     if seg.get("id") and seg.get("dubbed_text"):
                         edited_map[seg["id"]] = seg["dubbed_text"]
         
-        # Start voice cloning phase at 80% (only if not in review mode)
         if not review_mode:
-            self._update_status_non_blocking(
-                job_id,
-                ProcessingStatus.PROCESSING,
-                80,
-                {"message": "Voice cloning and reconstructing final audio"},
-                "dub",
-            )
+            self._update_status(job_id, ProcessingStatus.PROCESSING, 80, {
+                "message": "Starting AI voice cloning with Fish Speech",
+                "phase": "voice_cloning", 
+                "sub_progress": 0.0
+            }, smart=False)
             logger.info("Starting voice cloning...")
         
-        # Process voice cloning for each segment
         dubbed_segments = []
         dub_idx = 0
-
-        # Calculate dynamic progress range for voice cloning updates (80..89)
         cloneable_count = sum(1 for s in raw_sentences if s.get("text", "").strip()) if not review_mode else 0
         completed_clones = 0
-        last_progress_update = 80  # Track last progress to avoid frequent updates
 
         for i, segment in enumerate(raw_sentences):
-            # 🛡️ Check cancellation in voice cloning loop
             if self._check_cancellation(job_id):
-                return []  # Return empty list to stop processing
+                return []
             
             seg_id = f"seg_{i+1:03d}"
             start_ms = segment.get("start", 0)
@@ -521,11 +535,8 @@ class SimpleDubbedAPI:
             dubbed_text = dubbed_texts[dub_idx]
             dub_idx += 1
             
-            # Apply edited text override if present
             if seg_id in edited_map:
                 dubbed_text = edited_map[seg_id]
-            
-            # Voice clone if not in review mode
             cloned_audio_path = None
             cloned_duration_ms = end_ms - start_ms
             if not review_mode:
@@ -537,35 +548,16 @@ class SimpleDubbedAPI:
                     cloned_audio_path = clone_result.get("path")
                     cloned_duration_ms = clone_result.get("duration_ms", end_ms - start_ms)
                 
-                # Update progress only at significant intervals (every 10% of cloning or every 5 segments)
-                try:
-                    if cloneable_count > 0:
-                        completed_clones += 1
-                        # Calculate progress but only update at meaningful intervals
-                        progress_value = 80 + min(9, int((completed_clones / max(1, cloneable_count)) * 9))
-                        
-                        # Only update if progress increased by at least 2% or every 5 segments
-                        if (progress_value - last_progress_update >= 2 or 
-                            completed_clones % 5 == 0 or 
-                            completed_clones == cloneable_count):
-                            
-                            self._update_status_non_blocking(
-                                job_id,
-                                ProcessingStatus.PROCESSING,
-                                progress_value,
-                                {
-                                    "message": "Voice cloning and reconstructing final audio",
-                                    "cloned_segments": completed_clones,
-                                    "total_segments": cloneable_count,
-                                },
-                                "dub",
-                            )
-                            last_progress_update = progress_value
-                except Exception:
-                    # Best-effort progress update; ignore errors
-                    pass
+                if cloneable_count > 0:
+                    completed_clones += 1
+                    if self._should_update_progress(completed_clones, cloneable_count):
+                        try:
+                            sub_progress = completed_clones / cloneable_count
+                            self._update_phase_progress(job_id, "voice_cloning", sub_progress,
+                                f"Voice cloning: {completed_clones}/{cloneable_count} segments")
+                        except Exception:
+                            pass
             
-            # Create segment info and save to JSON
             segment_json = self._create_segment_info(
                 seg_id, i, start_ms, cloned_duration_ms, original_text, dubbed_text,
                 original_audio_path, cloned_audio_path, speaker_label, job_id, process_temp_dir
@@ -577,7 +569,6 @@ class SimpleDubbedAPI:
     def _create_segment_info(self, seg_id: str, segment_index: int, start_ms: int, cloned_duration_ms: int,
                            original_text: str, dubbed_text: str, original_audio_path: str, 
                            cloned_audio_path: str, speaker_label: str, job_id: str, process_temp_dir: str) -> dict:
-        """Create and save segment information JSON"""
         info_filename = f"segment_{job_id}_{segment_index:03d}_info.json"
         info_path = os.path.join(process_temp_dir, info_filename).replace('\\', '/')
         
@@ -631,7 +622,7 @@ class SimpleDubbedAPI:
             logger.info(f"🛑 Job {job_id} cancelled - skipping final output generation")
             return {"success": False, "error": "Job cancelled by user"}
         
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 90, {"message": "Reconstructing final audio..."}, "dub")
+        self._update_phase_progress(job_id, "final_processing", 0.0, "Reconstructing final audio...")
         logger.info("Reconstructing final audio...")
         
         # Reconstruct final audio
@@ -643,7 +634,7 @@ class SimpleDubbedAPI:
             return {"success": False, "error": "Job cancelled by user"}
         
         # Generate SRT file and finalize (combining multiple close steps)
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 92, {"message": "Finalizing output files..."}, "dub")
+        self._update_phase_progress(job_id, "final_processing", 0.5, "Finalizing output files...")
         
         subtitle_path = self._generate_srt_file(job_id, dubbed_segments, process_temp_dir)
         
@@ -746,7 +737,7 @@ class SimpleDubbedAPI:
     
     def _upload_and_finalize(self, job_id: str, process_temp_dir: str, final_audio_path: str) -> dict:
         """Upload files to R2 and return final results"""
-        self._update_status_non_blocking(job_id, ProcessingStatus.PROCESSING, 95, {"message": "Uploading and finalizing..."}, "dub")
+        self._update_phase_progress(job_id, "upload", 0.0, "Uploading and finalizing...")
         
         # Upload entire directory to R2
         folder_upload_result = self.r2_storage.upload_directory(job_id, process_temp_dir)
