@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     STRIPE_PREMIUM_YEARLY_PRICE_ID: Optional[str] = os.getenv("STRIPE_PREMIUM_YEARLY_PRICE_ID")
     STRIPE_PRO_MONTHLY_PRICE_ID: Optional[str] = os.getenv("STRIPE_PRO_MONTHLY_PRICE_ID")
     STRIPE_PRO_YEARLY_PRICE_ID: Optional[str] = os.getenv("STRIPE_PRO_YEARLY_PRICE_ID")
+    PAY_AS_YOU_GO_PRICE_ID: Optional[str] = os.getenv("PAY_AS_YOU_GO_PRICE_ID")
+    METER_EVENT: Optional[str] = os.getenv("METER_EVENT")
+    TIME_CYCLE: int = os.getenv("TIME_CYCLE")
     
     # OpenAI Configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")

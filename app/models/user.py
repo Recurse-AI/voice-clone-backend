@@ -3,8 +3,8 @@ from typing import Optional, Literal
 from datetime import datetime
 
 class Subscription(BaseModel):
-    type: Literal['free', 'premium', 'pro'] = 'free'
-    status: Literal['active', 'trialing', 'past_due', 'canceled', 'none'] = 'none'
+    type: str = 'pay as you go'  
+    status: str = 'none'
     stripeCustomerId: Optional[str] = None
     stripeSubscriptionId: Optional[str] = None
     currentPeriodEnd: Optional[datetime] = None

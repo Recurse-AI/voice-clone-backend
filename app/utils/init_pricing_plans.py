@@ -15,23 +15,25 @@ async def init_pricing_plans():
 
     pricing_plans: List[dict] = [
         {
-            "name": "small",
-            "description": "Perfect for small projects",
+            "name": "pay-as-you-go",
+            "description": "Perfect for flexible usage and occasional projects",
             "features": [
-                "150 credits",
+                "Flexible pricing for occasional use",
                 "All basic features",
                 "Priority support",
                 "Extended format support",
-                "20% savings on credits"
+                "Priority processing queue",
+                "No upfront commitment",
+                "Pay only for what you use"
             ],
             "creditPack": {
-                "name": "Small",
-                "credits": 150,
-                "originalPrice": 6.00,
-                "discountedPrice": 5.00,
-                "pricePerCredit": 0.033,
-                "savingsPercentage": 20,
-                "stripePriceId": "price_small_pack"
+                "name": "Pay As You Go",
+                "credits": 0,  # No upfront credits
+                "originalPrice": 0.00,  # No upfront cost
+                "discountedPrice": 0.00,  # No upfront cost
+                "pricePerCredit": 0.04,  # $0.04 per credit (25 credits = $1.00)
+                "savingsPercentage": 0,  # No discount for pay-as-you-go
+                "stripePriceId": "price_pay_as_you_go"  # Your metered price ID
             },
             "isActive": True,
             "displayOrder": 1,
