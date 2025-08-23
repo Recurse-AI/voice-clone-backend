@@ -185,8 +185,14 @@ async def create_checkout_session(
         )
 
 @stripe_route.get("/customer-portal", dependencies=[Depends(auth_protect)])
-def get_customer_portal():
-    pass
+async def get_customer_portal(user: TokenUser = Security(get_current_user)):
+    try: 
+        res = await stripe_service.create_customer_portal_session(user, str(user.id))
+        return success_response({
+            "url": res
+        })
+    except Exception as e:
+        return error_response(str(e), "Customer Portal Error")
 
 @stripe_route.post("/webhook")
 async def webhook(request: Request):
@@ -200,14 +206,40 @@ async def webhook(request: Request):
         logger.info(f"Processing webhook event: {event['type']} with ID: {event['id']}")
         
         if event['type'] == 'checkout.session.completed':
-            result = await transaction_service.handle_checkout_completed(event['data']['object'])
-            if result:
-                logger.info(f"Successfully processed checkout session: {result['message']}")
+            session = event['data']['object']
+            
+            # Handle different session modes
+            if session.mode == 'subscription':
+                # Handle subscription completion
+                if session.metadata.get('billingType') == 'usage-based':
+                    # Handle pay-as-you-go subscription
+                    await stripe_service.handle_usage_billing(session)
+                    logger.info(f"Usage-based subscription completed: {session.id}")
+                else:
+                    # Handle regular subscription
+                    logger.info(f"Regular subscription completed: {session.id}")
             else:
-                logger.warning("Checkout session processed with no result")
+                # Handle payment completion (credit packs)
+                result = await transaction_service.handle_checkout_completed(session)
+                if result:
+                    logger.info(f"Successfully processed checkout session: {result['message']}")
+                else:
+                    logger.warning("Checkout session processed with no result")
                 
         elif event['type'] == 'customer.created':
             logger.info(f"Stripe customer created: {event['data']['object'].get('id')}")
+        
+        elif event['type'] == 'invoice.payment_succeeded':
+            # Handle successful usage billing
+            invoice = event['data']['object']
+            if invoice.subscription:
+                logger.info(f"Usage billing payment succeeded for subscription: {invoice.subscription}")
+        
+        elif event['type'] == 'customer.subscription.updated':
+            # Handle subscription status updates
+            subscription = event['data']['object']
+            await stripe_service.update_subscription_status(subscription)
+            logger.info(f"Subscription status updated: {subscription.id}")
         
         return JSONResponse(
             status_code=200,
@@ -260,38 +292,59 @@ async def verify_payment(
         if existing:
             return success_response({
                 "message": "Payment already processed",
-                "transaction": existing  # Already serialized
+                "transaction": existing
             })
 
         # Verify Stripe session
         session_data = await stripe_service.verify_session(sessionId, user_id)
         
-        # Create transaction and update user credits
-        transaction = await transaction_service.create_transaction(
-            user_id=user_id,
-            credits=session_data["credits"],
-            amount=session_data["amount"],
-            session_id=sessionId,
-            description=f"Purchase of {session_data['credits']} credits ({session_data['pack_name']})"
-        )
-
-        # Update user credits
-        user_update = await transaction_service.update_user_credits(
-            user_id, 
-            session_data["credits"]
-        )
+        # Handle different session types
+        if session_data["session_type"] == "subscription":
+            # Handle subscription verification
+            if session_data["billing_type"] == "usage-based":
+                return success_response({
+                    "message": "Subscription verified successfully",
+                    "subscription": session_data["subscription_info"],
+                    "session_type": "subscription",
+                    "billing_type": "usage-based"
+                })
+            else:
+                return success_response({
+                    "message": "Subscription verified successfully",
+                    "session_type": "subscription",
+                    "billing_type": "regular"
+                })
         
-        return success_response({
-            "message": "Payment verified and processed successfully",
-            "transaction": transaction,  # Already serialized
-            "user": user_update,  # Already serialized
-            "session": {
-                "credits": session_data["credits"],
-                "amount": session_data["amount"],
-                "pack_name": session_data["pack_name"],
-                "discount": session_data["discount_percentage"]
-            }
-        })
+        elif session_data["session_type"] == "payment":
+            # Handle credit pack payment verification
+            transaction = await transaction_service.create_transaction(
+                user_id=user_id,
+                credits=session_data["credits"],
+                amount=session_data["amount"],
+                session_id=sessionId,
+                description=f"Purchase of {session_data['credits']} credits ({session_data['pack_name']})"
+            )
+
+            # Update user credits
+            user_update = await transaction_service.update_user_credits(
+                user_id, 
+                session_data["credits"]
+            )
+            
+            return success_response({
+                "message": "Payment verified and processed successfully",
+                "transaction": transaction,
+                "user": user_update,
+                "session": {
+                    "credits": session_data["credits"],
+                    "amount": session_data["amount"],
+                    "pack_name": session_data["pack_name"],
+                    "discount": session_data["discount_percentage"]
+                },
+                "session_type": "payment",
+                "billing_type": "credit_pack"
+            })
+
 
     except HTTPException as he:
         return error_response(str(he.detail), "Payment Verification Error", he.status_code)
@@ -300,5 +353,31 @@ async def verify_payment(
         return error_response(
             "Failed to verify payment", 
             "Internal Server Error", 
+            500
+        )
+
+@stripe_route.post("/create-checkout-asug", dependencies=[Depends(auth_protect)])
+async def create_checkout_asug(current_user: TokenUser = Security(get_current_user)):
+    try:
+        user = await get_user_id(current_user.id)
+        if not user:
+            return error_response(ERROR_USER_NOT_FOUND, "User not found")
+        
+        session = await stripe_service.get_psug_session(user, str(current_user.id))
+        
+        return success_response({
+            "sessionId": session.id,
+            "url": session.url,
+            "name": "pay as you go",
+            "status": session.status
+        })
+
+    except HTTPException as he:
+        return error_response(str(he.detail), "Checkout Error", he.status_code)
+    except Exception as e:
+        logger.error(f"Checkout session error: {str(e)}")
+        return error_response(
+            "Failed to create checkout session",
+            "Internal Server Error",
             500
         )

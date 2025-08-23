@@ -17,23 +17,25 @@ async def init_pricing_plans():
 
     pricing_plans: List[dict] = [
         {
-            "name": "small",
-            "description": "Perfect for small projects",
+            "name": "pay-as-you-go",
+            "description": "Perfect for flexible usage and occasional projects",
             "features": [
-                "150 credits",
+                "Flexible pricing for occasional use",
                 "All basic features",
                 "Priority support",
                 "Extended format support",
-                "20% savings on credits"
+                "Priority processing queue",
+                "No upfront commitment",
+                "Pay only for what you use"
             ],
             "creditPack": {
-                "name": "Small",
-                "credits": 150,
-                "originalPrice": 6.00,
-                "discountedPrice": 5.00,
-                "pricePerCredit": 0.033,
-                "savingsPercentage": 20,
-                "stripePriceId": "price_small_pack"
+                "name": "Pay As You Go",
+                "credits": 0,  # No upfront credits
+                "originalPrice": 0.00,  # No upfront cost
+                "discountedPrice": 0.00,  # No upfront cost
+                "pricePerCredit": 0.04,  # $0.04 per credit (25 credits = $1.00)
+                "savingsPercentage": 0,  # No discount for pay-as-you-go
+                "stripePriceId": "price_pay_as_you_go"  # Your metered price ID
             },
             "isActive": True,
             "displayOrder": 1,
@@ -55,7 +57,7 @@ async def init_pricing_plans():
                 "name": "Medium",
                 "credits": 350,
                 "originalPrice": 14.00,
-                "discountedPrice": 10.00,
+                "discountedPrice": 9.99,
                 "pricePerCredit": 0.028,
                 "savingsPercentage": 40,
                 "stripePriceId": "price_medium_pack"
@@ -80,7 +82,7 @@ async def init_pricing_plans():
                 "name": "Special",
                 "credits": 850,
                 "originalPrice": 34.00,
-                "discountedPrice": 20.00,
+                "discountedPrice": 19.99,
                 "pricePerCredit": 0.023,
                 "savingsPercentage": 70,
                 "stripePriceId": "price_special_pack"
@@ -106,7 +108,7 @@ async def init_pricing_plans():
                 "name": "Limited",
                 "credits": 1850,
                 "originalPrice": 72.00,
-                "discountedPrice": 40.00,
+                "discountedPrice": 39.99,
                 "pricePerCredit": 0.02,
                 "savingsPercentage": 85,
                 "stripePriceId": "price_limited_pack"
