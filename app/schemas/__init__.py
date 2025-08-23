@@ -11,9 +11,9 @@ class StatusResponse(BaseModel):
 # Video-dub related schemas
 class VideoDubRequest(BaseModel):
     """
-    ভিডিও ডাবিং প্রসেসের জন্য রিকোয়েস্ট।
-    ভিডিও upload-file API দিয়ে upload করতে হবে, তারপর এখানে সেই job_id দিতে হবে।
-    video_url ফিল্ড নেই, কারণ ভিডিও local-এ সংরক্ষিত থাকবে।
+    Request for video dubbing process.
+    Video must be uploaded using upload-file API first, then provide that job_id here.
+    No video_url field needed as video will be stored locally.
     """
     job_id: str = Field(..., description="Unique job ID for the dubbing process (from /upload-file API)")
     target_language: str = Field(..., description="Target language for dubbing")
@@ -21,8 +21,7 @@ class VideoDubRequest(BaseModel):
     duration: Optional[float] = Field(None, gt=0, le=14400, description="Video duration in seconds (max 4 hours)")
     expected_speaker: Optional[str] = Field(None, description="Expected speaker name or ID")
     source_video_language: Optional[str] = Field(None, description="Source video language (default: None, auto-detect)")
-    subtitle: bool = Field(False, description="Whether to add subtitles")
-    instrument: bool = Field(False, description="Whether to add instrument track")
+    humanReview: bool = Field(False, description="If true, pause after transcription+translation for human review")
 
 class VideoDubResponse(BaseModel):
     success: bool
@@ -39,54 +38,71 @@ class VideoDubStatusResponse(BaseModel):
     error: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
 
-# Export Video Schemas
-class ExportVideoRequest(BaseModel):
-    audioId: str = Field(..., min_length=1, description="Audio ID for the processed video")
-    format: str = Field("mp4", pattern="^(mp4|avi|mov|mkv)$", description="Video output format")
-    settings: Dict[str, Any] = Field(..., description="Export settings including quality, resolution, etc.")
-    timeline: Dict[str, Any] = Field(..., description="Timeline data with items and configuration")
-    editingChanges: Dict[str, Any] = Field(..., description="Changes applied during editing")
-    voiceCloneData: Dict[str, Any] = Field(..., description="Voice cloning data and segments")
-    exportMetadata: Dict[str, Any] = Field(..., description="Export metadata like title, description")
-    instrumentsUrl: Optional[str] = Field(None, description="Optional instruments audio URL")
-    subtitlesUrl: Optional[str] = Field(None, description="Optional SRT subtitle file URL")
-    
-    @validator('timeline')
-    def validate_timeline(cls, v):
-        required_fields = ['duration', 'fps', 'size', 'items']
-        for field in required_fields:
-            if field not in v:
-                raise ValueError(f"Timeline missing required field: {field}")
-        
-        if not isinstance(v['items'], list):
-            raise ValueError("Timeline items must be a list")
-        
-        return v
-    
-    @validator('settings')
-    def validate_settings(cls, v):
-        # Validate quality settings
-        if 'quality' in v and v['quality'] not in ['low', 'medium', 'high', 'ultra']:
-            raise ValueError("Quality must be one of: low, medium, high, ultra")
-        
-        return v
+# Review/Segments Schemas
+class SegmentItem(BaseModel):
+    id: str
+    segment_index: int
+    start: int
+    end: int
+    duration_ms: int
+    original_text: str
+    dubbed_text: str
+    original_audio_file: Optional[str] = None
+    speaker_label: Optional[str] = None
 
-class ExportJobResponse(BaseModel):
-    jobId: str
-    status: str
+class SegmentsResponse(BaseModel):
+    job_id: str
+    segments: list[SegmentItem]
+    manifestUrl: Optional[str] = None
+    version: Optional[int] = None
+    target_language: Optional[str] = None
+
+class SegmentEdit(BaseModel):
+    id: str
+    dubbed_text: str
+    start: Optional[int] = None
+    end: Optional[int] = None
+
+class SaveEditsRequest(BaseModel):
+    segments: list[SegmentEdit]
+
+class ApproveReviewRequest(BaseModel):
+    pass
+
+class RedubRequest(BaseModel):
+    target_language: str = Field(..., description="New target language for re-dub")
+    humanReview: Optional[bool] = False
+    
+    @validator('target_language')
+    def validate_target_language(cls, v):
+        if not v or not v.strip():
+            raise ValueError("Target language cannot be empty")
+        # Clean and normalize the language name
+        return v.strip().title()
+
+class RedubResponse(BaseModel):
+    success: bool
     message: str
-    estimatedDuration: Optional[int] = None
-
-class ProcessingLogs(BaseModel):
-    logs: list[str]
-
-class ExportStatusResponse(BaseModel):
-    jobId: str
+    job_id: str
     status: str
-    progress: int
-    downloadUrl: Optional[str] = None
-    error: Optional[str] = None
-    processingLogs: Optional[ProcessingLogs] = None
+    details: Optional[Dict[str, Any]] = None
+
+class RegenerateSegmentRequest(BaseModel):
+    dubbed_text: Optional[str] = None
+    tone: Optional[str] = Field(None, description="Optional tone marker like excited, sad, whispering")
+    prompt: Optional[str] = Field(None, description="Optional custom prompt for voice generation")
+    target_language: Optional[str] = None
+
+class RegenerateSegmentResponse(BaseModel):
+    success: bool
+    message: str
+    job_id: str
+    segment_id: str
+    manifestUrl: str
+    version: int
+    segment: SegmentItem
+
+
 
 # Audio Separation API Schemas
 class AudioSeparationRequest(BaseModel):
@@ -119,7 +135,34 @@ class SeparationStatusResponse(BaseModel):
 # Video Download Schemas
 class VideoDownloadRequest(BaseModel):
     url: str = Field(..., min_length=1, description="Video URL from supported platforms")
-    quality: Optional[str] = Field(None, description="Video quality preference (e.g., 'best', 'worst', 'best[height<=720]')")
+    quality: Optional[str] = Field(
+        "best", 
+        description="Video quality preference. Supports yt-dlp format selectors like 'best', 'worst', 'best[height<=720]', etc."
+    )
+    resolution: Optional[str] = Field(
+        None,
+        description="Preferred resolution (e.g., '1080', '720', '480', '360'). Will try to get best quality at this resolution."
+    )
+    max_filesize: Optional[str] = Field(
+        None,
+        description="Maximum file size (e.g., '100M', '500M', '1G'). Downloads will be limited to this size."
+    )
+    format_preference: Optional[str] = Field(
+        "mp4",
+        description="Preferred video format (mp4, webm, mkv, etc.). Default is mp4 for better compatibility."
+    )
+    audio_quality: Optional[str] = Field(
+        "best",
+        description="Audio quality preference: 'best', 'worst', or specific codec like 'aac', 'opus', 'm4a'"
+    )
+    prefer_free_formats: Optional[bool] = Field(
+        False,
+        description="Prefer free/open formats (webm, ogg) over proprietary ones (mp4, m4a)"
+    )
+    include_subtitles: Optional[bool] = Field(
+        False,
+        description="Download available subtitles/captions if available"
+    )
     
     @validator('url')
     def validate_url(cls, v):
@@ -136,13 +179,75 @@ class VideoDownloadRequest(BaseModel):
         if not url_pattern.match(v):
             raise ValueError("Invalid URL format")
         return v
+    
+    @validator('quality')
+    def validate_quality(cls, v):
+        if v is None:
+            return "best"
+        # Allow any yt-dlp format selector for flexibility
+        return v
+    
+    @validator('resolution')
+    def validate_resolution(cls, v):
+        if v is None:
+            return v
+        # Common resolution heights
+        valid_resolutions = ['144', '240', '360', '480', '720', '1080', '1440', '2160', '4320']
+        if v not in valid_resolutions:
+            # Allow any numeric value for custom resolutions
+            try:
+                int(v)
+            except ValueError:
+                raise ValueError(f"Resolution must be numeric (height in pixels) or one of: {', '.join(valid_resolutions)}")
+        return v
+    
+    @validator('max_filesize')
+    def validate_max_filesize(cls, v):
+        if v is None:
+            return v
+        # Validate filesize format (e.g., 100M, 1.5G, 500K)
+        import re
+        pattern = r'^\d+(\.\d+)?[KMG]$'
+        if not re.match(pattern, v, re.IGNORECASE):
+            raise ValueError("File size must be in format like '100M', '1.5G', '500K'")
+        return v
+    
+    @validator('format_preference')
+    def validate_format_preference(cls, v):
+        if v is None:
+            return "mp4"
+        # Common video formats
+        valid_formats = ['mp4', 'webm', 'mkv', 'avi', 'mov', 'flv', 'm4v']
+        if v.lower() not in valid_formats:
+            # Allow any format for flexibility
+            pass
+        return v.lower()
+    
+    @validator('audio_quality')
+    def validate_audio_quality(cls, v):
+        if v is None:
+            return "best"
+        # Allow any audio quality specification
+        return v
 
 class VideoDownloadResponse(BaseModel):
     success: bool
     message: str
     job_id: Optional[str] = None       # New field for consistency with other APIs
     video_info: Optional[Dict[str, Any]] = None
+    download_info: Optional[Dict[str, Any]] = None  # Extended download details
+    available_formats: Optional[List[Dict[str, Any]]] = None  # Available quality options
     cloudflare: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+# File Delete Schemas  
+class FileDeleteRequest(BaseModel):
+    job_id: str = Field(..., min_length=1, description="Job ID of the downloaded file to delete")
+
+class FileDeleteResponse(BaseModel):
+    success: bool
+    message: str
+    deleted_files: Optional[List[str]] = None
     error: Optional[str] = None
 
 # Upload Status Schema
@@ -197,6 +302,8 @@ class UserSeparationListResponse(BaseModel):
     page: Optional[int] = None
     limit: Optional[int] = None
     total_pages: Optional[int] = None
+    total_completed: Optional[int] = None
+    total_processing: Optional[int] = None
 
 class FileInfo(BaseModel):
     filename: str
@@ -208,12 +315,11 @@ class UserDubJob(BaseModel):
     job_id: str
     status: str
     progress: int
+    queuePosition: Optional[int] = None
     original_filename: Optional[str] = None
     target_language: str
     source_video_language: Optional[str] = None
     expected_speaker: Optional[str] = None
-    subtitle: bool = False
-    instrument: bool = False
     result_url: Optional[str] = None
     files: Optional[List[FileInfo]] = None
     error: Optional[str] = None
@@ -229,6 +335,8 @@ class UserDubListResponse(BaseModel):
     page: Optional[int] = None
     limit: Optional[int] = None
     total_pages: Optional[int] = None
+    total_completed: Optional[int] = None
+    total_processing: Optional[int] = None
 
 # Individual Job Detail Schemas
 class SeparationJobDetailResponse(BaseModel):
@@ -240,4 +348,76 @@ class DubJobDetailResponse(BaseModel):
     success: bool
     job: Optional[UserDubJob] = None
     error: Optional[str] = None
+
+# Process Video Complete API Schemas
+class TimelineAudioSegment(BaseModel):
+    start: int = Field(..., description="Start time in milliseconds")
+    end: int = Field(..., description="End time in milliseconds") 
+    audio_url: str = Field(..., description="URL to audio segment")
+    
+    @validator('start')
+    def validate_start(cls, v):
+        if v < 0:
+            raise ValueError("Start time must be >= 0")
+        return v
+    
+    @validator('end')
+    def validate_end(cls, v, values):
+        if v < 0:
+            raise ValueError("End time must be >= 0")
+        if 'start' in values and v <= values['start']:
+            raise ValueError("End time must be greater than start time")
+        return v
+
+class VideoProcessingOptions(BaseModel):
+    class Config:
+        validate_by_name = True
+
+    resolution: Optional[str] = Field("1080p", description="Output resolution: 720p, 1080p, 4k")
+    format: Optional[str] = Field("mp4", description="Output format: mp4, webm, mov")
+    quality: Optional[str] = Field("high", description="Video quality: medium, high")
+    audio_quality: Optional[str] = Field("high", alias="audioQuality", description="Audio quality: medium, high")
+    instrument_volume: Optional[float] = Field(0.3, alias="instrumentVolume", ge=0.0, le=1.0, description="Instrument audio volume (0.0-1.0)")
+    include_subtitles: Optional[bool] = Field(True, alias="includeSubtitles", description="Include subtitles if subtitle_url provided")
+    audio_only: Optional[bool] = Field(False, alias="audioOnly", description="Output audio only (no video)")
+    audio_format: Optional[str] = Field("mp3", alias="audioFormat", description="Audio format for audio-only output: wav, mp3, aac")
+    target_duration: Optional[int] = Field(None, description="Target duration in milliseconds")
+    
+    @validator('resolution')
+    def validate_resolution(cls, v):
+        if v and v not in ['720p', '1080p', '4k']:
+            raise ValueError("Resolution must be: 720p, 1080p, or 4k")
+        return v
+    
+    @validator('format')
+    def validate_format(cls, v):
+        if v and v.lower() not in ['mp4', 'webm', 'mov']:
+            raise ValueError("Format must be: mp4, webm, or mov")
+        return v.lower() if v else v
+    
+    @validator('quality', 'audio_quality')
+    def validate_quality(cls, v):
+        if v and v not in ['medium', 'high']:
+            raise ValueError("Quality must be: medium or high")
+        return v
+    
+    @validator('audio_format')
+    def validate_audio_format(cls, v):
+        if v and v.lower() not in ['wav', 'mp3', 'aac']:
+            raise ValueError("Audio format must be: wav, mp3, or aac")
+        return v.lower() if v else v
+
+class VideoProcessingResponse(BaseModel):
+    success: bool
+    message: str
+    job_id: str
+    download_url: Optional[str] = None
+    output_filename: Optional[str] = None
+    output_type: str = Field("video", description="Output type: video or audio")
+    file_size_mb: Optional[float] = None
+    duration_seconds: Optional[float] = None
+    applied_options: Optional[VideoProcessingOptions] = None
+    error: Optional[str] = None
+    details: Optional[str] = None
+    error_code: Optional[str] = None
 

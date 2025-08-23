@@ -10,6 +10,7 @@ import sys
 import torch
 import logging
 import numpy as np
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, Generator, Union
 
@@ -116,7 +117,7 @@ class FishSpeechService:
 
     
     def generate_with_reference_audio(self, text: str, reference_audio_bytes: bytes, 
-                                     reference_text: str, **kwargs) -> Dict[str, Any]:
+                                     reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:
         """
         Generate voice cloning with reference audio (proper fish-speech way)
         
@@ -157,6 +158,13 @@ class FishSpeechService:
             # Generate audio using TTSInferenceEngine
             audio_data = b""
             for result in self.inference_engine.inference(tts_request):
+                # 🛡️ Check job cancellation during inference generation
+                if job_id:
+                    from app.utils.shared_memory import is_job_cancelled
+                    if is_job_cancelled(job_id):
+                        logger.info(f"🛑 Fish speech inference cancelled for job {job_id}")
+                        return {"success": False, "error": "Job cancelled by user"}
+                
                 if result.code in ("chunk", "final"):
                     # Accumulate audio chunks
                     sample_rate, audio_chunk = result.audio
@@ -215,14 +223,17 @@ class FishSpeechService:
 
 # Global service instance
 fish_speech_service = None
+_service_lock = threading.Lock()
 
 
 def get_fish_speech_service() -> FishSpeechService:
-    """Get or create global Fish Speech service instance"""
+    """Get or create global Fish Speech service instance (thread-safe)"""
     global fish_speech_service
     
     if fish_speech_service is None:
-        fish_speech_service = FishSpeechService()
+        with _service_lock:
+            if fish_speech_service is None:
+                fish_speech_service = FishSpeechService()
     
     return fish_speech_service
 

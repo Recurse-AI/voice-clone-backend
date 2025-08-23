@@ -1,159 +1,243 @@
 import logging
 import shutil
 import time
-import uuid
-from datetime import datetime, timezone
+import threading
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, Any
 
 import yt_dlp
 
-from app.services.export_video.constants import (
-    DOWNLOAD_TIMEOUT,
-    DEFAULT_VIDEO_QUALITY,
-    PLATFORM_VIDEO_QUALITY,
-)
 from app.config.settings import settings
-from app.utils.r2_storage import R2Storage
-from app.utils.shared_memory import set_upload_status, update_upload_status
 
 logger = logging.getLogger(__name__)
 
 
 class VideoDownloadService:
-    """Download media (video/audio) from any supported URL and keep them locally.
-
-    The downloaded file is stored under:
-        {settings.TEMP_DIR}/dub_{job_id}/{filename}
-
-    Supports 800+ sites via yt-dlp. No Cloudflare / R2 upload happens here – 
-    keeping things simple and local as requested.
+    """Simple video downloader service.
+    
+    Downloads videos from URLs using yt-dlp and stores locally.
+    Files auto-delete after 30 minutes.
     """
 
     def __init__(self) -> None:
-        # Re-use the same ID generator used elsewhere for a consistent format
-        self.r2_storage = R2Storage()
+        # Track downloaded files for auto cleanup
+        self._downloaded_files = {}  # {job_id: {"path": str, "created_at": datetime}}
+    
+    def _generate_job_id(self) -> str:
+        """Generate unique job ID"""
+        import uuid
+        return str(uuid.uuid4())
 
     # ---------------------------------------------------------------------
     # Helper utilities
     # ---------------------------------------------------------------------
+    
+    def _build_quality_format(
+        self, 
+        quality: str | None, 
+        resolution: str | None, 
+        max_filesize: str | None,
+        format_preference: str | None, 
+        audio_quality: str | None, 
+        prefer_free_formats: bool
+    ) -> str:
+        """Build intelligent yt-dlp format selector based on user preferences."""
+        
+        # If explicit quality is provided, use it as base
+        if quality and quality != "best":
+            base_format = quality
+        else:
+            # Build format selector based on preferences
+            conditions = []
+            
+            # Resolution preference
+            if resolution:
+                conditions.append(f"height<={resolution}")
+            
+            # File size limit
+            if max_filesize:
+                conditions.append(f"filesize<{max_filesize}")
+            
+            # Format preference
+            if format_preference:
+                if prefer_free_formats and format_preference in ["mp4", "m4v"]:
+                    # Prefer webm over mp4 if free formats requested
+                    conditions.append("ext=webm")
+                else:
+                    conditions.append(f"ext={format_preference}")
+            elif prefer_free_formats:
+                conditions.append("ext=webm")
+            
+            # Build the format string
+            if conditions:
+                base_format = f"best[{']['.join(conditions)}]"
+            else:
+                base_format = "best"
+        
+        # Handle audio quality
+        if audio_quality and audio_quality != "best":
+            if audio_quality in ["aac", "opus", "m4a", "mp3"]:
+                # Try to get specific audio codec
+                return f"({base_format})[acodec*={audio_quality}]/({base_format})/best"
+            elif audio_quality == "worst":
+                return f"({base_format})[acodec!=none]/worstaudio+worstvideo/worst"
+        
+        # Fallback to ensure we get something
+        return f"{base_format}/best"
+    
+    def _analyze_available_formats(self, formats: list, requested_format: str) -> Dict[str, Any]:
+        """Analyze available formats and provide detailed information."""
+        
+        if not formats:
+            return {
+                "available_formats": [],
+                "selected_format": {},
+                "resolution": "Unknown",
+                "ext": "Unknown",
+                "vcodec": "Unknown",
+                "acodec": "Unknown",
+                "filesize": "Unknown"
+            }
+        
+        # Extract useful format information
+        available_formats = []
+        for fmt in formats:
+            if fmt.get("vcodec") != "none":  # Skip audio-only formats for main list
+                format_info = {
+                    "format_id": fmt.get("format_id", ""),
+                    "ext": fmt.get("ext", ""),
+                    "resolution": f"{fmt.get('width', 'N/A')}x{fmt.get('height', 'N/A')}",
+                    "filesize": fmt.get("filesize") or fmt.get("filesize_approx", "Unknown"),
+                    "vcodec": fmt.get("vcodec", ""),
+                    "acodec": fmt.get("acodec", ""),
+                    "fps": fmt.get("fps", ""),
+                    "quality": fmt.get("quality", ""),
+                }
+                available_formats.append(format_info)
+        
+        # Sort by quality/resolution (best first)
+        available_formats.sort(
+            key=lambda x: (x.get("quality", 0) or 0, 
+                          int(x["resolution"].split("x")[1]) if "x" in str(x["resolution"]) and x["resolution"].split("x")[1].isdigit() else 0), 
+            reverse=True
+        )
+        
+        # Find the best match for requested format (simplified)
+        selected_format = available_formats[0] if available_formats else {}
+        
+        return {
+            "available_formats": available_formats[:10],  # Limit to top 10 to avoid huge responses
+            "selected_format": selected_format,
+            "resolution": selected_format.get("resolution", "Unknown"),
+            "ext": selected_format.get("ext", "Unknown"),
+            "vcodec": selected_format.get("vcodec", "Unknown"),
+            "acodec": selected_format.get("acodec", "Unknown"),
+            "filesize": selected_format.get("filesize", "Unknown")
+        }
 
     # ---------------------------------------------------------------------
     # Public API
     # ---------------------------------------------------------------------
-    async def download_video(self, url: str, quality: str | None = None, platform_optimized: bool = True) -> Dict[str, Any]:
-        """Download media (video/audio) from any URL and return metadata.
-
+    async def download_video(
+        self, 
+        url: str, 
+        quality: str | None = None,
+        resolution: str | None = None,
+        max_filesize: str | None = None,
+        format_preference: str | None = None,
+        audio_quality: str | None = None,
+        prefer_free_formats: bool = False,
+        include_subtitles: bool = False
+    ) -> Dict[str, Any]:
+        """Download video from URL with advanced quality controls.
+        
         Args:
-            url:  The media URL from any supported site (800+ sites via yt-dlp).
-            quality: Optional yt-dlp format string.
-            platform_optimized: If True, use platform-optimized quality for social media uploads.
+            url: Video URL to download
+            quality: yt-dlp quality format (default: "best")
+            resolution: Preferred resolution height (e.g., "720", "1080")
+            max_filesize: Maximum file size (e.g., "100M", "1G")
+            format_preference: Preferred video format (e.g., "mp4", "webm")
+            audio_quality: Audio quality preference
+            prefer_free_formats: Whether to prefer open formats over proprietary
+            include_subtitles: Whether to download subtitles if available
+        
         Returns:
-            A dict ready to be fed into the FastAPI response.
+            Dict with success status and detailed file/format info
         """
         try:
-            # Let yt-dlp handle URL validation naturally - it supports many more sites
-            # than our hardcoded list
-
-            # Generate a unique job ID and matching storage directory
-            job_id = self.r2_storage.generate_job_id()
+            # Generate unique job ID and directory
+            job_id = self._generate_job_id()
             job_dir = Path(settings.TEMP_DIR) / f"dub_{job_id}"
             job_dir.mkdir(parents=True, exist_ok=True)
-
-            # Set initial status
-            set_upload_status(job_id, {
-                "status": "downloading",
-                "progress": 0,
-                "message": "Starting download...",
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "url": url
-            })
-
-            # Use platform-optimized quality by default for better social media compatibility
-            if quality:
-                quality_format = quality
-            elif platform_optimized:
-                quality_format = PLATFORM_VIDEO_QUALITY
-            else:
-                quality_format = DEFAULT_VIDEO_QUALITY
+            
+            # Build smart quality format based on parameters
+            quality_format = self._build_quality_format(
+                quality, resolution, max_filesize, format_preference, 
+                audio_quality, prefer_free_formats
+            )
+            
             output_template = str(job_dir / "%(title)s.%(ext)s")
-
-            # Update status while getting metadata
-            update_upload_status(job_id, {
-                "progress": 10,
-                "message": "Extracting video information..."
-            })
-
-            # Grab basic metadata first
-            with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+            
+            # Get video info and available formats first
+            with yt_dlp.YoutubeDL({"quiet": True, "listformats": False}) as ydl:
                 info = ydl.extract_info(url, download=False)
                 if not info:
-                    update_upload_status(job_id, {
-                        "status": "failed",
-                        "message": "Could not extract video information"
-                    })
                     return {"success": False, "error": "Could not extract video information"}
-
+                
                 video_title = info.get("title", "Unknown")
                 video_duration = info.get("duration", 0)
                 video_uploader = info.get("uploader", "Unknown")
-
-            # Update status before download
-            update_upload_status(job_id, {
-                "progress": 30,
-                "message": "Downloading video...",
-                "video_title": video_title,
-                "video_duration": video_duration
-            })
-
+                available_formats = info.get("formats", [])
+                
+                # Get format details for the selected quality
+                format_info = self._analyze_available_formats(available_formats, quality_format)
+            
+            # Download options
             ydl_opts = {
                 "outtmpl": output_template,
                 "format": quality_format,
                 "noplaylist": True,
-                "timeout": DOWNLOAD_TIMEOUT,
+                "timeout": 300,  # 5 minutes timeout
                 "ignoreerrors": False,
                 "no_warnings": True,
                 "quiet": True,
                 "no_color": True,
+                "extractaudio": False,
+                "embed_subs": include_subtitles,
+                "writesubtitles": include_subtitles,
+                "writeautomaticsub": include_subtitles,
             }
-
-            # Actual download
+            
+            # Download the file
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([url])
-
+            
+            # Find downloaded file
             downloaded_files = list(job_dir.glob("*"))
             if not downloaded_files:
-                update_upload_status(job_id, {
-                    "status": "failed",
-                    "message": "Download completed but file not found"
-                })
                 return {"success": False, "error": "Download completed but file not found"}
-
+            
             downloaded_file = downloaded_files[0]
             file_size = downloaded_file.stat().st_size
-
-            # Set final success status
-            update_upload_status(job_id, {
-                "status": "done",
-                "progress": 100,
-                "message": "Download completed successfully",
-                "file_url": str(downloaded_file),
-                "original_filename": downloaded_file.name,
-                "file_size": file_size,
-                "completed_at": datetime.now(timezone.utc).isoformat(),
-                "video_info": {
-                    "title": video_title,
-                    "duration": video_duration,
-                    "uploader": video_uploader,
-                    "filename": downloaded_file.name,
-                    "file_size": file_size,
-                    "local_path": str(downloaded_file)
-                }
-            })
-
+            
+            # Track file for auto cleanup
+            self._downloaded_files[job_id] = {
+                "path": str(downloaded_file),
+                "job_dir": str(job_dir),
+                "created_at": datetime.now(timezone.utc),
+                "filename": downloaded_file.name,
+                "file_size": file_size
+            }
+            
+            # Schedule auto cleanup after 30 minutes
+            self._schedule_auto_cleanup(job_id)
+            
+            logger.info(f"Successfully downloaded: {downloaded_file.name} ({file_size} bytes)")
+            
             return {
                 "success": True,
-                "message": "Media downloaded successfully",
+                "message": "Download successful",
                 "job_id": job_id,
                 "video_info": {
                     "title": video_title,
@@ -164,34 +248,152 @@ class VideoDownloadService:
                     "local_path": str(downloaded_file),
                     "downloaded_at": datetime.now(timezone.utc).isoformat(),
                 },
+                "download_info": {
+                    "requested_quality": quality_format,
+                    "actual_format": format_info.get("selected_format", {}),
+                    "resolution": format_info.get("resolution", "Unknown"),
+                    "format": format_info.get("ext", "Unknown"),
+                    "video_codec": format_info.get("vcodec", "Unknown"),
+                    "audio_codec": format_info.get("acodec", "Unknown"),
+                    "filesize_approx": format_info.get("filesize", "Unknown"),
+                },
+                "available_formats": format_info.get("available_formats", [])
+            }
+            
+        except Exception as e:
+            logger.error(f"Download error: {e}")
+            return {"success": False, "error": str(e)}
+
+    # ------------------------------------------------------------------
+    # File Management Methods
+    # ------------------------------------------------------------------
+    def get_file_path(self, job_id: str) -> Dict[str, Any]:
+        """Get file path for serving, with expiry check"""
+        try:
+            if job_id not in self._downloaded_files:
+                return {"success": False, "error": "File not found or expired"}
+            
+            file_info = self._downloaded_files[job_id]
+            file_path = Path(file_info["path"])
+            
+            # Check if file still exists
+            if not file_path.exists():
+                # Clean up tracking if file doesn't exist
+                del self._downloaded_files[job_id]
+                return {"success": False, "error": "File not found on disk"}
+            
+            # Check if file is expired (30+ minutes old)
+            created_at = file_info["created_at"]
+            if datetime.now(timezone.utc) - created_at > timedelta(minutes=30):
+                self._cleanup_file(job_id)
+                return {"success": False, "error": "File has expired"}
+            
+            return {
+                "success": True,
+                "file_path": str(file_path),
+                "filename": file_info["filename"]
             }
         except Exception as e:
-            logger.error(f"Video download error: {e}")
-            if 'job_id' in locals():
-                update_upload_status(job_id, {
-                    "status": "failed",
-                    "progress": 0,
-                    "message": f"Download failed: {str(e)}"
-                })
+            logger.error(f"Error getting file path for {job_id}: {e}")
             return {"success": False, "error": str(e)}
+    
+    def delete_file(self, job_id: str) -> Dict[str, Any]:
+        """Manually delete downloaded file by job_id"""
+        try:
+            if job_id not in self._downloaded_files:
+                return {"success": False, "error": "File not found"}
+            
+            file_info = self._downloaded_files[job_id]
+            deleted_files = self._cleanup_file(job_id)
+            
+            return {
+                "success": True,
+                "message": "File deleted successfully",
+                "deleted_files": deleted_files
+            }
+        except Exception as e:
+            logger.error(f"Error deleting file {job_id}: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _schedule_auto_cleanup(self, job_id: str) -> None:
+        """Schedule automatic file cleanup after 30 minutes"""
+        def delayed_cleanup():
+            time.sleep(30 * 60)  # Wait 30 minutes
+            self._cleanup_file(job_id)
+        
+        # Run cleanup in background thread
+        cleanup_thread = threading.Thread(target=delayed_cleanup, daemon=True)
+        cleanup_thread.start()
+        logger.info(f"Scheduled auto cleanup for {job_id} in 30 minutes")
+    
+    def _cleanup_file(self, job_id: str) -> list:
+        """Remove file and job directory for given job_id"""
+        deleted_files = []
+        try:
+            if job_id in self._downloaded_files:
+                file_info = self._downloaded_files[job_id]
+                job_dir = Path(file_info["job_dir"])
+                
+                # Remove entire job directory
+                if job_dir.exists() and job_dir.is_dir():
+                    # List files before deletion
+                    for file_path in job_dir.rglob("*"):
+                        if file_path.is_file():
+                            deleted_files.append(str(file_path))
+                    
+                    shutil.rmtree(job_dir, ignore_errors=True)
+                    logger.info(f"🧹 Cleaned up job directory: {job_dir}")
+                
+                # Remove from tracking
+                del self._downloaded_files[job_id]
+                
+        except Exception as e:
+            logger.error(f"Error cleaning up {job_id}: {e}")
+        
+        return deleted_files
 
     # ------------------------------------------------------------------
     # Cleanup helpers
     # ------------------------------------------------------------------
-    def cleanup_old_files(self, max_age_hours: int = settings.LOCAL_STORAGE_RETENTION_HOURS) -> None:
-        """Remove dub_* folders older than *max_age_hours* inside TEMP_DIR."""
+    def cleanup_old_files(self) -> None:
+        """Clean up any orphaned dub_* folders that might exist."""
         try:
-            cutoff_ts = time.time() - max_age_hours * 3600
             root_dir = Path(settings.TEMP_DIR)
             for path in root_dir.glob("dub_*"):
                 try:
-                    if path.is_dir() and path.stat().st_mtime < cutoff_ts:
+                    if path.is_dir():
                         shutil.rmtree(path, ignore_errors=True)
-                        logger.info(f"🧹 Removed old dub folder: {path}")
+                        logger.info(f"🧹 Removed orphaned folder: {path}")
                 except Exception:
                     continue
         except Exception:
             pass
+    
+    def cleanup_specific_job(self, job_id: str) -> None:
+        """Immediately clean up folders for specific completed/failed/cancelled job"""
+        try:
+            from app.services.dub.audio_utils import AudioUtils
+            import os
+            
+            # Clean up specific job directories
+            temp_patterns = [
+                f"dub_{job_id}",                    # Main job folder  
+                f"voice_cloning/dub_job_{job_id}"   # Voice cloning folder
+            ]
+            
+            for pattern in temp_patterns:
+                temp_dir = os.path.join(settings.TEMP_DIR, pattern)
+                if os.path.exists(temp_dir):
+                    AudioUtils.remove_temp_dir(folder_path=temp_dir)
+                    logger.info(f"🧹 Immediately removed {job_id} directory: {temp_dir}")
+            
+            # Remove from tracking if present
+            if job_id in self._downloaded_files:
+                del self._downloaded_files[job_id]
+                logger.info(f"🧹 Removed {job_id} from tracking")
+                
+        except Exception as e:
+            logger.warning(f"Failed to cleanup job {job_id}: {e}")
 
 
 # Shared singleton instance

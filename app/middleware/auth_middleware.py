@@ -64,6 +64,7 @@ class AuthMiddleware:
         skip_auth = [
             "/",
             "/api/download-video",  # Public download
+            "/api/process-video-complete",  # Public video processing
             "/docs",
             "/redoc",
             "/openapi.json",
@@ -97,7 +98,7 @@ class AuthMiddleware:
                 payload = jwt.decode(
                     token, 
                     settings.SECRET_KEY, 
-                    algorithms=["HS256"]
+                    algorithms=[settings.ALGORITHM]
                 )
                 user_id = payload.get("sub")
                 if not user_id:

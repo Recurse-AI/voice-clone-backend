@@ -14,13 +14,14 @@ class Settings(BaseSettings):
     API_DESCRIPTION: str = "Voice Cloning and Audio Processing API"
     
     # Server Configuration
-    HOST: str = "0.0.0.0"
-    PORT: int = 8000
-    WORKERS: int = 1
-    NODE_ENV: str = "production"
-    BACKEND_URL: str = "http://localhost:8000"
-    FRONTEND_URL: str = "https://clearvocals.io"
-    PUBLIC_HOST: str = "clearvocals.io"
+    HOST: str = os.getenv("HOST", "0.0.0.0")
+    PORT: int = int(os.getenv("PORT", "8000"))
+    WORKERS: int = int(os.getenv("WORKERS", "2"))  # Multiple workers with optimized R2 handling
+    DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
+    NODE_ENV: str = os.getenv("NODE_ENV", "development")
+    BACKEND_URL: str = os.getenv("BACKEND_URL", "http://localhost:8000")
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://clearvocals.io")
+    PUBLIC_HOST: str = os.getenv("PUBLIC_HOST", "clearvocals.io")
     
     # File Upload Configuration
     MAX_FILE_SIZE: int = 1024 * 1024 * 1024  # 1GB
@@ -34,15 +35,15 @@ class Settings(BaseSettings):
     # R2 Bucket Configuration
     R2_ACCESS_KEY_ID: str = os.getenv("R2_ACCESS_KEY_ID", "")
     R2_SECRET_ACCESS_KEY: str = os.getenv("R2_SECRET_ACCESS_KEY", "")
-    R2_BUCKET_NAME: str = os.getenv("R2_BUCKET_NAME", "")
-    R2_ENDPOINT_URL: str = os.getenv("R2_ENDPOINT_URL", "")
+    R2_BUCKET_NAME: str = os.getenv("R2_BUCKET_NAME", "music-separator")
+    R2_ENDPOINT_URL: str = os.getenv("R2_ENDPOINT_URL", "https://8e8c5686fdafcf9560f1babda0e7e460.r2.cloudflarestorage.com")
     R2_REGION: str = os.getenv("R2_REGION", "auto")
-    R2_BASE_PATH: str = "voice-cloning"
+    R2_BASE_PATH: str = os.getenv("R2_BASE_PATH", os.getenv("R2_BUCKET_NAME", "music-separator"))
     R2_PUBLIC_URL: str = os.getenv("R2_PUBLIC_URL", "")
     
     # MongoDB Configuration
     MONGODB_URI: str = os.getenv("MONGODB_URI", "")
-    DB_NAME: str = "clearvocals"
+    DB_NAME: str = os.getenv("DB_NAME", "music-separator")
     
     # Security & Authentication
     JWT_SECRET: str = os.getenv("JWT_SECRET", "")

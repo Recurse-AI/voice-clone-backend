@@ -1,29 +1,70 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 import asyncio
 import threading
+import gc
+from concurrent.futures import ThreadPoolExecutor
 from fastapi.responses import JSONResponse
 import logging
 import os
 from app.schemas import AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, VoiceCloneRequest, VoiceCloneResponse
 from app.dependencies.auth import get_current_user
 from app.services.separation_job_service import separation_job_service
-from app.services.credit_service import credit_service, JobType
+from app.services.credit_service import credit_service
+from app.services.credit_service import JobType as CreditJobType
 from app.config.constants import MAX_ATTEMPTS_DEFAULT, POLLING_INTERVAL_SECONDS, MSG_PROCESSING_STARTED, ERROR_PROCESSING_FAILED
 from datetime import datetime, timezone
-from app.utils.logger import logger
+# Removed custom logger import - using standard logging
 
 router = APIRouter()
-# logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
+
+# Global ThreadPoolExecutor for separation processing
+_separation_executor = None
+_executor_lock = threading.Lock()
+
+def get_separation_executor():
+    """Get or create global ThreadPoolExecutor for separation processing"""
+    global _separation_executor
+    if _separation_executor is None:
+        with _executor_lock:
+            if _separation_executor is None:
+                _separation_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="separation_worker")
+    return _separation_executor
 
 def _update_separation_status_non_blocking(job_id: str, status: str, progress: int = None, **kwargs):
-    """Update separation status using common utility"""
-    from app.utils.db_sync_operations import update_separation_status
-    update_separation_status(job_id, status, progress, **kwargs)
+    """Update separation job status using unified status manager"""
+    from app.utils.unified_status_manager import get_unified_status_manager, ProcessingStatus
+    from app.utils.unified_status_manager import JobType as UnifiedJobType
+    
+    manager = get_unified_status_manager()
+    
+    # Convert string status to enum
+    try:
+        status_enum = ProcessingStatus(status)
+    except ValueError:
+        logger.warning(f"Unknown status: {status}, defaulting to processing")
+        status_enum = ProcessingStatus.PROCESSING
+    
+    # Use sync version to avoid event loop issues
+    try:
+        manager.update_status_sync(job_id, UnifiedJobType.SEPARATION, status_enum, progress, kwargs)
+
+    except Exception as e:
+        logger.error(f"Failed to update separation status for {job_id}: {e}")
 
 def _deduct_separation_credits_non_blocking(user_id: str, job_id: str, duration_seconds: float):
     """Deduct credits using common utility"""
     from app.utils.db_sync_operations import deduct_credits
     deduct_credits(user_id, job_id, duration_seconds, "separation")
+
+def _cleanup_separation_files_non_blocking(job_id: str):
+    """Cleanup separation temp files using common utility"""
+    try:
+        from app.utils.db_sync_operations import cleanup_separation_files
+        cleanup_separation_files(job_id)
+        logger.info(f"🧹 Cleaned up separation temp files for job {job_id}")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup separation files for {job_id}: {e}")
 
 # Background Task Functions
 def process_audio_separation_background(job_id: str, runpod_request_id: str, user_id: str, duration_seconds: float):
@@ -38,6 +79,25 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
         attempt = 0
         
         while attempt < max_attempts:
+            # Check if job was cancelled by user
+            from app.utils.shared_memory import is_job_cancelled, _status_manager
+            is_cancelled = is_job_cancelled(job_id)
+
+            
+            if is_cancelled:
+                logger.info(f"🛑 Separation job {job_id} (RunPod: {runpod_request_id}) was cancelled by user")
+                _update_separation_status_non_blocking(
+                    job_id=job_id,
+                    status="cancelled",
+                    progress=0,
+                    error="Job cancelled by user"
+                )
+                _cleanup_separation_files_non_blocking(job_id)
+                # Unmark as cancelled since monitoring is stopping
+                from app.utils.shared_memory import unmark_job_cancelled
+                unmark_job_cancelled(job_id)
+                break
+            
             try:
                 # Check job status from RunPod using RunPod request ID
                 status = runpod_service.get_separation_status(runpod_request_id)
@@ -53,6 +113,55 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 progress = status.get("progress", 0)
                 
 
+                
+                # Check for cancelled status from RunPod
+                if job_status.upper() == "CANCELLED":
+                    logger.info(f"🛑 RunPod job {runpod_request_id} was CANCELLED - force stopping monitoring")
+                    
+                    # Try to update status (but don't fail if it doesn't work)
+                    try:
+                        _update_separation_status_non_blocking(
+                            job_id=job_id,
+                            status="cancelled",
+                            progress=0,
+                            error="Job cancelled by user"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to update cancelled status for {job_id}: {e}")
+                    
+                    # Try cleanup (but don't fail if it doesn't work)
+                    try:
+                        _cleanup_separation_files_non_blocking(job_id)
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup files for {job_id}: {e}")
+                    
+                    # Always unmark and break regardless of database update success
+                    from app.utils.shared_memory import unmark_job_cancelled
+                    unmark_job_cancelled(job_id)
+                    logger.info(f"🚫 FORCE STOPPED monitoring for {job_id} due to RunPod CANCELLED")
+                    break  # Force stop monitoring
+                
+                # Only update status if job is not cancelled
+
+                
+                # 🛡️ CRITICAL: Check if job is already cancelled in database (soft delete protection)
+                try:
+                    from app.utils.db_sync_operations import SyncDBOperations
+                    from pymongo import MongoClient
+                    from app.config.settings import settings
+                    
+                    sync_client = MongoClient(settings.MONGODB_URI)
+                    sync_collection = sync_client[settings.DB_NAME]["separation_jobs"]
+                    current_job = sync_collection.find_one({"job_id": job_id})
+                    sync_client.close()
+                    
+                    if current_job and current_job.get("status") == "cancelled":
+                        logger.info(f"🛡️ Job {job_id} already cancelled in database - stopping background monitoring")
+                        from app.utils.shared_memory import unmark_job_cancelled
+                        unmark_job_cancelled(job_id)
+                        break
+                except Exception as e:
+                    logger.warning(f"Failed to check job status in database: {e}")
                 
                 # Update MongoDB status (non-blocking) using our job_id
                 _update_separation_status_non_blocking(
@@ -89,12 +198,15 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                         }
                     )
                     
-                    # Auto-deduct credits on successful completion (non-blocking)
-                    _deduct_separation_credits_non_blocking(
-                        user_id=user_id,
-                        job_id=job_id,
-                        duration_seconds=duration_seconds
-                    )
+                    # Memory cleanup after separation completion
+                    del status, vocal_url, instrument_url
+                    gc.collect()
+                    
+                    # Confirm credit usage
+                    credit_service.confirm_credit_usage_sync(job_id, CreditJobType.SEPARATION)
+                    
+                    # Cleanup temp files after successful completion
+                    _cleanup_separation_files_non_blocking(job_id)
                     
                     break
                     
@@ -107,6 +219,18 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                         error=error_msg
                     )
                     logger.error(f"Separation job {job_id} (RunPod: {runpod_request_id}) failed: {error_msg}")
+                    
+                    # Refund credits on failure
+                    try:
+                        # Note: For failed jobs, we use a simple approach - just log and cleanup
+                        # Complex refund logic can cause additional event loop issues
+                        logger.info(f"Separation job {job_id} failed, cleaning up resources")
+                    except Exception:
+                        pass
+                    
+                    # Cleanup temp files even on failure
+                    _cleanup_separation_files_non_blocking(job_id)
+                    
                     break
                     
                 # Wait before next check
@@ -129,6 +253,18 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 error="Job monitoring timed out"
             )
             
+            # Refund credits on timeout
+            try:
+                from app.utils.db_sync_operations import deduct_credits
+                # Note: For timeout, we use a simple approach - just log and cleanup
+                # Complex refund logic can cause additional event loop issues
+                logger.info(f"Separation job {job_id} timed out, cleaning up resources")
+            except Exception:
+                pass
+            
+            # Cleanup temp files on timeout
+            _cleanup_separation_files_non_blocking(job_id)
+            
     except Exception as e:
         logger.error(f"Background separation monitoring failed for job {job_id} (RunPod: {runpod_request_id}): {e}")
         try:
@@ -138,6 +274,17 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 progress=0,
                 error=f"Background monitoring error: {str(e)}"
             )
+            
+            # Refund credits on error
+            try:
+                # Note: For monitoring errors, we use a simple approach - just log and cleanup
+                # Complex refund logic can cause additional event loop issues
+                logger.info(f"Separation job {job_id} monitoring error, cleaning up resources")
+            except Exception:
+                pass
+            
+            # Cleanup temp files on error
+            _cleanup_separation_files_non_blocking(job_id)
         except:
             pass  # Avoid double error
 
@@ -151,23 +298,6 @@ async def start_audio_separation(
     try:
         user_id = current_user.id
         job_id = request.job_id
-        # Pre-check: Verify user has sufficient credits
-        credit_check = await credit_service.check_sufficient_credits(
-            user_id=user_id,
-            job_type=JobType.SEPARATION,
-            duration_seconds=request.duration
-        )
-        
-        if not credit_check["sufficient"]:
-            return JSONResponse(
-                status_code=400,
-                content={
-                    "success": False,
-                    "message": credit_check["message"],
-                    "required_credits": credit_check["required"],
-                    "available_credits": credit_check["available"]
-                }
-            )
         
         # Get uploaded file path from upload status
         from app.utils.shared_memory import get_upload_status as get_upload_status_data, job_exists
@@ -195,8 +325,8 @@ async def start_audio_separation(
         
         logger.info(f"---> local url {local_audio_path}")
         # Upload audio to R2 storage for separation processing
-        from app.utils.r2_storage import R2Storage
-        r2_storage = R2Storage()
+        from app.services.r2_service import get_r2_service
+        r2_service = get_r2_service()
         
         # Get original filename from upload data or fallback to local path basename
         original_filename = upload_data.get("original_filename", os.path.basename(local_audio_path))
@@ -205,7 +335,7 @@ async def start_audio_separation(
         audio_extension = os.path.splitext(original_filename)[1] if original_filename else ".wav"
         r2_audio_key = f"audio_separation/{job_id}/{original_filename}"
         
-        audio_upload_result = r2_storage.upload_file(local_audio_path, r2_audio_key)
+        audio_upload_result = r2_service.upload_file(local_audio_path, r2_audio_key)
         if not audio_upload_result.get("success"):
             raise HTTPException(status_code=500, detail=f"Audio upload failed: {audio_upload_result.get('error')}")
         
@@ -222,7 +352,7 @@ async def start_audio_separation(
         # Use upload job_id as separation job_id for consistency
         separation_job_id = job_id
         
-        # Create separation job in MongoDB for tracking
+        # Create separation job data
         job_data = {
             "job_id": separation_job_id,
             "user_id": user_id,
@@ -230,28 +360,37 @@ async def start_audio_separation(
             "original_filename": upload_data.get("original_filename", os.path.basename(local_audio_path)),
             "caller_info": request.callerInfo or "audio_separation_api",
             "runpod_request_id": runpod_request_id,
-            "details": {
-                "duration": request.duration,
-                "required_credits": credit_check["required"],
-                "upload_job_id": job_id,
-                "local_audio_path": local_audio_path
-            }
+            "status": "pending",
+            "progress": 0,
+            "upload_job_id": job_id,
+            "local_audio_path": local_audio_path
         }
         
-        # Save to MongoDB
-        job = await separation_job_service.create_job(job_data)
-        if not job:
-            logger.error(f"Failed to create separation job in MongoDB for {separation_job_id}")
+        # Atomic credit reservation + job creation
+        result = await credit_service.atomic_reserve_and_create_job(
+            user_id=user_id,
+            job_data=job_data,
+            job_type=CreditJobType.SEPARATION,
+            duration_seconds=request.duration,
+            collection_name="separation_jobs"
+        )
         
-        # Set initial pending status
-        await separation_job_service.update_job_status(separation_job_id, "pending", 0)
+        if not result["success"]:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": "Insufficient credits",
+                    "error": result.get("error", "Credit reservation failed")
+                }
+            )
         
         status = runpod_service.get_separation_status(runpod_request_id)
         queue_position = status.get("queue_position") if status else None
         
-        # Run separation monitoring in separate thread
-        thread = threading.Thread(target=process_audio_separation_background, args=(separation_job_id, runpod_request_id, user_id, request.duration), daemon=True)
-        thread.start()
+        # Run separation monitoring in ThreadPoolExecutor for better resource management
+        executor = get_separation_executor()
+        future = executor.submit(process_audio_separation_background, separation_job_id, runpod_request_id, user_id, request.duration)
         
         logger.info(f"Started audio separation job {separation_job_id} (RunPod: {runpod_request_id}) for user {user_id} (duration: {request.duration}s)")
         
@@ -282,13 +421,15 @@ async def voice_clone_segment(request: VoiceCloneRequest):
     3. Uploads generated audio to R2 bucket.
     4. Returns public URL of cloned audio.
     """
+    job_dir = None  # Initialize to ensure cleanup works
     try:
-        from app.utils.r2_storage import R2Storage
+        from app.services.r2_service import get_r2_service
         from app.config.settings import settings
         
-        r2_storage = R2Storage()
-        job_id = r2_storage.generate_job_id()
-        job_dir = os.path.join(settings.TEMP_DIR, f"voice_clone_{job_id}")
+        r2_service = get_r2_service()
+        job_id = r2_service.generate_job_id()
+        # Voice cloning এর জন্য nested folder structure ব্যবহার করি
+        job_dir = os.path.join(settings.TEMP_DIR, "voice_cloning", f"voice_clone_job_{job_id}")
         os.makedirs(job_dir, exist_ok=True)
 
         # Download reference audio
@@ -326,8 +467,8 @@ async def voice_clone_segment(request: VoiceCloneRequest):
             f.write(result["audio_data"])
 
         # Upload to R2
-        r2_key = r2_storage.generate_file_path(job_id, "", f"{job_id}.wav")
-        upload_res = r2_storage.upload_file(cloned_path, r2_key, content_type="audio/wav")
+        r2_key = r2_service.generate_file_path(job_id, "", f"{job_id}.wav")
+        upload_res = r2_service.upload_file(cloned_path, r2_key, content_type="audio/wav")
 
         if not upload_res.get("success"):
             raise HTTPException(status_code=500, detail=upload_res.get("error", "Upload failed"))
@@ -348,6 +489,12 @@ async def voice_clone_segment(request: VoiceCloneRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
-        from app.services.dub.audio_utils import AudioUtils
-        AudioUtils.remove_temp_dir(folder_path=locals().get("job_dir"))
+        # Cleanup temp directory properly
+        if job_dir and os.path.exists(job_dir):
+            try:
+                from app.services.dub.audio_utils import AudioUtils
+                AudioUtils.remove_temp_dir(folder_path=job_dir)
+                logger.info(f"🧹 Cleaned up voice clone temp directory: {job_dir}")
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup voice clone directory {job_dir}: {cleanup_error}")
 

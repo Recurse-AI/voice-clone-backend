@@ -76,10 +76,7 @@ class RunPodService:
             if response.status_code == 200:
                 data = response.json()
                 
-                # Log RunPod response structure for debugging queue position
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(f"RunPod status response for {request_id}: {data}")
-                
+
                 # Map RunPod status to our simplified status
                 runpod_status = data.get('status')
                 progress = 0
@@ -96,6 +93,9 @@ class RunPodService:
                     progress = 100
                 elif runpod_status == 'FAILED':
                     status = "failed"
+                    progress = 0
+                elif runpod_status == 'CANCELLED':
+                    status = "cancelled"
                     progress = 0
                 
                 # Calculate queue position from delayTime (if available)
@@ -134,9 +134,9 @@ class RunPodService:
             return None
     
     def wait_for_completion(self, request_id: str, timeout: int = 900) -> Dict[str, Any]:
-        """Wait for separation to complete (blocking)"""
+        """Wait for separation to complete with non-blocking polling"""
         start_time = time.time()
-        check_interval = 10  # Check every 10 seconds
+        check_interval = 20  # Check every 20 seconds
         
         while time.time() - start_time < timeout:
             status = self.get_separation_status(request_id)
@@ -163,7 +163,7 @@ class RunPodService:
                     "request_id": request_id
                 }
             
-            # Still processing, wait and check again
+            # Use smaller sleep interval for better responsiveness 
             time.sleep(check_interval)
         
         # Timeout reached
@@ -172,6 +172,26 @@ class RunPodService:
             "error": f"Request timed out after {timeout} seconds",
             "request_id": request_id
         }
+    
+    def cancel_job(self, request_id: str) -> bool:
+        """Cancel a running RunPod job"""
+        try:
+            response = requests.post(
+                f"{self.base_url}/cancel/{request_id}",
+                headers=self.headers,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"Successfully cancelled RunPod job {request_id}")
+                return True
+            else:
+                logger.warning(f"Failed to cancel RunPod job {request_id}: {response.status_code} - {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Failed to cancel RunPod job {request_id}: {e}")
+            return False
 
 
 # Global service instance

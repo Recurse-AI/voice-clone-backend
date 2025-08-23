@@ -60,6 +60,11 @@ class AudioUtils:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
+            # Memory cleanup after download
+            del response
+            import gc
+            gc.collect()
+            
             return {"success": True, "audio_path": output_path}
          
         except requests.exceptions.RequestException as e:
@@ -69,35 +74,8 @@ class AudioUtils:
     
     def _get_ffmpeg_path(self):
         """Get FFmpeg executable path based on platform"""
-        # Check if ffmpeg is in PATH
-        try:
-            result = subprocess.run(['ffmpeg', '-version'], 
-                                  capture_output=True, text=True)
-            if result.returncode == 0:
-                return 'ffmpeg'
-        except FileNotFoundError:
-            pass
-
-        # Check local FFmpeg installation in project directory
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        local_ffmpeg_paths = [
-            os.path.join(project_root, 'ffmpeg-master-latest-win64-gpl', 'ffmpeg-master-latest-win64-gpl', 'bin', 'ffmpeg.exe'),
-            os.path.join(project_root, 'ffmpeg-master-latest-win64-gpl', 'bin', 'ffmpeg.exe'),
-            os.path.join(project_root, 'ffmpeg', 'bin', 'ffmpeg.exe'),
-            os.path.join(project_root, 'ffmpeg.exe')
-        ]
-        
-        for ffmpeg_path in local_ffmpeg_paths:
-            if os.path.exists(ffmpeg_path):
-                return ffmpeg_path
-
-        # Check if ffmpeg is in the same directory as the script
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        ffmpeg_path = os.path.join(script_dir, 'ffmpeg.exe')
-        if os.path.exists(ffmpeg_path):
-            return ffmpeg_path
-        
-        return None
+        from app.utils.ffmpeg_helper import get_ffmpeg_path
+        return get_ffmpeg_path()
     
     
     @staticmethod
@@ -287,15 +265,32 @@ class AudioUtils:
         Returns True if deletion attempted (regardless of existing), False if
         parameters were invalid.
         """
-
+        import logging
+        logger = logging.getLogger(__name__)
+        
         if not job_id and not folder_path:
+            logger.warning("AudioUtils.remove_temp_dir: No job_id or folder_path provided")
             return False
         if folder_path is None:
             folder_path = os.path.join(settings.TEMP_DIR, job_id)
+        
         try:
             import shutil
-            shutil.rmtree(folder_path, ignore_errors=True)
-            return True
-        except Exception:
+            import os
+            
+            if os.path.exists(folder_path):
+                # Count files before deletion for logging
+                file_count = 0
+                for root, dirs, files in os.walk(folder_path):
+                    file_count += len(files)
+                
+                shutil.rmtree(folder_path, ignore_errors=True)
+                logger.info(f"🧹 Successfully removed temp directory: {folder_path} ({file_count} files)")
+                return True
+            else:
+
+                return True
+        except Exception as e:
+            logger.error(f"🧹 Failed to remove temp directory {folder_path}: {e}")
             return False
     

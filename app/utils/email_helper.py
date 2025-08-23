@@ -2,19 +2,36 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from fastapi import HTTPException, BackgroundTasks
-from app.utils.logger import logger
+import logging
 from app.config.settings import settings
-import time 
+import time
 
-# Function to send email using smtplib
-def send_email(sender_email: str, receiver_email: str, subject: str, body: str, password: str):
+logger = logging.getLogger(__name__) 
+
+# Function to send HTML email using smtplib
+def send_email(sender_email: str, receiver_email: str, subject: str, body: str, password: str, is_html: bool = False):
     try:
         # Create the email content
-        msg = MIMEMultipart()
+        msg = MIMEMultipart('alternative')
         msg['From'] = sender_email
         msg['To'] = receiver_email
         msg['Subject'] = subject
-        msg.attach(MIMEText(body, 'plain'))
+        
+        # Attach both plain text and HTML versions
+        if is_html:
+            # Create plain text version as fallback
+            plain_text = body.replace('<br>', '\n').replace('<p>', '').replace('</p>', '\n')
+            # Remove HTML tags for plain text version
+            import re
+            plain_text = re.sub('<[^<]+?>', '', plain_text)
+            
+            text_part = MIMEText(plain_text, 'plain', 'utf-8')
+            html_part = MIMEText(body, 'html', 'utf-8')
+            
+            msg.attach(text_part)
+            msg.attach(html_part)
+        else:
+            msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
         # Set up the SMTP server and send the email
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
@@ -27,26 +44,263 @@ def send_email(sender_email: str, receiver_email: str, subject: str, body: str, 
         raise HTTPException(status_code=500, detail="Error sending verification email")
 
 
+def create_email_verification_template(name: str, verification_link: str) -> str:
+    """Create beautiful HTML email template for email verification"""
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Verify Your Email - ClearVocals</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }}
+            .email-container {{ max-width: 600px; margin: 0 auto; background-color: #ffffff; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; text-align: center; }}
+            .logo {{ color: #ffffff; font-size: 28px; font-weight: bold; margin-bottom: 10px; }}
+            .header-subtitle {{ color: #e8eaff; font-size: 16px; }}
+            .content {{ padding: 40px 30px; }}
+            .greeting {{ font-size: 24px; color: #333333; margin-bottom: 20px; }}
+            .message {{ font-size: 16px; color: #666666; line-height: 1.6; margin-bottom: 30px; }}
+            .verify-button {{ display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                             color: #ffffff; text-decoration: none; padding: 15px 30px; border-radius: 8px; 
+                             font-size: 16px; font-weight: bold; text-align: center; margin: 20px 0; 
+                             box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4); transition: all 0.3s ease; }}
+            .verify-button:hover {{ transform: translateY(-2px); box-shadow: 0 6px 16px rgba(102, 126, 234, 0.5); }}
+            .alternative-link {{ margin-top: 20px; padding: 20px; background-color: #f8f9fa; border-radius: 8px; }}
+            .alternative-text {{ font-size: 14px; color: #666666; margin-bottom: 10px; }}
+            .copy-link {{ word-break: break-all; color: #667eea; font-size: 12px; }}
+            .security-note {{ background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; 
+                             border-radius: 8px; margin: 25px 0; }}
+            .security-text {{ font-size: 14px; color: #856404; }}
+            .footer {{ background-color: #f8f9fa; padding: 30px; text-align: center; border-top: 1px solid #e9ecef; }}
+            .footer-text {{ font-size: 14px; color: #666666; margin-bottom: 10px; }}
+            .social-links {{ margin-top: 15px; }}
+            .social-link {{ display: inline-block; margin: 0 10px; color: #667eea; text-decoration: none; }}
+            @media only screen and (max-width: 600px) {{
+                .content {{ padding: 20px 15px; }}
+                .header {{ padding: 30px 15px; }}
+                .greeting {{ font-size: 20px; }}
+                .verify-button {{ padding: 12px 24px; font-size: 14px; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <!-- Header -->
+            <div class="header">
+                <div class="logo">🎤 ClearVocals</div>
+                <div class="header-subtitle">AI-Powered Voice & Audio Platform</div>
+            </div>
+            
+            <!-- Main Content -->
+            <div class="content">
+                <h1 class="greeting">Welcome, {name}! 👋</h1>
+                
+                <p class="message">
+                    Thank you for registering with ClearVocals! Your account has been successfully created. 
+                    To access all features and use our amazing AI voice tools, 
+                    please verify your email address.
+                </p>
+                
+                <!-- Call to Action Button -->
+                <div style="text-align: center;">
+                    <a href="{verification_link}" class="verify-button">
+                        ✨ Verify Your Email
+                    </a>
+                </div>
+                
+                <!-- Alternative Link Section -->
+                <div class="alternative-link">
+                    <p class="alternative-text">
+                        <strong>If the button doesn't work:</strong> Copy and paste the link below into your browser:
+                    </p>
+                    <p class="copy-link">{verification_link}</p>
+                </div>
+                
+                <!-- Security Note -->
+                <div class="security-note">
+                    <p class="security-text">
+                        🔒 <strong>Security Notice:</strong> This verification link is valid for 24 hours only. 
+                        If you didn't expect this email, please ignore it.
+                    </p>
+                </div>
+                
+                <p class="message">
+                    After email verification, you'll get access to:
+                    <br>• 🎯 25 free credits
+                    <br>• 🎵 Audio separation & dubbing 
+                    <br>• 🗣️ AI voice cloning
+                    <br>• 📹 Video processing tools
+                </p>
+            </div>
+            
+            <!-- Footer -->
+            <div class="footer">
+                <p class="footer-text">
+                    <strong>ClearVocals Team</strong><br>
+                    Your AI-powered voice companion
+                </p>
+                
+                <p class="footer-text">
+                    Need help? <a href="mailto:support@clearvocals.io" style="color: #667eea;">support@clearvocals.io</a>
+                </p>
+                
+                <div class="social-links">
+                    <a href="#" class="social-link">Website</a> |
+                    <a href="#" class="social-link">Support</a> |
+                    <a href="#" class="social-link">Privacy Policy</a>
+                </div>
+                
+                <p style="font-size: 12px; color: #999999; margin-top: 15px;">
+                    © 2024 ClearVocals. All rights reserved.
+                </p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+
 # Background task function to send verification email
 def send_verification_email_background_task(background_tasks: BackgroundTasks, email: str, name: str, token: str):
     verification_link = f"{settings.FRONTEND_URL}/auth/verify-email?token={token}"
 
-    subject = "Please Verify Your Email"
-    body = f"Hello {name},\n\nPlease click on the link below to verify your email address:\n{verification_link}"
+    # Enhanced subject line
+    subject = "🎤 Welcome to ClearVocals! Please Verify Your Email"
+    
+    # Create beautiful HTML email body
+    html_body = create_email_verification_template(name, verification_link)
 
     sender_email = settings.EMAIL_HOST_USER
     password = settings.EMAIL_HOST_PASSWORD  
 
-    background_tasks.add_task(send_email, sender_email, email, subject, body, password)
+    # Send HTML email
+    background_tasks.add_task(send_email, sender_email, email, subject, html_body, password, True)
+
+
+def create_password_reset_template(name: str, reset_link: str) -> str:
+    """Create beautiful HTML email template for password reset"""
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Reset Your Password - ClearVocals</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }}
+            .email-container {{ max-width: 600px; margin: 0 auto; background-color: #ffffff; }}
+            .header {{ background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); padding: 40px 20px; text-align: center; }}
+            .logo {{ color: #ffffff; font-size: 28px; font-weight: bold; margin-bottom: 10px; }}
+            .header-subtitle {{ color: #ffe8e8; font-size: 16px; }}
+            .content {{ padding: 40px 30px; }}
+            .greeting {{ font-size: 24px; color: #333333; margin-bottom: 20px; }}
+            .message {{ font-size: 16px; color: #666666; line-height: 1.6; margin-bottom: 30px; }}
+            .reset-button {{ display: inline-block; background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%); 
+                           color: #ffffff; text-decoration: none; padding: 15px 30px; border-radius: 8px; 
+                           font-size: 16px; font-weight: bold; text-align: center; margin: 20px 0; 
+                           box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4); transition: all 0.3s ease; }}
+            .reset-button:hover {{ transform: translateY(-2px); box-shadow: 0 6px 16px rgba(255, 107, 107, 0.5); }}
+            .alternative-link {{ margin-top: 20px; padding: 20px; background-color: #f8f9fa; border-radius: 8px; }}
+            .alternative-text {{ font-size: 14px; color: #666666; margin-bottom: 10px; }}
+            .copy-link {{ word-break: break-all; color: #ff6b6b; font-size: 12px; }}
+            .security-note {{ background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; 
+                             border-radius: 8px; margin: 25px 0; }}
+            .security-text {{ font-size: 14px; color: #856404; }}
+            .footer {{ background-color: #f8f9fa; padding: 30px; text-align: center; border-top: 1px solid #e9ecef; }}
+            .footer-text {{ font-size: 14px; color: #666666; margin-bottom: 10px; }}
+            @media only screen and (max-width: 600px) {{
+                .content {{ padding: 20px 15px; }}
+                .header {{ padding: 30px 15px; }}
+                .greeting {{ font-size: 20px; }}
+                .reset-button {{ padding: 12px 24px; font-size: 14px; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <!-- Header -->
+            <div class="header">
+                <div class="logo">🔒 ClearVocals</div>
+                <div class="header-subtitle">Password Reset Request</div>
+            </div>
+            
+            <!-- Main Content -->
+            <div class="content">
+                <h1 class="greeting">Hello, {name}! 🔐</h1>
+                
+                <p class="message">
+                    We received a password reset request for your ClearVocals account. 
+                    Click the button below to reset your password.
+                </p>
+                
+                <!-- Call to Action Button -->
+                <div style="text-align: center;">
+                    <a href="{reset_link}" class="reset-button">
+                        🔐 Reset Password
+                    </a>
+                </div>
+                
+                <!-- Alternative Link Section -->
+                <div class="alternative-link">
+                    <p class="alternative-text">
+                        <strong>If the button doesn't work:</strong> Copy and paste the link below into your browser:
+                    </p>
+                    <p class="copy-link">{reset_link}</p>
+                </div>
+                
+                <!-- Security Note -->
+                <div class="security-note">
+                    <p class="security-text">
+                        ⚠️ <strong>Security Notice:</strong> This reset link is valid for 1 hour only. 
+                        If you didn't request a password reset, please ignore this email and contact us.
+                    </p>
+                </div>
+                
+                <p class="message">
+                    After resetting your password:
+                    <br>• Choose a strong password
+                    <br>• Avoid using passwords from other accounts  
+                    <br>• Keep your account secure
+                </p>
+            </div>
+            
+            <!-- Footer -->
+            <div class="footer">
+                <p class="footer-text">
+                    <strong>ClearVocals Security Team</strong><br>
+                    Your account security is our priority
+                </p>
+                
+                <p class="footer-text">
+                    Need help? <a href="mailto:support@clearvocals.io" style="color: #ff6b6b;">support@clearvocals.io</a>
+                </p>
+                
+                <p style="font-size: 12px; color: #999999; margin-top: 15px;">
+                    © 2024 ClearVocals. All rights reserved.
+                </p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
 
 # Background task function to send password reset email
 def send_reset_email_background_task(background_tasks: BackgroundTasks, email: str, name: str, token: str):
     reset_link = f"{settings.FRONTEND_URL}/auth/reset-password?token={token}"
 
-    subject = "Reset Your Password"
-    body = f"Hello {name},\n\nWe received a request to reset your password.\nPlease click the link below to proceed:\n{reset_link}\n\nIf you did not request this, you can ignore this email."
+    # Enhanced subject line
+    subject = "🔐 ClearVocals Password Reset Request"
+    
+    # Create beautiful HTML email body
+    html_body = create_password_reset_template(name, reset_link)
 
     sender_email = settings.EMAIL_HOST_USER
     password = settings.EMAIL_HOST_PASSWORD
 
-    background_tasks.add_task(send_email, sender_email, email, subject, body, password)
+    # Send HTML email
+    background_tasks.add_task(send_email, sender_email, email, subject, html_body, password, True)

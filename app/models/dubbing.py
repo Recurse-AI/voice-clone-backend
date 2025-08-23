@@ -3,7 +3,7 @@ from typing import Optional, Literal
 from datetime import datetime
 
 class Dubbing(BaseModel):
-    id: Optional[str] = None  # MongoDB ObjectId হলে str রাখাই ভালো
+    id: Optional[str] = None  # Better to keep as str if MongoDB ObjectId
     user: str  # User id (ObjectId)
     job_id: str
     project_title: str = "Untitled project"

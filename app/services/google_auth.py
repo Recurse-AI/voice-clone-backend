@@ -2,8 +2,10 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 from fastapi import HTTPException
 from app.config.settings import settings
-from app.utils.logger import logger
+import logging
 from app.services.user_service import get_user_email, create_user
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
 
 async def verify_google_token(token: str, client_id: str):

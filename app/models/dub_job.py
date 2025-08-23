@@ -8,7 +8,7 @@ class DubJob(BaseModel):
     user_id: str = Field(..., description="User who submitted the job")
     
     # Job Status
-    status: Literal['pending', 'downloading', 'separating', 'transcribing', 'processing', 'uploading', 'completed', 'failed'] = 'pending'
+    status: Literal['pending', 'downloading', 'separating', 'transcribing', 'processing', 'uploading', 'completed', 'failed', 'cancelled', 'awaiting_review', 'reviewing'] = 'pending'
     progress: int = Field(0, ge=0, le=100, description="Progress percentage")
     
     # Input Details
@@ -16,8 +16,6 @@ class DubJob(BaseModel):
     target_language: str = Field(..., description="Target language for dubbing")
     expected_speaker: Optional[str] = Field(None, description="Expected speaker name or ID")
     source_video_language: Optional[str] = Field(None, description="Source video language")
-    subtitle: bool = Field(False, description="Whether to add subtitles")
-    instrument: bool = Field(False, description="Whether to add instrument track")
     
     # File Processing
     local_video_path: Optional[str] = Field(None, description="Local path of uploaded video")
@@ -33,7 +31,15 @@ class DubJob(BaseModel):
     separation_request_id: Optional[str] = Field(None, description="Audio separation job ID")
     
     # Processing Details
+    duration: Optional[float] = Field(None, description="Video duration in seconds")
     details: Optional[Dict[str, Any]] = Field(None, description="Additional processing details")
+    review_required: bool = Field(False, description="Whether human review is required before final processing")
+    review_status: Optional[Literal['awaiting', 'in_progress', 'approved', 'rejected', 'completed', 'failed']] = None
+    segments_manifest_url: Optional[str] = Field(None, description="R2 URL to the segments manifest JSON for human review")
+    segments_manifest_key: Optional[str] = Field(None, description="R2 object key for the segments manifest JSON")
+    segments_count: Optional[int] = Field(None, description="Number of segments produced for review")
+    transcript_id: Optional[str] = Field(None, description="AssemblyAI transcript ID")
+    edited_segments_version: Optional[int] = Field(0, description="Version number for edited segments")
     
     # Error handling
     error: Optional[str] = Field(None, description="Error message if failed")
@@ -58,7 +64,7 @@ class DubJob(BaseModel):
         # Set timestamps based on status
         if status in ['downloading', 'processing'] and not self.started_at:
             self.started_at = datetime.now(timezone.utc)
-        elif status in ['completed', 'failed']:
+        elif status in ['completed', 'failed', 'cancelled']:
             self.completed_at = datetime.now(timezone.utc)
             
         # Update additional fields
@@ -76,6 +82,9 @@ class DubJob(BaseModel):
             'processing': "Processing audio and video...",
             'uploading': "Uploading results...",
             'completed': "Processing completed successfully",
-            'failed': "Processing failed"
+            'failed': "Processing failed",
+            'cancelled': "Job cancelled by user",
+            'awaiting_review': "Awaiting human review - segments ready for editing",
+            'reviewing': "Processing approved segments after human review"
         }
         return messages.get(self.status, "Unknown status")

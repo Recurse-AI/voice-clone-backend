@@ -3,8 +3,10 @@ from fastapi import HTTPException
 from datetime import datetime
 from app.config.database import db
 from app.models.pricing import Pricing, CreditPack
-from app.utils.logger import logger
+import logging
 from fastapi.encoders import jsonable_encoder
+
+logger = logging.getLogger(__name__)
 from bson import ObjectId
 
 class PricingService:

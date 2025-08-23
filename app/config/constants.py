@@ -4,8 +4,8 @@ All hardcoded values should be defined here for maintainability and configurabil
 """
 
 # Processing Constants
-MAX_ATTEMPTS_DEFAULT = 180  # Default max attempts for background jobs (30 minutes with 10s intervals)
-POLLING_INTERVAL_SECONDS = 10  # Default polling interval for background jobs
+MAX_ATTEMPTS_DEFAULT = 90  # Default max attempts for background jobs (30 minutes with 20s intervals)
+POLLING_INTERVAL_SECONDS = 20  # Default polling interval for background jobs
 TIMEOUT_MINUTES = 30  # Default timeout for long-running jobs
 
 # Credit Calculation Constants  
@@ -14,9 +14,11 @@ CREDITS_PER_MINUTE_DUB = 2  # 2 credits per minute for video dubbing
 MIN_CREDIT_CHECK_DURATION = 0.1  # Minimum duration to check credits for
 
 # File Upload Constants
-MAX_FILE_SIZE_MB = 500  # 500MB max file size
+MAX_FILE_SIZE_MB = 1024  # 1GB max file size (user requirement)
+MAX_SAFE_PROCESSING_SIZE_MB = 500  # 500MB safe processing limit (memory optimization)
 ALLOWED_VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv', '.webm', '.m4v'}
 CHUNK_SIZE_UPLOAD = 8192  # 8KB chunks for file uploads
+LARGE_FILE_THRESHOLD_MB = 100  # Files above this use optimized processing
 
 # HTTP Response Constants
 HTTP_STATUS_SUCCESS = 200
@@ -34,6 +36,7 @@ ERROR_INSUFFICIENT_CREDITS = "Insufficient credits"
 ERROR_FILE_NOT_FOUND = "File not found"
 ERROR_PROCESSING_FAILED = "Processing failed"
 ERROR_AUTHENTICATION_REQUIRED = "Authentication required"
+ERROR_FILE_TOO_LARGE = "File size exceeds safe processing limit (500MB). Please use a smaller file or contact support for assistance."
 
 # Success Messages
 MSG_PROCESSING_STARTED = "Processing started successfully"
@@ -58,7 +61,7 @@ MAX_THREAD_RETRY_ATTEMPTS = 3
 
 # Cache/Memory Constants
 SHARED_MEMORY_TTL_SECONDS = 3600  # 1 hour TTL for shared memory
-MAX_CONCURRENT_JOBS = 10  # Maximum concurrent processing jobs
+MAX_CONCURRENT_JOBS = 6  # Maximum concurrent processing jobs
 
 # Audio Processing Constants
 AUDIO_SAMPLE_RATE = 44100

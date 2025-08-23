@@ -1,9 +1,10 @@
 from fastapi import HTTPException, Depends, Security
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.utils.token_helper import decode_jwt_token
-from app.utils.logger import logger 
+import logging 
 from app.schemas.user import TokenUser
 
+logger = logging.getLogger(__name__)
 security = HTTPBearer()
 
 async def get_current_user(
@@ -11,7 +12,7 @@ async def get_current_user(
 ) -> TokenUser:
     try:
         token = credentials.credentials
-        logger.info(f"getting get user. {token}")
+        # Only log token validation errors, not every auth check
         if not token:
             raise HTTPException(
                 status_code=403,
