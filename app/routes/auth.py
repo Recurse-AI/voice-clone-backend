@@ -15,6 +15,7 @@ from datetime import datetime, timezone, timedelta
 from app.services.google_auth import verify_google_token, handle_google_user
 from app.config.settings import settings
 from authlib.integrations.starlette_client import OAuth
+from bson import ObjectId
 
 auth = APIRouter()
 
@@ -87,9 +88,12 @@ async def verify_email(token: str):
         if user_doc is None:
             raise HTTPException(status_code=404, detail="Invalid verification token")
         
-        # Check if token has expired
         if user_doc.get("emailVerificationExpiry"):
-            if datetime.now(timezone.utc) > user_doc["emailVerificationExpiry"]:
+            expiry_datetime = user_doc["emailVerificationExpiry"]
+            if expiry_datetime.tzinfo is None:
+                expiry_datetime = expiry_datetime.replace(tzinfo=timezone.utc)
+            
+            if datetime.now(timezone.utc) > expiry_datetime:
                 raise HTTPException(status_code=400, detail="Verification token has expired")
         
         if user_doc.get("isEmailVerified", False):
@@ -464,8 +468,24 @@ async def google_callback(request: Request):
         logger.info(f"userinfo: {user_info}")
         
         try:
-            # Try to find user by email
             user = await get_user_email(user_info['email'])
+            if not user.isEmailVerified:
+                result = await db["users"].update_one(
+                    {"_id": ObjectId(user.id)},
+                    {
+                        "$set": {
+                            "isEmailVerified": True,
+                            "updatedAt": datetime.now(timezone.utc)
+                        },
+                        "$unset": {
+                            "emailVerificationToken": "",
+                            "emailVerificationExpiry": ""
+                        }
+                    }
+                )
+                logger.info(f"Update result: {result.modified_count} document(s) modified")
+                user.isEmailVerified = True
+                
             user_data = {
                 "id": user.id,
                 "email": user.email,
