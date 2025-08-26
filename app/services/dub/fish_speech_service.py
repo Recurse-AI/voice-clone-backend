@@ -72,6 +72,8 @@ class FishSpeechService:
             
             # Load LLAMA model queue
             compile_model = getattr(settings, 'FISH_SPEECH_COMPILE', False)
+            checkpoint_path = Path(self.checkpoint_path)
+            decoder_path = Path(self.decoder_checkpoint_path)
             
             self.llama_queue = launch_thread_safe_queue(
                 checkpoint_path=checkpoint_path,

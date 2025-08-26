@@ -16,7 +16,6 @@ def setup_logging():
         logging.getLogger(logger_name).setLevel(logging.ERROR)
     
     # Disable tqdm progress bars
-    import os
     os.environ['TQDM_DISABLE'] = '1'
 
     logging_config = {
