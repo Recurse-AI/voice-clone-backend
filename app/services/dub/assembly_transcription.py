@@ -195,7 +195,7 @@ class TranscriptionService:
                     "start": sentence["start"],
                     "end": sentence["end"], 
                     "text": sentence["text"],
-                    "speaker_label": sentence.get("speaker", sentence["words"][0]["speaker"] if sentence.get("words") else "A")
+                    "speaker_label": sentence.get("speaker", sentence["words"][0].get("speaker", "A") if sentence.get("words") else "A")
                 })
 
 

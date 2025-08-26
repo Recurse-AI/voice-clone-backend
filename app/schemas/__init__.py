@@ -137,7 +137,7 @@ class VideoDownloadRequest(BaseModel):
     url: str = Field(..., min_length=1, description="Video URL from supported platforms")
     quality: Optional[str] = Field(
         "best", 
-        description="Video quality preference. Supports yt-dlp format selectors like 'best', 'worst', 'best[height<=720]', etc."
+        description="Video quality preference. Use 'best' for highest quality, 'worst' for smallest file, or specify custom yt-dlp format selectors."
     )
     resolution: Optional[str] = Field(
         None,

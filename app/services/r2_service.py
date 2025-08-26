@@ -28,6 +28,9 @@ class R2Service:
     def upload_file(self, local_path: str, r2_key: str, content_type: str = "application/octet-stream") -> Dict[str, Any]:
         """Upload file to R2 storage with automatic optimization for large files"""
         try:
+            if not os.path.exists(local_path):
+                return {"success": False, "error": f"File not found: {local_path}"}
+            
             file_size = os.path.getsize(local_path)
             
             # Use chunked upload for files larger than 100MB
