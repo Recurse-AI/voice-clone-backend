@@ -42,49 +42,75 @@ class VideoDownloadService:
         audio_quality: str | None, 
         prefer_free_formats: bool
     ) -> str:
-        """Build intelligent yt-dlp format selector based on user preferences."""
+        """Build intelligent yt-dlp format selector with robust fallbacks for best quality."""
         
-        # If explicit quality is provided, use it as base
-        if quality and quality != "best":
-            base_format = quality
+        # If explicit quality is provided and it's a custom format, use it
+        if quality and quality not in ["best", "worst"]:
+            return f"{quality}/best"
+        
+        # Build progressive quality selection with multiple fallbacks
+        format_options = []
+        
+        # Determine target resolution based on quality preference
+        if quality == "best" and not resolution:
+            # Auto ultra quality: prioritize 4K, 1440p, 1080p, 720p for best experience
+            target_resolutions = ["2160", "1440", "1080", "720"]
+        elif resolution:
+            # User specified resolution
+            res_num = resolution.replace("p", "")
+            target_resolutions = [res_num]
         else:
-            # Build format selector based on preferences
-            conditions = []
-            
-            # Resolution preference
-            if resolution:
-                conditions.append(f"height<={resolution}")
-            
-            # File size limit
-            if max_filesize:
-                conditions.append(f"filesize<{max_filesize}")
-            
-            # Format preference
-            if format_preference:
-                if prefer_free_formats and format_preference in ["mp4", "m4v"]:
-                    # Prefer webm over mp4 if free formats requested
-                    conditions.append("ext=webm")
-                else:
-                    conditions.append(f"ext={format_preference}")
-            elif prefer_free_formats:
-                conditions.append("ext=webm")
-            
-            # Build the format string
-            if conditions:
-                base_format = f"best[{']['.join(conditions)}]"
-            else:
-                base_format = "best"
+            # Default to high quality options
+            target_resolutions = ["1080", "720"]
         
-        # Handle audio quality
+        # Determine preferred formats
+        if prefer_free_formats:
+            preferred_extensions = ["webm", "mkv", "mp4"]
+        elif format_preference:
+            preferred_extensions = [format_preference, "mp4", "webm"]
+        else:
+            preferred_extensions = ["mp4", "webm", "mkv"]
+        
+        # Build format options with progressive fallbacks
+        for res in target_resolutions:
+            for ext in preferred_extensions:
+                # Option 1: Exact resolution + format + audio
+                if max_filesize:
+                    format_options.append(f"best[height<={res}][ext={ext}][filesize<{max_filesize}]")
+                else:
+                    format_options.append(f"best[height<={res}][ext={ext}]")
+                
+                # Option 2: Exact resolution + format (no filesize limit)
+                format_options.append(f"best[height<={res}][ext={ext}]")
+            
+            # Option 3: Resolution only (any format)
+            if max_filesize:
+                format_options.append(f"best[height<={res}][filesize<{max_filesize}]")
+            format_options.append(f"best[height<={res}]")
+        
+        # Additional fallbacks for preferred format without resolution constraints
+        for ext in preferred_extensions:
+            if max_filesize:
+                format_options.append(f"best[ext={ext}][filesize<{max_filesize}]")
+            format_options.append(f"best[ext={ext}]")
+        
+        # Final fallbacks
+        if max_filesize:
+            format_options.append(f"best[filesize<{max_filesize}]")
+        format_options.append("best")
+        format_options.append("worst")  # Last resort
+        
+        # Handle audio quality preferences
         if audio_quality and audio_quality != "best":
             if audio_quality in ["aac", "opus", "m4a", "mp3"]:
-                # Try to get specific audio codec
-                return f"({base_format})[acodec*={audio_quality}]/({base_format})/best"
-            elif audio_quality == "worst":
-                return f"({base_format})[acodec!=none]/worstaudio+worstvideo/worst"
+                # Try to get specific audio codec with all format options
+                audio_enhanced_options = []
+                for fmt in format_options[:5]:  # Apply to first 5 options only
+                    audio_enhanced_options.append(f"({fmt})[acodec*={audio_quality}]")
+                format_options = audio_enhanced_options + format_options
         
-        # Fallback to ensure we get something
-        return f"{base_format}/best"
+        # Join all options with "/" for fallback chain
+        return "/".join(format_options)
     
     def _analyze_available_formats(self, formats: list, requested_format: str) -> Dict[str, Any]:
         """Analyze available formats and provide detailed information."""
@@ -183,15 +209,31 @@ class VideoDownloadService:
             with yt_dlp.YoutubeDL({"quiet": True, "listformats": False}) as ydl:
                 info = ydl.extract_info(url, download=False)
                 if not info:
-                    return {"success": False, "error": "Could not extract video information"}
+                    return {"success": False, "error": "Could not extract video information from URL"}
                 
                 video_title = info.get("title", "Unknown")
                 video_duration = info.get("duration", 0)
                 video_uploader = info.get("uploader", "Unknown")
                 available_formats = info.get("formats", [])
                 
+                # Validate that formats are available
+                if not available_formats:
+                    return {
+                        "success": False, 
+                        "error": "No video formats available for this URL",
+                        "video_info": {
+                            "title": video_title,
+                            "duration": video_duration,
+                            "uploader": video_uploader
+                        }
+                    }
+                
                 # Get format details for the selected quality
                 format_info = self._analyze_available_formats(available_formats, quality_format)
+                
+                # Log the quality format being used for debugging
+                logger.info(f"Using quality format: {quality_format}")
+                logger.info(f"Available formats count: {len(available_formats)}")
             
             # Download options
             ydl_opts = {
@@ -209,14 +251,39 @@ class VideoDownloadService:
                 "writeautomaticsub": include_subtitles,
             }
             
-            # Download the file
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+            # Download the file with enhanced error handling
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([url])
+            except Exception as download_error:
+                error_msg = str(download_error)
+                
+                # Handle specific yt-dlp errors with helpful messages
+                if "Requested format is not available" in error_msg:
+                    return {
+                        "success": False,
+                        "error": f"The requested video quality/format is not available for this video. Available formats: {len(available_formats)} options. Try using 'ultra' or 'best' quality for automatic selection.",
+                        "video_info": {
+                            "title": video_title,
+                            "duration": video_duration,
+                            "uploader": video_uploader
+                        },
+                        "available_formats": format_info.get("available_formats", [])[:5],  # Show top 5 formats
+                        "suggested_format": quality_format.split("/")[0]  # Show the first attempted format
+                    }
+                elif "Video unavailable" in error_msg:
+                    return {"success": False, "error": "Video is unavailable or private"}
+                elif "Sign in to confirm your age" in error_msg:
+                    return {"success": False, "error": "Video requires age verification and cannot be downloaded"}
+                elif "timeout" in error_msg.lower():
+                    return {"success": False, "error": "Download timeout - the video server may be slow or unavailable"}
+                else:
+                    return {"success": False, "error": f"Download failed: {error_msg}"}
             
             # Find downloaded file
             downloaded_files = list(job_dir.glob("*"))
             if not downloaded_files:
-                return {"success": False, "error": "Download completed but file not found"}
+                return {"success": False, "error": "Download completed but file not found in expected directory"}
             
             downloaded_file = downloaded_files[0]
             file_size = downloaded_file.stat().st_size

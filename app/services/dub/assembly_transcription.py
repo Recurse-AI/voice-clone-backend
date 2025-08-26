@@ -5,11 +5,8 @@ Transcription and Text Processing Module - Enhanced with Speaker Diarization
 import json
 import logging
 import os
-import re
 import time
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 
 import assemblyai as aai
 import requests
@@ -22,9 +19,7 @@ from app.services.language_service import language_service
 logger = logging.getLogger(__name__)
 
 class TranscriptionService:
-    """Enhanced transcription service with speaker diarization"""
-
-    # Using centralized language service (removed duplicate mapping)
+    """Transcription service using AssemblyAI Universal model"""
 
     @classmethod
     def _normalize_language_code(cls, language: Optional[str]) -> Optional[str]:
@@ -39,21 +34,18 @@ class TranscriptionService:
         aai.settings.api_key = settings.ASSEMBLYAI_API_KEY
         self.audio_utils = AudioUtils()
         
-        # AssemblyAI configuration for optimal transcription
+        # Universal model configuration
         self.transcription_config = {
-            "speaker_labels": True,           # Enable speaker diarization
-            "language_detection": True,       # Auto-detect language
-            "punctuate": True,               # Add punctuation
-            "format_text": True,             # Format text properly
-            "dual_channel": False,           # Single channel processing
-            "filter_profanity": False,       # Keep original content
-            "word_boost": [],                # No word boosting
-            "boost_param": None,             # No boost parameters
-            "auto_highlights": False,        # Disable highlights
-            "content_safety": False,         # Disable content safety
-            "iab_categories": False,         # Disable categorization
-            "speech_threshold": 0.1,         # Detect low volume speech
-            "disfluencies": True,            # Include uh, um, etc.
+            "speech_model": aai.SpeechModel.universal,
+            "punctuate": True,
+            "format_text": True,
+            "dual_channel": False,
+            "filter_profanity": False,
+            "auto_highlights": False,
+            "content_safety": False,
+            "iab_categories": False,
+            "disfluencies": False,
+            "speech_threshold": 0.1,
             "language_confidence_threshold": 0.1
         }
     
@@ -67,18 +59,24 @@ class TranscriptionService:
             # Store audio locally for backup
             local_audio_path = self._store_audio_locally(audio_path, audio_id)
             
-            # Prepare transcription config
+            # Prepare config
             config = self.transcription_config.copy()
             
-            # Set language if specified
+            # Language configuration
             normalized_code = self._normalize_language_code(language_code) if language_code else None
             if normalized_code:
                 config["language_code"] = normalized_code
                 config["language_detection"] = False
+            else:
+                config["language_detection"] = True
             
-            # Set expected speakers if specified
-            if speakers_expected and speakers_expected > 1:
-                config["speakers_expected"] = min(speakers_expected, 10)  # Max 10 speakers
+            # Speaker configuration
+            speakers_count = speakers_expected or 1
+            if speakers_count > 1:
+                config["speaker_labels"] = True
+                config["speakers_expected"] = min(speakers_count, 10)
+            else:
+                config["speaker_labels"] = False
             
             # Upload audio file to AssemblyAI
             transcriber = aai.Transcriber()
@@ -109,7 +107,7 @@ class TranscriptionService:
                 
                 # Update progress
                 self._update_transcription_progress(audio_id, elapsed)
-                time.sleep(20)  # Check every 20 seconds
+                time.sleep(10 if elapsed < 120 else 20)
                 transcript = transcriber.get_transcript(transcript.id)
             
             if transcript.status == aai.TranscriptStatus.error:
@@ -248,18 +246,32 @@ class TranscriptionService:
             raise Exception(f"Service error: {str(e)}")
     
     def _create_transcription_for_audio(self, audio_path: str, speakers_count: int = 2, language_code: str = None, language_detection: bool = True, job_id: Optional[str] = None) -> Dict[str, Any]:
-        """Create a new transcription for audio file with speaker diarization and language control"""
+        """Create transcription for audio file with Universal model"""
         try:
             transcriber = aai.Transcriber()
-            config = aai.TranscriptionConfig(
-                speaker_labels=True,
-                speakers_expected=speakers_count,
-                language_detection=language_detection,
-                language_code=None if language_detection else language_code,
-                punctuate=True,
-                format_text=True
-            )
-            transcript = transcriber.transcribe(audio_path, config=config)
+            
+            # Prepare config
+            config = self.transcription_config.copy()
+            
+            # Language settings
+            if not language_detection and language_code:
+                normalized_code = self._normalize_language_code(language_code)
+                if normalized_code:
+                    config["language_code"] = normalized_code
+                    config["language_detection"] = False
+                else:
+                    config["language_detection"] = True
+            else:
+                config["language_detection"] = True
+            
+            # Speaker settings
+            if speakers_count > 1:
+                config["speaker_labels"] = True
+                config["speakers_expected"] = min(speakers_count, 10)
+            else:
+                config["speaker_labels"] = False
+            
+            transcript = transcriber.transcribe(audio_path, config=aai.TranscriptionConfig(**config))
             
             # Wait for completion
             start_time = time.time()
@@ -281,7 +293,7 @@ class TranscriptionService:
                 elapsed = time.time() - start_time
                 if elapsed > 300:  # 5 minute timeout
                     raise Exception("Transcription timeout")
-                time.sleep(20)
+                time.sleep(10 if elapsed < 120 else 20)
                 transcript = transcriber.get_transcript(transcript.id)
             
             if transcript.status != aai.TranscriptStatus.completed:
@@ -464,6 +476,3 @@ class TranscriptionService:
         
         logger.info(f"Force split created {len(segments)} segments from 1 long segment")
         return segments
-
-
-    
