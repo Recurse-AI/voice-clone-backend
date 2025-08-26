@@ -124,7 +124,6 @@ async def start_video_dub(
             "target_language": request.target_language,
             "original_filename": request.project_title,
             "source_video_language": request.source_video_language,
-            "expected_speaker": request.expected_speaker,
             "duration": request.duration,
             "status": "pending",
             "progress": 0
@@ -435,7 +434,6 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             job_id=job_id,
             audio_url=audio_url,
             target_language=request.target_language,
-            speakers_count=int(request.expected_speaker) if request.expected_speaker else 1,
             source_video_language=request.source_video_language,
             output_dir=job_dir,
             review_mode=getattr(request, "humanReview", False)
@@ -603,7 +601,6 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
                 audio_url=None,
                 job_id=job_id,
                 target_language=manifest.get("target_language") or job.target_language,
-                speakers_count=int(job.expected_speaker) if job.expected_speaker else 1,
                 source_video_language=job.source_video_language,
                 output_dir=job_dir,
                 review_mode=False,
@@ -719,7 +716,6 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
         "target_language": request_body.target_language,
         "original_filename": f"Redub - {original_job.original_filename}",
         "source_video_language": original_job.source_video_language,
-        "expected_speaker": original_job.expected_speaker,
         "duration": duration,
         "status": "pending",
         "progress": 0,
@@ -764,7 +760,6 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             target_language=request_body.target_language,
             project_title=f"Redub - {original_job.original_filename}",
             duration=duration,
-            expected_speaker=original_job.expected_speaker,
             source_video_language=original_job.source_video_language,
             humanReview=getattr(request_body, "humanReview", False)
         )
@@ -786,7 +781,6 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
                 audio_url=None,  # Reuse existing files
                 job_id=new_job_id,
                 target_language=request_body.target_language,
-                speakers_count=int(original_job.expected_speaker) if original_job.expected_speaker else 1,
                 source_video_language=original_job.source_video_language,
                 output_dir=new_job_dir,
                 review_mode=bool(getattr(request_body, "humanReview", False)),

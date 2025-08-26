@@ -72,13 +72,16 @@ class Settings(BaseSettings):
     STRIPE_PRO_YEARLY_PRICE_ID: Optional[str] = os.getenv("STRIPE_PRO_YEARLY_PRICE_ID")
     PAY_AS_YOU_GO_PRICE_ID: Optional[str] = os.getenv("PAY_AS_YOU_GO_PRICE_ID")
     METER_EVENT: Optional[str] = os.getenv("METER_EVENT")
-    TIME_CYCLE: int = os.getenv("TIME_CYCLE")
+    TIME_CYCLE: int = int(os.getenv("TIME_CYCLE", "30"))
     
     # OpenAI Configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     
+    # HuggingFace Configuration
+    HF_TOKEN: str = os.getenv("HF_TOKEN", "")
+    
     # AssemblyAI Configuration
-    ASSEMBLYAI_API_KEY: str = os.getenv("ASSEMBLYAI_API_KEY", "")
+    # ASSEMBLYAI_API_KEY  # No longer needed - using WhisperX: str = os.getenv("# ASSEMBLYAI_API_KEY  # No longer needed - using WhisperX", "")
     
     # RunPod Configuration for Audio Separation
     API_ACCESS_TOKEN: str = os.getenv("API_ACCESS_TOKEN", "")

@@ -14,7 +14,6 @@ class DubJob(BaseModel):
     # Input Details
     original_filename: Optional[str] = Field(None, description="Original uploaded file name")
     target_language: str = Field(..., description="Target language for dubbing")
-    expected_speaker: Optional[str] = Field(None, description="Expected speaker name or ID")
     source_video_language: Optional[str] = Field(None, description="Source video language")
     
     # File Processing
@@ -38,7 +37,7 @@ class DubJob(BaseModel):
     segments_manifest_url: Optional[str] = Field(None, description="R2 URL to the segments manifest JSON for human review")
     segments_manifest_key: Optional[str] = Field(None, description="R2 object key for the segments manifest JSON")
     segments_count: Optional[int] = Field(None, description="Number of segments produced for review")
-    transcript_id: Optional[str] = Field(None, description="AssemblyAI transcript ID")
+    transcript_id: Optional[str] = Field(None, description="WhisperX transcript ID")
     edited_segments_version: Optional[int] = Field(0, description="Version number for edited segments")
     
     # Error handling

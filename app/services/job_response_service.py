@@ -98,7 +98,6 @@ class JobResponseService:
             original_filename=job.original_filename,
             target_language=job.target_language,
             source_video_language=job.source_video_language,
-            expected_speaker=job.expected_speaker,
             result_url=JobResponseService._extract_result_url(job),
             files=JobResponseService._extract_files_info(job),
             error=job.error,

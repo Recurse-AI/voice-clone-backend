@@ -3,7 +3,7 @@ Centralized Language Service
 Handles all language validation, mapping, and normalization
 """
 
-from typing import Optional, Set, Dict
+from typing import Set, Dict
 import logging
 
 logger = logging.getLogger(__name__)
@@ -14,58 +14,39 @@ class LanguageService:
     Single source of truth for all language operations.
     """
     
-    # Complete language mapping with all supported languages
-    LANGUAGE_NAME_TO_CODE: Dict[str, Optional[str]] = {
-        # Special cases
-        "auto detect": None,
-        
-        # Core supported languages (Fish Speech + Assembly AI)
+    # Language mapping - includes all supported languages (source + target)
+    LANGUAGE_NAME_TO_CODE: Dict[str, str] = {
+        # Core supported languages
         "english": "en",
-        "english_global": "en", 
-        "english_us": "en-US",
-        "english_au": "en-AU", 
-        "english_uk": "en-GB",
-        "chinese": "zh",
-        "japanese": "ja",
-        "german": "de",
-        "french": "fr",
-        "spanish": "es",
-        "korean": "ko",
-        "arabic": "ar",
-        "russian": "ru",
+        "chinese": "zh", 
         "dutch": "nl",
+        "finnish": "fi",  # WhisperX transcription only
+        "french": "fr",
+        "german": "de",
+        "hindi": "hi",
         "italian": "it",
+        "japanese": "ja",
+        "korean": "ko",
         "polish": "pl",
         "portuguese": "pt",
-        "hindi": "hi",
+        "russian": "ru",
+        "spanish": "es",
         "turkish": "tr",
         "ukrainian": "uk",
         "vietnamese": "vi",
-        
-        # Additional Assembly AI supported languages
-        "azerbaijani": "az",
-        "czech": "cs",
-        "danish": "da",
-        "finnish": "fi",
-        "hebrew": "he",
-        "hungarian": "hu",
-        "indonesian": "id",
-        "norwegian": "no",
-        "romanian": "ro",
-        "swedish": "sv",
+        "arabic": "ar",  # Fish Speech dubbing only
     }
     
-    # Languages supported for dubbing (Fish Speech)
+    # Languages supported for dubbing (Fish Speech) - matches frontend target languages exactly
     DUBBING_SUPPORTED_CODES: Set[str] = {
-        "en", "zh", "ja", "de", "fr", "es", "ko", "ar", 
-        "ru", "nl", "it", "pl", "pt", "hi", "tr", "uk", "vi"
+        "en", "zh", "ja", "de", "fr", "es", "ko", "ar", "ru", 
+        "tr", "uk", "vi", "hi", "nl", "it", "pl", "pt"
     }
     
-    # Languages supported for transcription (Assembly AI)
+    # Languages supported for transcription (WhisperX) - matches frontend exactly
     TRANSCRIPTION_SUPPORTED_CODES: Set[str] = {
-        "en", "en-US", "en-AU", "en-GB", "zh", "ja", "de", "fr", "es", 
-        "ko", "ar", "ru", "nl", "it", "pl", "pt", "hi", "tr", "uk", "vi",
-        "az", "cs", "da", "fi", "he", "hu", "id", "no", "ro", "sv"
+        "en", "zh", "nl", "fi", "fr", "de", "hi", "it", "ja", 
+        "ko", "pl", "pt", "ru", "es", "tr", "uk", "vi"
     }
     
     @classmethod
@@ -81,20 +62,19 @@ class LanguageService:
         
         # Direct mapping from name to code
         if language_lower in cls.LANGUAGE_NAME_TO_CODE:
-            code = cls.LANGUAGE_NAME_TO_CODE[language_lower]
-            return code if code else "en"  # Handle None (auto detect) -> default English
+            return cls.LANGUAGE_NAME_TO_CODE[language_lower]
         
         # If it's already a language code, validate and return
         if language_lower in cls.DUBBING_SUPPORTED_CODES or language_lower in cls.TRANSCRIPTION_SUPPORTED_CODES:
             return language_lower
         
-        # Handle compound codes (en-US -> en)
+        # Handle compound codes (en-US -> en) - but only if base code is supported
         if "-" in language_lower or "_" in language_lower:
             base_code = language_lower.split("-")[0].split("_")[0]
             if base_code in cls.DUBBING_SUPPORTED_CODES or base_code in cls.TRANSCRIPTION_SUPPORTED_CODES:
                 return base_code
         
-        # Return original if not found (will be caught by validation)
+        # Return default if not found
         logger.warning(f"Unknown language input: {language}, defaulting to English")
         return "en"
     
@@ -106,11 +86,11 @@ class LanguageService:
         normalized = cls.normalize_language_input(language)
         return normalized in cls.DUBBING_SUPPORTED_CODES
     
-    @classmethod 
+    @classmethod
     def is_transcription_supported(cls, language: str) -> bool:
-        """Check if a language is supported for transcription (Assembly AI)."""
+        """Check if a language is supported for transcription (WhisperX)."""
         if not language:
-            return True  # Auto detect supported
+            return False  # Language required for WhisperX
         normalized = cls.normalize_language_input(language)
         return normalized in cls.TRANSCRIPTION_SUPPORTED_CODES
     
@@ -118,25 +98,23 @@ class LanguageService:
     def get_supported_dubbing_languages(cls) -> Set[str]:
         """Get all supported language names for dubbing."""
         return {name for name, code in cls.LANGUAGE_NAME_TO_CODE.items() 
-                if code and code in cls.DUBBING_SUPPORTED_CODES}
+                if code in cls.DUBBING_SUPPORTED_CODES}
     
     @classmethod
-    def get_language_code_for_transcription(cls, language: Optional[str]) -> Optional[str]:
+    def get_language_code_for_transcription(cls, language: str) -> str:
         """
-        Get language code suitable for Assembly AI transcription.
-        Returns None for auto-detect.
+        Get language code for WhisperX transcription.
+        Language is required - no auto-detect.
         """
-        if not language or language.lower().strip() == "auto detect":
-            return None
+        if not language:
+            raise ValueError("Language is required for WhisperX transcription")
         
         normalized = cls.normalize_language_input(language)
         
-        # For transcription, we can use more specific codes if available
-        language_lower = language.lower().strip()
-        if language_lower in cls.LANGUAGE_NAME_TO_CODE:
-            return cls.LANGUAGE_NAME_TO_CODE[language_lower]
+        if normalized not in cls.TRANSCRIPTION_SUPPORTED_CODES:
+            raise ValueError(f"Language '{language}' not supported for transcription")
         
-        return normalized if normalized in cls.TRANSCRIPTION_SUPPORTED_CODES else None
+        return normalized
 
 
 # Global service instance

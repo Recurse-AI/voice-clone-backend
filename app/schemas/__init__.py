@@ -19,7 +19,6 @@ class VideoDubRequest(BaseModel):
     target_language: str = Field(..., description="Target language for dubbing")
     project_title: Optional[str] = Field("Untitled Project", description="Project title for the dubbing job")
     duration: Optional[float] = Field(None, gt=0, le=14400, description="Video duration in seconds (max 4 hours)")
-    expected_speaker: Optional[str] = Field(None, description="Expected speaker name or ID")
     source_video_language: Optional[str] = Field(None, description="Source video language (default: None, auto-detect)")
     humanReview: bool = Field(False, description="If true, pause after transcription+translation for human review")
 
@@ -48,7 +47,6 @@ class SegmentItem(BaseModel):
     original_text: str
     dubbed_text: str
     original_audio_file: Optional[str] = None
-    speaker_label: Optional[str] = None
 
 class SegmentsResponse(BaseModel):
     job_id: str
@@ -265,7 +263,6 @@ class VoiceCloneRequest(BaseModel):
     referenceAudioUrl: str = Field(..., min_length=1, description="URL to the reference audio segment")
     referenceText: str = Field(..., min_length=1, max_length=5000, description="Text spoken in the reference audio")
     text: str = Field(..., min_length=1, max_length=5000, description="Text to synthesize with cloned voice")
-    speakerLabel: Optional[str] = Field(None, max_length=100, description="Optional speaker label")
     
     @validator('referenceAudioUrl')
     def validate_reference_url(cls, v):
@@ -320,7 +317,6 @@ class UserDubJob(BaseModel):
     original_filename: Optional[str] = None
     target_language: str
     source_video_language: Optional[str] = None
-    expected_speaker: Optional[str] = None
     result_url: Optional[str] = None
     files: Optional[List[FileInfo]] = None
     error: Optional[str] = None

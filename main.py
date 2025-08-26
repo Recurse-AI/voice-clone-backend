@@ -54,6 +54,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Failed to initialize Fish Speech: {e}")
     
+    # Initialize WhisperX transcription service
+    try:
+        from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
+        if initialize_whisperx_transcription():
+            logger.info("✅ WhisperX transcription service initialized successfully")
+        else:
+            logger.warning("⚠️ WhisperX transcription service initialization failed")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize WhisperX transcription: {e}")
+    
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     
     try:
@@ -72,6 +82,12 @@ async def lifespan(app: FastAPI):
         cleanup_fish_speech()
     except Exception as e:
         logger.error(f"Failed to cleanup Fish Speech: {e}")
+    
+    try:
+        from app.services.dub.whisperx_transcription import cleanup_whisperx_transcription
+        cleanup_whisperx_transcription()
+    except Exception as e:
+        logger.error(f"Failed to cleanup WhisperX transcription: {e}")
     
     try:
         from app.routes.video.dub_routes import get_dub_executor

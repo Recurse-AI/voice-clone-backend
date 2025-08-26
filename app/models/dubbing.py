@@ -9,7 +9,6 @@ class Dubbing(BaseModel):
     project_title: str = "Untitled project"
     source_language: str = "Auto Detect"
     target_language: str = "English"
-    speakers: int = 1
     fileDuration: float = 0
     startTime: float = 0
     endTime: float = 0

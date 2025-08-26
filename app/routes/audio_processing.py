@@ -13,6 +13,7 @@ from app.services.credit_service import credit_service
 from app.services.credit_service import JobType as CreditJobType
 from app.config.constants import MAX_ATTEMPTS_DEFAULT, POLLING_INTERVAL_SECONDS, MSG_PROCESSING_STARTED, ERROR_PROCESSING_FAILED
 from datetime import datetime, timezone
+import random
 # Removed custom logger import - using standard logging
 
 router = APIRouter()
@@ -456,7 +457,7 @@ async def voice_clone_segment(request: VoiceCloneRequest):
             text=request.text,
             reference_audio_bytes=reference_bytes,
             reference_text=request.referenceText,
-            **generation_kwargs
+            seed=int(random.randint(0, 2**32 - 1))
         )
 
         if not result.get("success"):

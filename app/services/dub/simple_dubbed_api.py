@@ -3,7 +3,7 @@ import json
 import logging
 import time
 from app.config.settings import settings
-from .assembly_transcription import TranscriptionService
+from .whisperx_transcription import get_whisperx_transcription_service
 from .fish_speech_service import get_fish_speech_service
 from app.services.r2_service import get_r2_service
 from .manifest_service import (
@@ -83,7 +83,7 @@ class SimpleDubbedAPI:
     }
     
     def __init__(self):
-        self.transcription_service = TranscriptionService()
+        self.transcription_service = get_whisperx_transcription_service()
         self.fish_speech = get_fish_speech_service()
         self._r2_storage = None
     
@@ -209,7 +209,7 @@ class SimpleDubbedAPI:
         return output_dir
 
     def process_dubbed_audio(self, audio_url: str, job_id: str, target_language: str, 
-                           speakers_count: int = 1, source_video_language: str = None, 
+                           source_video_language: str = None, 
                            output_dir: str = None, review_mode: bool = False, 
                            manifest_override: Optional[Dict[str, Any]] = None) -> dict:
         """
@@ -236,7 +236,7 @@ class SimpleDubbedAPI:
             
             # Get transcription data
             raw_sentences, transcript_id = self._get_transcription_data(
-                job_id, audio_url, manifest_override, process_temp_dir, speakers_count, source_video_language
+                job_id, audio_url, manifest_override, process_temp_dir, source_video_language
             )
             
             # 🛡️ Check cancellation before dubbing and voice cloning
@@ -309,7 +309,7 @@ class SimpleDubbedAPI:
             # Generate final audio and files
             return self._generate_final_output(
                 job_id, dubbed_segments, process_temp_dir, 
-                target_language, audio_url, speakers_count, transcript_id
+                target_language, audio_url, transcript_id
             )
         except Exception as e:
             logger.error(f"Dubbed processing failed: {str(e)}")
@@ -318,7 +318,7 @@ class SimpleDubbedAPI:
                 AudioUtils.remove_temp_dir(folder_path=locals().get("process_temp_dir"))
             return {"success": False, "error": str(e)}
     
-    def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, original_text: str = "", speaker_label: str = None, job_id: str = None, process_temp_dir: str = None) -> Optional[Dict[str, Any]]:
+    def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, original_text: str = "", job_id: str = None, process_temp_dir: str = None) -> Optional[Dict[str, Any]]:
         """Voice clone dubbed text using FishSpeechService with reference audio and transcript_id in filename"""
         try:
             if not reference_audio_path:
@@ -359,8 +359,6 @@ class SimpleDubbedAPI:
             audio_chunks = []
             sample_rate_out = None
             seed_val = None
-            if speaker_label:
-                seed_val = abs(hash(speaker_label)) % (2**32)
             for chunk in text_chunks:
                 # 🛡️ Check cancellation before each chunk processing
                 if job_id and self._check_cancellation(job_id):
@@ -404,7 +402,7 @@ class SimpleDubbedAPI:
             return None
     
     def _get_transcription_data(self, job_id: str, audio_url: str, manifest_override: Optional[Dict[str, Any]], 
-                               process_temp_dir: str, speakers_count: int, source_video_language: str) -> tuple:
+                               process_temp_dir: str, source_video_language: str) -> tuple:
         """Get transcription data either from manifest override or by transcribing audio"""
         
         transcript_id = None
@@ -418,7 +416,6 @@ class SimpleDubbedAPI:
                     "text": seg.get("original_text", ""),
                     "start": seg.get("start", 0),
                     "end": seg.get("end", 0),
-                    "speaker_label": seg.get("speaker_label"),
                     "output_path": os.path.join(process_temp_dir, seg.get("original_audio_file", f"segment_{idx:03d}.wav")).replace('\\', '/')
                 })
             transcript_id = manifest_override.get("transcript_id")
@@ -428,12 +425,11 @@ class SimpleDubbedAPI:
             
         else:
             # Fresh transcription - use phase-based progress
-            self._update_phase_progress(job_id, "transcription", 0.0, "Starting AI transcription with Assembly AI")
+            self._update_phase_progress(job_id, "transcription", 0.0, "Starting transcription with WhisperX")
             logger.info("Starting fresh transcription")
             sentences_result = self.transcription_service.get_sentences_and_split_audio(
                 audio_url=audio_url,
                 output_dir=process_temp_dir,
-                speakers_count=speakers_count,
                 source_video_language=source_video_language,
                 job_id=job_id
             )
@@ -526,7 +522,6 @@ class SimpleDubbedAPI:
             start_ms = segment.get("start", 0)
             end_ms = segment.get("end", 0)
             original_text = segment.get("text", "")
-            speaker_label = segment.get("speaker_label")
             original_audio_path = segment.get("output_path", "")
             
             if not original_text.strip():
@@ -542,7 +537,7 @@ class SimpleDubbedAPI:
             if not review_mode:
                 clone_result = self._voice_clone_segment(
                     dubbed_text, original_audio_path, seg_id, original_text, 
-                    speaker_label, job_id=job_id, process_temp_dir=process_temp_dir
+                    job_id=job_id, process_temp_dir=process_temp_dir
                 )
                 if clone_result:
                     cloned_audio_path = clone_result.get("path")
@@ -560,7 +555,7 @@ class SimpleDubbedAPI:
             
             segment_json = self._create_segment_info(
                 seg_id, i, start_ms, cloned_duration_ms, original_text, dubbed_text,
-                original_audio_path, cloned_audio_path, speaker_label, job_id, process_temp_dir
+                original_audio_path, cloned_audio_path, job_id, process_temp_dir
             )
             dubbed_segments.append(segment_json)
         
@@ -568,7 +563,7 @@ class SimpleDubbedAPI:
     
     def _create_segment_info(self, seg_id: str, segment_index: int, start_ms: int, cloned_duration_ms: int,
                            original_text: str, dubbed_text: str, original_audio_path: str, 
-                           cloned_audio_path: str, speaker_label: str, job_id: str, process_temp_dir: str) -> dict:
+                           cloned_audio_path: str, job_id: str, process_temp_dir: str) -> dict:
         info_filename = f"segment_{job_id}_{segment_index:03d}_info.json"
         info_path = os.path.join(process_temp_dir, info_filename).replace('\\', '/')
         
@@ -585,7 +580,6 @@ class SimpleDubbedAPI:
             "voice_cloned": bool(cloned_audio_path),
             "original_audio_path": original_audio_path,
             "cloned_audio_path": cloned_audio_path,
-            "speaker_label": speaker_label,
         }
         
         try:
@@ -614,7 +608,7 @@ class SimpleDubbedAPI:
                     logger.warning(f"Failed to download original segment {fname}: {e}")
 
     def _generate_final_output(self, job_id: str, dubbed_segments: list, process_temp_dir: str, 
-                              target_language: str, audio_url: str, speakers_count: int, transcript_id: str) -> dict:
+                              target_language: str, audio_url: str, transcript_id: str) -> dict:
         """Generate final audio, SRT file, and upload to R2"""
         
         # 🛡️ Check cancellation before starting final output generation
@@ -645,7 +639,7 @@ class SimpleDubbedAPI:
         
         # Create process summary
         self._create_process_summary(job_id, dubbed_segments, final_audio_path, subtitle_path, 
-                                   process_temp_dir, target_language, audio_url, speakers_count, transcript_id)
+                                   process_temp_dir, target_language, audio_url, transcript_id)
         
         # 🛡️ Check cancellation before upload
         if self._check_cancellation(job_id):
@@ -687,7 +681,7 @@ class SimpleDubbedAPI:
     
     def _create_process_summary(self, job_id: str, dubbed_segments: list, final_audio_path: str, 
                                subtitle_path: str, process_temp_dir: str, target_language: str, 
-                               audio_url: str, speakers_count: int, transcript_id: str) -> None:
+                               audio_url: str, transcript_id: str) -> None:
         """Create and save process summary JSON"""
         
         # 🛡️ Check cancellation before creating summary
@@ -712,7 +706,6 @@ class SimpleDubbedAPI:
             "segments_count": len(dubbed_segments) if not cancelled else 0,
             "audio_url": audio_url if not cancelled else None,
             "target_language": target_language,
-            "speakers_count": speakers_count,
             "final_audio_file": os.path.basename(final_audio_path) if final_audio_path and not cancelled else None,
             "subtitle_file": os.path.basename(subtitle_path) if subtitle_path and not cancelled else None,
             "instrument_file": instrument_file,
