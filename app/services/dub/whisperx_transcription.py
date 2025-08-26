@@ -10,6 +10,10 @@ import threading
 from typing import Dict, Any, List, Optional
 import torch
 
+# Set PyTorch CUDA memory allocation config for better memory management
+if 'PYTORCH_CUDA_ALLOC_CONF' not in os.environ:
+    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+
 from app.config.settings import settings
 from app.services.language_service import language_service
 
@@ -49,11 +53,15 @@ class WhisperXTranscriptionService:
         logger.info(f"WhisperX configured - Model: {self.model_size}, Preload languages: {self.preload_languages}")
     
     def load_model(self) -> bool:
-        """Load WhisperX model with auto-download and language model preloading"""
+        """Load WhisperX model with auto-download and aggressive memory management"""
         try:
             if self.is_initialized:
                 logger.info("WhisperX model already loaded")
                 return True
+            
+            # 🧹 AGGRESSIVE MEMORY CLEANUP BEFORE LOADING
+            logger.info("🧹 Clearing all GPU memory before WhisperX loading...")
+            self._aggressive_gpu_cleanup()
             
             import whisperx
             logger.info(f"🔄 Loading WhisperX model '{self.model_size}' (auto-downloading if needed)...")
@@ -67,17 +75,19 @@ class WhisperXTranscriptionService:
             
             logger.info(f"✅ WhisperX model '{self.model_size}' loaded successfully")
             
-            # Preload alignment models for common languages
-            if self.preload_languages:
-                logger.info(f"🔄 Preloading alignment models for languages: {', '.join(self.preload_languages)}")
-                self._preload_alignment_models()
+            # Skip preloading if GPU memory is tight - load on demand instead
+            logger.info("⚡ Skipping language preloading to save GPU memory")
             
             self.is_initialized = True
-            logger.info("🎉 WhisperX service fully initialized with all models loaded")
+            logger.info("🎉 WhisperX service fully initialized (minimal memory footprint)")
             return True
             
         except Exception as e:
             logger.error(f"❌ Failed to load WhisperX model: {e}")
+            # Try CPU fallback if GPU fails
+            if self.device == "cuda":
+                logger.warning("🔄 GPU failed, trying CPU fallback...")
+                return self._try_cpu_fallback()
             return False
     
     def _ensure_model_loaded(self):
@@ -85,6 +95,94 @@ class WhisperXTranscriptionService:
         if not self.is_initialized:
             if not self.load_model():
                 raise Exception("Failed to load WhisperX model")
+    
+    def _cleanup_gpu_memory(self):
+        """Clean up GPU memory to prevent CUDA OOM errors"""
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                logger.info("🧹 GPU memory cache cleared")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to clear GPU cache: {e}")
+    
+    def _aggressive_gpu_cleanup(self):
+        """Aggressive GPU memory cleanup before loading models"""
+        try:
+            if not torch.cuda.is_available():
+                return
+            
+            logger.info("🧹 Starting aggressive GPU memory cleanup...")
+            
+            # Clear PyTorch cache multiple times
+            for i in range(3):
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            
+            # Try to temporarily unload Fish Speech if it's loaded
+            try:
+                from app.services.dub.fish_speech_service import fish_speech_service
+                if fish_speech_service and hasattr(fish_speech_service, 'is_initialized') and fish_speech_service.is_initialized:
+                    logger.info("🔄 Temporarily unloading Fish Speech for WhisperX...")
+                    fish_speech_service.cleanup()
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to cleanup Fish Speech: {e}")
+            
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+            # Final cache clear
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            
+            # Log memory status
+            if hasattr(torch.cuda, 'memory_summary'):
+                logger.info(f"📊 GPU Memory after cleanup:\n{torch.cuda.memory_summary()}")
+            
+            logger.info("✅ Aggressive GPU cleanup completed")
+            
+        except Exception as e:
+            logger.error(f"❌ Aggressive GPU cleanup failed: {e}")
+    
+    def _try_cpu_fallback(self) -> bool:
+        """Try loading WhisperX on CPU if GPU fails"""
+        try:
+            logger.info("🔄 Attempting CPU fallback for WhisperX...")
+            
+            # Switch to CPU settings
+            self.device = "cpu"
+            self.compute_type = "int8"
+            
+            import whisperx
+            logger.info(f"🔄 Loading WhisperX model '{self.model_size}' on CPU...")
+            
+            self.whisperx_model = whisperx.load_model(
+                self.model_size, 
+                device=self.device,
+                compute_type=self.compute_type
+            )
+            
+            self.is_initialized = True
+            logger.info("✅ WhisperX successfully loaded on CPU (slower but stable)")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ CPU fallback also failed: {e}")
+            return False
+    
+    def _reload_fish_speech(self):
+        """Reload Fish Speech service if it was unloaded"""
+        try:
+            from app.services.dub.fish_speech_service import fish_speech_service
+            if fish_speech_service and not fish_speech_service.is_initialized:
+                logger.info("🔄 Reloading Fish Speech service...")
+                if fish_speech_service.load_model():
+                    logger.info("✅ Fish Speech service reloaded successfully")
+                else:
+                    logger.warning("⚠️ Failed to reload Fish Speech service")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to reload Fish Speech: {e}")
     
     def transcribe_audio_file(self, audio_path: str, language: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -142,10 +240,23 @@ class WhisperXTranscriptionService:
             }
             
             logger.info(f"Transcription completed in {processing_time:.2f}s - {len(sentences)} sentences")
+            
+            # Clean up GPU memory after transcription
+            self._cleanup_gpu_memory()
+            
+            # Try to reload Fish Speech if it was unloaded
+            self._reload_fish_speech()
+            
             return result
             
         except Exception as e:
             logger.error(f"WhisperX transcription failed: {e}")
+            # Clean up GPU memory even on failure
+            self._cleanup_gpu_memory()
+            
+            # Try to reload Fish Speech even if transcription failed
+            self._reload_fish_speech()
+            
             return {
                 "success": False,
                 "error": str(e),

@@ -81,9 +81,16 @@ class Settings(BaseSettings):
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
     
     # WhisperX Configuration
-    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "large-v2")  # Options: tiny, base, small, medium, large-v2, large-v3
+    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "medium")  # Options: tiny, base, small, medium, large-v2, large-v3
     WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "auto")  # auto, float16, int8
-    WHISPER_PRELOAD_LANGUAGES: list = os.getenv("WHISPER_PRELOAD_LANGUAGES", "en,es,fr,de,it,pt,ru,ja,ko,zh,hi,ar,bn").split(",")
+    WHISPER_PRELOAD_LANGUAGES: list = os.getenv("WHISPER_PRELOAD_LANGUAGES", "en,es,fr,de,it").split(",")
+    
+    # GPU Memory Optimization
+    PYTORCH_CUDA_ALLOC_CONF: str = os.getenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    
+    # Fish Speech Memory Configuration
+    FISH_SPEECH_LOW_MEMORY: bool = os.getenv("FISH_SPEECH_LOW_MEMORY", "true").lower() == "true"
+    FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "false").lower() == "true"
     
     # AssemblyAI Configuration
     # ASSEMBLYAI_API_KEY  # No longer needed - using WhisperX: str = os.getenv("# ASSEMBLYAI_API_KEY  # No longer needed - using WhisperX", "")

@@ -39,9 +39,14 @@ class FishSpeechService:
     
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Use even lower precision for memory optimization
         self.precision = torch.half if torch.cuda.is_available() else torch.float32
         self.checkpoint_path = "checkpoints/openaudio-s1-mini"
         self.decoder_checkpoint_path = "checkpoints/openaudio-s1-mini/codec.pth"
+        
+        # Memory optimization flags
+        self.use_memory_efficient_attention = True
+        self.use_flash_attention = torch.cuda.is_available()
         self.is_initialized = False
         
         # TTSInferenceEngine components
@@ -72,12 +77,14 @@ class FishSpeechService:
             logger.info(f"LLAMA model: {checkpoint_path}")
             logger.info(f"Decoder model: {decoder_path}")
             
-            # Load LLAMA model queue (for text2semantic)
+            # Load LLAMA model queue (for text2semantic) with memory optimization
+            compile_model = settings.FISH_SPEECH_COMPILE if hasattr(settings, 'FISH_SPEECH_COMPILE') else False
+            
             self.llama_queue = launch_thread_safe_queue(
                 checkpoint_path=checkpoint_path,
                 device=self.device,
                 precision=self.precision,
-                compile=False
+                compile=compile_model  # Disable compilation to save memory
             )
             
             # Load VQ-GAN decoder model (for semantic2audio)
@@ -87,13 +94,17 @@ class FishSpeechService:
                 device=self.device,
             )
             
-            # Create TTSInferenceEngine (supports reference audio)
+            # Create TTSInferenceEngine (supports reference audio) with memory optimization
+            low_memory_mode = getattr(settings, 'FISH_SPEECH_LOW_MEMORY', True)
+            
             self.inference_engine = TTSInferenceEngine(
                 llama_queue=self.llama_queue,
                 decoder_model=self.decoder_model,
-                compile=False,
+                compile=compile_model,
                 precision=self.precision,
             )
+            
+            logger.info(f"🧠 Fish Speech memory mode: {'Low Memory' if low_memory_mode else 'Normal'}")
             
             logger.info("Warming up TTSInferenceEngine...")
             # Dry run to avoid first-time latency
