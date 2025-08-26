@@ -75,11 +75,12 @@ class WhisperXTranscriptionService:
             
             logger.info(f"✅ WhisperX model '{self.model_size}' loaded successfully")
             
-            # Skip preloading if GPU memory is tight - load on demand instead
-            logger.info("⚡ Skipping language preloading to save GPU memory")
+            # Preload alignment models for configured languages
+            logger.info("🔄 Starting language alignment models preloading...")
+            self._preload_alignment_models()
             
             self.is_initialized = True
-            logger.info("🎉 WhisperX service fully initialized (minimal memory footprint)")
+            logger.info("🎉 WhisperX service fully initialized with preloaded language models")
             return True
             
         except Exception as e:
