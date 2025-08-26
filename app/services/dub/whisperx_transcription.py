@@ -35,7 +35,6 @@ class WhisperXTranscriptionService:
         # Device and compute type setup
         if torch.cuda.is_available():
             self.device = "cuda"
-            # Use configured compute type or auto-detect
             if settings.WHISPER_COMPUTE_TYPE == "auto":
                 self.compute_type = "float16"
             else:
@@ -43,7 +42,6 @@ class WhisperXTranscriptionService:
             logger.info(f"WhisperX service initialized on GPU (CUDA) with {self.compute_type} precision")
         else:
             self.device = "cpu"
-            # Use configured compute type or auto-detect
             if settings.WHISPER_COMPUTE_TYPE == "auto":
                 self.compute_type = "int8"
             else:
@@ -150,19 +148,7 @@ class WhisperXTranscriptionService:
             logger.error(f"❌ CPU fallback also failed: {e}")
             return False
     
-    def _reload_fish_speech(self):
-        """Reload Fish Speech service if it was unloaded"""
-        try:
-            from app.services.dub.fish_speech_service import fish_speech_service
-            if fish_speech_service and not fish_speech_service.is_initialized:
-                logger.info("🔄 Reloading Fish Speech service...")
-                if fish_speech_service.load_model():
-                    logger.info("✅ Fish Speech service reloaded successfully")
-                else:
-                    logger.warning("⚠️ Failed to reload Fish Speech service")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to reload Fish Speech: {e}")
-    
+
     def transcribe_audio_file(self, audio_path: str, language: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Transcribe audio file and return sentences with timestamps
@@ -223,18 +209,12 @@ class WhisperXTranscriptionService:
             # Clean up GPU memory after transcription
             self._cleanup_gpu_memory()
             
-            # Try to reload Fish Speech if it was unloaded
-            self._reload_fish_speech()
-            
             return result
             
         except Exception as e:
             logger.error(f"WhisperX transcription failed: {e}")
             # Clean up GPU memory even on failure
             self._cleanup_gpu_memory()
-            
-            # Try to reload Fish Speech even if transcription failed
-            self._reload_fish_speech()
             
             return {
                 "success": False,

@@ -39,7 +39,6 @@ class FishSpeechService:
     
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        # Use even lower precision for memory optimization
         self.precision = torch.half if torch.cuda.is_available() else torch.float32
         self.checkpoint_path = "checkpoints/openaudio-s1-mini"
         self.decoder_checkpoint_path = "checkpoints/openaudio-s1-mini/codec.pth"

@@ -63,9 +63,20 @@ done
 
 # Install dependencies (including Fish Speech 1.5 requirements)
 echo "📦 Installing required packages..."
-apt-get install -y ffmpeg libsndfile1 python3-dev python3-pip python3-venv git curl build-essential portaudio19-dev libsox-dev || {
-    echo "⚠️  Some packages failed to install, continuing anyway..."
-}
+# Install critical dependencies for AI processing
+echo "🔧 Installing AI dependencies..."
+
+# CUDA libraries (critical for GPU processing)
+echo "📦 Installing CUDA libraries..."
+apt-get install -y libcudnn8 libcudnn8-dev
+
+# FFmpeg (critical for audio processing)
+echo "📦 Installing FFmpeg..."
+apt-get install -y ffmpeg
+
+# Other dependencies
+echo "📦 Installing system libraries..."
+apt-get install -y libsndfile1 python3-dev python3-pip python3-venv git curl build-essential portaudio19-dev libsox-dev
 
 apt-get autoremove -y || true
 

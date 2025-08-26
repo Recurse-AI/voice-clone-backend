@@ -164,7 +164,9 @@ class SimpleDubbedAPI:
                 f"{joined_texts}"
             )
             try:
-                response = self.transcription_service.openai_client.chat.completions.create(
+                from openai import OpenAI
+                openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+                response = openai_client.chat.completions.create(
                     model="gpt-4o",
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -180,7 +182,7 @@ class SimpleDubbedAPI:
                 # Retry once with a shorter delay
                 try:
                     time.sleep(1)
-                    response = self.transcription_service.openai_client.chat.completions.create(
+                    response = openai_client.chat.completions.create(
                         model="gpt-4o",
                         messages=[
                             {"role": "system", "content": system_prompt},
