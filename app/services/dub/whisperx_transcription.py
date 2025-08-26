@@ -139,7 +139,7 @@ class WhisperXTranscriptionService:
             audio_utils = AudioUtils()
             
             # Use the exact vocal file path (already downloaded by dub_routes.py)
-            vocal_file_path = os.path.join(os.path.dirname(output_dir), f"vocals_{job_id}.wav")
+            vocal_file_path = os.path.join(output_dir, f"vocals_{job_id}.wav")
             
             if not os.path.exists(vocal_file_path):
                 raise Exception(f"Vocal file not found at expected path: {vocal_file_path}")

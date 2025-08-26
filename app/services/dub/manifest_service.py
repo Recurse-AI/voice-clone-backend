@@ -47,7 +47,6 @@ def build_manifest(job_id: str, transcript_id: Optional[str], target_language: s
                 "original_text": seg["original_text"],
                 "dubbed_text": seg["dubbed_text"],
                 "original_audio_file": seg.get("original_audio_file"),
-                "speaker_label": seg.get("speaker_label"),
             } for seg in dubbed_segments
         ]
     }
