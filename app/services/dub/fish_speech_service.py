@@ -60,43 +60,34 @@ class FishSpeechService:
         """Load Fish Speech TTSInferenceEngine for proper reference audio support"""
         try:
             if self.is_initialized:
-                logger.info("TTSInferenceEngine already loaded")
                 return True
             
-            checkpoint_path = Path(self.checkpoint_path)
-            if not checkpoint_path.exists():
-                logger.error(f"Checkpoint path not found: {checkpoint_path}")
+            # Quick validation
+            if not Path(self.checkpoint_path).exists() or not Path(self.decoder_checkpoint_path).exists():
+                logger.warning("Fish Speech models not found - voice cloning disabled")
                 return False
             
-            decoder_path = Path(self.decoder_checkpoint_path)
-            if not decoder_path.exists():
-                logger.error(f"Decoder checkpoint path not found: {decoder_path}")
-                return False
+            import warnings
+            warnings.filterwarnings("ignore")
             
-            logger.info(f"Loading Fish Speech TTSInferenceEngine...")
-            logger.info(f"LLAMA model: {checkpoint_path}")
-            logger.info(f"Decoder model: {decoder_path}")
-            
-            # Load LLAMA model queue (for text2semantic) with memory optimization
-            compile_model = settings.FISH_SPEECH_COMPILE if hasattr(settings, 'FISH_SPEECH_COMPILE') else False
+            # Load LLAMA model queue
+            compile_model = getattr(settings, 'FISH_SPEECH_COMPILE', False)
             
             self.llama_queue = launch_thread_safe_queue(
                 checkpoint_path=checkpoint_path,
                 device=self.device,
                 precision=self.precision,
-                compile=compile_model  # Disable compilation to save memory
+                compile=compile_model
             )
             
-            # Load VQ-GAN decoder model (for semantic2audio)
+            # Load VQ-GAN decoder model
             self.decoder_model = load_decoder_model(
                 config_name="modded_dac_vq",
                 checkpoint_path=decoder_path,
                 device=self.device,
             )
             
-            # Create TTSInferenceEngine (supports reference audio) with memory optimization
-            low_memory_mode = getattr(settings, 'FISH_SPEECH_LOW_MEMORY', True)
-            
+            # Create TTSInferenceEngine
             self.inference_engine = TTSInferenceEngine(
                 llama_queue=self.llama_queue,
                 decoder_model=self.decoder_model,
@@ -104,10 +95,7 @@ class FishSpeechService:
                 precision=self.precision,
             )
             
-            logger.info(f"🧠 Fish Speech memory mode: {'Low Memory' if low_memory_mode else 'Normal'}")
-            
-            logger.info("Warming up TTSInferenceEngine...")
-            # Dry run to avoid first-time latency
+            # Warm up with dry run
             list(self.inference_engine.inference(
                 ServeTTSRequest(
                     text="Hello world.",
@@ -118,7 +106,6 @@ class FishSpeechService:
             ))
             
             self.is_initialized = True
-            logger.info("Fish Speech TTSInferenceEngine loaded successfully")
             return True
             
         except Exception as e:

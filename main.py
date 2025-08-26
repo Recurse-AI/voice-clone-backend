@@ -44,26 +44,32 @@ async def lifespan(app: FastAPI):
     except Exception as cleanup_error:
         logger.warning(f"Failed to cleanup old directories: {cleanup_error}")
     
-    # Initialize Fish Speech service
+    # Initialize AI services
+    logger.info("🚀 Initializing AI services...")
+    
+    # Fish Speech initialization
     try:
         from app.services.dub.fish_speech_service import initialize_fish_speech
+        logger.info("🔄 Loading Fish Speech models...")
         if initialize_fish_speech():
-            logger.info("✅ Fish Speech service initialized successfully")
+            logger.info("✅ Fish Speech service ready")
         else:
-            logger.warning("⚠️ Fish Speech service initialization failed")
+            logger.info("⚠️ Fish Speech models not found - voice cloning disabled")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize Fish Speech: {e}")
+        logger.warning(f"⚠️ Fish Speech initialization failed: {str(e)[:100]}...")
     
-    # Initialize WhisperX transcription service
+    # WhisperX initialization  
     try:
-        logger.info("🚀 Initializing WhisperX transcription service with auto-download...")
         from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
+        logger.info("🔄 Loading WhisperX transcription models...")
         if initialize_whisperx_transcription():
-            logger.info("✅ WhisperX transcription service initialized successfully")
+            logger.info("✅ WhisperX service ready with preloaded models")
         else:
-            logger.warning("⚠️ WhisperX transcription service initialization failed")
+            logger.error("❌ WhisperX initialization failed")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize WhisperX transcription: {e}")
+        logger.error(f"❌ WhisperX error: {str(e)[:100]}...")
+    
+    logger.info("🎉 AI services initialization complete")
     
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     

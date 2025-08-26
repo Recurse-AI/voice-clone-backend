@@ -1,10 +1,23 @@
 import os
 import logging
+import warnings
 from logging.config import dictConfig
 
 def setup_logging():
     from app.config.settings import settings
     os.makedirs("app/logs", exist_ok=True)
+    
+    # Suppress third-party noise
+    warnings.filterwarnings("ignore")
+    
+    # Suppress verbose loggers
+    for logger_name in ["urllib3", "requests", "huggingface_hub", "transformers", 
+                       "speechbrain", "pyannote", "torchaudio", "matplotlib", "tqdm"]:
+        logging.getLogger(logger_name).setLevel(logging.ERROR)
+    
+    # Disable tqdm progress bars
+    import os
+    os.environ['TQDM_DISABLE'] = '1'
 
     logging_config = {
         "version": 1,
