@@ -307,7 +307,7 @@ async def start_audio_separation(
             raise HTTPException(status_code=400, detail="Upload job not found")
             
         upload_data = get_upload_status_data(job_id)
-        if upload_data.get("status") != "done":
+        if upload_data.get("status") not in ["done", "ready"]:
             raise HTTPException(status_code=400, detail=f"Upload not completed. Status: {upload_data.get('status', 'unknown')}")
         
         local_audio_path = upload_data.get("file_url")

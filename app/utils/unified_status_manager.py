@@ -163,7 +163,7 @@ class UnifiedStatusManager:
             ProcessingStatus.DOWNLOADING: 10,      # Download phase starts at 10%
             ProcessingStatus.SEPARATING: 30,       # Separation phase starts at 30% 
             ProcessingStatus.TRANSCRIBING: 45,     # Transcription phase starts at 45%
-            ProcessingStatus.PROCESSING: 45,       # Main processing starts at 45%
+            ProcessingStatus.PROCESSING: 5,        # Main processing starts at 5%
             ProcessingStatus.UPLOADING: 97,        # Upload phase starts at 97%
             ProcessingStatus.COMPLETED: 100,
             ProcessingStatus.AWAITING_REVIEW: 80,  # Review phase starts at 80%

@@ -61,7 +61,6 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
         temp_file_path = os.path.join(job_dir, original_filename)
         set_upload_status(job_id, {
             "status": "uploading",
-            "progress": 5,
             "message": "Saving uploaded file...",
             "original_filename": original_filename,
             "started_at": datetime.now(timezone.utc).isoformat()
@@ -93,7 +92,6 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
             )
         
         update_upload_status(job_id, {
-            "progress": 8,
             "message": f"File saved ({file_size // (1024*1024)} MB), starting background processing..."
         })
         background_tasks.add_task(process_file_background_only, job_id, temp_file_path, original_filename, file_size)
@@ -116,7 +114,6 @@ async def upload_file(video_file: UploadFile = File(...), background_tasks: Back
             if job_exists(job_id):
                 update_upload_status(job_id, {
                     "status": "failed",
-                    "progress": 0,
                     "message": f"File save failed: {str(e)}"
                 })
             from app.services.dub.audio_utils import AudioUtils
@@ -132,7 +129,6 @@ async def process_file_background_only(job_id: str, temp_file_path: str, filenam
     job_dir = os.path.dirname(temp_file_path)
     try:
         update_upload_status(job_id, {
-            "progress": 9, 
             "message": "Validating uploaded file...",
             "status": "uploading"
         })
@@ -140,7 +136,7 @@ async def process_file_background_only(job_id: str, temp_file_path: str, filenam
             raise Exception("Temporary file not found")
         if file_size == 0:
             raise Exception("Uploaded file is empty")
-        update_upload_status(job_id, {"progress": 9, "message": "Checking file format...", "status": "uploading"})
+        update_upload_status(job_id, {"message": "Checking file format...", "status": "uploading"})
         
         # Import audio formats from settings
         from app.config.settings import settings
@@ -154,7 +150,6 @@ async def process_file_background_only(job_id: str, temp_file_path: str, filenam
             audio_formats = ', '.join(sorted(allowed_audio_extensions))
             update_upload_status(job_id, {
                 "status": "failed", 
-                "progress": 0, 
                 "message": f"Unsupported file format. Allowed video: {video_formats}. Allowed audio: {audio_formats}"
             })
             if os.path.exists(temp_file_path):
@@ -162,39 +157,40 @@ async def process_file_background_only(job_id: str, temp_file_path: str, filenam
             AudioUtils.remove_temp_dir(folder_path=job_dir)
             return
         update_upload_status(job_id, {
-            "progress": 10,
-            "message": "File uploaded successfully. You can now start dubbing.",
-            "status": "done",
-            "file_url": temp_file_path
+            "message": "File uploaded successfully. Ready for processing.",
+            "status": "ready",
+            "file_url": temp_file_path,
+            "ready_for_processing": True
         })
     except Exception as e:
         update_upload_status(job_id, {
             "status": "failed",
-            "progress": 0,
             "message": f"Processing failed: {str(e)}"
         })
         AudioUtils.remove_temp_dir(folder_path=job_dir)
 
 @router.get("/upload-status/{job_id}", response_model=UploadStatusResponse)
 async def get_upload_status(job_id: str):
-    """Get upload progress status"""
+    """Get upload status without progress tracking"""
     try:
         if not job_exists(job_id):
             raise HTTPException(status_code=404, detail="Upload ID not found")
         data = get_upload_status_data(job_id)
-        # status: pending, uploading, done, failed
+        # status: uploading, ready, failed
         status = data.get("status", "pending")
-        progress = data.get("progress", 0)
         message = data.get("message", "")
         original_filename = data.get("original_filename")
         file_url = data.get("file_url")
+        ready_for_processing = data.get("ready_for_processing", False)
+        
         return {
             "job_id": job_id,
             "status": status,
-            "progress": progress,
+            "progress": 0,  # Always 0 during upload phase
             "message": message,
             "original_filename": original_filename,
-            "file_url": file_url
+            "file_url": file_url,
+            "ready_for_processing": ready_for_processing
         }
     except HTTPException:
         raise
