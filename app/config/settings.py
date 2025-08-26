@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     # HuggingFace Configuration
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
     
+    # WhisperX Configuration
+    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "large-v2")  # Options: tiny, base, small, medium, large-v2, large-v3
+    WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "auto")  # auto, float16, int8
+    WHISPER_PRELOAD_LANGUAGES: list = os.getenv("WHISPER_PRELOAD_LANGUAGES", "en,es,fr,de,it,pt,ru,ja,ko,zh,hi,ar,bn").split(",")
+    
     # AssemblyAI Configuration
     # ASSEMBLYAI_API_KEY  # No longer needed - using WhisperX: str = os.getenv("# ASSEMBLYAI_API_KEY  # No longer needed - using WhisperX", "")
     

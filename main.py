@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI):
     
     # Initialize WhisperX transcription service
     try:
+        logger.info("🚀 Initializing WhisperX transcription service with auto-download...")
         from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
         if initialize_whisperx_transcription():
             logger.info("✅ WhisperX transcription service initialized successfully")

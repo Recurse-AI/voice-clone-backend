@@ -22,38 +22,62 @@ class WhisperXTranscriptionService:
         """Initialize WhisperX service"""
         self.whisperx_model = None
         self.is_initialized = False
+        self.preloaded_align_models = {}  # Cache for language alignment models
+        
+        # Get configuration from settings
+        self.model_size = settings.WHISPER_MODEL_SIZE
+        self.preload_languages = settings.WHISPER_PRELOAD_LANGUAGES
         
         # Device and compute type setup
         if torch.cuda.is_available():
             self.device = "cuda"
-            self.compute_type = "float16"
-            logger.info(f"WhisperX service initialized on GPU (CUDA) with float16 precision")
+            # Use configured compute type or auto-detect
+            if settings.WHISPER_COMPUTE_TYPE == "auto":
+                self.compute_type = "float16"
+            else:
+                self.compute_type = settings.WHISPER_COMPUTE_TYPE
+            logger.info(f"WhisperX service initialized on GPU (CUDA) with {self.compute_type} precision")
         else:
             self.device = "cpu"
-            self.compute_type = "int8"
-            logger.info(f"WhisperX service initialized on CPU with int8 precision")
+            # Use configured compute type or auto-detect
+            if settings.WHISPER_COMPUTE_TYPE == "auto":
+                self.compute_type = "int8"
+            else:
+                self.compute_type = settings.WHISPER_COMPUTE_TYPE
+            logger.info(f"WhisperX service initialized on CPU with {self.compute_type} precision")
+        
+        logger.info(f"WhisperX configured - Model: {self.model_size}, Preload languages: {self.preload_languages}")
     
     def load_model(self) -> bool:
-        """Load WhisperX model with auto-download"""
+        """Load WhisperX model with auto-download and language model preloading"""
         try:
             if self.is_initialized:
                 logger.info("WhisperX model already loaded")
                 return True
             
             import whisperx
-            logger.info(f"Loading WhisperX model (auto-downloading if needed)...")
+            logger.info(f"🔄 Loading WhisperX model '{self.model_size}' (auto-downloading if needed)...")
+            
+            # Load main Whisper model
             self.whisperx_model = whisperx.load_model(
-                "large-v2", 
+                self.model_size, 
                 device=self.device,
                 compute_type=self.compute_type
             )
             
+            logger.info(f"✅ WhisperX model '{self.model_size}' loaded successfully")
+            
+            # Preload alignment models for common languages
+            if self.preload_languages:
+                logger.info(f"🔄 Preloading alignment models for languages: {', '.join(self.preload_languages)}")
+                self._preload_alignment_models()
+            
             self.is_initialized = True
-            logger.info("WhisperX model loaded successfully")
+            logger.info("🎉 WhisperX service fully initialized with all models loaded")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to load WhisperX model: {e}")
+            logger.error(f"❌ Failed to load WhisperX model: {e}")
             return False
     
     def _ensure_model_loaded(self):
@@ -227,10 +251,7 @@ class WhisperXTranscriptionService:
             
             # Word-level alignment for better timestamps
             try:
-                model_a, metadata = whisperx.load_align_model(
-                    language_code=used_language, 
-                    device=self.device
-                )
+                model_a, metadata = self._get_alignment_model(used_language)
                 aligned_result = whisperx.align(
                     result["segments"], 
                     model_a, 
@@ -239,13 +260,13 @@ class WhisperXTranscriptionService:
                     self.device,
                     return_char_alignments=False
                 )
-                logger.info("Word-level alignment completed")
+                logger.info(f"✅ Word-level alignment completed for '{used_language}'")
                 return {
                     "segments": aligned_result.get("segments", result.get("segments", [])),
                     "language": used_language
                 }
             except Exception as e:
-                logger.warning(f"Alignment failed, using base transcription: {e}")
+                logger.warning(f"⚠️ Alignment failed for '{used_language}', using base transcription: {e}")
                 return {
                     "segments": result.get("segments", []),
                     "language": used_language
@@ -254,6 +275,64 @@ class WhisperXTranscriptionService:
         except Exception as e:
             logger.error(f"WhisperX transcription failed: {e}")
             raise Exception(f"Transcription failed: {str(e)}")
+    
+    def _preload_alignment_models(self):
+        """Preload alignment models for common languages to avoid runtime delays"""
+        try:
+            import whisperx
+            
+            for lang_code in self.preload_languages:
+                try:
+                    # Clean language code
+                    clean_lang = lang_code.strip().lower()
+                    if not clean_lang:
+                        continue
+                    
+                    logger.info(f"🔄 Preloading alignment model for language: {clean_lang}")
+                    model_a, metadata = whisperx.load_align_model(
+                        language_code=clean_lang, 
+                        device=self.device
+                    )
+                    
+                    # Cache the models
+                    self.preloaded_align_models[clean_lang] = {
+                        'model': model_a,
+                        'metadata': metadata
+                    }
+                    
+                    logger.info(f"✅ Alignment model for '{clean_lang}' preloaded successfully")
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to preload alignment model for '{clean_lang}': {e}")
+                    continue
+            
+            logger.info(f"✅ Preloaded {len(self.preloaded_align_models)} alignment models")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to preload alignment models: {e}")
+    
+    def _get_alignment_model(self, language_code: str):
+        """Get alignment model (from cache or load on demand)"""
+        try:
+            import whisperx
+            
+            # Check if we have it preloaded
+            if language_code in self.preloaded_align_models:
+                logger.info(f"🚀 Using preloaded alignment model for '{language_code}'")
+                cached = self.preloaded_align_models[language_code]
+                return cached['model'], cached['metadata']
+            
+            # Load on demand if not preloaded
+            logger.info(f"🔄 Loading alignment model for '{language_code}' on demand...")
+            model_a, metadata = whisperx.load_align_model(
+                language_code=language_code, 
+                device=self.device
+            )
+            return model_a, metadata
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to get alignment model for '{language_code}': {e}")
+            raise
     
     def _convert_to_sentences_format(self, whisperx_segments: List[Dict]) -> List[Dict[str, Any]]:
         """Convert WhisperX segments to simple sentence format"""
@@ -302,7 +381,25 @@ def cleanup_whisperx_transcription():
     global _whisperx_service
     try:
         if _whisperx_service:
+            # Clean up preloaded models
+            if hasattr(_whisperx_service, 'preloaded_align_models'):
+                for lang_code in list(_whisperx_service.preloaded_align_models.keys()):
+                    try:
+                        del _whisperx_service.preloaded_align_models[lang_code]
+                    except Exception as e:
+                        logger.warning(f"Failed to cleanup alignment model for {lang_code}: {e}")
+                _whisperx_service.preloaded_align_models.clear()
+            
+            # Clean up main model
+            if hasattr(_whisperx_service, 'whisperx_model') and _whisperx_service.whisperx_model:
+                del _whisperx_service.whisperx_model
+                _whisperx_service.whisperx_model = None
+            
+            # Clear CUDA cache if available
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
             _whisperx_service = None
-            logger.info("WhisperX transcription service cleaned up")
+            logger.info("✅ WhisperX transcription service cleaned up successfully")
     except Exception as e:
-        logger.error(f"Error during WhisperX cleanup: {e}")
+        logger.error(f"❌ Error during WhisperX cleanup: {e}")
