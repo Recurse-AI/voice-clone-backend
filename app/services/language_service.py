@@ -49,6 +49,9 @@ class LanguageService:
         "ko", "pl", "pt", "ru", "es", "tr", "uk", "vi"
     }
     
+    # Accepted tokens that mean: let the system auto-detect source language
+    AUTO_DETECT_TOKENS: Set[str] = {"auto", "auto_detect", "auto-detect", "auto detect"}
+    
     @classmethod
     def normalize_language_input(cls, language: str) -> str:
         """
@@ -59,6 +62,10 @@ class LanguageService:
             return "en"  # Default to English
         
         language_lower = language.lower().strip()
+        
+        # Handle auto-detect sentinel values
+        if language_lower in cls.AUTO_DETECT_TOKENS:
+            return "auto_detect"
         
         # Direct mapping from name to code
         if language_lower in cls.LANGUAGE_NAME_TO_CODE:
@@ -90,8 +97,11 @@ class LanguageService:
     def is_transcription_supported(cls, language: str) -> bool:
         """Check if a language is supported for transcription (WhisperX)."""
         if not language:
-            return False  # Language required for WhisperX
+            return False
         normalized = cls.normalize_language_input(language)
+        # Allow auto-detect as a valid option for transcription
+        if normalized == "auto_detect":
+            return True
         return normalized in cls.TRANSCRIPTION_SUPPORTED_CODES
     
     @classmethod
@@ -104,12 +114,16 @@ class LanguageService:
     def get_language_code_for_transcription(cls, language: str) -> str:
         """
         Get language code for WhisperX transcription.
-        Language is required - no auto-detect.
+        Accepts 'auto_detect' to enable automatic language detection.
         """
         if not language:
-            raise ValueError("Language is required for WhisperX transcription")
+            raise ValueError("Language is required for WhisperX transcription (use 'auto_detect' to auto-detect)")
         
         normalized = cls.normalize_language_input(language)
+        
+        # Allow auto-detect to pass through
+        if normalized == "auto_detect":
+            return normalized
         
         if normalized not in cls.TRANSCRIPTION_SUPPORTED_CODES:
             raise ValueError(f"Language '{language}' not supported for transcription")

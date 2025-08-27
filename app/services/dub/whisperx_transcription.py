@@ -31,7 +31,8 @@ class WhisperXTranscriptionService:
 
         # Get configuration from settings
         self.model_size = settings.WHISPER_MODEL_SIZE
-        self.preload_languages = settings.WHISPER_PRELOAD_LANGUAGES
+        # No static preloading; alignment models load on demand only
+        self.alignment_device = settings.WHISPER_ALIGNMENT_DEVICE
         
         # Device and compute type setup
         if torch.cuda.is_available():
@@ -49,7 +50,7 @@ class WhisperXTranscriptionService:
                 self.compute_type = settings.WHISPER_COMPUTE_TYPE
             logger.info(f"WhisperX service initialized on CPU with {self.compute_type} precision")
         
-        logger.info(f"WhisperX configured - Model: {self.model_size}, Preload languages: {self.preload_languages}")
+        logger.info(f"WhisperX configured - Model: {self.model_size}")
     
     def load_model(self) -> bool:
         """Load WhisperX model with auto-download and aggressive memory management"""
@@ -105,13 +106,7 @@ class WhisperXTranscriptionService:
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
             
-            # Skip Fish Speech cleanup to avoid unwanted reloading
-            # try:
-            #     from app.services.dub.fish_speech_service import fish_speech_service
-            #     if fish_speech_service and hasattr(fish_speech_service, 'is_initialized') and fish_speech_service.is_initialized:
-            #         fish_speech_service.cleanup()
-            # except Exception:
-            #     pass
+           
             
             # Force garbage collection
             import gc
@@ -152,14 +147,14 @@ class WhisperXTranscriptionService:
             # Ensure models are loaded
             self._ensure_model_loaded()
             
-            # Normalize language code
+            # Normalize language code (supports 'auto_detect')
             language_code = self._normalize_language_code(language)
             
             # Transcribe audio using WhisperX
             transcription_result = self._transcribe_with_whisperx(audio_path, language_code, job_id)
             
             # Convert to sentences format
-            sentences = self._convert_to_sentences_format(transcription_result["segments"])
+            sentences = self._convert_to_sentences_format(transcription_result["segments"]) 
             
             # Calculate audio duration
             import librosa
@@ -287,9 +282,13 @@ class WhisperXTranscriptionService:
                 if is_job_cancelled(job_id):
                     raise Exception("Job cancelled by user")
             
-            # Transcribe with specified language
-            logger.info(f"Transcribing with language: {language_code}")
-            result = self.whisperx_model.transcribe(audio, language=language_code)
+            # Transcribe with specified language or auto-detect
+            if language_code == "auto_detect":
+                logger.info("Transcribing with auto language detection")
+                result = self.whisperx_model.transcribe(audio)
+            else:
+                logger.info(f"Transcribing with language: {language_code}")
+                result = self.whisperx_model.transcribe(audio, language=language_code)
             
             used_language = result.get("language", language_code)
             logger.info(f"Used language: {used_language}")
@@ -302,7 +301,7 @@ class WhisperXTranscriptionService:
                     model_a, 
                     metadata, 
                     audio, 
-                    self.device,
+                    self.alignment_device,
                     return_char_alignments=False
                 )
                 logger.info(f"✅ Word-level alignment completed for '{used_language}'")
@@ -321,37 +320,7 @@ class WhisperXTranscriptionService:
             logger.error(f"WhisperX transcription failed: {e}")
             raise Exception(f"Transcription failed: {str(e)}")
     
-    def preload_alignment_models(self) -> bool:
-        """Preload alignment models for configured languages"""
-        if not self.is_initialized:
-            return False
-            
-        try:
-            import whisperx
-            import warnings
-            
-            # Suppress download progress bars and warnings
-            warnings.filterwarnings("ignore")
-            
-            for lang_code in self.preload_languages:
-                clean_lang = lang_code.strip().lower()
-                if not clean_lang:
-                    continue
-                    
-                try:
-                    model_a, metadata = whisperx.load_align_model(
-                        language_code=clean_lang, device=self.device
-                    )
-                    self.preloaded_align_models[clean_lang] = {
-                        'model': model_a, 'metadata': metadata
-                    }
-                except Exception:
-                    continue
-            
-            return len(self.preloaded_align_models) > 0
-            
-        except Exception:
-            return False
+    # Preloading removed: alignment models are loaded on-demand only
     
     def _get_alignment_model(self, language_code: str):
         """Get alignment model (from cache or load on demand)"""
@@ -368,7 +337,7 @@ class WhisperXTranscriptionService:
             logger.info(f"🔄 Loading alignment model for '{language_code}' on demand...")
             model_a, metadata = whisperx.load_align_model(
                 language_code=language_code, 
-                device=self.device
+                device=self.alignment_device
             )
             return model_a, metadata
             
@@ -376,7 +345,7 @@ class WhisperXTranscriptionService:
             logger.error(f"❌ Failed to get alignment model for '{language_code}': {e}")
             raise
     
-    def _convert_to_sentences_format(self, whisperx_segments: List[Dict]) -> List[Dict[str, Any]]:
+    def _convert_to_sentences_format(self, whisperx_segments: List[Dict], default_language: Optional[str] = None) -> List[Dict[str, Any]]:
         """Convert WhisperX segments to simple sentence format"""
         sentences = []
         
@@ -387,6 +356,15 @@ class WhisperXTranscriptionService:
                 "end": int(segment.get("end", 0) * 1000),
                 "id": f"sentence_{i}"
             }
+            # Attach optional fields if present (language, confidence/logprob)
+            if "language" in segment:
+                sentence["language"] = segment.get("language")
+            elif default_language:
+                sentence["language"] = default_language
+            if "avg_logprob" in segment:
+                sentence["avg_logprob"] = segment.get("avg_logprob")
+            if "confidence" in segment:
+                sentence["confidence"] = segment.get("confidence")
             
             if sentence["text"]:
                 sentences.append(sentence)
@@ -417,10 +395,6 @@ def initialize_whisperx_transcription() -> bool:
         # Load core model
         if not service.load_model():
             return False
-        
-        # Preload alignment models
-        if not service.preload_alignment_models():
-            logger.warning("Alignment models preloading failed - will load on demand")
         
         return True
         

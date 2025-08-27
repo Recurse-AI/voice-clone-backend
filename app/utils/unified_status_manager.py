@@ -163,7 +163,7 @@ class UnifiedStatusManager:
             ProcessingStatus.DOWNLOADING: 10,      # Download phase starts at 10%
             ProcessingStatus.SEPARATING: 30,       # Separation phase starts at 30% 
             ProcessingStatus.TRANSCRIBING: 45,     # Transcription phase starts at 45%
-            ProcessingStatus.PROCESSING: 5,        # Main processing starts at 5%
+            ProcessingStatus.PROCESSING: 60,       # Processing phase starts at 60% (dubbing + voice cloning)
             ProcessingStatus.UPLOADING: 97,        # Upload phase starts at 97%
             ProcessingStatus.COMPLETED: 100,
             ProcessingStatus.AWAITING_REVIEW: 80,  # Review phase starts at 80%
@@ -494,9 +494,17 @@ class UnifiedStatusManager:
         # Clamp to 0-100 range
         progress = max(0, min(100, progress))
         
-        # Apply status-based floor
-        status_floor = self._progress_floors.get(status, 0)
-        progress = max(progress, status_floor)
+        # Special handling for reviewing→processing transition (resume after review)
+        if (current_data and 
+            current_data.status == ProcessingStatus.REVIEWING and 
+            status == ProcessingStatus.PROCESSING and
+            current_data.progress >= 80):
+            # Maintain current progress when resuming processing after review
+            progress = max(progress, current_data.progress)
+        else:
+            # Apply status-based floor
+            status_floor = self._progress_floors.get(status, 0)
+            progress = max(progress, status_floor)
         
         # Monotonic protection (never go backwards except for valid cases)
         if current_data and current_data.progress > progress:

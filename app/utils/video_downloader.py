@@ -50,7 +50,8 @@ class VideoDownloadService:
         
         # If no specific requirements, use simple "best" 
         if not resolution and not max_filesize and not format_preference:
-            return "best"
+            # Prefer merged bestvideo+bestaudio, fallback to best
+            return "bv*+ba/best"
         
         # Build a simple format chain with only essential options
         format_options = []
@@ -59,18 +60,20 @@ class VideoDownloadService:
         if resolution:
             res_num = resolution.replace("p", "")
             if max_filesize:
-                format_options.append(f"best[height<={res_num}][filesize<{max_filesize}]")
-            format_options.append(f"best[height<={res_num}]")
+                # Prefer merged formats at target resolution
+                format_options.append(f"(bv*[height<={res_num}]+ba/best[height<={res_num}])[filesize<{max_filesize}]")
+            format_options.append(f"(bv*[height<={res_num}]+ba)/best[height<={res_num}]")
         
         if format_preference:
             if max_filesize:
-                format_options.append(f"best[ext={format_preference}][filesize<{max_filesize}]")
-            format_options.append(f"best[ext={format_preference}]")
+                format_options.append(f"(bv*[ext={format_preference}]+ba/best[ext={format_preference}])[filesize<{max_filesize}]")
+            format_options.append(f"(bv*[ext={format_preference}]+ba)/best[ext={format_preference}]")
         
         if max_filesize:
-            format_options.append(f"best[filesize<{max_filesize}]")
+            format_options.append(f"(bv*+ba/best)[filesize<{max_filesize}]")
         
         # Always add reliable fallbacks
+        format_options.append("bv*+ba/best")
         format_options.append("best")
         format_options.append("worst")
         
@@ -214,6 +217,12 @@ class VideoDownloadService:
                 "embed_subs": include_subtitles,
                 "writesubtitles": include_subtitles,
                 "writeautomaticsub": include_subtitles,
+                # Robustness for YouTube/Shorts and HLS
+                "merge_output_format": "mp4",
+                "hls_prefer_native": True,
+                "geo_bypass": True,
+                "source_address": "0.0.0.0",  # force IPv4 in some environments
+                "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
             }
             
             # Download the file with enhanced error handling
@@ -225,23 +234,29 @@ class VideoDownloadService:
                 
                 # Handle specific yt-dlp errors with helpful messages
                 if "Requested format is not available" in error_msg:
-                    # Try one more time with just "best" as a final fallback
-                    logger.info("Format not available, trying simple 'best' fallback")
+                    # Try merged video+audio first, then simple best
+                    logger.info("Format not available, trying merged 'bv*+ba/best' fallback")
                     try:
-                        ydl_opts["format"] = "best"
+                        ydl_opts["format"] = "bv*+ba/best"
                         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                             ydl.download([url])
                     except Exception:
-                        return {
-                            "success": False,
-                            "error": "No compatible video formats found for download. This video may be restricted or in an unsupported format.",
-                            "video_info": {
-                                "title": video_title,
-                                "duration": video_duration,
-                                "uploader": video_uploader
-                            },
-                            "available_formats": format_info.get("available_formats", [])[:5]
-                        }
+                        logger.info("Merged fallback failed, trying simple 'best'")
+                        try:
+                            ydl_opts["format"] = "best"
+                            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                                ydl.download([url])
+                        except Exception:
+                            return {
+                                "success": False,
+                                "error": "No compatible video formats found for download. This video may be restricted or in an unsupported format.",
+                                "video_info": {
+                                    "title": video_title,
+                                    "duration": video_duration,
+                                    "uploader": video_uploader
+                                },
+                                "available_formats": format_info.get("available_formats", [])[:5]
+                            }
                 elif "Video unavailable" in error_msg:
                     return {"success": False, "error": "Video is unavailable or private"}
                 elif "Sign in to confirm your age" in error_msg:

@@ -83,7 +83,8 @@ class Settings(BaseSettings):
     # WhisperX Configuration
     WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "large-v2")  # Options: tiny, base, small, medium, large-v2, large-v3
     WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "auto")  # auto, float16, int8
-    WHISPER_PRELOAD_LANGUAGES: list = os.getenv("WHISPER_PRELOAD_LANGUAGES", "en,es,fr,de,it,hi,zh").split(",")
+    # Where to run alignment models: 'cpu' saves VRAM, 'cuda' is faster but uses VRAM
+    WHISPER_ALIGNMENT_DEVICE: str = os.getenv("WHISPER_ALIGNMENT_DEVICE", "cpu")  # cpu | cuda
     
     # GPU Memory Optimization
     PYTORCH_CUDA_ALLOC_CONF: str = os.getenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
