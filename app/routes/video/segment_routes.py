@@ -118,47 +118,17 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     
     # If custom prompt is provided, use OpenAI to regenerate text
     if request_body.prompt and dubbed_text:
-        try:
-            from app.services.dub.assembly_transcription import TranscriptionService
-            from app.config.settings import settings
-            from openai import OpenAI
-            
-            openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
-            
-            target_lang = request_body.target_language or manifest.get("target_language", "Bengali")
-            
-            system_prompt = (
-                f"You are a professional dubbing script writer. "
-                f"Rewrite the given text in {target_lang} according to the specific instructions provided. "
-                f"Keep the meaning accurate but adapt the style based on the prompt. "
-                f"Return only the rewritten text, nothing else."
-            )
-            
-            user_prompt = (
-                f"Instructions: {request_body.prompt}\n"
-                f"Original text: {dubbed_text}\n"
-                f"Language: {target_lang}\n"
-                f"Rewrite this text following the instructions:"
-            )
-            
-            response = openai_client.chat.completions.create(
-                model="gpt-4o",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.7,
-                max_tokens=500
-            )
-            
-            # Use OpenAI generated text
-            dubbed_text = response.choices[0].message.content.strip()
-            
-        except Exception as e:
-            # If OpenAI fails, fallback to original logic
-            logger.warning(f"OpenAI regeneration failed: {e}, using fallback")
-            if request_body.prompt:
-                dubbed_text = f"[{request_body.prompt}] " + dubbed_text
+        from app.services.openai_service import get_openai_service
+        service = get_openai_service()
+        
+        target_lang = request_body.target_language or manifest.get("target_language", "Bengali")
+        regenerated_text = service.regenerate_text_with_prompt(dubbed_text, target_lang, request_body.prompt)
+        
+        # Use regenerated text if successful, otherwise fallback
+        if not regenerated_text.startswith("[Error]"):
+            dubbed_text = regenerated_text
+        else:
+            dubbed_text = f"[{request_body.prompt}] " + dubbed_text
     
     # Apply tone if provided
     if request_body.tone and dubbed_text:

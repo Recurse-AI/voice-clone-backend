@@ -136,72 +136,14 @@ class SimpleDubbedAPI:
         return (completed % max(1, total // 10) == 0 or completed == total or completed <= 3)
     
     def dub_text_batch(self, segments: list, target_language: str = "English", batch_size: int = 10, job_id: str = None) -> list:
-        all_dubbed = []
-        for i in range(0, len(segments), batch_size):
-            if job_id and self._check_cancellation(job_id):
-                return []
-                
-            batch = segments[i:i+batch_size]
-            prompt_lines = []
-            for idx, seg in enumerate(batch):
-                prompt_lines.append(f"[{idx+1}] (Target duration: {seg['duration_ms']} ms) {seg['text']}")
-            joined_texts = "\n".join(prompt_lines)
-            
-            system_prompt = (
-                f"You are assisting in creating dubbing scripts for the Fish Audio OpenAudio-S1 TTS model.\n"
-                f"Translate each input segment into {target_language} (keeping meaning accurate).\n"
-                f"Constraints for every translated segment:\n"
-                f"1. Try to match the target duration (given in ms) — if you need to lengthen, prefer inserting extra *spaces* between words rather than adding new words.\n"
-                f"2. Use the correct alphabet/script for {target_language}; never mix English letters unless the original word is a proper noun or acronym.\n"
-                f"3. You MAY optionally use the Fish-Audio emotion/tone markers like (excited), (sad), (whispering) etc. **only** when that better reflects the original intent. Place the marker at the very beginning of the sentence.\n"
-                f"4. Do NOT add any explanatory text, numbering, or comments — only the final translated sentences.\n"
-                f"5. Return the translated segments in the same order, separated by ||| on a single line."
-            )
-            
-            user_prompt = (
-                "Translate each segment below. Return only the translated segments, in order, separated by |||.\n"
-                "Segments (with target duration):\n"
-                f"{joined_texts}"
-            )
-            try:
-                from openai import OpenAI
-                openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
-                response = openai_client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
-                    temperature=0.3,
-                    max_tokens=2048
-                )
-                output = response.choices[0].message.content.strip()
-                all_dubbed.extend([seg.strip() for seg in output.split("|||")])
-            except ConnectionResetError as e:
-                logger.warning(f"Connection reset error during OpenAI call, retrying batch {i//batch_size + 1}: {e}")
-                # Retry once with a shorter delay
-                try:
-                    time.sleep(1)
-                    response = openai_client.chat.completions.create(
-                        model="gpt-4o",
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        temperature=0.3,
-                        max_tokens=2048
-                    )
-                    output = response.choices[0].message.content.strip()
-                    all_dubbed.extend([seg.strip() for seg in output.split("|||")])
-                except Exception as retry_error:
-                    logger.error(f"Failed to process batch {i//batch_size + 1} after retry: {retry_error}")
-                    # Add placeholder translations to maintain segment count
-                    all_dubbed.extend([f"[Translation Error for segment {j+1}]" for j in range(len(batch))])
-            except Exception as e:
-                logger.error(f"Error processing batch {i//batch_size + 1}: {e}")
-                # Add placeholder translations to maintain segment count
-                all_dubbed.extend([f"[Translation Error for segment {j+1}]" for j in range(len(batch))])
-        return all_dubbed
+        """Use dedicated OpenAI service for text dubbing"""
+        if job_id and self._check_cancellation(job_id):
+            return []
+        
+        from app.services.openai_service import get_openai_service
+        openai_service = get_openai_service()
+        
+        return openai_service.translate_dubbing_batch(segments, target_language, batch_size)
 
     def _setup_processing_directory(self, job_id: str, output_dir: str = None) -> str:
         """Setup and ensure processing directory exists."""

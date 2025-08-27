@@ -28,6 +28,7 @@ class WhisperXTranscriptionService:
         self.is_initialized = False
         self.preloaded_align_models = {}  # Cache for language alignment models
         
+
         # Get configuration from settings
         self.model_size = settings.WHISPER_MODEL_SIZE
         self.preload_languages = settings.WHISPER_PRELOAD_LANGUAGES
@@ -72,10 +73,9 @@ class WhisperXTranscriptionService:
             
         except Exception as e:
             logger.error(f"❌ Failed to load WhisperX model: {e}")
-            # Try CPU fallback if GPU fails
+            # No CPU fallback - GPU required
             if self.device == "cuda":
-                logger.warning("🔄 GPU failed, trying CPU fallback...")
-                return self._try_cpu_fallback()
+                logger.error("❌ GPU failed and CPU fallback is disabled")
             return False
     
     def _ensure_model_loaded(self):
@@ -105,13 +105,13 @@ class WhisperXTranscriptionService:
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
             
-            # Try to temporarily unload Fish Speech if it's loaded
-            try:
-                from app.services.dub.fish_speech_service import fish_speech_service
-                if fish_speech_service and hasattr(fish_speech_service, 'is_initialized') and fish_speech_service.is_initialized:
-                    fish_speech_service.cleanup()
-            except Exception:
-                pass
+            # Skip Fish Speech cleanup to avoid unwanted reloading
+            # try:
+            #     from app.services.dub.fish_speech_service import fish_speech_service
+            #     if fish_speech_service and hasattr(fish_speech_service, 'is_initialized') and fish_speech_service.is_initialized:
+            #         fish_speech_service.cleanup()
+            # except Exception:
+            #     pass
             
             # Force garbage collection
             import gc
@@ -122,32 +122,7 @@ class WhisperXTranscriptionService:
         except Exception:
             pass
     
-    def _try_cpu_fallback(self) -> bool:
-        """Try loading WhisperX on CPU if GPU fails"""
-        try:
-            logger.info("🔄 Attempting CPU fallback for WhisperX...")
-            
-            # Switch to CPU settings
-            self.device = "cpu"
-            self.compute_type = "int8"
-            
-            import whisperx
-            logger.info(f"🔄 Loading WhisperX model '{self.model_size}' on CPU...")
-            
-            self.whisperx_model = whisperx.load_model(
-                self.model_size, 
-                device=self.device,
-                compute_type=self.compute_type
-            )
-            
-            self.is_initialized = True
-            logger.info("✅ WhisperX successfully loaded on CPU (slower but stable)")
-            return True
-            
-        except Exception as e:
-            logger.error(f"❌ CPU fallback also failed: {e}")
-            return False
-    
+
 
     def transcribe_audio_file(self, audio_path: str, language: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -206,15 +181,15 @@ class WhisperXTranscriptionService:
             
             logger.info(f"Transcription completed in {processing_time:.2f}s - {len(sentences)} sentences")
             
-            # Clean up GPU memory after transcription
-            self._cleanup_gpu_memory()
+            # Skip GPU cleanup to avoid unnecessary memory operations
+            # self._cleanup_gpu_memory()  # DISABLED per user request
             
             return result
             
         except Exception as e:
             logger.error(f"WhisperX transcription failed: {e}")
-            # Clean up GPU memory even on failure
-            self._cleanup_gpu_memory()
+            # Skip GPU cleanup even on failure to avoid unnecessary operations
+            # self._cleanup_gpu_memory()  # DISABLED per user request
             
             return {
                 "success": False,

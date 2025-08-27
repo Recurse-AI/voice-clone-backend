@@ -69,6 +69,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ WhisperX error: {str(e)[:100]}...")
     
+    # OpenAI service initialization
+    try:
+        from app.services.openai_service import initialize_openai_service
+        logger.info("🔄 Initializing OpenAI service...")
+        if initialize_openai_service():
+            logger.info("✅ OpenAI service ready")
+        else:
+            logger.warning("⚠️ OpenAI service unavailable - translation features disabled")
+    except Exception as e:
+        logger.warning(f"⚠️ OpenAI initialization failed: {str(e)[:100]}...")
+    
     logger.info("🎉 AI services initialization complete")
     
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
