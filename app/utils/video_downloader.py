@@ -34,51 +34,60 @@ class VideoDownloadService:
     # ---------------------------------------------------------------------
     
     def _build_quality_format(
-        self, 
-        quality: str | None, 
-        resolution: str | None, 
+        self,
+        quality: str | None,
+        resolution: str | None,
         max_filesize: str | None,
-        format_preference: str | None, 
-        audio_quality: str | None, 
+        format_preference: str | None,
+        audio_quality: str | None,
         prefer_free_formats: bool
     ) -> str:
-        """Build simplified and robust yt-dlp format selector."""
-        
+        """Build simplified and robust yt-dlp format selector with better fallback logic."""
+
         # Handle common quality presets with simple, reliable selectors
         if quality == "worst":
             return "worst"
-        
-        # If no specific requirements, use simple "best" 
+
+        # If no specific requirements, use simple "best" with comprehensive fallbacks
         if not resolution and not max_filesize and not format_preference:
-            # Prefer merged bestvideo+bestaudio, fallback to best
-            return "bv*+ba/best"
-        
-        # Build a simple format chain with only essential options
+            # Prefer merged bestvideo+bestaudio, with multiple fallbacks
+            return "bv*+ba/best/bv+ba/bestvideo+bestaudio/best[height<=1080]/best[height<=720]/worst[height>=360]"
+
+        # Build a comprehensive format chain with essential options
         format_options = []
-        
-        # Try user preferences first, but keep it simple
+
+        # Try user preferences first, with better error handling
         if resolution:
             res_num = resolution.replace("p", "")
-            if max_filesize:
-                # Prefer merged formats at target resolution
-                format_options.append(f"(bv*[height<={res_num}]+ba/best[height<={res_num}])[filesize<{max_filesize}]")
-            format_options.append(f"(bv*[height<={res_num}]+ba)/best[height<={res_num}]")
-        
+            try:
+                res_int = int(res_num)
+                if max_filesize:
+                    # Prefer merged formats at target resolution with size limit
+                    format_options.append(f"(bv*[height<={res_int}]+ba/best[height<={res_int}])[filesize<{max_filesize}]")
+                format_options.append(f"(bv*[height<={res_int}]+ba)/best[height<={res_int}]")
+            except ValueError:
+                logger.warning(f"Invalid resolution format: {resolution}")
+
         if format_preference:
             if max_filesize:
                 format_options.append(f"(bv*[ext={format_preference}]+ba/best[ext={format_preference}])[filesize<{max_filesize}]")
             format_options.append(f"(bv*[ext={format_preference}]+ba)/best[ext={format_preference}]")
-        
+
         if max_filesize:
             format_options.append(f"(bv*+ba/best)[filesize<{max_filesize}]")
-        
-        # Always add reliable fallbacks
-        format_options.append("bv*+ba/best")
-        format_options.append("best")
-        format_options.append("worst")
-        
-        # Join options with "/" for fallback chain (max 5 options for simplicity)
-        return "/".join(format_options[:5])
+
+        # Always add comprehensive reliable fallbacks
+        format_options.extend([
+            "bv*+ba/best",  # Best merged format
+            "bv+ba/bestvideo+bestaudio",  # Alternative merged format
+            "best[height<=1080]",  # Best up to 1080p
+            "best[height<=720]",  # Best up to 720p
+            "best",  # Any best format
+            "worst[height>=360]"  # At least 360p minimum quality
+        ])
+
+        # Join options with "/" for fallback chain (max 8 options for better coverage)
+        return "/".join(format_options[:8])
     
     def _analyze_available_formats(self, formats: list, requested_format: str) -> Dict[str, Any]:
         """Analyze available formats and provide detailed information."""

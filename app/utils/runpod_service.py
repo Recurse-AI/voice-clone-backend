@@ -31,7 +31,7 @@ class RunPodService:
         """Submit audio separation request and return request ID"""
         if not audio_url:
             raise ValueError('Audio URL is required')
-        
+
         payload = {
             "input": {
                 "input_audio": audio_url
@@ -40,29 +40,55 @@ class RunPodService:
                 "executionTimeout": 600000  # 10 minutes
             }
         }
-        
-        try:
-            response = requests.post(
-                f"{self.base_url}/run",
-                json=payload,
-                headers=self.headers,
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                request_id = data.get('id')
-                if request_id:
-                    logger.info(f"Submitted separation request {request_id} from {caller_info}")
-                    return request_id
+
+        # Increase timeout and add retry logic for better reliability
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Increase timeout to 90 seconds to handle slow API responses
+                response = requests.post(
+                    f"{self.base_url}/run",
+                    json=payload,
+                    headers=self.headers,
+                    timeout=90
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    request_id = data.get('id')
+                    if request_id:
+                        logger.info(f"Submitted separation request {request_id} from {caller_info}")
+                        return request_id
+                    else:
+                        raise Exception("No request ID returned from RunPod")
+                elif response.status_code == 429:  # Rate limited
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 5  # Exponential backoff: 5s, 10s, 15s
+                        logger.warning(f"Rate limited (attempt {attempt + 1}/{max_retries}), waiting {wait_time}s...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        raise Exception(f"Rate limited after {max_retries} attempts")
                 else:
-                    raise Exception("No request ID returned from RunPod")
-            else:
-                raise Exception(f"RunPod API error: {response.status_code} - {response.text}")
-                
-        except Exception as e:
-            logger.error(f"Failed to submit separation request: {e}")
-            raise
+                    raise Exception(f"RunPod API error: {response.status_code} - {response.text}")
+
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Request timeout (attempt {attempt + 1}/{max_retries}), retrying...")
+                    time.sleep(2)
+                    continue
+                else:
+                    raise Exception("Request timeout after multiple attempts")
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Request failed (attempt {attempt + 1}/{max_retries}): {e}, retrying...")
+                    time.sleep(2)
+                    continue
+                else:
+                    raise Exception(f"Request failed after {max_retries} attempts: {e}")
+
+        # This should never be reached, but just in case
+        raise Exception("Failed to submit separation request after all retries")
     
     def get_separation_status(self, request_id: str) -> Optional[Dict[str, Any]]:
         """Get status of separation request"""
@@ -70,7 +96,7 @@ class RunPodService:
             response = requests.get(
                 f"{self.base_url}/status/{request_id}",
                 headers=self.headers,
-                timeout=30
+                timeout=60  # Increased timeout for status checks
             )
             
             if response.status_code == 200:
@@ -179,7 +205,7 @@ class RunPodService:
             response = requests.post(
                 f"{self.base_url}/cancel/{request_id}",
                 headers=self.headers,
-                timeout=30
+                timeout=60  # Increased timeout for consistency
             )
             
             if response.status_code == 200:

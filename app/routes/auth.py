@@ -334,14 +334,14 @@ async def request_password_reset(req: ResetPasswordRequest, background_tasks: Ba
 @auth.get("/reset-password")
 async def reset_password_token_check(token: str) -> JSONResponse:
     try:
-        user: User = await db["users"].find_one({"resetPasswordToken": token})
-        if not user:
+        user_data = await db["users"].find_one({"resetPasswordToken": token})
+        if not user_data:
             return JSONResponse(
                 status_code=404,
                 content={"error": "Invalid token", "details": "Token not found"}
             )
-        email: EmailStr = user["email"]
-        expiry = user.get("resetPasswordExpiry")
+        email: EmailStr = user_data["email"]
+        expiry = user_data.get("resetPasswordExpiry")
         if not expiry or datetime.now(timezone.utc) > expiry:
             return JSONResponse(
                 status_code=400,
@@ -366,12 +366,12 @@ async def reset_password_token_check(token: str) -> JSONResponse:
 @auth.post("/reset-password")
 async def reset_password(token: str, body: ResetPasswordBody) -> JSONResponse:
     try:
-        user =         await db["users"].find_one({
+        user_data = await db["users"].find_one({
             "resetPasswordToken": token,
             "resetPasswordExpiry": {"$gt": datetime.now(timezone.utc)}
         })
 
-        if not user:
+        if not user_data:
             raise HTTPException(
                 status_code=400,
                 detail={
@@ -383,7 +383,7 @@ async def reset_password(token: str, body: ResetPasswordBody) -> JSONResponse:
         hashed_password = hash_password(body.password)
 
         await db["users"].update_one(
-            {"_id": user["_id"]},
+            {"_id": user_data["_id"]},
             {
                 "$set": {"password": hashed_password},
                 "$unset": {"resetPasswordToken": "", "resetPasswordExpiry": ""}
