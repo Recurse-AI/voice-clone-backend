@@ -48,15 +48,15 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Initializing AI services...")
     
     # Fish Speech initialization
-    try:
-        from app.services.dub.fish_speech_service import initialize_fish_speech
-        logger.info("🔄 Loading Fish Speech models...")
-        if initialize_fish_speech():
-            logger.info("✅ Fish Speech service ready")
-        else:
-            logger.info("⚠️ Fish Speech models not found - voice cloning disabled")
-    except Exception as e:
-        logger.warning(f"⚠️ Fish Speech initialization failed: {str(e)[:100]}...")
+    # try:
+    #     from app.services.dub.fish_speech_service import initialize_fish_speech
+    #     logger.info("🔄 Loading Fish Speech models...")
+    #     if initialize_fish_speech():
+    #         logger.info("✅ Fish Speech service ready")
+    #     else:
+    #         logger.info("⚠️ Fish Speech models not found - voice cloning disabled")
+    # except Exception as e:
+    #     logger.warning(f"⚠️ Fish Speech initialization failed: {str(e)[:100]}...")
     
     # WhisperX initialization  
     try:

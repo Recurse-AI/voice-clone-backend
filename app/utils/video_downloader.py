@@ -261,7 +261,7 @@ class VideoDownloadService:
                                 "error": "No compatible video formats found for download. This video may be restricted or in an unsupported format.",
                                 "video_info": {
                                     "title": video_title,
-                                    "duration": video_duration,
+                                    "duration": video_duration if video_duration > 0 else 0,
                                     "uploader": video_uploader
                                 },
                                 "available_formats": format_info.get("available_formats", [])[:5]
@@ -283,6 +283,24 @@ class VideoDownloadService:
             downloaded_file = downloaded_files[0]
             file_size = downloaded_file.stat().st_size
             
+            # Extract actual duration from downloaded file if not available from metadata
+            actual_duration = video_duration
+            if not video_duration or video_duration <= 0:
+                try:
+                    # Use ffprobe to get actual duration from downloaded file
+                    import subprocess
+                    cmd = [
+                        "ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                        "-of", "csv=p=0", str(downloaded_file)
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    if result.returncode == 0 and result.stdout.strip():
+                        actual_duration = float(result.stdout.strip())
+                        logger.info(f"Extracted duration from downloaded file: {actual_duration:.2f}s")
+                except Exception as e:
+                    logger.warning(f"Could not extract duration from downloaded file: {e}")
+                    actual_duration = 0
+            
             # Track file for auto cleanup
             self._downloaded_files[job_id] = {
                 "path": str(downloaded_file),
@@ -303,7 +321,7 @@ class VideoDownloadService:
                 "job_id": job_id,
                 "video_info": {
                     "title": video_title,
-                    "duration": video_duration,
+                    "duration": actual_duration,
                     "uploader": video_uploader,
                     "filename": downloaded_file.name,
                     "file_size": file_size,
