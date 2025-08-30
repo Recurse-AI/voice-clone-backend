@@ -10,8 +10,9 @@ from app.schemas import AudioSeparationRequest, AudioSeparationResponse, Separat
 from app.dependencies.auth import get_current_user
 from app.services.separation_job_service import separation_job_service
 from app.services.credit_service import credit_service
-from app.services.credit_service import JobType as CreditJobType
+from app.config.credit_constants import JobType
 from app.config.constants import MAX_ATTEMPTS_DEFAULT, POLLING_INTERVAL_SECONDS, MSG_PROCESSING_STARTED, ERROR_PROCESSING_FAILED
+from app.utils.job_utils import job_utils
 from datetime import datetime, timezone
 import random
 # Removed custom logger import - using standard logging
@@ -203,8 +204,8 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                     del status, vocal_url, instrument_url
                     gc.collect()
                     
-                    # Confirm credit usage
-                    credit_service.confirm_credit_usage_sync(job_id, CreditJobType.SEPARATION)
+                    # Complete credit billing using centralized utility (sync context)
+                    job_utils.complete_job_billing_sync(job_id, "separation", user_id)
                     
                     # Cleanup temp files after successful completion
                     _cleanup_separation_files_non_blocking(job_id)
@@ -221,13 +222,8 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                     )
                     logger.error(f"Separation job {job_id} (RunPod: {runpod_request_id}) failed: {error_msg}")
                     
-                    # Refund credits on failure
-                    try:
-                        # Note: For failed jobs, we use a simple approach - just log and cleanup
-                        # Complex refund logic can cause additional event loop issues
-                        logger.info(f"Separation job {job_id} failed, cleaning up resources")
-                    except Exception:
-                        pass
+                    # Refund credits on failure (sync context)
+                    job_utils.refund_job_credits_sync(job_id, "separation", "job_failed")
                     
                     # Cleanup temp files even on failure
                     _cleanup_separation_files_non_blocking(job_id)
@@ -254,14 +250,8 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 error="Job monitoring timed out"
             )
             
-            # Refund credits on timeout
-            try:
-                from app.utils.db_sync_operations import deduct_credits
-                # Note: For timeout, we use a simple approach - just log and cleanup
-                # Complex refund logic can cause additional event loop issues
-                logger.info(f"Separation job {job_id} timed out, cleaning up resources")
-            except Exception:
-                pass
+            # Refund credits on timeout (sync context)
+            job_utils.refund_job_credits_sync(job_id, "separation", "job_timeout")
             
             # Cleanup temp files on timeout
             _cleanup_separation_files_non_blocking(job_id)
@@ -276,13 +266,8 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 error=f"Background monitoring error: {str(e)}"
             )
             
-            # Refund credits on error
-            try:
-                # Note: For monitoring errors, we use a simple approach - just log and cleanup
-                # Complex refund logic can cause additional event loop issues
-                logger.info(f"Separation job {job_id} monitoring error, cleaning up resources")
-            except Exception:
-                pass
+            # Refund credits on monitoring error (sync context)
+            job_utils.refund_job_credits_sync(job_id, "separation", "monitoring_error")
             
             # Cleanup temp files on error
             _cleanup_separation_files_non_blocking(job_id)
@@ -368,12 +353,11 @@ async def start_audio_separation(
         }
         
         # Atomic credit reservation + job creation
-        result = await credit_service.atomic_reserve_and_create_job(
+        result = await credit_service.reserve_credits_and_create_job(
             user_id=user_id,
             job_data=job_data,
-            job_type=CreditJobType.SEPARATION,
-            duration_seconds=request.duration,
-            collection_name="separation_jobs"
+            job_type=JobType.SEPARATION,
+            duration_seconds=request.duration
         )
         
         if not result["success"]:

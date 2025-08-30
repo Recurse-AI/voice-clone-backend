@@ -281,7 +281,7 @@ class UnifiedStatusManager:
                     # Keep in cache briefly for immediate reads, will auto-expire
                     pass
                 
-                logger.info(f"Status updated: {job_id} -> {status.value} ({validated_progress}%)")
+                self._log_status_update(job_id, status.value, validated_progress)
                 return True
                 
         except Exception as e:
@@ -337,13 +337,17 @@ class UnifiedStatusManager:
                 # Persist to database synchronously
                 self._persist_status_to_database_sync(status_data)
                 
-                logger.info(f"Status updated (sync): {job_id} -> {status.value} ({validated_progress}%)")
+                self._log_status_update(job_id, status.value, validated_progress, "(sync)")
                 return True
                 
         except Exception as e:
             logger.error(f"Failed to update status (sync) for {job_id}: {e}")
             return False
     
+    def _log_status_update(self, job_id: str, status: str, progress: int, suffix: str = ""):
+        """Centralized status update logging to reduce code duplication"""
+        logger.info(f"Status updated{suffix}: {job_id} -> {status} ({progress}%)")
+
     def _persist_status_to_database_sync(self, status_data: StatusData) -> bool:
         """Synchronous database persistence using sync operations"""
         try:

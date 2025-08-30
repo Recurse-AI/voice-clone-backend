@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
 from contextlib import asynccontextmanager
+import asyncio
 
 # App routes and configuration
 from app.config.database import verify_connection, create_unique_indexes
@@ -20,6 +21,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.config.settings import settings
 from app.utils.video_downloader import video_download_service
 from app.schemas import StatusResponse
+from app.utils.event_loop_manager import loop_manager
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -48,15 +50,15 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Initializing AI services...")
     
     # Fish Speech initialization
-    # try:
-    #     from app.services.dub.fish_speech_service import initialize_fish_speech
-    #     logger.info("🔄 Loading Fish Speech models...")
-    #     if initialize_fish_speech():
-    #         logger.info("✅ Fish Speech service ready")
-    #     else:
-    #         logger.info("⚠️ Fish Speech models not found - voice cloning disabled")
-    # except Exception as e:
-    #     logger.warning(f"⚠️ Fish Speech initialization failed: {str(e)[:100]}...")
+    try:
+        from app.services.dub.fish_speech_service import initialize_fish_speech
+        logger.info("🔄 Loading Fish Speech models...")
+        if initialize_fish_speech():
+            logger.info("✅ Fish Speech service ready")
+        else:
+            logger.info("⚠️ Fish Speech models not found - voice cloning disabled")
+    except Exception as e:
+        logger.warning(f"⚠️ Fish Speech initialization failed: {str(e)[:100]}...")
     
     # WhisperX initialization  
     try:
@@ -123,7 +125,7 @@ app = FastAPI(
     title=settings.API_TITLE,
     version=settings.API_VERSION,
     description=settings.API_DESCRIPTION,
-    lifespan=lifespan
+    # lifespan=lifespan
 )
 
 app.add_middleware(
@@ -143,12 +145,22 @@ app.add_middleware(
 app.add_middleware(AuthMiddleware)
 
 app.include_router(auth, prefix="/api/auth", tags=["auth"])
-app.include_router(stripe_route, prefix="/api/stripe", tags=["stripe"])
+app.include_router(stripe_route, tags=["stripe"])
 
 app.include_router(audio_processing_router, prefix="/api", tags=["audio-processing"])
 app.include_router(uploads_router, prefix="", tags=["uploads"])
 app.include_router(video_processing_router, prefix="/api", tags=["video-processing"])
 app.include_router(user_jobs_router, prefix="/api/jobs", tags=["user-jobs"])
+
+@app.on_event("startup")
+async def startup_event():
+    """Register the main event loop on startup"""
+    try:
+        loop = asyncio.get_running_loop()
+        loop_manager.set_main_loop(loop)
+        logger.info("✅ Main event loop registered for background tasks")
+    except Exception as e:
+        logger.error(f"Failed to register main event loop: {e}")
 
 @app.get("/", response_model=StatusResponse)
 async def root():

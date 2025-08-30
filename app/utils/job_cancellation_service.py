@@ -12,7 +12,8 @@ from app.utils.shared_memory import mark_job_cancelled, delete_upload_status_asy
 from app.utils.db_sync_operations import cleanup_separation_files
 from app.services.separation_job_service import separation_job_service
 from app.services.dub_job_service import dub_job_service
-from app.services.credit_service import credit_service, JobType
+from app.services.credit_service import credit_service
+from app.config.credit_constants import JobType
 from app.services.dub.audio_utils import AudioUtils
 from app.config.settings import settings
 import os

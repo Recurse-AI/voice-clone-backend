@@ -7,7 +7,8 @@ import shutil
 from datetime import datetime
 from typing import Dict, Any, Optional
 from app.config.settings import settings
-from app.services.credit_service import credit_service, JobType
+from app.services.credit_service import credit_service
+from app.config.credit_constants import JobType
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +60,7 @@ class JobUtils:
         
         return {"valid": True, "message": "Manifest is valid"}
     
+
     @staticmethod
     async def setup_job_directory(source_job_id: str, target_job_id: str) -> str:
         """
@@ -85,51 +87,6 @@ class JobUtils:
             raise Exception(f"Failed to setup job directory: {str(e)}")
     
     @staticmethod
-    def handle_credit_operations_sync(user_id: str, job_id: str, duration: float, operation: str = "deduct") -> Dict[str, Any]:
-        """
-        Handle credit operations (deduct/refund) with proper error handling (Sync version for background threads)
-        Returns: {"success": bool, "message": str, "amount": float}
-        """
-        try:
-            if operation == "deduct":
-                from app.utils.db_sync_operations import deduct_credits
-                success = deduct_credits(user_id, job_id, duration, "dub")
-                return {
-                    "success": success,
-                    "message": "Credit deduction completed" if success else "Credit deduction failed",
-                    "amount": duration * 0.05 if success else 0  # DUB rate: 0.05 credits per second
-                }
-            else:
-                return {"success": False, "message": f"Unknown operation: {operation}", "amount": 0}
-                
-        except Exception as e:
-            logger.error(f"Credit operation failed for job {job_id}: {e}")
-            return {"success": False, "message": f"Credit operation failed: {str(e)}", "amount": 0}
-    
-    @staticmethod
-    async def handle_credit_operations(user_id: str, job_id: str, duration: float, operation: str = "deduct") -> Dict[str, Any]:
-        """
-        Handle credit operations (deduct/refund) with proper error handling (Async version for main endpoints)
-        Returns: {"success": bool, "message": str, "amount": float}
-        """
-        try:
-            if operation == "deduct":
-                result = await credit_service.deduct_credits_on_completion(
-                    user_id, job_id, JobType.DUB, duration
-                )
-                return {
-                    "success": result.get("success", False),
-                    "message": result.get("message", "Credit deduction completed"),
-                    "amount": result.get("deducted", 0)
-                }
-            else:
-                return {"success": False, "message": f"Unknown operation: {operation}", "amount": 0}
-                
-        except Exception as e:
-            logger.error(f"Credit operation failed for job {job_id}: {e}")
-            return {"success": False, "message": f"Credit operation failed: {str(e)}", "amount": 0}
-    
-    @staticmethod
     def prepare_manifest_for_redub(manifest: Dict[str, Any], new_job_id: str, target_language: str, parent_job_id: str) -> Dict[str, Any]:
         """
         Prepare manifest for redub with updated metadata
@@ -149,15 +106,130 @@ class JobUtils:
         })
         return updated_manifest
     
+
+    # ===== CREDIT BILLING UTILITIES =====
+    
     @staticmethod
-    def cleanup_job_directories():
-        """Clean up old job directories"""
+    async def complete_job_billing(job_id: str, job_type: str, user_id: str) -> bool:
+        """
+        Complete credit billing for job completion (async context)
+        Centralized utility for reusability across all routes
+        """
         try:
-            from app.utils.video_downloader import video_download_service
-            video_download_service.cleanup_old_files()
-            logger.info("🧹 Old job directories cleaned up")
-        except Exception as cleanup_error:
-            logger.warning(f"Failed to cleanup old directories: {cleanup_error}")
+            job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
+            
+            billing_result = await credit_service.complete_job_billing(job_id, job_type_enum, user_id)
+            
+            if billing_result.get("success"):
+                logger.info(f"✅ Credit billing completed for {job_type} job {job_id}")
+                return True
+            else:
+                logger.warning(f"⚠️ Credit billing failed for {job_type} job {job_id}: {billing_result.get('message')}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Credit billing error for {job_type} job {job_id}: {e}")
+            return False
+    
+    @staticmethod 
+    def complete_job_billing_sync(job_id: str, job_type: str, user_id: str) -> bool:
+        """
+        Complete credit billing for job completion (sync context)
+        For use in thread pools and background tasks
+        """
+        try:
+            import asyncio
+            from app.utils.event_loop_manager import loop_manager
+            
+            job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
+            
+            # Get the main event loop
+            main_loop = loop_manager.get_main_loop()
+            
+            if main_loop and main_loop.is_running():
+                # Schedule the coroutine on the main loop from this thread
+                future = asyncio.run_coroutine_threadsafe(
+                    credit_service.complete_job_billing(job_id, job_type_enum, user_id),
+                    main_loop
+                )
+                # Wait for the result with timeout
+                billing_result = future.result(timeout=30)
+            else:
+                # Fallback: No main loop available (shouldn't happen in production)
+                logger.warning(f"Main event loop not available for job {job_id}, skipping billing")
+                return False
+            
+            if billing_result.get("success"):
+                logger.info(f"✅ Credit billing completed for {job_type} job {job_id}")
+                return True
+            else:
+                logger.warning(f"⚠️ Credit billing failed for {job_type} job {job_id}: {billing_result.get('message')}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Credit billing error for {job_type} job {job_id}: {e}")
+            return False
+    
+    @staticmethod
+    async def refund_job_credits(job_id: str, job_type: str, reason: str = "job_failed") -> bool:
+        """
+        Refund credits for failed jobs (async context)
+        Centralized utility for reusability across all routes
+        """
+        try:
+            job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
+            
+            billing_result = await credit_service.refund_job_credits(job_id, job_type_enum, reason)
+            
+            if billing_result.get("success"):
+                logger.info(f"💰 Credits refunded for {job_type} job {job_id} (reason: {reason})")
+                return True
+            else:
+                logger.warning(f"⚠️ Credit refund failed for {job_type} job {job_id}: {billing_result.get('message')}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Credit refund error for {job_type} job {job_id}: {e}")
+            return False
+    
+    @staticmethod
+    def refund_job_credits_sync(job_id: str, job_type: str, reason: str = "job_failed") -> bool:
+        """
+        Refund credits for failed jobs (sync context)  
+        For use in thread pools and background tasks
+        """
+        try:
+            import asyncio
+            from app.utils.event_loop_manager import loop_manager
+            
+            job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
+            
+            # Get the main event loop
+            main_loop = loop_manager.get_main_loop()
+            
+            if main_loop and main_loop.is_running():
+                # Schedule the coroutine on the main loop from this thread
+                future = asyncio.run_coroutine_threadsafe(
+                    credit_service.refund_job_credits(job_id, job_type_enum, reason),
+                    main_loop
+                )
+                # Wait for the result with timeout
+                billing_result = future.result(timeout=30)
+            else:
+                # Fallback: No main loop available (shouldn't happen in production)
+                logger.warning(f"Main event loop not available for job {job_id}, skipping refund")
+                return False
+            
+            if billing_result.get("success"):
+                logger.info(f"💰 Credits refunded for {job_type} job {job_id} (reason: {reason})")
+                return True
+            else:
+                logger.warning(f"⚠️ Credit refund failed for {job_type} job {job_id}: {billing_result.get('message')}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"❌ Credit refund error for {job_type} job {job_id}: {e}")
+            return False
 
 
 # Create global instance for easy access

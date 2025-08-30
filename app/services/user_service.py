@@ -24,14 +24,19 @@ async def create_user(user_dict: dict):
     user_dict["role"] = "user"
     user_dict["verificationAttempts"] = 0
     
-    # Initialize default subscription for new users
+    # Initialize default subscription and payment method fields for new users
     user_dict["subscription"] = {
         "type": "free",
         "status": "none",
         "stripeCustomerId": None,
         "stripeSubscriptionId": None,
-        "currentPeriodEnd": None
+        "currentPeriodEnd": None,
+        "cancelledAt": None
     }
+    
+    # Initialize payment method tracking
+    user_dict["hasPaymentMethod"] = False
+    user_dict["paymentMethodAddedAt"] = None
 
     result = await db["users"].insert_one(user_dict)
     user_dict["id"] = str(result.inserted_id)

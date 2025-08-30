@@ -12,9 +12,10 @@ from app.schemas import (
 from app.dependencies.auth import get_current_user
 from app.services.dub_job_service import dub_job_service
 from app.services.credit_service import credit_service
-from app.services.credit_service import JobType as CreditJobType
+from app.config.credit_constants import JobType
 from app.utils.unified_status_manager import ProcessingStatus
 from app.utils.runpod_url_manager import RunPodURLManager
+from app.utils.job_utils import job_utils
 import asyncio
 import gc
 import threading
@@ -130,12 +131,11 @@ async def start_video_dub(
         }
         
         # Atomic credit reservation + job creation
-        result = await credit_service.atomic_reserve_and_create_job(
+        result = await credit_service.reserve_credits_and_create_job(
             user_id=user_id,
             job_data=job_data,
-            job_type=CreditJobType.DUB,
-            duration_seconds=request.duration,
-            collection_name="dub_jobs"
+            job_type=JobType.DUB,
+            duration_seconds=request.duration
         )
         
         if not result["success"]:
@@ -279,7 +279,6 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
     from app.services.dub.audio_utils import AudioUtils
     from app.config.settings import settings
     from app.services.r2_service import get_r2_service
-    from app.utils.job_utils import job_utils
     from app.utils.shared_memory import is_job_cancelled
     
     r2_service = get_r2_service()
@@ -506,8 +505,8 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         from app.utils.shared_memory import unmark_job_cancelled
         unmark_job_cancelled(job_id)
         
-        # Confirm credit usage
-        credit_service.confirm_credit_usage_sync(job_id, CreditJobType.DUB)
+        # Complete credit billing using centralized utility (sync context)
+        job_utils.complete_job_billing_sync(job_id, "dub", user_id)
         
         if r2_audio_path.get("r2_key"):
             r2_service.delete_file(r2_audio_path["r2_key"])
@@ -515,8 +514,6 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         # Immediate cleanup for this specific completed job
         from app.utils.video_downloader import video_download_service
         video_download_service.cleanup_specific_job(job_id)
-        
-        job_utils.cleanup_job_directories()
 
     except Exception as e:
         if is_job_cancelled(job_id):
@@ -528,8 +525,8 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         from app.utils.video_downloader import video_download_service
         video_download_service.cleanup_specific_job(job_id)
         
-        # Refund credits on failure
-        credit_service.refund_reserved_credits_sync(job_id, CreditJobType.DUB, "job_failed")
+        # Refund credits on failure (sync context)
+        job_utils.refund_job_credits_sync(job_id, "dub", "job_failed")
         
         try:
             if r2_audio_path.get("r2_key"):
@@ -571,8 +568,8 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
     manifest = _load_manifest_json(manifest_url)
     
     # Kick off background resume
-    from app.utils.job_utils import job_utils
     executor = get_dub_executor()
+    user_id = current_user.id  # Capture user_id for nested function
     def _resume():
         # Initialize variable to avoid scoping issues
         stored_runpod_urls = {}
@@ -638,14 +635,12 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             logger.info(f"✅ Job {job_id} completed after review - unmarked cancellation")
             
             # Confirm credit usage
-            credit_service.confirm_credit_usage_sync(job_id, CreditJobType.DUB)
+            # Complete credit billing using centralized utility (sync context)
+            job_utils.complete_job_billing_sync(job_id, "dub", user_id)
             
             # ✅ Cleanup ONLY after resume is completely finished
             from app.utils.video_downloader import video_download_service
             video_download_service.cleanup_specific_job(job_id)
-            
-            # Cleanup old dub directories after approval completion
-            job_utils.cleanup_job_directories()
             
         except Exception as e:
             logger.error(f"Approval resume failed for job {job_id}: {str(e)}")
@@ -656,7 +651,8 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             }, "dub")
             
             # Refund credits on failure
-            credit_service.refund_reserved_credits_sync(job_id, CreditJobType.DUB, "approval_failed")
+            # Refund credits for failed job (sync context)
+            job_utils.refund_job_credits_sync(job_id, "dub", "approval_failed")
             
             # ❌ Cleanup after resume failure too
             from app.utils.video_downloader import video_download_service
@@ -677,8 +673,6 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
         raise HTTPException(status_code=404, detail="Original job not found")
     
     # Validate job for redub using utility function
-    from app.utils.job_utils import job_utils
-    
     validation_result = await job_utils.validate_job_for_redub(original_job)
     if not validation_result["valid"]:
         raise HTTPException(status_code=400, detail=validation_result["message"])
@@ -724,12 +718,11 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     }
     
     # Atomic credit reservation + job creation
-    result = await credit_service.atomic_reserve_and_create_job(
+    result = await credit_service.reserve_credits_and_create_job(
         user_id=user_id,
         job_data=new_job_data,
-        job_type=CreditJobType.DUB,
-        duration_seconds=duration,
-        collection_name="dub_jobs"
+        job_type=JobType.DUB,
+        duration_seconds=duration
     )
     
     if not result["success"]:
@@ -773,7 +766,6 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     api = get_simple_dubbed_api()
 
     def _run_redub():  # ← Sync function like existing pattern
-        from app.utils.job_utils import job_utils
         try:
             _update_status_non_blocking(new_job_id, ProcessingStatus.PROCESSING, 10, {"message": f"Redubbing to {request_body.target_language}", "phase": "initialization"}, "dub")
             
@@ -843,15 +835,12 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             unmark_job_cancelled(new_job_id)
             logger.info(f"✅ Redub job {new_job_id} completed - unmarked cancellation")
             
-            # Confirm credit usage
-            credit_service.confirm_credit_usage_sync(new_job_id, CreditJobType.DUB)
+            # Complete credit billing using centralized utility (sync context for redub)
+            job_utils.complete_job_billing_sync(new_job_id, "dub", user_id)
             
             # Immediate cleanup for this specific completed redub job
             from app.utils.video_downloader import video_download_service
             video_download_service.cleanup_specific_job(new_job_id)
-            
-            # Cleanup old dub directories after redub completion
-            job_utils.cleanup_job_directories()
                 
         except Exception as e:
             logger.error(f"Redub processing failed: {str(e)}")

@@ -19,23 +19,28 @@ class TransactionService:
         if not transaction:
             return None
             
-        # Convert ObjectId and datetime objects
-        serialized = jsonable_encoder(transaction)
+        # Simple conversion
+        result = {}
+        for key, value in transaction.items():
+            if isinstance(value, ObjectId):
+                result[key] = str(value)
+            elif isinstance(value, datetime):
+                result[key] = value.isoformat()
+            else:
+                result[key] = value
         
-        # Additional formatting if needed
-        if "createdAt" in serialized:
-            serialized["createdAt"] = serialized["createdAt"].isoformat() if isinstance(serialized["createdAt"], datetime) else serialized["createdAt"]
-            
-        return serialized
+        return result
 
     async def get_transaction(self, session_id: str, user_id: str) -> Optional[Dict[str, Any]]:
-        """Get existing transaction by session ID"""
+        """Get existing transaction by session ID and user ID"""
         try:
             transaction = await self.collection.find_one({
                 "stripeSessionId": session_id,
                 "userId": user_id
             })
-            return self.serialize_transaction(transaction)
+            if transaction:
+                return self.serialize_transaction(transaction)
+            return None
         except Exception as e:
             logger.error(f"Error getting transaction: {e}")
             return None
@@ -68,12 +73,15 @@ class TransactionService:
 
             try:
                 result = await self.collection.insert_one(transaction_data)
-                transaction_data["_id"] = str(result.inserted_id)
+                transaction_data["_id"] = result.inserted_id
                 return self.serialize_transaction(transaction_data)
 
             except DuplicateKeyError:
                 # If concurrent request created the transaction, get and return it
-                raise HTTPException(status_code=400, detail="Transaction creation failed due to duplicate entry")
+                existing = await self.get_transaction(session_id, user_id)
+                if existing:
+                    return existing
+                raise HTTPException(status_code=400, detail="Transaction creation failed")
 
         except Exception as e:
             logger.error(f"Error creating transaction: {e}")
@@ -88,7 +96,7 @@ class TransactionService:
                 {
                     "$inc": {"credits": credits},
                     "$set": {
-                        "subscription.type": "premium",
+                        "subscription.type": "credit pack",
                         "subscription.status": "active",
                         "updatedAt": update_time
                     }
@@ -102,7 +110,7 @@ class TransactionService:
             return {
                 "credits": result.get("credits", 0),
                 "subscription": {
-                    "type": "premium",
+                    "type": "credit pack",
                     "status": "active"
                 },
                 "updatedAt": update_time.isoformat()
@@ -175,12 +183,33 @@ class TransactionService:
                     "transaction": existing
                 }
             
-            # Validate metadata
-            user_id = session['metadata'].get('userId')
-            credits = float(session['metadata'].get('credit', 0))
+            # Check if this is a subscription session (skip for transaction processing)
+            if session.get('mode') == 'subscription':
+                logger.info(f"Skipping subscription session {session['id']} - handled separately")
+                return {
+                    "success": True,
+                    "message": "Subscription session - handled by subscription flow",
+                    "session_type": "subscription"
+                }
             
-            if not user_id or not credits or credits <= 0:
-                logger.error(f"Invalid metadata in session: {session['id']}")
+            # Validate metadata for credit pack purchases
+            user_id = session['metadata'].get('userId')
+            credits_str = session['metadata'].get('credit', '0')
+            
+            # Validate user_id
+            if not user_id:
+                logger.warning(f"No userId in session metadata: {session['id']}")
+                return None
+            
+            # Validate credits (should be numeric and > 0 for credit packs)
+            try:
+                credits = float(credits_str) if credits_str else 0
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid credit value in session {session['id']}: {credits_str}")
+                return None
+                
+            if credits <= 0:
+                logger.info(f"Session {session['id']} is not a credit pack purchase (credits: {credits}) - skipping transaction creation")
                 return None
 
             logger.info(f"Processing payment for {credits} credits for user: {user_id}")

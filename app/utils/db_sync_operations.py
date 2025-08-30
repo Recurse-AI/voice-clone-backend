@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pymongo import MongoClient
 from bson import ObjectId
 from app.config.settings import settings
-from app.config.constants import CREDITS_PER_MINUTE_SEPARATION, CREDITS_PER_MINUTE_DUB
+from app.config.credit_constants import CreditRates
 
 logger = logging.getLogger(__name__)
 
@@ -193,78 +193,11 @@ class SyncDBOperations:
             logger.error(f"Failed to update dub job status for {job_id}: {e}")
             return False
     
-    @staticmethod
-    def deduct_user_credits(user_id: str, job_id: str, duration_seconds: float, job_type: str = "separation") -> bool:
-        """Deduct credits from user synchronously"""
-        try:
-            sync_client = SyncDBOperations._get_sync_client()
-            sync_db = sync_client[settings.DB_NAME]
-            users_collection = sync_db.users
-            
-            # Calculate credits required based on job type using constants
-            if job_type.lower() == "dub":
-                # DUB jobs: 0.05 credits per second (converted to per minute calculation)
-                credits_required = round(duration_seconds * 0.05, 2)
-            else:
-                # Separation jobs: 1 credit per minute
-                duration_minutes = duration_seconds / 60.0
-                credits_required = round(duration_minutes * CREDITS_PER_MINUTE_SEPARATION, 2)
-            
-            # Ensure minimum credit requirement
-            if credits_required == 0:
-                credits_required = 0.01  # Minimum 0.01 credits
-            
-            # Try to find user by ObjectId first, then by string
-            user_query_conditions = [
-                {"_id": ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id, "credits": {"$gte": credits_required}},
-                {"_id": user_id, "credits": {"$gte": credits_required}}
-            ]
-            
-            result = None
-            for query in user_query_conditions:
-                try:
-                    result = users_collection.update_one(
-                        query,
-                        {
-                            "$inc": {"credits": -credits_required},
-                            "$set": {"updated_at": datetime.now(timezone.utc)}
-                        }
-                    )
-                    if result.modified_count > 0:
-                        break
-                except Exception:
-                    continue
-            
-            sync_client.close()
-            
-            if result and result.modified_count > 0:
-                logger.info(f"Credit deduction completed for {job_type} job {job_id}: {credits_required} credits")
-                return True
-            else:
-                logger.warning(f"Credit deduction failed for {job_type} job {job_id}: insufficient credits or user not found")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Credit deduction failed for {job_type} job {job_id}: {e}")
-            return False
 
-# Convenience functions for easier usage - DEPRECATED: Use unified_status_manager instead
-# These are kept only for legacy compatibility and will be removed in future versions
-def update_separation_status(job_id: str, status: str, progress: int = None, **kwargs):
-    """DEPRECATED: Use unified_status_manager instead"""
-    import logging
-    logging.warning(f"DEPRECATED: update_separation_status called for {job_id}. Use unified_status_manager instead.")
-    return SyncDBOperations.update_separation_job_status(job_id, status, progress, **kwargs)
 
-def update_dub_status(job_id: str, status: str, progress: int, details: Dict[str, Any] = None):
-    """DEPRECATED: Use unified_status_manager instead"""
-    import logging
-    logging.warning(f"DEPRECATED: update_dub_status called for {job_id}. Use unified_status_manager instead.")
-    return SyncDBOperations.update_dub_job_status(job_id, status, progress, details)
 
-def deduct_credits(user_id: str, job_id: str, duration_seconds: float, job_type: str = "separation"):
-    """Convenience function to deduct user credits"""
-    return SyncDBOperations.deduct_user_credits(user_id, job_id, duration_seconds, job_type)
+
+
 
 def update_job_status_sync(job_id: str, job_type: str, status: str, progress: int = None, details: Dict[str, Any] = None) -> bool:
     """

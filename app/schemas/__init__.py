@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List
 import re
 
@@ -71,7 +71,8 @@ class RedubRequest(BaseModel):
     target_language: str = Field(..., description="New target language for re-dub")
     humanReview: Optional[bool] = False
     
-    @validator('target_language')
+    @field_validator('target_language')
+    @classmethod
     def validate_target_language(cls, v):
         if not v or not v.strip():
             raise ValueError("Target language cannot be empty")
@@ -162,7 +163,8 @@ class VideoDownloadRequest(BaseModel):
         description="Download available subtitles/captions if available"
     )
     
-    @validator('url')
+    @field_validator('url')
+    @classmethod
     def validate_url(cls, v):
         if not v.startswith(('http://', 'https://')):
             raise ValueError("URL must start with http:// or https://")
@@ -178,14 +180,16 @@ class VideoDownloadRequest(BaseModel):
             raise ValueError("Invalid URL format")
         return v
     
-    @validator('quality')
+    @field_validator('quality')
+    @classmethod
     def validate_quality(cls, v):
         if v is None:
             return "best"
         # Allow any yt-dlp format selector for flexibility
         return v
     
-    @validator('resolution')
+    @field_validator('resolution')
+    @classmethod
     def validate_resolution(cls, v):
         if v is None:
             return v
@@ -199,7 +203,8 @@ class VideoDownloadRequest(BaseModel):
                 raise ValueError(f"Resolution must be numeric (height in pixels) or one of: {', '.join(valid_resolutions)}")
         return v
     
-    @validator('max_filesize')
+    @field_validator('max_filesize')
+    @classmethod
     def validate_max_filesize(cls, v):
         if v is None:
             return v
@@ -210,7 +215,8 @@ class VideoDownloadRequest(BaseModel):
             raise ValueError("File size must be in format like '100M', '1.5G', '500K'")
         return v
     
-    @validator('format_preference')
+    @field_validator('format_preference')
+    @classmethod
     def validate_format_preference(cls, v):
         if v is None:
             return "mp4"
@@ -221,7 +227,8 @@ class VideoDownloadRequest(BaseModel):
             pass
         return v.lower()
     
-    @validator('audio_quality')
+    @field_validator('audio_quality')
+    @classmethod
     def validate_audio_quality(cls, v):
         if v is None:
             return "best"
@@ -264,7 +271,8 @@ class VoiceCloneRequest(BaseModel):
     referenceText: str = Field(..., min_length=1, max_length=5000, description="Text spoken in the reference audio")
     text: str = Field(..., min_length=1, max_length=5000, description="Text to synthesize with cloned voice")
     
-    @validator('referenceAudioUrl')
+    @field_validator('referenceAudioUrl')
+    @classmethod
     def validate_reference_url(cls, v):
         if not v.startswith(('http://', 'https://')):
             raise ValueError("Reference audio URL must start with http:// or https://")
@@ -352,17 +360,19 @@ class TimelineAudioSegment(BaseModel):
     end: int = Field(..., description="End time in milliseconds") 
     audio_url: str = Field(..., description="URL to audio segment")
     
-    @validator('start')
+    @field_validator('start')
+    @classmethod
     def validate_start(cls, v):
         if v < 0:
             raise ValueError("Start time must be >= 0")
         return v
     
-    @validator('end')
-    def validate_end(cls, v, values):
+    @field_validator('end')
+    @classmethod
+    def validate_end(cls, v, info):
         if v < 0:
             raise ValueError("End time must be >= 0")
-        if 'start' in values and v <= values['start']:
+        if hasattr(info, 'data') and 'start' in info.data and v <= info.data['start']:
             raise ValueError("End time must be greater than start time")
         return v
 
@@ -380,25 +390,29 @@ class VideoProcessingOptions(BaseModel):
     audio_format: Optional[str] = Field("mp3", alias="audioFormat", description="Audio format for audio-only output: wav, mp3, aac")
     target_duration: Optional[int] = Field(None, description="Target duration in milliseconds")
     
-    @validator('resolution')
+    @field_validator('resolution')
+    @classmethod
     def validate_resolution(cls, v):
         if v and v not in ['720p', '1080p', '4k']:
             raise ValueError("Resolution must be: 720p, 1080p, or 4k")
         return v
     
-    @validator('format')
+    @field_validator('format')
+    @classmethod
     def validate_format(cls, v):
         if v and v.lower() not in ['mp4', 'webm', 'mov']:
             raise ValueError("Format must be: mp4, webm, or mov")
         return v.lower() if v else v
     
-    @validator('quality', 'audio_quality')
+    @field_validator('quality', 'audio_quality')
+    @classmethod
     def validate_quality(cls, v):
         if v and v not in ['medium', 'high']:
             raise ValueError("Quality must be: medium or high")
         return v
     
-    @validator('audio_format')
+    @field_validator('audio_format')
+    @classmethod
     def validate_audio_format(cls, v):
         if v and v.lower() not in ['wav', 'mp3', 'aac']:
             raise ValueError("Audio format must be: wav, mp3, or aac")

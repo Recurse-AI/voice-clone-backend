@@ -1,13 +1,28 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional, Literal
+from typing import Optional, Literal, List
 from datetime import datetime
 
+class PaymentMethod(BaseModel):
+    id: str
+    brand: str
+    last4: str
+    expiryMonth: int
+    expiryYear: int
+    isDefault: bool = False
+
+class SpendingLimit(BaseModel):
+    amount: float
+    period: Literal['daily', 'weekly', 'monthly'] = 'monthly'
+    currentSpent: float = 0.0
+    periodStartDate: Optional[datetime] = None
+
 class Subscription(BaseModel):
-    type: str = 'pay as you go'  
-    status: str = 'none'
+    type: Literal['free', 'pay as you go', 'credit pack', 'premium', 'pro'] = 'free'
+    status: Literal['active', 'trialing', 'past_due', 'canceled', 'cancelled', 'none'] = 'none'
     stripeCustomerId: Optional[str] = None
     stripeSubscriptionId: Optional[str] = None
     currentPeriodEnd: Optional[datetime] = None
+    cancelledAt: Optional[datetime] = None
 
 class User(BaseModel):
     id: Optional[str] = None
@@ -23,6 +38,10 @@ class User(BaseModel):
     profilePicture: Optional[str] = None
     role: Literal['user', 'admin'] = 'user'
     subscription: Optional[Subscription] = Subscription()
+    paymentMethods: List[PaymentMethod] = []
+    spendingLimit: Optional[SpendingLimit] = None
+    hasPaymentMethod: bool = False
+    paymentMethodAddedAt: Optional[datetime] = None
     resetPasswordToken: Optional[str] = None
     resetPasswordExpiry: Optional[datetime] = None
     createdAt: Optional[datetime] = None

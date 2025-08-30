@@ -8,9 +8,6 @@ MAX_ATTEMPTS_DEFAULT = 90  # Default max attempts for background jobs (30 minute
 POLLING_INTERVAL_SECONDS = 20  # Default polling interval for background jobs
 TIMEOUT_MINUTES = 30  # Default timeout for long-running jobs
 
-# Credit Calculation Constants  
-CREDITS_PER_MINUTE_SEPARATION = 1  # 1 credit per minute for audio separation
-CREDITS_PER_MINUTE_DUB = 2  # 2 credits per minute for video dubbing
 MIN_CREDIT_CHECK_DURATION = 0.1  # Minimum duration to check credits for
 
 # File Upload Constants

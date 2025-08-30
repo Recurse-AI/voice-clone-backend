@@ -2,9 +2,10 @@ from fastapi import APIRouter, Security, BackgroundTasks, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBearer
 from app.schemas.user import *
-from app.config.database import db 
+from app.config.database import db
 from app.services.user_service import *
 from app.utils.user_helper import *
+from app.utils.response_helper import error_response, validate_user_id
 from app.dependencies.auth import get_current_user
 import logging
 from app.utils.email_helper import *
@@ -69,15 +70,13 @@ async def register(user: UserCreate, background_tasks: BackgroundTasks):
         return JSONResponse(status_code=201, content={
             "message": "User created successfully. Please verify email",
         })
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as they are already handled
     except Exception as e:
         logger.error(f"Registration error: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "success": False,
-                "error": "Server error",
-                "message": "An error occurred while creating account. Please try again."
-            }
+        return error_response(
+            message="Registration failed. Please try again.",
+            details="Unable to create account at this time"
         )
 
 @auth.get("/verify-email")
@@ -167,15 +166,13 @@ async def login_user(req: LoginData):
             }
         )
         
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions as they are already handled
     except Exception as e:
         logger.error(f"Login error: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "success": False,
-                "error": "Server error", 
-                "message": "Login failed. Please check your credentials and try again."
-            }
+        return error_response(
+            message="Login failed. Please check your credentials.",
+            details="Authentication error occurred"
         )
     
 
@@ -187,13 +184,7 @@ async def profile(
         user = await get_user_id(current_user.id)
         # Reduced logging - only log when there's an issue
         if user is None:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "error": "User not found",
-                    "details": "User no longer exists"
-                }
-            )
+            return error_response("User not found", details="User no longer exists", status_code=404)
 
         # Convert to FullUser schema to include subscription information
         subscription_data = prepare_subscription_data(user.subscription)
@@ -206,7 +197,9 @@ async def profile(
             profilePicture=user.profilePicture,
             role=user.role,
             credits=user.credits,
-            subscription=subscription_data
+            subscription=subscription_data,
+            hasPaymentMethod=getattr(user, 'hasPaymentMethod', False),
+            paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None)
         )
         
         user_data = full_user.model_dump(mode='json')
@@ -223,36 +216,22 @@ async def profile(
 
     except Exception as e:
         logger.error(f"Get profile error: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "Server error",
-                "details": "An error occurred while retrieving the profile"
-            }
+        return error_response(
+            message="An error occurred while retrieving the profile",
+            details=str(e)
         )
 
 @auth.put("/profile")
 async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = Security(get_current_user)) -> JSONResponse:
     try:
-        if not current_user.id:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "success": False,
-                    "message": "not found"
-                }
-            )
+        is_valid, error_msg = validate_user_id(current_user.id)
+        if not is_valid:
+            return error_response(error_msg, status_code=404)
         
         user = await update_user_name(current_user.id, data)
 
         if user is None:
-            return JSONResponse(
-                status_code=404,
-                content={
-                    "error": "User not found",
-                    "details": "User no longer exists"
-                }
-            )
+            return error_response("User not found", details="User no longer exists", status_code=404)
         
         # Convert to FullUser schema to include subscription information
         subscription_data = prepare_subscription_data(user.subscription)
@@ -282,12 +261,9 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
 
     except Exception as e:
         logger.error(f"Error while updating profile: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "Server error",
-                "details": "An error occurred while updating profile"
-            }
+        return error_response(
+            message="An error occurred while updating profile",
+            details=str(e)
         )
 
 @auth.post("/forgot-password")
@@ -323,12 +299,9 @@ async def request_password_reset(req: ResetPasswordRequest, background_tasks: Ba
         )
     except Exception as e:
         logger.error(f"Found error while sending reset email: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "Server error",
-                "details": "An error occurred while processing the forgot password request"
-            }
+        return error_response(
+            message="An error occurred while processing the forgot password request",
+            details=str(e)
         )
 
 @auth.get("/reset-password")
@@ -358,9 +331,9 @@ async def reset_password_token_check(token: str) -> JSONResponse:
 
     except Exception as e:
         logger.error(f"Token verification error: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"error": "Server error", "details": "Something went wrong"}
+        return error_response(
+            message="Something went wrong",
+            details=str(e)
         )
 
 @auth.post("/reset-password")
@@ -402,12 +375,9 @@ async def reset_password(token: str, body: ResetPasswordBody) -> JSONResponse:
 
     except Exception as error:
         logger.error(f"Reset password error: {error}")
-        return JSONResponse(
-            status_code=500,
-            content={
-                "error": "Server error",
-                "details": "An error occurred while resetting password"
-            }
+        return error_response(
+            message="An error occurred while resetting password",
+            details=str(error)
         )
 
 
