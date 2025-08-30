@@ -67,7 +67,7 @@ async def register(user: UserCreate, background_tasks: BackgroundTasks):
         background_tasks.add_task(send_verification_email_background_task, background_tasks, user.email, user.name, token)
 
         return JSONResponse(status_code=201, content={
-            "message": "User created successfully. Please verify email",
+            "message": "Registration successful! Please check your email for verification.",
         })
     except Exception as e:
         logger.error(f"Registration error: {str(e)}")
