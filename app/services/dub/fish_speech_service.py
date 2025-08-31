@@ -179,7 +179,7 @@ class FishSpeechService:
                     return {"success": False, "error": str(result.error)}
             
             if audio_data:
-                logger.info("✅ Voice generation with reference completed")
+                logger.info("Voice generation with reference completed")
                 return {
                     "success": True,
                     "audio_data": audio_data,

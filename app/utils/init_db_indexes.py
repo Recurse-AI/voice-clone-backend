@@ -61,7 +61,7 @@ async def init_database_indexes():
                     unique=True,
                     background=True  # Non-blocking index creation
                 )
-                logger.info(f"✅ Created unique index on {index_config['name']}")
+                logger.info(f"Created unique index on {index_config['name']}")
                 created_count += 1
                 
             except Exception as index_error:

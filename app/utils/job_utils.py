@@ -121,7 +121,7 @@ class JobUtils:
             billing_result = await credit_service.complete_job_billing(job_id, job_type_enum, user_id)
             
             if billing_result.get("success"):
-                logger.info(f"✅ Credit billing completed for {job_type} job {job_id}")
+                logger.info(f"Credit billing completed for {job_type} job {job_id}")
                 return True
             else:
                 logger.warning(f"⚠️ Credit billing failed for {job_type} job {job_id}: {billing_result.get('message')}")
@@ -160,7 +160,7 @@ class JobUtils:
                 return False
             
             if billing_result.get("success"):
-                logger.info(f"✅ Credit billing completed for {job_type} job {job_id}")
+                logger.info(f"Credit billing completed for {job_type} job {job_id}")
                 return True
             else:
                 logger.warning(f"⚠️ Credit billing failed for {job_type} job {job_id}: {billing_result.get('message')}")

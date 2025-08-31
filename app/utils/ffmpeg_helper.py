@@ -15,12 +15,12 @@ def get_ffmpeg_path():
         result = subprocess.run(['ffmpeg', '-version'], 
                               capture_output=True, text=True, timeout=10)
         if result.returncode == 0:
-            logger.info("✅ FFmpeg found in PATH")
+            logger.info("FFmpeg found in PATH")
             return 'ffmpeg'
     except FileNotFoundError:
-        logger.warning("❌ FFmpeg not found in PATH")
+        logger.warning("FFmpeg not found in PATH")
     except subprocess.TimeoutExpired:
-        logger.warning("❌ FFmpeg check timed out")
+        logger.warning("FFmpeg check timed out")
     
     # Common Windows paths
     windows_paths = [
@@ -29,7 +29,7 @@ def get_ffmpeg_path():
     
     for path in windows_paths:
         if os.path.exists(path):
-            logger.info(f"✅ FFmpeg found at: {path}")
+            logger.info(f"FFmpeg found at: {path}")
             return path
     return None
 

@@ -23,7 +23,7 @@ class R2Service:
             region_name=region
         )
         self.bucket_name = settings.R2_BUCKET_NAME
-        logger.info(f"✅ R2Service initialized - bucket: {self.bucket_name}")
+        logger.info(f"R2Service initialized - bucket: {self.bucket_name}")
     
     def upload_file(self, local_path: str, r2_key: str, content_type: str = "application/octet-stream") -> Dict[str, Any]:
         """Upload file to R2 storage with automatic optimization for large files"""
@@ -63,7 +63,7 @@ class R2Service:
         public_url = f"{settings.R2_PUBLIC_URL}/{r2_key}" if settings.R2_PUBLIC_URL else f"https://{self.bucket_name}.r2.cloudflarestorage.com/{r2_key}"
         
         file_size = os.path.getsize(local_path)
-        logger.info(f"✅ Standard upload: {r2_key} ({file_size} bytes)")
+        logger.info(f"Standard upload: {r2_key} ({file_size} bytes)")
         
         return {
             "success": True,
@@ -119,7 +119,7 @@ class R2Service:
         # Generate public URL
         public_url = f"{settings.R2_PUBLIC_URL}/{r2_key}" if settings.R2_PUBLIC_URL else f"https://{self.bucket_name}.r2.cloudflarestorage.com/{r2_key}"
         
-        logger.info(f"✅ Chunked upload: {r2_key} ({file_size} bytes)")
+        logger.info(f"Chunked upload: {r2_key} ({file_size} bytes)")
         
         return {
             "success": True,

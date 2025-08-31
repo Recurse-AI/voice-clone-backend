@@ -23,9 +23,7 @@ class VideoProcessor:
         self.subtitle_margin_bottom = 30
         self.words_per_subtitle = 3
 
-    # ---------------------------------------------------------------------
-    # Internal helpers
-    # ---------------------------------------------------------------------
+
     def _load_subtitles(self, segments_dir: str) -> List[Dict[str, Any]]:
         """Load subtitle information from segment_*_info.json files.
 
@@ -52,9 +50,7 @@ class VideoProcessor:
         except Exception:
             return []
 
-    # ---------------------------------------------------------------------
-    # FFmpeg wrapper
-    # ---------------------------------------------------------------------
+
     def _create_video_ffmpeg(self, video_path: str, audio_path: str, 
                            subtitle_path: Optional[str], output_path: Path) -> Dict[str, Any]:
         try:
@@ -144,9 +140,7 @@ class VideoProcessor:
             # If mixing fails, fallback to original audio
             return Path(audio_path)
 
-    # ---------------------------------------------------------------------
-    # Public methods (create video)
-    # ---------------------------------------------------------------------
+
     def create_srt_file(self, subtitle_data: List[Dict], output_path: Path) -> None:
         with open(output_path, 'w', encoding='utf-8') as f:
             for i, subtitle in enumerate(subtitle_data, 1):

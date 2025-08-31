@@ -210,7 +210,11 @@ class StripeService:
             default_amount = DefaultLimits.PAYG_WEEKLY_LIMIT_USD if is_payg_user else 0
             default_period = "weekly" if is_payg_user else "monthly"
             
-            # Calculate total current spending: Stripe billed + local usage  
+            # Reset spending on 1st of each month
+            if spending_limit and spending_limit.get("currentSpent", 0) > 0:
+                await self._reset_monthly_spending_if_needed(user_id, spending_limit)
+
+            # Calculate total current spending: Stripe billed + local usage
             from app.config.credit_constants import CreditRates
             stripe_spent = spending_limit.get("currentSpent", 0)
             local_usage = user.get("total_usage", 0.0)
@@ -265,37 +269,60 @@ class StripeService:
             user = await users_collection.find_one({"_id": ObjectId(user_id)})
             if not user:
                 return True  # Allow if user not found
-            
+
             # Apply safety limits for PAYG users
             from app.config.credit_constants import DefaultLimits
             subscription = user.get("subscription", {})
             is_payg_user = subscription.get("type") == "pay as you go"
-            
+
             spending_limit = user.get("spendingLimit")
-            
+
+            # Reset spending on 1st of each month
+            if spending_limit and spending_limit.get("currentSpent", 0) > 0:
+                await self._reset_monthly_spending_if_needed(user_id, spending_limit)
+
             # Calculate total current spending: Stripe billed + local usage
             from app.config.credit_constants import CreditRates
             stripe_spent = spending_limit.get("currentSpent", 0) if spending_limit else 0
             local_usage = user.get("total_usage", 0.0)
             local_usage_usd = local_usage * CreditRates.COST_PER_CREDIT_USD
             total_current_spent = stripe_spent + local_usage_usd
-            
+
             # For PAYG users, apply default safety limit if none set
             if is_payg_user and (not spending_limit or not spending_limit.get("amount")):
                 limit_amount = DefaultLimits.PAYG_WEEKLY_LIMIT_USD
                 return self.spending_util.is_within_limit(total_current_spent, limit_amount, amount)
-            
+
             # For non-PAYG users or users with custom limits
             if not spending_limit or not spending_limit.get("amount"):
                 return True  # No limit set for credit pack users
-            
+
             limit_amount = spending_limit.get("amount", 0)
             return self.spending_util.is_within_limit(total_current_spent, limit_amount, amount)
-            
+
         except Exception as e:
             logger.error(f"Failed to check spending limit for user {user_id}: {e}")
             return True  # Allow on error to avoid blocking users
-    
+
+    async def _reset_monthly_spending_if_needed(self, user_id: str, spending_limit: Dict[str, Any]):
+        """Reset currentSpent to 0 on 1st of each month"""
+        try:
+            now = datetime.now(timezone.utc)
+            current_month = now.month
+            current_year = now.year
+
+            # Check if it's 1st of the month and we haven't reset yet
+            if now.day == 1:
+                # Simple monthly reset - just set to 0
+                await users_collection.update_one(
+                    {"_id": ObjectId(user_id)},
+                    {"$set": {"spendingLimit.currentSpent": 0.0}}
+                )
+                logger.info(f"Monthly spending reset for user {user_id}")
+
+        except Exception as e:
+            logger.warning(f"Monthly spending reset failed for user {user_id}: {e}")
+
     @log_execution_time
     async def update_current_spending(self, user_id: str, amount: float):
         """Update current spending amount"""

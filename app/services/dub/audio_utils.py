@@ -60,10 +60,8 @@ class AudioUtils:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
-            # Memory cleanup after download
+                        # Memory cleanup after download
             del response
-            import gc
-            gc.collect()
             
             return {"success": True, "audio_path": output_path}
          
@@ -276,7 +274,6 @@ class AudioUtils:
         
         try:
             import shutil
-            import os
             
             if os.path.exists(folder_path):
                 # Count files before deletion for logging
@@ -285,12 +282,12 @@ class AudioUtils:
                     file_count += len(files)
                 
                 shutil.rmtree(folder_path, ignore_errors=True)
-                logger.info(f"🧹 Successfully removed temp directory: {folder_path} ({file_count} files)")
+                logger.info(f"Successfully removed temp directory: {folder_path} ({file_count} files)")
                 return True
             else:
 
                 return True
         except Exception as e:
-            logger.error(f"🧹 Failed to remove temp directory {folder_path}: {e}")
+            logger.error(f"Failed to remove temp directory {folder_path}: {e}")
             return False
     

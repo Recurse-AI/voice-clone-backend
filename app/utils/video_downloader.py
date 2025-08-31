@@ -29,9 +29,7 @@ class VideoDownloadService:
         import uuid
         return str(uuid.uuid4())
 
-    # ---------------------------------------------------------------------
-    # Helper utilities
-    # ---------------------------------------------------------------------
+
     
     def _build_quality_format(
         self,
@@ -139,9 +137,7 @@ class VideoDownloadService:
             "filesize": selected_format.get("filesize", "Unknown")
         }
 
-    # ---------------------------------------------------------------------
-    # Public API
-    # ---------------------------------------------------------------------
+
     async def download_video(
         self, 
         url: str, 
@@ -344,9 +340,7 @@ class VideoDownloadService:
             logger.error(f"Download error: {e}")
             return {"success": False, "error": str(e)}
 
-    # ------------------------------------------------------------------
-    # File Management Methods
-    # ------------------------------------------------------------------
+
     def get_file_path(self, job_id: str) -> Dict[str, Any]:
         """Get file path for serving, with expiry check"""
         try:
@@ -432,9 +426,7 @@ class VideoDownloadService:
         
         return deleted_files
 
-    # ------------------------------------------------------------------
-    # Cleanup helpers
-    # ------------------------------------------------------------------
+
     def cleanup_old_files(self) -> None:
         """Clean up only truly orphaned dub_* folders that are older than 1 hour."""
         try:
@@ -478,7 +470,6 @@ class VideoDownloadService:
         """Immediately clean up folders for specific completed/failed/cancelled job"""
         try:
             from app.services.dub.audio_utils import AudioUtils
-            import os
             
             # Clean up specific job directories
             temp_patterns = [

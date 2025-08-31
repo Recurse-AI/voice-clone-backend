@@ -3,8 +3,11 @@ Synchronous Database Operations for Thread-Safe Background Tasks
 """
 import logging
 import math
+import threading
+import os
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
+from pathlib import Path
 from pymongo import MongoClient
 from bson import ObjectId
 from app.config.settings import settings
@@ -217,53 +220,53 @@ def update_job_status_sync(job_id: str, job_type: str, status: str, progress: in
         logger.error(f"Failed to update job status (sync) for {job_id}: {e}")
         return False
 
-def cleanup_separation_files(job_id: str):
-    """Cleanup separation temp files synchronously"""
-    try:
-        from app.services.dub.audio_utils import AudioUtils
-        from app.config.settings import settings
-        import os
-        
-        # Get job details from database  
+class CleanupManager:
+    def __init__(self):
+        self._locks = {}
+        self._lock = threading.Lock()
+
+    def cleanup_job(self, job_id: str):
+        lock_key = job_id
+        with self._lock:
+            if lock_key not in self._locks:
+                self._locks[lock_key] = threading.Lock()
+            job_lock = self._locks[lock_key]
+
+        with job_lock:
+            try:
+                self._cleanup_files(job_id)
+                self._cleanup_temp_dirs(job_id)
+            finally:
+                with self._lock:
+                    if lock_key in self._locks:
+                        del self._locks[lock_key]
+
+    def _cleanup_files(self, job_id: str):
         sync_client = SyncDBOperations._get_sync_client()
-        sync_db = sync_client[settings.DB_NAME]
-        separation_jobs_collection = sync_db.separation_jobs
-        
         try:
-            job_data = separation_jobs_collection.find_one({"job_id": job_id})
-            
+            db = sync_client[settings.DB_NAME]
+            job_data = db.separation_jobs.find_one({"job_id": job_id})
+
             if job_data and job_data.get("details"):
-                local_audio_path = job_data["details"].get("local_audio_path")
-                
-                if local_audio_path and os.path.exists(local_audio_path):
-                    # Remove local audio file
-                    try:
-                        os.remove(local_audio_path)
-                        logger.info(f"🧹 Removed local audio file: {local_audio_path}")
-                    except Exception as e:
-                        logger.warning(f"Failed to remove local audio file {local_audio_path}: {e}")
-                
-                # Clean up temp directories only for this specific job
-                temp_patterns = [
-                    f"dub_{job_id}",           # Main job folder
-                    f"voice_clone_{job_id}",
-                    f"separation_{job_id}",
-                    f"audio_{job_id}",
-                    f"processing_{job_id}",
-                    f"voice_cloning/dub_job_{job_id}"  # Nested voice cloning folder - ONLY this job
-                ]
-                
-                for pattern in temp_patterns:
-                    temp_dir = os.path.join(settings.TEMP_DIR, pattern)
-                    if os.path.exists(temp_dir):
-                        try:
-                            AudioUtils.remove_temp_dir(folder_path=temp_dir)
-                            logger.info(f"🧹 Removed separation job directory: {temp_dir}")
-                        except Exception as e:
-                            logger.warning(f"Failed to remove {temp_dir}: {e}")
-                        
+                local_path = job_data["details"].get("local_audio_path")
+                if local_path and os.path.exists(local_path):
+                    os.remove(local_path)
         finally:
             sync_client.close()
-            
-    except Exception as e:
-        logger.error(f"Separation cleanup error for job {job_id}: {e}")
+
+    def _cleanup_temp_dirs(self, job_id: str):
+        from pathlib import Path
+        from app.services.dub.audio_utils import AudioUtils
+
+        temp_dir = Path(settings.TEMP_DIR)
+        patterns = [f"dub_{job_id}", f"separation_{job_id}", f"audio_{job_id}"]
+
+        for pattern in patterns:
+            temp_path = temp_dir / pattern
+            if temp_path.exists():
+                AudioUtils.remove_temp_dir(str(temp_path))
+
+_cleanup_manager = CleanupManager()
+
+def cleanup_separation_files(job_id: str):
+    _cleanup_manager.cleanup_job(job_id)

@@ -47,42 +47,42 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to cleanup old directories: {cleanup_error}")
     
     # Initialize AI services
-    logger.info("🚀 Initializing AI services...")
-    
+    logger.info("Initializing AI services...")
+
     # Fish Speech initialization
     try:
         from app.services.dub.fish_speech_service import initialize_fish_speech
-        logger.info("🔄 Loading Fish Speech models...")
+        logger.info("Loading Fish Speech models...")
         if initialize_fish_speech():
-            logger.info("✅ Fish Speech service ready")
+            logger.info("Fish Speech service ready")
         else:
-            logger.info("⚠️ Fish Speech models not found - voice cloning disabled")
+            logger.info("Fish Speech models not found - voice cloning disabled")
     except Exception as e:
-        logger.warning(f"⚠️ Fish Speech initialization failed: {str(e)[:100]}...")
-    
-    # WhisperX initialization  
+        logger.warning(f"Fish Speech initialization failed: {str(e)[:100]}...")
+
+    # WhisperX initialization
     try:
         from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
-        logger.info("🔄 Loading WhisperX transcription models...")
+        logger.info("Loading WhisperX transcription models...")
         if initialize_whisperx_transcription():
-            logger.info("✅ WhisperX service ready with preloaded models")
+            logger.info("WhisperX service ready with preloaded models")
         else:
-            logger.error("❌ WhisperX initialization failed")
+            logger.error("WhisperX initialization failed")
     except Exception as e:
-        logger.error(f"❌ WhisperX error: {str(e)[:100]}...")
-    
+        logger.error(f"WhisperX error: {str(e)[:100]}...")
+
     # OpenAI service initialization
     try:
         from app.services.openai_service import initialize_openai_service
-        logger.info("🔄 Initializing OpenAI service...")
+        logger.info("Initializing OpenAI service...")
         if initialize_openai_service():
-            logger.info("✅ OpenAI service ready")
+            logger.info("OpenAI service ready")
         else:
-            logger.warning("⚠️ OpenAI service unavailable - translation features disabled")
+            logger.warning("OpenAI service unavailable - translation features disabled")
     except Exception as e:
-        logger.warning(f"⚠️ OpenAI initialization failed: {str(e)[:100]}...")
-    
-    logger.info("🎉 AI services initialization complete")
+        logger.warning(f"OpenAI initialization failed: {str(e)[:100]}...")
+
+    logger.info("AI services initialization complete")
     
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     
@@ -111,13 +111,15 @@ async def lifespan(app: FastAPI):
     
     try:
         from app.routes.video.dub_routes import get_dub_executor
-        from app.routes.audio_processing import get_separation_executor
+        from app.routes.audio_processing import _separation_manager
         
         dub_executor = get_dub_executor()
-        separation_executor = get_separation_executor()
+
         
         dub_executor.shutdown(wait=True)
-        separation_executor.shutdown(wait=True)
+        _separation_manager.shutdown()
+        from app.utils.status_reconciler import _reconciler
+        _reconciler.stop()
     except Exception as e:
         logger.error(f"Failed to cleanup ThreadPoolExecutors: {e}")
 
@@ -125,7 +127,7 @@ app = FastAPI(
     title=settings.API_TITLE,
     version=settings.API_VERSION,
     description=settings.API_DESCRIPTION,
-    # lifespan=lifespan
+    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -158,7 +160,10 @@ async def startup_event():
     try:
         loop = asyncio.get_running_loop()
         loop_manager.set_main_loop(loop)
-        logger.info("✅ Main event loop registered for background tasks")
+        logger.info("Main event loop registered for background tasks")
+
+        from app.utils.status_reconciler import _reconciler
+        _reconciler.start()
     except Exception as e:
         logger.error(f"Failed to register main event loop: {e}")
 

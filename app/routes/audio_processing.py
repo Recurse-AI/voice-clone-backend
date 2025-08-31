@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 import asyncio
 import threading
 import gc
+import time
 from concurrent.futures import ThreadPoolExecutor
 from fastapi.responses import JSONResponse
 import logging
@@ -20,18 +21,41 @@ import random
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Global ThreadPoolExecutor for separation processing
-_separation_executor = None
-_executor_lock = threading.Lock()
+class SeparationExecutor:
+    def __init__(self):
+        self._executor = None
+        self._lock = threading.Lock()
+        self._last_used = 0
+        self._shutdown = False
+
+    def get_executor(self):
+        with self._lock:
+            if self._shutdown:
+                raise RuntimeError("Executor shutdown")
+
+            current_time = time.time()
+            if self._executor is None or (current_time - self._last_used) > 300:
+                self._create_executor()
+
+            self._last_used = current_time
+            return self._executor
+
+    def _create_executor(self):
+        if self._executor:
+            self._executor.shutdown(wait=True)
+        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="sep")
+
+    def shutdown(self):
+        with self._lock:
+            self._shutdown = True
+            if self._executor:
+                self._executor.shutdown(wait=True)
+                self._executor = None
+
+_separation_manager = SeparationExecutor()
 
 def get_separation_executor():
-    """Get or create global ThreadPoolExecutor for separation processing"""
-    global _separation_executor
-    if _separation_executor is None:
-        with _executor_lock:
-            if _separation_executor is None:
-                _separation_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="separation_worker")
-    return _separation_executor
+    return _separation_manager.get_executor()
 
 def _update_separation_status_non_blocking(job_id: str, status: str, progress: int = None, **kwargs):
     """Update separation job status using unified status manager"""

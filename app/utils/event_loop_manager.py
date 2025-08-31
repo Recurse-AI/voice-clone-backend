@@ -18,7 +18,7 @@ class EventLoopManager:
     def set_main_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Store reference to the main event loop"""
         self._main_loop = loop
-        logger.info(f"✅ Main event loop registered: {loop}")
+        logger.info(f"Main event loop registered: {loop}")
     
     def get_main_loop(self) -> Optional[asyncio.AbstractEventLoop]:
         """Get the stored main event loop"""

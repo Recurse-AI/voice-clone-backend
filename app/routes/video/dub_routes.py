@@ -90,13 +90,13 @@ def _ensure_resume_files_available(job_id: str, job_dir: str, manifest: dict) ->
                     resp.raise_for_status()
                     with open(file_info["path"], 'wb') as f:
                         f.write(resp.content)
-                    logger.info(f"✅ Downloaded: {file_info['filename']}")
+                    logger.info(f"Downloaded: {file_info['filename']}")
                 except Exception as e:
-                    logger.warning(f"❌ Failed to download {file_info['filename']}: {e}")
+                    logger.warning(f"Failed to download {file_info['filename']}: {e}")
                     
-            logger.info(f"📥 Resume files preparation complete for job {job_id}")
+            logger.info(f"Resume files preparation complete for job {job_id}")
         else:
-            logger.info(f"✅ Resume: All files already available for job {job_id}")
+            logger.info(f"Resume: All files already available for job {job_id}")
             
     except Exception as e:
         logger.warning(f"Resume files check failed for job {job_id}: {e}")
@@ -149,7 +149,7 @@ async def start_video_dub(
             )
         
         # Initialize job status in unified status manager to prevent 404 errors
-        from app.utils.unified_status_manager import get_unified_status_manager, ProcessingStatus, JobType
+        from app.utils.unified_status_manager import get_unified_status_manager, ProcessingStatus
         manager = get_unified_status_manager()
         
         # Get queue position before enqueuing (to get proper position)
