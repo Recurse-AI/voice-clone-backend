@@ -40,7 +40,7 @@ async def create_user(user_dict: dict):
 
     user_dict["spendingLimit"] = {
         "amount": 0.0, 
-        "period": "monthly",
+        "period": "weekly",
         "currentSpent": 0.0,
         "periodStartDate": None
     }
@@ -52,7 +52,6 @@ async def create_user(user_dict: dict):
 
 async def get_user(data: LoginData) -> User:
     user_data = await db["users"].find_one({"email": data.email})
-    logger.info(f"----> poniter reached here.")
     if not user_data:
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
@@ -83,7 +82,6 @@ async def get_user_id(id: str) -> User:
     user_data["id"] = str(user_data["_id"])
     user_data["_id"] = user_data["id"]
     user_data.pop("password", None)
-    
     return User(**user_data)
 
 async def update_user_name(id: str, data: UpdateProfileRequest) -> User:

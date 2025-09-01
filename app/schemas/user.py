@@ -21,6 +21,12 @@ class LoginData(BaseModel):
     email: EmailStr
     password: str
 
+class SpendingLimit(BaseModel):
+    amount: float
+    period: Literal['daily', 'weekly', 'monthly'] = 'monthly'
+    currentSpent: float = 0.0
+    periodStartDate: Optional[datetime] = None
+
 class UserOut(UserBase):
     id: Optional[str]
     isEmailVerified: bool
@@ -33,6 +39,7 @@ class UserOut(UserBase):
 
 class FullUser(UserOut):
     subscription: Optional[Union[Subscription, Dict[str, Any]]] = None
+    spendingLimit: Optional[SpendingLimit] = None 
     hasPaymentMethod: bool = False
     paymentMethodAddedAt: Optional[datetime] = None
 
