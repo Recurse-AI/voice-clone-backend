@@ -61,15 +61,15 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Fish Speech initialization failed: {str(e)[:100]}...")
 
     # WhisperX initialization
-    # try:
-    #     from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
-    #     logger.info("Loading WhisperX transcription models...")
-    #     if initialize_whisperx_transcription():
-    #         logger.info("WhisperX service ready with preloaded models")
-    #     else:
-    #         logger.error("WhisperX initialization failed")
-    # except Exception as e:
-    #     logger.error(f"WhisperX error: {str(e)[:100]}...")
+    try:
+        from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
+        logger.info("Loading WhisperX transcription models...")
+        if initialize_whisperx_transcription():
+            logger.info("WhisperX service ready with preloaded models")
+        else:
+            logger.error("WhisperX initialization failed")
+    except Exception as e:
+        logger.error(f"WhisperX error: {str(e)[:100]}...")
 
     # OpenAI service initialization
     try:
