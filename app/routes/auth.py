@@ -38,6 +38,18 @@ def prepare_subscription_data(subscription):
             "currentPeriodEnd": None
         }
 
+def prepare_spending_limit_data(spending_limit):
+    """Helper function to prepare spending limit data for FullUser schema"""
+    if spending_limit:
+        if hasattr(spending_limit, 'model_dump'):
+            return spending_limit.model_dump()
+        elif hasattr(spending_limit, 'dict'):
+            return spending_limit.dict()
+        else:
+            return spending_limit
+    else:
+        return None
+
 # Define the security scheme
 security = HTTPBearer(
     bearerFormat="JWT",  
@@ -139,7 +151,8 @@ async def login_user(req: LoginData):
             )
         # Convert to FullUser schema to include subscription information
         subscription_data = prepare_subscription_data(user.subscription)
-        
+        spending_limit_data = prepare_spending_limit_data(user.spendingLimit)
+
         full_user = FullUser(
             id=user.id,
             name=user.name,
@@ -148,7 +161,10 @@ async def login_user(req: LoginData):
             profilePicture=user.profilePicture,
             role=user.role,
             credits=user.credits,
-            subscription=subscription_data
+            subscription=subscription_data,
+            spendingLimit=spending_limit_data,
+            hasPaymentMethod=getattr(user, 'hasPaymentMethod', False),
+            paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None)
         )
         
         user_data = full_user.model_dump(mode='json')
@@ -188,7 +204,7 @@ async def profile(
 
         # Convert to FullUser schema to include subscription information
         subscription_data = prepare_subscription_data(user.subscription)
-        
+        spending_limit_data = prepare_spending_limit_data(user.spendingLimit)
         full_user = FullUser(
             id=user.id,
             name=user.name,
@@ -198,6 +214,7 @@ async def profile(
             role=user.role,
             credits=user.credits,
             subscription=subscription_data,
+            spendingLimit=spending_limit_data,
             hasPaymentMethod=getattr(user, 'hasPaymentMethod', False),
             paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None)
         )
@@ -235,7 +252,8 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
         
         # Convert to FullUser schema to include subscription information
         subscription_data = prepare_subscription_data(user.subscription)
-        
+        spending_limit_data = prepare_spending_limit_data(user.spendingLimit)
+
         full_user = FullUser(
             id=user.id,
             name=user.name,
@@ -244,7 +262,10 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
             profilePicture=user.profilePicture,
             role=user.role,
             credits=user.credits,
-            subscription=subscription_data
+            subscription=subscription_data,
+            spendingLimit=spending_limit_data,
+            hasPaymentMethod=getattr(user, 'hasPaymentMethod', False),
+            paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None)
         )
         
         user_data = full_user.model_dump(mode='json')
@@ -270,7 +291,6 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
 async def request_password_reset(req: ResetPasswordRequest, background_tasks: BackgroundTasks) -> JSONResponse:
     
     try:
-        logger.info(f"----> forgot-password {req.email}")
         user = await get_user_email(req.email)
         logger.info("controller reached here")
         if not user : 
