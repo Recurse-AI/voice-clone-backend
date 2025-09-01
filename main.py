@@ -103,11 +103,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to cleanup Fish Speech: {e}")
     
-    # try:
-    #     from app.services.dub.whisperx_transcription import cleanup_whisperx_transcription
-    #     cleanup_whisperx_transcription()
-    # except Exception as e:
-    #     logger.error(f"Failed to cleanup WhisperX transcription: {e}")
+    try:
+        from app.services.dub.whisperx_transcription import cleanup_whisperx_transcription
+        cleanup_whisperx_transcription()
+    except Exception as e:
+        logger.error(f"Failed to cleanup WhisperX transcription: {e}")
     
     try:
         from app.routes.video.dub_routes import get_dub_executor
