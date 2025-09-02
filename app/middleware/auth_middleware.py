@@ -57,7 +57,7 @@ class AuthMiddleware:
             "/api/audio-separation", # Audio separation
             "/upload-file",         # File uploads
             "/api/voice-clone-segment", # Voice cloning
-            "/api/export-video",    # Video export
+
             "/api/dubbing/",        # Dubbing APIs
             "/api/stripe/",         # Stripe APIs (except webhooks)
         ]

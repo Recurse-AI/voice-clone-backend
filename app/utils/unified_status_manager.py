@@ -10,6 +10,12 @@ from datetime import datetime, timezone
 from collections import defaultdict
 import threading
 
+
+from app.services.dub_job_service import dub_job_service
+from app.services.separation_job_service import separation_job_service
+from app.utils.db_sync_operations import update_job_status_sync
+from app.utils.runpod_service import runpod_service
+
 logger = logging.getLogger(__name__)
 
 
@@ -79,11 +85,11 @@ class StatusData:
         if phase:
             phase_messages = {
                 "initialization": "Initializing dubbing process...",
-                "download": "Downloading and preparing audio...",
                 "separation": "Separating audio tracks...",
                 "transcription": "Transcribing audio with AI...",
                 "dubbing": "Dubbing text with AI translation...",
                 "review_prep": "Preparing for review...",
+                "reviewing": "Applying your edits...",
                 "voice_cloning": "Voice cloning with AI...",
                 "final_processing": "Generating final audio...",
                 "upload": "Uploading results...",
@@ -93,23 +99,23 @@ class StatusData:
         
         # Fallback to progress-based ranges (matching SimpleDubbedAPI.PROGRESS_PHASES)
         if self.progress <= 10:
-            return "Initializing dubbing process..."  # initialization: 0-10%
-        elif self.progress <= 30:
-            return "Downloading and preparing audio..."  # download: 10-30%
+            return "Initializing dubbing process..."
+        elif self.progress <= 25:
+            return "Queued - Waiting to start processing..."
         elif self.progress <= 45:
-            return "Separating audio tracks..."  # separation: 30-45%
+            return "Separating audio tracks..."
         elif self.progress <= 60:
-            return "Transcribing audio with AI..."  # transcription: 45-60% ← FIXED!
+            return "Transcribing audio with AI..."
         elif self.progress <= 75:
-            return "Dubbing text with AI translation..."  # dubbing: 60-75% ← FIXED!
+            return "Processing translation and dubbing with AI..."
         elif self.progress <= 80:
-            return "Preparing for review..."  # review_prep: 75-80%
-        elif self.progress <= 92:
-            return "Voice cloning with AI..."  # voice_cloning: 80-92%
-        elif self.progress <= 97:
-            return "Generating final audio..."  # final_processing: 92-97%
+            return "Preparing for review..."
+        elif self.progress <= 81:
+            return "Applying your edits..."
+        elif self.progress < 96:
+            return "Voice cloning with AI..."
         elif self.progress < 100:
-            return "Uploading results..."  # upload: 97-100%
+            return "Uploading results..."
         else:
             return "Processing completed successfully"
     
@@ -160,16 +166,15 @@ class UnifiedStatusManager:
         # Progress validation rules - Minimum progress for each status (aligned with phases)
         self._progress_floors = {
             ProcessingStatus.PENDING: 0,
-            ProcessingStatus.DOWNLOADING: 10,      # Download phase starts at 10%
-            ProcessingStatus.SEPARATING: 30,       # Separation phase starts at 30% 
-            ProcessingStatus.TRANSCRIBING: 45,     # Transcription phase starts at 45%
-            ProcessingStatus.PROCESSING: 60,       # Processing phase starts at 60% (dubbing + voice cloning)
-            ProcessingStatus.UPLOADING: 97,        # Upload phase starts at 97%
+            ProcessingStatus.SEPARATING: 25,
+            ProcessingStatus.TRANSCRIBING: 45,
+            ProcessingStatus.PROCESSING: 60,
+            ProcessingStatus.UPLOADING: 96,
             ProcessingStatus.COMPLETED: 100,
-            ProcessingStatus.AWAITING_REVIEW: 80,  # Review phase starts at 80%
-            ProcessingStatus.REVIEWING: 80,        # Applying human edits at 80%
-            ProcessingStatus.FAILED: 0,            # Can fail at any progress
-            ProcessingStatus.CANCELLED: 0          # Can cancel at any progress
+            ProcessingStatus.AWAITING_REVIEW: 80,
+            ProcessingStatus.REVIEWING: 80,
+            ProcessingStatus.FAILED: 0,
+            ProcessingStatus.CANCELLED: 0
         }
         
 
@@ -259,13 +264,20 @@ class UnifiedStatusManager:
                 # Get queue position if applicable
                 queue_position = await self._get_queue_position(job_id, job_type, status)
                 
+                # Merge details with existing to avoid losing prior context (e.g., runpod_urls)
+                merged_details: Dict[str, Any] = {}
+                if current_data and current_data.details:
+                    merged_details.update(current_data.details)
+                if details:
+                    merged_details.update(details)
+
                 # Create new status data
                 status_data = StatusData(
                     job_id=job_id,
                     job_type=job_type,
                     status=status,
                     progress=validated_progress,
-                    details=details,
+                    details=merged_details,
                     queue_position=queue_position,
                     user_id=user_id
                 )
@@ -320,13 +332,20 @@ class UnifiedStatusManager:
 
                         return True
                 
+                # Merge details with existing to avoid losing prior context (e.g., runpod_urls)
+                merged_details_sync: Dict[str, Any] = {}
+                if current_data and current_data.details:
+                    merged_details_sync.update(current_data.details)
+                if details:
+                    merged_details_sync.update(details)
+
                 # Create new status data
                 status_data = StatusData(
                     job_id=job_id,
                     job_type=job_type,
                     status=status,
                     progress=validated_progress,
-                    details=details,
+                    details=merged_details_sync,
                     queue_position=None,  # Skip queue position for sync version
                     user_id=user_id
                 )
@@ -351,7 +370,7 @@ class UnifiedStatusManager:
     def _persist_status_to_database_sync(self, status_data: StatusData) -> bool:
         """Synchronous database persistence using sync operations"""
         try:
-            from app.utils.db_sync_operations import update_job_status_sync
+
             
             return update_job_status_sync(
                 job_id=status_data.job_id,
@@ -592,8 +611,7 @@ class UnifiedStatusManager:
     async def _get_runpod_queue_position(self, job_id: str) -> Optional[int]:
         """Get queue position from RunPod service"""
         try:
-            from app.utils.runpod_service import runpod_service
-            from app.services.separation_job_service import separation_job_service
+
             
             # Get job to find runpod_request_id
             job = await separation_job_service.get_job(job_id)

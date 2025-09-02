@@ -5,7 +5,7 @@ from app.config.settings import settings
 from app.utils.db_sync_operations import SyncDBOperations
 from app.utils.runpod_service import runpod_service
 from app.utils.job_utils import job_utils
-from app.utils.db_sync_operations import cleanup_separation_files
+from app.utils.cleanup_utils import cleanup_utils
 
 class StatusReconciler:
     def __init__(self):
@@ -92,6 +92,6 @@ class StatusReconciler:
             if user_id:
                 job_utils.complete_job_billing_sync(job_id, "separation", user_id)
 
-            cleanup_separation_files(job_id)
+            cleanup_utils.cleanup_job_comprehensive(job_id, "separation")
 
 _reconciler = StatusReconciler()

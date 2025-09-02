@@ -2,7 +2,7 @@ import boto3
 import os
 import logging
 import uuid
-from typing import Dict, Any
+from typing import Dict, Any, List
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -138,15 +138,21 @@ class R2Service:
             logger.error(f"❌ Delete failed: {r2_key} → {e}")
             return {"success": False, "error": str(e)}
     
-    def upload_directory(self, job_id: str, local_dir: str) -> Dict[str, Any]:
+    def upload_directory(self, job_id: str, local_dir: str, exclude_files: List[str] = None) -> Dict[str, Any]:
         """Upload all files from a directory to R2"""
         results = {}
-        
+
         try:
+            exclude_files = exclude_files or []
             for filename in os.listdir(local_dir):
                 file_path = os.path.join(local_dir, filename)
-                
+
                 if not os.path.isfile(file_path):
+                    continue
+
+                # Skip excluded files
+                if filename in exclude_files:
+                    logger.info(f"⏭️ Skipping excluded file: {filename}")
                     continue
                 
                 # Only upload supported files

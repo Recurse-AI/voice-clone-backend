@@ -255,15 +255,7 @@ class FileDeleteResponse(BaseModel):
     deleted_files: Optional[List[str]] = None
     error: Optional[str] = None
 
-# Upload Status Schema
-class UploadStatusResponse(BaseModel):
-    job_id: str
-    status: str  # uploading, ready, failed
-    progress: int  # Always 0 during upload
-    message: str
-    original_filename: Optional[str] = None
-    file_url: Optional[str] = None
-    ready_for_processing: Optional[bool] = None
+
 
 # Voice Clone Segment Schemas
 class VoiceCloneRequest(BaseModel):

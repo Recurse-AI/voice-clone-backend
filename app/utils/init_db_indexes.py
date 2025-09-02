@@ -5,7 +5,7 @@ Ensures unique indexes on job_id fields to prevent duplicate processing across m
 
 import logging
 from typing import List, Dict, Any
-from app.config.database import dub_jobs_collection, separation_jobs_collection, upload_status_collection, export_jobs_collection
+from app.config.database import dub_jobs_collection, separation_jobs_collection
 
 logger = logging.getLogger(__name__)
 
@@ -27,27 +27,12 @@ async def init_database_indexes():
             "name": "separation_jobs.job_id", 
             "field": "job_id"
         },
-        {
-            "collection": upload_status_collection,
-            "name": "upload_status.job_id",
-            "field": "job_id"
-        },
-        {
-            "collection": export_jobs_collection,
-            "name": "export_jobs.job_id",
-            "field": "job_id"
-        }
+
+
     ]
     
     # TTL indexes for automatic cleanup
-    ttl_indexes_to_create = [
-        {
-            "collection": upload_status_collection,
-            "name": "upload_status.updated_at (TTL)",
-            "field": "updated_at",
-            "expire_after_seconds": 86400  # 24 hours
-        }
-    ]
+    ttl_indexes_to_create = []
     
     created_count = 0
     existing_count = 0

@@ -67,8 +67,8 @@ class JobUtils:
         Setup job directory by copying from source or creating new
         Returns: path to the new job directory
         """
-        source_dir = os.path.join(settings.TEMP_DIR, f"dub_{source_job_id}")
-        target_dir = os.path.join(settings.TEMP_DIR, f"dub_{target_job_id}")
+        source_dir = os.path.join(settings.TEMP_DIR, source_job_id)
+        target_dir = os.path.join(settings.TEMP_DIR, target_job_id)
         
         try:
             if os.path.exists(source_dir):
@@ -87,7 +87,7 @@ class JobUtils:
             raise Exception(f"Failed to setup job directory: {str(e)}")
     
     @staticmethod
-    def prepare_manifest_for_redub(manifest: Dict[str, Any], new_job_id: str, target_language: str, parent_job_id: str) -> Dict[str, Any]:
+    def prepare_manifest_for_redub(manifest: Dict[str, Any], redub_job_id: str, target_language: str, parent_job_id: str) -> Dict[str, Any]:
         """
         Prepare manifest for redub with updated metadata
         Returns: updated manifest
@@ -97,7 +97,7 @@ class JobUtils:
         """
         updated_manifest = manifest.copy()
         updated_manifest.update({
-            "job_id": new_job_id,
+            "job_id": redub_job_id,
             # Don't update target_language - preserve original for override comparison
             "redub_target_language": target_language,  # Store new target language separately
             "parent_job_id": parent_job_id,
@@ -153,7 +153,11 @@ class JobUtils:
                     main_loop
                 )
                 # Wait for the result with timeout
-                billing_result = future.result(timeout=30)
+                try:
+                    billing_result = future.result(timeout=30)
+                except Exception as e:
+                    logger.error(f"Async billing failed for {job_id}: {e}")
+                    billing_result = {"success": False, "error": str(e)}
             else:
                 # Fallback: No main loop available (shouldn't happen in production)
                 logger.warning(f"Main event loop not available for job {job_id}, skipping billing")

@@ -22,6 +22,7 @@ from app.config.settings import settings
 from app.utils.video_downloader import video_download_service
 from app.schemas import StatusResponse
 from app.utils.event_loop_manager import loop_manager
+from app.utils.cleanup_utils import cleanup_utils
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -42,10 +43,20 @@ async def lifespan(app: FastAPI):
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
     
     try:
-        video_download_service.cleanup_old_files()
+        cleanup_utils.cleanup_all_expired()
     except Exception as cleanup_error:
-        logger.warning(f"Failed to cleanup old directories: {cleanup_error}")
+        logger.warning(f"Failed to cleanup expired resources: {cleanup_error}")
     
+    # Register main event loop and start reconciler
+    try:
+        loop = asyncio.get_running_loop()
+        loop_manager.set_main_loop(loop)
+        logger.info("Main event loop registered for background tasks")
+        from app.utils.status_reconciler import _reconciler
+        _reconciler.start()
+    except Exception as e:
+        logger.error(f"Failed to register main event loop: {e}")
+
     # Initialize AI services
     logger.info("Initializing AI services...")
 
@@ -154,18 +165,7 @@ app.include_router(uploads_router, prefix="", tags=["uploads"])
 app.include_router(video_processing_router, prefix="/api", tags=["video-processing"])
 app.include_router(user_jobs_router, prefix="/api/jobs", tags=["user-jobs"])
 
-@app.on_event("startup")
-async def startup_event():
-    """Register the main event loop on startup"""
-    try:
-        loop = asyncio.get_running_loop()
-        loop_manager.set_main_loop(loop)
-        logger.info("Main event loop registered for background tasks")
-
-        from app.utils.status_reconciler import _reconciler
-        _reconciler.start()
-    except Exception as e:
-        logger.error(f"Failed to register main event loop: {e}")
+# Removed separate startup event; loop registration is handled in lifespan
 
 @app.get("/", response_model=StatusResponse)
 async def root():

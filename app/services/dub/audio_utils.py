@@ -242,8 +242,8 @@ class AudioUtils:
             return {"success": False, "error": str(e)}
     
     @staticmethod
-    def mix_audio_files(file1: str, file2: str, out_path: str, ratio1: float = 0.75, ratio2: float = 0.25):
-        """Mix two audio files with given ratios and write to out_path"""
+    def mix_audio_files(file1: str, file2: str, out_path: str, ratio1: float = 1.0, ratio2: float = 0.3):
+        """Mix two audio files with given ratios and write to out_path - file1 (dubbed) always at 1.0, file2 (instrument) configurable"""
         import soundfile as sf
         audio1, sr1 = sf.read(file1)
         audio2, sr2 = sf.read(file2)
@@ -253,41 +253,19 @@ class AudioUtils:
         mixed = ratio1 * audio1[:min_len] + ratio2 * audio2[:min_len]
         sf.write(out_path, mixed, sr1)
         return out_path
-
+    
     @staticmethod
-    def remove_temp_dir(job_id: str = None, folder_path: str = None) -> bool:
-        """Remove temporary directory by job_id or explicit folder_path.
-
-        Either job_id or folder_path must be provided. If job_id is given, the
-        directory is resolved under settings.TEMP_DIR.
-        Returns True if deletion attempted (regardless of existing), False if
-        parameters were invalid.
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        if not job_id and not folder_path:
-            logger.warning("AudioUtils.remove_temp_dir: No job_id or folder_path provided")
-            return False
-        if folder_path is None:
-            folder_path = os.path.join(settings.TEMP_DIR, job_id)
-        
+    def remove_temp_dir(folder_path: str) -> bool:
+        """Remove temporary directory safely"""
         try:
             import shutil
-            
-            if os.path.exists(folder_path):
-                # Count files before deletion for logging
-                file_count = 0
-                for root, dirs, files in os.walk(folder_path):
-                    file_count += len(files)
-                
+            if os.path.exists(folder_path) and os.path.isdir(folder_path):
                 shutil.rmtree(folder_path, ignore_errors=True)
-                logger.info(f"Successfully removed temp directory: {folder_path} ({file_count} files)")
                 return True
-            else:
-
-                return True
-        except Exception as e:
-            logger.error(f"Failed to remove temp directory {folder_path}: {e}")
             return False
-    
+        except Exception as e:
+            # Log error but don't raise - cleanup should be non-blocking
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Failed to remove temp directory {folder_path}: {e}")
+            return False

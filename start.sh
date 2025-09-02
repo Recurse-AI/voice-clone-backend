@@ -27,8 +27,8 @@ fi
 
 # Create temp and logs directories
 echo "📁 Creating directories..."
-mkdir -p ./tmp/voice_cloning ./logs
-chmod 755 ./tmp/voice_cloning ./logs
+mkdir -p ./tmp ./logs
+chmod 755 ./tmp ./logs
 
 # Check if virtual environment exists
 if [ ! -d "venv" ]; then

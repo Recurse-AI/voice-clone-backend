@@ -16,6 +16,7 @@ if 'PYTORCH_CUDA_ALLOC_CONF' not in os.environ:
 
 from app.config.settings import settings
 from app.services.language_service import language_service
+from app.utils.cleanup_utils import cleanup_utils
 
 logger = logging.getLogger(__name__)
 
@@ -87,35 +88,11 @@ class WhisperXTranscriptionService:
     
     def _cleanup_gpu_memory(self):
         """Clean up GPU memory to prevent CUDA OOM errors"""
-        try:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-                logger.info("🧹 GPU memory cache cleared")
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to clear GPU cache: {e}")
+        cleanup_utils.cleanup_gpu_memory()
     
     def _aggressive_gpu_cleanup(self):
         """Aggressive GPU memory cleanup before loading models"""
-        try:
-            if not torch.cuda.is_available():
-                return
-            
-            # Clear PyTorch cache
-            for i in range(3):
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-            
-           
-            
-            # Force garbage collection
-            import gc
-            gc.collect()
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            
-        except Exception:
-            pass
+        cleanup_utils.cleanup_aggressive_gpu()
     
 
 
@@ -175,10 +152,7 @@ class WhisperXTranscriptionService:
             }
             
             logger.info(f"Transcription completed in {processing_time:.2f}s - {len(sentences)} sentences")
-            
-            # Skip GPU cleanup to avoid unnecessary memory operations
-            # self._cleanup_gpu_memory()  # DISABLED per user request
-            
+                        
             return result
             
         except Exception as e:
@@ -196,66 +170,7 @@ class WhisperXTranscriptionService:
                 }
             }
     
-    def get_sentences_and_split_audio(self, audio_url: str, output_dir: str = None, source_video_language: str = None, max_sentences: int = None, job_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get sentences from WhisperX and split audio into segments"""
-        try:
-            from .audio_utils import AudioUtils
-            audio_utils = AudioUtils()
-            
-            # Use the exact vocal file path (already downloaded by dub_routes.py)
-            vocal_file_path = os.path.join(output_dir, f"vocals_{job_id}.wav")
-            
-            if not os.path.exists(vocal_file_path):
-                raise Exception(f"Vocal file not found at expected path: {vocal_file_path}")
-            
-            logger.info(f"Using vocal file: {vocal_file_path}")
-            
-            # Transcribe using WhisperX
-            transcription_result = self.transcribe_audio_file(vocal_file_path, source_video_language, job_id)
-            if not transcription_result["success"]:
-                raise Exception(transcription_result.get("error", "Transcription failed"))
-            
-            raw_sentences = transcription_result["sentences"]
-            if max_sentences:
-                raw_sentences = raw_sentences[:max_sentences]
-            
-            # Split by sentences
-            segments_to_split = []
-            for sentence in raw_sentences:
-                segments_to_split.append({
-                    "start": sentence["start"],
-                    "end": sentence["end"], 
-                    "text": sentence["text"]
-                })
-            
-            # Split audio
-            split_result = audio_utils.split_audio_by_timestamps(vocal_file_path, output_dir, segments_to_split)
-            if not split_result["success"]:
-                raise Exception(f"Failed to split audio: {split_result['error']}")
-            
-            # Create segments
-            enhanced_segments = []
-            split_files = split_result.get("split_files", [])
-            for i, split_file in enumerate(split_files):
-                if i < len(raw_sentences):
-                    enhanced_segment = raw_sentences[i].copy()
-                    enhanced_segment.update({
-                        "output_path": split_file["output_path"],
-                        "duration_ms": split_file["duration_ms"]
-                    })
-                    enhanced_segments.append(enhanced_segment)
-            
-            return {
-                "success": True,
-                "transcript_id": f"whisperx_{int(time.time())}",
-                "audio_url": audio_url,
-                "segments": enhanced_segments
-            }
-            
-        except Exception as e:
-            logger.error(f"WhisperX failed: {str(e)}")
-            raise Exception(f"WhisperX error: {str(e)}")
-    
+
     def _normalize_language_code(self, language: str) -> str:
         """Normalize language code for WhisperX transcription"""
         if not language:
@@ -345,30 +260,20 @@ class WhisperXTranscriptionService:
             logger.error(f"❌ Failed to get alignment model for '{language_code}': {e}")
             raise
     
-    def _convert_to_sentences_format(self, whisperx_segments: List[Dict], default_language: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Convert WhisperX segments to simple sentence format"""
+    def _convert_to_sentences_format(self, whisperx_segments: List[Dict]) -> List[Dict[str, Any]]:
+        """Convert WhisperX segments to simple sentence format - only essential fields"""
         sentences = []
-        
+
         for i, segment in enumerate(whisperx_segments):
-            sentence = {
-                "text": segment.get("text", "").strip(),
-                "start": int(segment.get("start", 0) * 1000),  # Convert to ms
-                "end": int(segment.get("end", 0) * 1000),
-                "id": f"sentence_{i}"
-            }
-            # Attach optional fields if present (language, confidence/logprob)
-            if "language" in segment:
-                sentence["language"] = segment.get("language")
-            elif default_language:
-                sentence["language"] = default_language
-            if "avg_logprob" in segment:
-                sentence["avg_logprob"] = segment.get("avg_logprob")
-            if "confidence" in segment:
-                sentence["confidence"] = segment.get("confidence")
-            
-            if sentence["text"]:
-                sentences.append(sentence)
-        
+            text = segment.get("text", "").strip()
+            if text:  # Only include non-empty text segments
+                sentences.append({
+                    "text": text,
+                    "start": int(segment.get("start", 0) * 1000),  # Convert to ms
+                    "end": int(segment.get("end", 0) * 1000),
+                    "id": f"sentence_{i}"
+                })
+
         return sentences
 
 

@@ -8,8 +8,8 @@ import asyncio
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 from app.utils.runpod_service import runpod_service
-from app.utils.shared_memory import mark_job_cancelled, delete_upload_status_async
-from app.utils.db_sync_operations import cleanup_separation_files
+from app.utils.shared_memory import mark_job_cancelled
+from app.utils.cleanup_utils import cleanup_utils
 from app.services.separation_job_service import separation_job_service
 from app.services.dub_job_service import dub_job_service
 from app.services.credit_service import credit_service
@@ -66,30 +66,25 @@ class JobCancellationService:
             # 5. Cleanup files asynchronously
             try:
                 def cleanup_files():
-                    cleanup_separation_files(job_id)
-                
+                    cleanup_utils.cleanup_job_comprehensive(job_id, "separation")
+
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, cleanup_files)
-                logger.info(f"🧹 Cleaned up files for separation job {job_id}")
+                logger.info(f"Cleaned up files for separation job {job_id}")
             except Exception as e:
                 logger.warning(f"File cleanup failed for separation job {job_id}: {e}")
             
             # 6. Refund credits
             try:
-                refund_result = await credit_service.refund_reserved_credits(
+                refund_ok = await credit_service.refund_job_credits(
                     job_id, JobType.SEPARATION, "user_cancelled"
                 )
-                if refund_result["success"]:
-                    logger.info(f"💰 Refunded {refund_result['credits_refunded']} credits for cancelled separation {job_id}")
+                if refund_ok:
+                    logger.info(f"💰 Credits refunded for cancelled separation {job_id}")
             except Exception as e:
                 logger.warning(f"Credit refund failed for separation {job_id}: {e}")
             
-            # 7. Clear upload status
-            try:
-                await delete_upload_status_async(job_id)
-                logger.info(f"🧹 Cleared upload status for job {job_id}")
-            except Exception as e:
-                logger.warning(f"Upload status cleanup failed for {job_id}: {e}")
+
             
             # 8. Database handling based on hard_delete option
             if hard_delete:
@@ -156,33 +151,26 @@ class JobCancellationService:
             
             # 4. Immediate cleanup for cancelled job
             try:
-                from app.utils.video_downloader import video_download_service
-                
                 def cleanup_cancelled_job():
-                    video_download_service.cleanup_specific_job(job_id)
-                
+                    cleanup_utils.cleanup_job_comprehensive(job_id, "dub")
+
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, cleanup_cancelled_job)
-                logger.info(f"🧹 Immediately cleaned up cancelled dub job {job_id}")
+                logger.info(f"Cleaned up cancelled dub job {job_id}")
             except Exception as e:
                 logger.warning(f"File cleanup failed for dub job {job_id}: {e}")
             
             # 5. Refund credits
             try:
-                refund_result = await credit_service.refund_reserved_credits(
+                refund_ok = await credit_service.refund_job_credits(
                     job_id, JobType.DUB, "user_cancelled"
                 )
-                if refund_result["success"]:
-                    logger.info(f"💰 Refunded {refund_result['credits_refunded']} credits for cancelled dub {job_id}")
+                if refund_ok:
+                    logger.info(f"💰 Credits refunded for cancelled dub {job_id}")
             except Exception as e:
                 logger.warning(f"Credit refund failed for dub {job_id}: {e}")
             
-            # 6. Clear upload status 
-            try:
-                await delete_upload_status_async(job_id)
-                logger.info(f"🧹 Cleared upload status for job {job_id}")
-            except Exception as e:
-                logger.warning(f"Upload status cleanup failed for {job_id}: {e}")
+            
             
             # 7. Database handling based on hard_delete option
             if hard_delete:

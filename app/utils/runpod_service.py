@@ -91,12 +91,12 @@ class RunPodService:
         raise Exception("Failed to submit separation request after all retries")
     
     def get_separation_status(self, request_id: str) -> Optional[Dict[str, Any]]:
-        """Get status of separation request"""
+        """Get status of separation request using ClearVocals API format"""
         try:
             response = requests.get(
                 f"{self.base_url}/status/{request_id}",
                 headers=self.headers,
-                timeout=60  # Increased timeout for status checks
+                timeout=60
             )
             
             if response.status_code == 200:

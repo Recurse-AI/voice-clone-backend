@@ -9,6 +9,7 @@ from typing import Dict, Any
 import yt_dlp
 
 from app.config.settings import settings
+from app.utils.cleanup_utils import cleanup_utils
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,7 @@ class VideoDownloadService:
         try:
             # Generate unique job ID and directory
             job_id = self._generate_job_id()
-            job_dir = Path(settings.TEMP_DIR) / f"dub_{job_id}"
+            job_dir = Path(settings.TEMP_DIR) / job_id
             job_dir.mkdir(parents=True, exist_ok=True)
             
             # Build smart quality format based on parameters
@@ -390,106 +391,44 @@ class VideoDownloadService:
             return {"success": False, "error": str(e)}
     
     def _schedule_auto_cleanup(self, job_id: str) -> None:
-        """Schedule automatic file cleanup after 30 minutes"""
-        def delayed_cleanup():
-            time.sleep(30 * 60)  # Wait 30 minutes
-            self._cleanup_file(job_id)
-        
-        # Run cleanup in background thread
-        cleanup_thread = threading.Thread(target=delayed_cleanup, daemon=True)
-        cleanup_thread.start()
-        logger.info(f"Scheduled auto cleanup for {job_id} in 30 minutes")
-    
+        cleanup_utils.schedule_auto_cleanup(job_id, 30)
+
     def _cleanup_file(self, job_id: str) -> list:
-        """Remove file and job directory for given job_id"""
         deleted_files = []
+
         try:
             if job_id in self._downloaded_files:
                 file_info = self._downloaded_files[job_id]
                 job_dir = Path(file_info["job_dir"])
-                
-                # Remove entire job directory
+
+                # List files before deletion for return value
                 if job_dir.exists() and job_dir.is_dir():
-                    # List files before deletion
                     for file_path in job_dir.rglob("*"):
                         if file_path.is_file():
                             deleted_files.append(str(file_path))
-                    
-                    shutil.rmtree(job_dir, ignore_errors=True)
-                    logger.info(f"🧹 Cleaned up job directory: {job_dir}")
-                
+
+                # Use centralized cleanup
+                cleanup_utils.cleanup_job(job_id)
+
                 # Remove from tracking
                 del self._downloaded_files[job_id]
-                
+
         except Exception as e:
             logger.error(f"Error cleaning up {job_id}: {e}")
-        
+
         return deleted_files
 
 
-    def cleanup_old_files(self) -> None:
-        """Clean up only truly orphaned dub_* folders that are older than 1 hour."""
-        try:
-            from datetime import datetime, timezone, timedelta
-            
-            root_dir = Path(settings.TEMP_DIR)
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=1)
-            
-            for path in root_dir.glob("dub_*"):
-                try:
-                    if path.is_dir():
-                        # Get directory modification time
-                        dir_mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
-                        
-                        # Only delete if directory is older than 1 hour
-                        if dir_mtime < cutoff_time:
-                            # Additional safety check: ensure no recent file activity
-                            has_recent_activity = False
-                            for file_path in path.rglob("*"):
-                                if file_path.is_file():
-                                    file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime, timezone.utc)
-                                    if file_mtime >= cutoff_time:
-                                        has_recent_activity = True
-                                        break
-                            
-                            if not has_recent_activity:
-                                shutil.rmtree(path, ignore_errors=True)
-                                logger.info(f"🧹 Removed orphaned folder (older than 1h): {path}")
-                            else:
-                                logger.debug(f"🧹 Skipping folder with recent activity: {path}")
-                        else:
-                            logger.debug(f"🧹 Skipping recent folder: {path}")
-                except Exception as e:
-                    logger.warning(f"🧹 Error checking folder {path}: {e}")
-                    continue
-        except Exception as e:
-            logger.warning(f"🧹 Error during cleanup: {e}")
-            pass
+
     
+    def cleanup_old_files(self) -> None:
+        cleanup_utils.cleanup_old_files()
+
     def cleanup_specific_job(self, job_id: str) -> None:
-        """Immediately clean up folders for specific completed/failed/cancelled job"""
-        try:
-            from app.services.dub.audio_utils import AudioUtils
-            
-            # Clean up specific job directories
-            temp_patterns = [
-                f"dub_{job_id}",                    # Main job folder  
-                f"voice_cloning/dub_job_{job_id}"   # Voice cloning folder
-            ]
-            
-            for pattern in temp_patterns:
-                temp_dir = os.path.join(settings.TEMP_DIR, pattern)
-                if os.path.exists(temp_dir):
-                    AudioUtils.remove_temp_dir(folder_path=temp_dir)
-                    logger.info(f"🧹 Immediately removed {job_id} directory: {temp_dir}")
-            
-            # Remove from tracking if present
-            if job_id in self._downloaded_files:
-                del self._downloaded_files[job_id]
-                logger.info(f"🧹 Removed {job_id} from tracking")
-                
-        except Exception as e:
-            logger.warning(f"Failed to cleanup job {job_id}: {e}")
+        cleanup_utils.cleanup_job(job_id)
+
+        if job_id in self._downloaded_files:
+            del self._downloaded_files[job_id]
 
 
 # Shared singleton instance

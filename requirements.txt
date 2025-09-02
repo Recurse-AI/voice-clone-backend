@@ -47,8 +47,7 @@ cachetools
 pytorch-lightning>=2.1.0
 lightning>=2.1.0
 
-# AssemblyAI for transcription (legacy)
-assemblyai
+
 
 # WhisperX for transcription
 whisperx

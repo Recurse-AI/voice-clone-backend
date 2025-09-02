@@ -347,9 +347,9 @@ async def _reconstruct_timeline_audio(
         for segment_path, start_ms, end_ms in segment_files:
             cmd.extend(["-i", str(segment_path)])
             
-            # Create adelay filter for this segment
+            # Create adelay filter for this segment with volume 1.0
             delay_ms = start_ms
-            delay_filter = f"[{input_count}:a]adelay={delay_ms}|{delay_ms}[delayed{input_count}]"
+            delay_filter = f"[{input_count}:a]volume=1.0,adelay={delay_ms}|{delay_ms}[delayed{input_count}]"
             delay_filters.append(delay_filter)
             mix_inputs.append(f"[delayed{input_count}]")
             input_count += 1
@@ -404,7 +404,7 @@ async def _mix_audio_files(
                 "ffmpeg", "-y",
                 "-i", str(dubbed_path),
                 "-i", str(instrument_path),
-                "-filter_complex", f"[1:a]volume={instrument_volume}[inst];[0:a][inst]amix=inputs=2:duration=longest[out]",
+                "-filter_complex", f"[0:a]volume=1.0[dub];[1:a]volume={instrument_volume}[inst];[dub][inst]amix=inputs=2:duration=longest[out]",
                 "-map", "[out]",
                 str(output_path)
             ]
@@ -414,6 +414,7 @@ async def _mix_audio_files(
             cmd = [
                 "ffmpeg", "-y",
                 "-i", str(dubbed_path),
+                "-filter:a", "volume=1.0",
                 "-c:a", "mp3",
                 str(output_path)
             ]

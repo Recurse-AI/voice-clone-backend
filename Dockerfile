@@ -20,7 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create temp directory
-RUN mkdir -p /tmp/voice_cloning
+RUN mkdir -p /tmp
 
 # Expose port
 EXPOSE 8000

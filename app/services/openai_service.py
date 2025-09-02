@@ -61,26 +61,30 @@ class OpenAIService:
                 output = response.choices[0].message.content.strip()
                 translated_segments = [seg.strip() for seg in output.split("|||")]
                 all_dubbed.extend(translated_segments)
-                
-            except ConnectionResetError:
-                try:
-                    time.sleep(1)
-                    response = self.client.chat.completions.create(
-                        model="gpt-4o",
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
-                        ],
-                        temperature=0.3,
-                        max_tokens=2048
-                    )
-                    output = response.choices[0].message.content.strip()
-                    translated_segments = [seg.strip() for seg in output.split("|||")]
-                    all_dubbed.extend(translated_segments)
-                except Exception:
+
+            except Exception as e:
+                logger.warning(f"OpenAI translation failed for batch {i//batch_size + 1}: {e}")
+                # Simple retry for connection issues
+                if "ConnectionResetError" in str(type(e)) or "connection" in str(e).lower():
+                    try:
+                        time.sleep(1)
+                        response = self.client.chat.completions.create(
+                            model="gpt-4o",
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt}
+                            ],
+                            temperature=0.3,
+                            max_tokens=2048
+                        )
+                        output = response.choices[0].message.content.strip()
+                        translated_segments = [seg.strip() for seg in output.split("|||")]
+                        all_dubbed.extend(translated_segments)
+                    except Exception as retry_e:
+                        logger.error(f"OpenAI retry failed: {retry_e}")
+                        all_dubbed.extend([f"[Translation Error]" for _ in range(len(batch))])
+                else:
                     all_dubbed.extend([f"[Translation Error]" for _ in range(len(batch))])
-            except Exception:
-                all_dubbed.extend([f"[Translation Error]" for _ in range(len(batch))])
         
         return all_dubbed
     
@@ -119,18 +123,8 @@ class OpenAIService:
             return f"[Error] {original_text}"
     
     def check_availability(self) -> bool:
-        if not self.is_available:
-            return False
-        
-        try:
-            self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": "Hello"}],
-                max_tokens=5
-            )
-            return True
-        except Exception:
-            return False
+        """Check if OpenAI service is available - uses cached status to avoid unnecessary API calls"""
+        return self.is_available and self.client is not None
 
 
 # Global service instance

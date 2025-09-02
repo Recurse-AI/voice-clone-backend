@@ -220,53 +220,6 @@ def update_job_status_sync(job_id: str, job_type: str, status: str, progress: in
         logger.error(f"Failed to update job status (sync) for {job_id}: {e}")
         return False
 
-class CleanupManager:
-    def __init__(self):
-        self._locks = {}
-        self._lock = threading.Lock()
-
-    def cleanup_job(self, job_id: str):
-        lock_key = job_id
-        with self._lock:
-            if lock_key not in self._locks:
-                self._locks[lock_key] = threading.Lock()
-            job_lock = self._locks[lock_key]
-
-        with job_lock:
-            try:
-                self._cleanup_files(job_id)
-                self._cleanup_temp_dirs(job_id)
-            finally:
-                with self._lock:
-                    if lock_key in self._locks:
-                        del self._locks[lock_key]
-
-    def _cleanup_files(self, job_id: str):
-        sync_client = SyncDBOperations._get_sync_client()
-        try:
-            db = sync_client[settings.DB_NAME]
-            job_data = db.separation_jobs.find_one({"job_id": job_id})
-
-            if job_data and job_data.get("details"):
-                local_path = job_data["details"].get("local_audio_path")
-                if local_path and os.path.exists(local_path):
-                    os.remove(local_path)
-        finally:
-            sync_client.close()
-
-    def _cleanup_temp_dirs(self, job_id: str):
-        from pathlib import Path
-        from app.services.dub.audio_utils import AudioUtils
-
-        temp_dir = Path(settings.TEMP_DIR)
-        patterns = [f"dub_{job_id}", f"separation_{job_id}", f"audio_{job_id}"]
-
-        for pattern in patterns:
-            temp_path = temp_dir / pattern
-            if temp_path.exists():
-                AudioUtils.remove_temp_dir(str(temp_path))
-
-_cleanup_manager = CleanupManager()
-
 def cleanup_separation_files(job_id: str):
-    _cleanup_manager.cleanup_job(job_id)
+    from app.utils.cleanup_utils import cleanup_utils
+    return cleanup_utils.cleanup_job(job_id)

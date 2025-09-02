@@ -28,8 +28,8 @@ class JobCollection:
 
 class CreditRates:
     """Credit calculation rates"""
-    DUB_RATE_PER_SECOND = 0.05
-    SEPARATION_RATE_PER_MINUTE = 1.0
+    DUB_RATE_PER_SECOND = 0.135  # Increased by 2.7x (0.05 * 2.7)
+    SEPARATION_RATE_PER_MINUTE = 2.5  # Increased by 2.5x (1.0 * 2.5)
     COST_PER_CREDIT_USD = 0.04
 
 class SpendingPeriod:

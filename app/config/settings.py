@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     # File Upload Configuration
     MAX_FILE_SIZE: int = 1024 * 1024 * 1024  # 1GB
     ALLOWED_AUDIO_FORMATS: list = [".wav", ".mp3", ".flac", ".m4a", ".aac", ".ogg"]
-    TEMP_DIR: str = os.getenv("TEMP_DIR", "./tmp/voice_cloning")
+    TEMP_DIR: str = os.getenv("TEMP_DIR", "./tmp")
     
     # Local Storage Settings
     LOCAL_STORAGE_DIR: str = os.getenv('LOCAL_STORAGE_DIR', './tmp/local_storage')
@@ -93,8 +93,7 @@ class Settings(BaseSettings):
     FISH_SPEECH_LOW_MEMORY: bool = os.getenv("FISH_SPEECH_LOW_MEMORY", "true").lower() == "true"
     FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "false").lower() == "true"
     
-    # AssemblyAI Configuration
-    # ASSEMBLYAI_API_KEY  # No longer needed - using WhisperX: str = os.getenv("# ASSEMBLYAI_API_KEY  # No longer needed - using WhisperX", "")
+
     
     # RunPod Configuration for Audio Separation
     API_ACCESS_TOKEN: str = os.getenv("API_ACCESS_TOKEN", "")

@@ -63,16 +63,16 @@ class JobResponseService:
             # Build a set of existing filenames for de-duplication
             existing_names = set(f.filename for f in files_info)
             # Older jobs may have saved direct URLs in details
-            if job.details.get("vocal_url") and f"vocals_{job.job_id}.wav" not in existing_names:
+            if job.details.get("vocal_url") and f"vocal_{job.job_id}.wav" not in existing_names:
                 files_info.append(FileInfo(
-                    filename=f"vocals_{job.job_id}.wav",
+                    filename=f"vocal_{job.job_id}.wav",
                     url=job.details.get("vocal_url"),
                     size=None,
                     type='audio'
                 ))
-            if job.details.get("instrument_url") and f"instruments_{job.job_id}.wav" not in existing_names:
+            if job.details.get("instrument_url") and f"instrument_{job.job_id}.wav" not in existing_names:
                 files_info.append(FileInfo(
-                    filename=f"instruments_{job.job_id}.wav",
+                    filename=f"instrument_{job.job_id}.wav",
                     url=job.details.get("instrument_url"),
                     size=None,
                     type='audio'

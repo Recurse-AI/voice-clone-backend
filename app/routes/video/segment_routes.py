@@ -73,7 +73,7 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
 
     # Write and upload manifest back to R2
     job_dir = _ensure_job_dir(job_id)
-    manifest_path = os.path.join(job_dir, f"dubbing_manifest_{job_id}.json")
+    manifest_path = os.path.join(job_dir, f"manifest_{job_id}.json")
     _write_temp_json(manifest, manifest_path)
     from app.services.r2_service import get_r2_service
     r2 = get_r2_service()
@@ -151,7 +151,7 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     # Persist manifest (version +1)
     manifest["version"] = int(manifest.get("version", 1)) + 1
     job_dir = _ensure_job_dir(job_id)
-    manifest_path = os.path.join(job_dir, f"dubbing_manifest_{job_id}.json")
+    manifest_path = os.path.join(job_dir, f"manifest_{job_id}.json")
     _write_temp_json(manifest, manifest_path)
     from app.services.r2_service import get_r2_service
     r2 = get_r2_service()
