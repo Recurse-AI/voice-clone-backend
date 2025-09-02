@@ -104,7 +104,6 @@ class CreditService:
         
         billing_type = job.get("billing_type", BillingType.CREDIT_PACK)
         credits_required = job.get("credits_required", 0)
-        
         # Handle completion based on billing type
         if billing_type == BillingType.PAY_AS_YOU_GO:
             return await self._complete_payg_job(job_id, job_type, user_id, credits_required)
@@ -355,7 +354,7 @@ class CreditService:
                     await session.commit_transaction()
                     
                     # Update spending tracking
-                    await self._update_spending_tracking(user_id, estimated_cost)
+                    # await self._update_spending_tracking(user_id, estimated_cost)
                     
                     remaining_credits = user_result.get("credits", 0)
                     logger.info(f"Credit pack reservation: {required_credits} credits deducted for job {job_data['job_id']} (remaining: {remaining_credits})")

@@ -5,7 +5,7 @@ Only the necessary API endpoints
 
 from fastapi import APIRouter, Depends, Security, HTTPException, Request
 from fastapi.responses import JSONResponse
-from typing import Dict, Any
+from typing import Dict, Any, List
 import logging
 
 from app.schemas.user import TokenUser
@@ -375,31 +375,31 @@ async def create_payg_checkout_session(current_user: TokenUser = Security(get_cu
         user = await get_authenticated_user(current_user)
         customer_id = await stripe_service.get_or_create_customer(user, str(current_user.id))
         # Check if user already has payment methods
-        payment_methods = await stripe_service.get_payment_methods(user, str(current_user.id))
+        # payment_methods = await stripe_service.get_payment_methods(user, str(current_user.id))
         
         # If no payment method, redirect to card add widget  
-        if not payment_methods:
-            # Create card add checkout session instead of setup intent
-            session = stripe.checkout.Session.create(
-                customer=customer_id,
-                payment_method_types=['card'],
-                mode='setup',
-                locale='auto',
-                success_url=f"{settings.FRONTEND_URL}/subscription/success?session_id={{CHECKOUT_SESSION_ID}}&action=card_added",
-                cancel_url=f"{settings.FRONTEND_URL}/subscription/cancel",
-                metadata={
-                    'userId': str(current_user.id),
-                    'purpose': 'payg_setup',
-                    'next_action': 'create_subscription'
-                }
-            )
+        # if not payment_methods:
+        #     # Create card add checkout session instead of setup intent
+        #     session = stripe.checkout.Session.create(
+        #         customer=customer_id,
+        #         payment_method_types=['card'],
+        #         mode='setup',
+        #         locale='auto',
+        #         success_url=f"{settings.FRONTEND_URL}/subscription/success?session_id={{CHECKOUT_SESSION_ID}}&action=card_added",
+        #         cancel_url=f"{settings.FRONTEND_URL}/subscription/cancel",
+        #         metadata={
+        #             'userId': str(current_user.id),
+        #             'purpose': 'payg_setup',
+        #             'next_action': 'create_subscription'
+        #         }
+        #     )
             
-            return success_response({
-                "sessionId": session.id,
-                "url": session.url,
-                "requiresPaymentMethod": True,
-                "message": "Please add a payment method first to subscribe to Pay-as-You-Go"
-            })
+        #     return success_response({
+        #         "sessionId": session.id,
+        #         "url": session.url,
+        #         "requiresPaymentMethod": True,
+        #         "message": "Please add a payment method first to subscribe to Pay-as-You-Go"
+        #     })
         
         # Create subscription with existing payment method
         session = stripe.checkout.Session.create(
@@ -503,6 +503,155 @@ async def get_billing_history(current_user: TokenUser = Security(get_current_use
     except Exception as e:
         return handle_api_error(e, "Get Billing History")
 
+# 11. Get Customer Invoices
+@stripe_route.get("/invoices")
+@log_execution_time
+async def get_customer_invoices_route(current_user: TokenUser = Security(get_current_user)):
+    """Get customer's invoices with download links"""
+    try:
+        user = await get_authenticated_user(current_user)
+        user_id = str(current_user.id)
+        
+        # Get or create customer
+        customer_id = await stripe_service.get_or_create_customer(user, user_id)
+        
+        # Get invoices
+        invoices = await stripe_service.get_customer_invoices(customer_id)
+        
+        return success_response({
+            "invoices": invoices,
+            "total_count": len(invoices)
+        })
+        
+    except Exception as e:
+        return handle_api_error(e, "Get Customer Invoices")
+
+# 12. Get Specific Invoice
+@stripe_route.get("/invoices/{invoice_id}")
+@log_execution_time
+async def get_specific_invoice(
+    invoice_id: str,
+    current_user: TokenUser = Security(get_current_user)
+):
+    """Get specific invoice details"""
+    try:
+        user = await get_authenticated_user(current_user)
+        user_id = str(current_user.id)
+        
+        # Get or create customer
+        customer_id = await stripe_service.get_or_create_customer(user, user_id)
+        
+        # Retrieve specific invoice
+        invoice = stripe.Invoice.retrieve(invoice_id)
+        
+        # Verify invoice belongs to this customer
+        if invoice.customer != customer_id:
+            raise HTTPException(status_code=403, detail="Access denied to this invoice")
+        
+        # Format invoice data
+        invoice_data = {
+            "id": invoice.id,
+            "number": invoice.number,
+            "created": datetime.fromtimestamp(invoice.created),
+            "due_date": datetime.fromtimestamp(invoice.due_date) if invoice.due_date else None,
+            "amount_due": invoice.amount_due / 100,
+            "amount_paid": invoice.amount_paid / 100,
+            "currency": invoice.currency,
+            "status": invoice.status,
+            "pdf_url": invoice.invoice_pdf,
+            "hosted_invoice_url": invoice.hosted_invoice_url,
+            "period_start": datetime.fromtimestamp(invoice.period_start) if invoice.period_start else None,
+            "period_end": datetime.fromtimestamp(invoice.period_end) if invoice.period_end else None,
+            "subtotal": invoice.subtotal / 100,
+            "total": invoice.total / 100,
+            "tax": invoice.tax / 100 if invoice.tax else 0,
+            "description": invoice.description,
+            "lines": []
+        }
+        
+        # Add line items
+        for line in invoice.lines.data:
+            line_data = {
+                "id": line.id,
+                "description": line.description,
+                "amount": line.amount / 100,
+                "currency": line.currency,
+                "quantity": line.quantity,
+                "period_start": datetime.fromtimestamp(line.period.start) if line.period else None,
+                "period_end": datetime.fromtimestamp(line.period.end) if line.period else None
+            }
+            invoice_data["lines"].append(line_data)
+        
+        return success_response({"invoice": invoice_data})
+        
+    except Exception as e:
+        return handle_api_error(e, "Get Specific Invoice")
+
+# Weekly billing endpoint
+@stripe_route.post("/process-weekly-billing")
+@log_execution_time
+async def process_weekly_billing_endpoint(
+    current_user: TokenUser = Security(get_current_user)
+):
+    """Process weekly billing for a specific user"""
+    try:
+        # Verify user can only process their own billing
+        if not current_user:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        result = await stripe_service.process_weekly_billing(current_user.id)
+        return success_response(result)
+        
+    except Exception as e:
+        return handle_api_error(e, "Process Weekly Billing")
+
+# Admin endpoint for processing all PAYG users
+@stripe_route.post("/process-weekly-billing-all")
+@log_execution_time
+async def process_all_weekly_billing(
+    current_user: TokenUser = Security(get_current_user)
+):
+    """Process weekly billing for all PAYG users (Admin only)"""
+    try:
+        # Check if user is admin
+        if current_user.role != "admin":
+            raise HTTPException(status_code=403, detail="Admin access required")
+        
+        # Get all PAYG users
+        from app.config.database import users_collection
+        from bson import ObjectId
+        
+        payg_users = await users_collection.find({
+            "subscription.type": "pay as you go",
+            "subscription.status": "active"
+        }).to_list(length=None)
+        
+        results = []
+        for user in payg_users:
+            user_id = str(user["_id"])
+            try:
+                result = await stripe_service.process_weekly_billing(user_id)
+                results.append({
+                    "user_id": user_id,
+                    "email": user.get("email"),
+                    "result": result
+                })
+            except Exception as e:
+                results.append({
+                    "user_id": user_id,
+                    "email": user.get("email"),
+                    "error": str(e)
+                })
+        
+        return success_response({
+            "processed_users": len(results),
+            "results": results
+        })
+        
+    except Exception as e:
+        return handle_api_error(e, "Process All Weekly Billing")
+
+
 # 12. Webhook (No auth required)
 @stripe_route.post("/webhook")
 async def stripe_webhook(request: Request):
@@ -579,9 +728,6 @@ async def handle_subscription_completion(session: Dict[str, Any], user_id: str) 
         current_period_end = None
         if subscription.get('current_period_end'):
             current_period_end = datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc)
-
-        logger.info(f"===========> here is the subscription completion: {subscription_id}")
-
         update_result = await users_collection.update_one(
             {"_id": ObjectId(user_id)},
             {

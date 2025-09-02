@@ -109,7 +109,6 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
             from app.utils.shared_memory import is_job_cancelled, _status_manager
             is_cancelled = is_job_cancelled(job_id)
 
-            
             if is_cancelled:
                 logger.info(f"🛑 Separation job {job_id} (RunPod: {runpod_request_id}) was cancelled by user")
                 _update_separation_status_non_blocking(
@@ -227,7 +226,6 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                     # Memory cleanup after separation completion
                     del status, vocal_url, instrument_url
                     gc.collect()
-                    
                     # Complete credit billing using centralized utility (sync context)
                     job_utils.complete_job_billing_sync(job_id, "separation", user_id)
                     

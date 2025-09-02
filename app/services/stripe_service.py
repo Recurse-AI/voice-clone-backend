@@ -248,7 +248,7 @@ class StripeService:
             # Update database
             update_data = {
                 f"spendingLimit.{key}": value 
-                for key, value in spending_data.items()
+                for key, value in spending_data.items() if key != "currentSpent"
             }
             update_data["updatedAt"] = datetime.now(timezone.utc)
             
@@ -365,7 +365,6 @@ class StripeService:
         
         subscription = user.get("subscription", {})
         subscription_id = subscription.get("stripeSubscriptionId")
-        
         if (not subscription_id or 
             subscription.get("type") != "pay as you go" or 
             subscription.get("status") != "active"):
@@ -377,13 +376,15 @@ class StripeService:
             # Access subscription items correctly
             if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
                 # Try different ways to access items data
+                logger.info(f"==========> {stripe_subscription.items.data[0].id}")
                 if hasattr(stripe_subscription.items, 'data'):
+                    logger.info(f"========++> here we go")
                     subscription_items = stripe_subscription.items.data
                 elif hasattr(stripe_subscription.items, '__iter__'):
                     subscription_items = list(stripe_subscription.items)
                 else:
                     subscription_items = []
-                    
+
                 if subscription_items:
                     return {
                         "is_payg": True,
@@ -442,6 +443,47 @@ class StripeService:
         except Exception as e:
             logger.error(f"Weekly billing failed for user {user_id}: {e}")
             return {"success": False, "message": str(e)}
+
+    @log_execution_time
+    async def get_customer_invoices(self, customer_id: str) -> List[Dict[str, Any]]:
+        """Retrieve a customer's invoices with download links"""
+        try:
+            # Retrieve invoices for the customer
+            invoices = stripe.Invoice.list(
+                customer=customer_id,
+                limit=100,  # Adjust as needed
+                expand=['data.charge']  # Include charge data if needed
+            )
+            
+            # Format invoice data with PDF URLs
+            formatted_invoices = []
+            
+            for invoice in invoices.data:
+                invoice_data = {
+                    "id": invoice.id,
+                    "number": invoice.number,
+                    "created": datetime.fromtimestamp(invoice.created).isoformat(),  # ← Convert to ISO string
+                    "due_date": datetime.fromtimestamp(invoice.due_date).isoformat() if invoice.due_date else None,  # ← Convert to ISO string
+                    "amount_due": invoice.amount_due / 100,  # Convert from cents
+                    "amount_paid": invoice.amount_paid / 100,
+                    "currency": invoice.currency,
+                    "status": invoice.status,
+                    "pdf_url": invoice.invoice_pdf,  # URL to the invoice PDF
+                    "hosted_invoice_url": invoice.hosted_invoice_url,  # URL to view invoice online
+                    "period_start": datetime.fromtimestamp(invoice.period_start).isoformat() if invoice.period_start else None,  # ← Convert to ISO string
+                    "period_end": datetime.fromtimestamp(invoice.period_end).isoformat() if invoice.period_end else None  # ← Convert to ISO string
+                }
+                
+                formatted_invoices.append(invoice_data)
+                
+            return formatted_invoices
+            
+        except stripe.error.StripeError as e:
+            logger.error(f"Error retrieving invoices for customer {customer_id}: {str(e)}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Error retrieving invoices: {str(e)}"
+            )
 
 # Create singleton instance
 stripe_service = StripeService()

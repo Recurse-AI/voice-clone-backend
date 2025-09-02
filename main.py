@@ -93,6 +93,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to initialize R2 service: {e}")
     
+    # Add main loop registration here
+    try:
+        loop = asyncio.get_running_loop()
+        loop_manager.set_main_loop(loop)
+        logger.info("Main event loop registered for background tasks")
+        
+        from app.utils.status_reconciler import _reconciler
+        _reconciler.start()
+    except Exception as e:
+        logger.error(f"Failed to register main event loop: {e}")
+    
     yield
     
     logger.info("Shutting down...")

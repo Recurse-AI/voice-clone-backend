@@ -117,7 +117,6 @@ class JobUtils:
         """
         try:
             job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
-            
             billing_result = await credit_service.complete_job_billing(job_id, job_type_enum, user_id)
             
             if billing_result.get("success"):
@@ -145,7 +144,6 @@ class JobUtils:
             
             # Get the main event loop
             main_loop = loop_manager.get_main_loop()
-            
             if main_loop and main_loop.is_running():
                 # Schedule the coroutine on the main loop from this thread
                 future = asyncio.run_coroutine_threadsafe(
