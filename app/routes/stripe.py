@@ -161,7 +161,12 @@ async def remove_payment_method(
     """Remove a payment method"""
     try:
         user = await get_authenticated_user(current_user)
-        
+        payment_methods = await stripe_service.get_payment_methods(user, str(current_user.id))
+        if len(payment_methods) <= 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"you have only one card saved. So you can't remove it. Add a new card then you can remove this card"
+            )
         # Check for outstanding bills first
         from app.services.credit_service import credit_service
         outstanding_amount = await credit_service._get_outstanding_billing_amount(str(current_user.id))
@@ -369,7 +374,6 @@ async def create_payg_checkout_session(current_user: TokenUser = Security(get_cu
     try:
         user = await get_authenticated_user(current_user)
         customer_id = await stripe_service.get_or_create_customer(user, str(current_user.id))
-        
         # Check if user already has payment methods
         payment_methods = await stripe_service.get_payment_methods(user, str(current_user.id))
         
@@ -446,7 +450,6 @@ async def cancel_subscription(current_user: TokenUser = Security(get_current_use
                 status_code=400, 
                 detail=f"Cannot cancel subscription with outstanding bill of ${outstanding_amount:.2f}. Please clear your bill first."
             )
-        
         # Get user's subscription ID from database
         from app.config.database import users_collection
         from bson import ObjectId
@@ -464,20 +467,24 @@ async def cancel_subscription(current_user: TokenUser = Security(get_current_use
         )
         
         # Update database
-        await users_collection.update_one(
+        updated_result = await users_collection.update_one(
             {"_id": ObjectId(current_user.id)},
             {
                 "$set": {
                     "subscription.status": "cancelled",
-                    "subscription.cancelledAt": datetime.now(timezone.utc)
+                    "subscription.cancelledAt": datetime.now(timezone.utc),
+                    "updatedAt": datetime.now(timezone.utc)
                 }
             }
         )
+        logger.info(f"============> updated user {updated_result}")
         
+        updated_user = await users_collection.find_one({"_id": ObjectId(current_user.id)})
+        logger.info(f"Updated user subscription: {updated_user.get('subscription', {})}")
+
         return success_response({
             "success": True,
             "message": "Subscription will be cancelled at the end of current period",
-            "periodEnd": subscription.current_period_end
         })
         
     except Exception as e:
@@ -572,7 +579,9 @@ async def handle_subscription_completion(session: Dict[str, Any], user_id: str) 
         current_period_end = None
         if subscription.get('current_period_end'):
             current_period_end = datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc)
-        
+
+        logger.info(f"===========> here is the subscription completion: {subscription_id}")
+
         update_result = await users_collection.update_one(
             {"_id": ObjectId(user_id)},
             {
@@ -585,6 +594,8 @@ async def handle_subscription_completion(session: Dict[str, Any], user_id: str) 
                 }
             }
         )
+
+        logger.info(f"========> updated user {update_result}")
         
         if update_result.modified_count > 0:
             logger.info(f"Successfully updated {subscription_type} subscription for user {user_id}")
@@ -684,18 +695,19 @@ async def handle_subscription_created(subscription: Dict[str, Any]):
 async def handle_subscription_updated(subscription: Dict[str, Any]):
     """Handle subscription status updates"""
     try:
+        logger.info(f"===========> handle subcription updated")
         subscription_id = subscription.get('id')
         if not subscription_id:
             return
             
         # Find user by subscription ID
         from app.config.database import users_collection
-        
         user = await users_collection.find_one({
             "subscription.stripeSubscriptionId": subscription_id
         })
         
         if user:
+            logger.info(f"===========> handle subcription updated user {user}")
             # Safely handle current_period_end
             current_period_end = None
             if subscription.get('current_period_end'):

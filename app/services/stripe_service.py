@@ -90,18 +90,21 @@ class StripeService:
     @handle_stripe_errors
     @log_execution_time
     async def create_setup_intent(self, user: TokenUser, user_id: str) -> Dict[str, str]:
-        """Create setup intent for adding payment methods"""
+        """Create checkout setup session for adding payment methods"""
         customer_id = await self.get_or_create_customer(user, user_id)
         
-        setup_intent = stripe.SetupIntent.create(
+        # Create a Checkout Session in setup mode
+        checkout_session = stripe.checkout.Session.create(
             customer=customer_id,
-            usage=StripeConfig.SETUP_INTENT_USAGE,
-            payment_method_types=['card']  # Only allow card to avoid Link issues
+            mode="setup",
+            payment_method_types=['card'],
+            success_url=f"{settings.FRONTEND_URL}/subscription/manage",
+            cancel_url=f"{settings.FRONTEND_URL}/subscription/manage"
         )
         
         return {
-            "url": f"{StripeConfig.CHECKOUT_BASE_URL}/setup/{setup_intent.client_secret}",
-            "client_secret": setup_intent.client_secret
+            "url": checkout_session.url,  # This gives the correct checkout.stripe.com URL
+            "session_id": checkout_session.id
         }
     
     @handle_stripe_errors
@@ -109,7 +112,6 @@ class StripeService:
     async def get_payment_methods(self, user, user_id: str) -> List[Dict[str, Any]]:
         """Get user's saved payment methods and sync with database"""
         customer_id = await self.get_or_create_customer(user, user_id)
-        
         # First try to get existing payment methods
         payment_methods = stripe.PaymentMethod.list(
             customer=customer_id,
@@ -312,7 +314,7 @@ class StripeService:
             current_year = now.year
 
             # Check if it's 1st of the month and we haven't reset yet
-            if now.day == 1:
+            if now.day == 1 and now.hour == 0 and now.minute == 0:
                 # Simple monthly reset - just set to 0
                 await users_collection.update_one(
                     {"_id": ObjectId(user_id)},
