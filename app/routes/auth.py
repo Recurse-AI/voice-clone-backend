@@ -530,24 +530,22 @@ async def delete_account(current_user: TokenUser = Security(get_current_user)):
         if not user:
             return error_response("User not found", status_code=404)
         
-        # Check for outstanding bills (PAYG users only)
-        subscription = user.get("subscription", {})
-        if subscription.get("type") == "pay as you go":
-            total_usage = user.get("total_usage", 0.0)
-            cost_usd = total_usage * CreditRates.COST_PER_CREDIT_USD
-            
-            # If usage >= $5, user must clear bill first
-            if cost_usd > 0:
-                return JSONResponse(
-                    status_code=400,
-                    content={
-                        "success": False,
-                        "error": "OUTSTANDING_BILL",
-                        "message": f"Please clear your outstanding bill of ${cost_usd:.2f} before deleting your account.",
-                        "outstanding_amount": cost_usd,
-                        "usage_credits": total_usage
-                    }
-                )
+        
+        total_usage = user.get("total_usage", 0.0)
+        cost_usd = total_usage * CreditRates.COST_PER_CREDIT_USD
+        
+        # If usage >= $5, user must clear bill first
+        if cost_usd > 0:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "error": "OUTSTANDING_BILL",
+                    "message": f"Please clear your outstanding bill of ${cost_usd:.2f} before deleting your account.",
+                    "outstanding_amount": cost_usd,
+                    "usage_credits": total_usage
+                }
+            )
         
         # No outstanding bills - proceed with deletion
         result = await users_collection.delete_one({"_id": ObjectId(user_id)})
