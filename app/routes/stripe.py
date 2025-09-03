@@ -121,11 +121,11 @@ async def remove_payment_method(
     try:
         user = await get_authenticated_user(current_user)
         payment_methods = await stripe_service.get_payment_methods(user, str(current_user.id))
-        if len(payment_methods) <= 1:
-            raise HTTPException(
-                status_code=400,
-                detail=f"you have only one card saved. So you can't remove it. Add a new card then you can remove this card"
-            )
+        # if len(payment_methods) <= 1:
+        #     raise HTTPException(
+        #         status_code=400,
+        #         detail=f"you have only one card saved. So you can't remove it. Add a new card then you can remove this card"
+        #     )
         # Check for outstanding bills first
         from app.services.credit_service import credit_service
         # Calculate current usage in USD
