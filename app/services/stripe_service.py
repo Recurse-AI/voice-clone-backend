@@ -346,16 +346,23 @@ class StripeService:
     @log_execution_time
     async def report_usage_to_stripe(self, subscription_item_id: str, usage_quantity: int):
         """Report usage to Stripe for metered billing"""
-        usage_record = stripe.SubscriptionItem.create_usage_record(
-            subscription_item_id,
-            quantity=usage_quantity,
-            timestamp=int(datetime.now().timestamp()),
-            action='increment'
-        )
-        
-        logger.info(f"Reported {usage_quantity} credits to Stripe item {subscription_item_id}")
-        return usage_record
-    
+        try:
+            # The correct API call is stripe.SubscriptionItem.create_usage_record
+            usage_record = stripe.SubscriptionItem.create_usage_record(
+                subscription_item_id,  
+                {
+                    "quantity": usage_quantity,
+                    "timestamp": int(datetime.now().timestamp()),
+                    "action": 'increment'
+                }
+            )
+            
+            logger.info(f"Reported {usage_quantity} credits to Stripe item {subscription_item_id}")
+            return usage_record
+            
+        except stripe.error.StripeError as e:
+            logger.error(f"Failed to report usage to Stripe: {e}")
+            raise
 
     async def _get_user_subscription(self, user_id: str) -> Dict[str, Any]:
         """Get user subscription details for usage reporting"""
@@ -376,19 +383,16 @@ class StripeService:
             # Access subscription items correctly
             if hasattr(stripe_subscription, 'items') and stripe_subscription.items:
                 # Try different ways to access items data
-                logger.info(f"==========> {stripe_subscription.items.data[0].id}")
-                if hasattr(stripe_subscription.items, 'data'):
-                    logger.info(f"========++> here we go")
-                    subscription_items = stripe_subscription.items.data
+                if hasattr(stripe_subscription["items"], 'data'):
+                    subscription_items = stripe_subscription["items"]["data"]
                 elif hasattr(stripe_subscription.items, '__iter__'):
                     subscription_items = list(stripe_subscription.items)
                 else:
                     subscription_items = []
-
                 if subscription_items:
                     return {
                         "is_payg": True,
-                        "subscription_item_id": subscription_items[0].id
+                        "subscription_item_id": subscription_items[0]["id"]
                     }
             
             return {"is_payg": False}
