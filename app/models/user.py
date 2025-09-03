@@ -10,14 +10,10 @@ class PaymentMethod(BaseModel):
     expiryYear: int
     isDefault: bool = False
 
-class SpendingLimit(BaseModel):
-    amount: float
-    period: Literal['daily', 'weekly', 'monthly'] = 'monthly'
-    currentSpent: float = 0.0
-    periodStartDate: Optional[datetime] = None
+
 
 class Subscription(BaseModel):
-    type: Literal['free', 'pay as you go', 'credit pack', 'premium', 'pro'] = 'free'
+    type: Literal['free', 'pay as you go', 'credit pack'] = 'free'
     status: Literal['active', 'trialing', 'past_due', 'canceled', 'cancelled', 'none'] = 'none'
     stripeCustomerId: Optional[str] = None
     stripeSubscriptionId: Optional[str] = None
@@ -39,7 +35,6 @@ class User(BaseModel):
     role: Literal['user', 'admin'] = 'user'
     subscription: Optional[Subscription] = Subscription()
     paymentMethods: List[PaymentMethod] = []
-    spendingLimit: Optional[SpendingLimit] = None
     hasPaymentMethod: bool = False
     paymentMethodAddedAt: Optional[datetime] = None
     resetPasswordToken: Optional[str] = None

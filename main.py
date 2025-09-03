@@ -15,7 +15,7 @@ from app.routes.audio_processing import router as audio_processing_router
 from app.routes.uploads import router as uploads_router
 from app.routes.video import router as video_processing_router
 from app.routes.user_jobs import router as user_jobs_router
-from app.utils.init_pricing_plans import init_pricing_plans
+
 from app.middleware.auth_middleware import AuthMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from app.config.settings import settings
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Starting up — checking MongoDB connection...")
     await verify_connection()
-    await init_pricing_plans()
+
     await create_unique_indexes()
     
     try:
@@ -165,7 +165,6 @@ app.include_router(uploads_router, prefix="", tags=["uploads"])
 app.include_router(video_processing_router, prefix="/api", tags=["video-processing"])
 app.include_router(user_jobs_router, prefix="/api/jobs", tags=["user-jobs"])
 
-# Removed separate startup event; loop registration is handled in lifespan
 
 @app.get("/", response_model=StatusResponse)
 async def root():

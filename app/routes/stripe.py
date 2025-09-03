@@ -3,7 +3,7 @@ Essential Stripe Routes for Frontend
 Only the necessary API endpoints
 """
 
-from fastapi import APIRouter, Depends, Security, HTTPException, Request
+from fastapi import APIRouter, Security, HTTPException, Request
 from fastapi.responses import JSONResponse
 from typing import Dict, Any
 import logging
@@ -12,7 +12,6 @@ from app.schemas.user import TokenUser
 from app.dependencies.auth import get_current_user
 from app.services.user_service import get_user_id
 from app.services.stripe_service import stripe_service
-from app.services.pricing_service import PricingService
 from app.services.transaction_service import TransactionService
 from app.config.credit_constants import ErrorCodes
 from app.utils.response_helper import success_response, error_response
@@ -25,26 +24,6 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 # Request models
-class SpendingLimitRequest(BaseModel):
-    amount: float
-    period: str
-    
-    @field_validator('amount')
-    @classmethod
-    def validate_amount(cls, v):
-        if v <= 0:
-            raise ValueError('Amount must be positive')
-        if v > 10000:
-            raise ValueError('Amount cannot exceed $10,000')
-        return v
-    
-    @field_validator('period')
-    @classmethod
-    def validate_period(cls, v):
-        from app.config.credit_constants import SpendingPeriod
-        if v not in SpendingPeriod.get_all():
-            raise ValueError(f'Period must be one of: {SpendingPeriod.get_all()}')
-        return v
 
 class CheckoutRequest(BaseModel):
     planId: str = None
@@ -78,7 +57,6 @@ class CheckoutRequest(BaseModel):
 stripe_route = APIRouter(prefix="/api/stripe", tags=["stripe"])
 
 # Initialize services
-pricing_service = PricingService()
 transaction_service = TransactionService()
 
 # Initialize Stripe
@@ -104,28 +82,9 @@ async def get_authenticated_user(current_user: TokenUser) -> Dict[str, Any]:
         raise HTTPException(status_code=404, detail="User not found")
     return user
 
-# ========== ESSENTIAL ENDPOINTS ==========
+# ========== SIMPLE ENDPOINTS ==========
 
-# 1. Pricing Plans
-@stripe_route.get("/plans")
-@log_execution_time
-async def get_pricing_plans():
-    """Get all active pricing plans for frontend"""
-    try:
-        plans_result = await pricing_service.get_all_plans()
-        
-        if isinstance(plans_result, dict) and plans_result.get("status_code") == 200:
-            return JSONResponse(
-                status_code=200,
-                content=plans_result["content"]
-            )
-        else:
-            return success_response({"plans": plans_result, "count": len(plans_result)})
-        
-    except Exception as e:
-        return handle_api_error(e, "Get Pricing Plans")
-
-# 2. Setup Intent (Add Payment Methods)
+# 1. Setup Intent (Add Payment Methods)
 @stripe_route.post("/setup-intent")
 @log_execution_time
 async def create_setup_intent(current_user: TokenUser = Security(get_current_user)):
@@ -133,12 +92,12 @@ async def create_setup_intent(current_user: TokenUser = Security(get_current_use
     try:
         user = await get_authenticated_user(current_user)
         result = await stripe_service.create_setup_intent(user, str(current_user.id))
-        return success_response({"message": {"url": result["url"]}})
+        return success_response("Setup intent created successfully", {"url": result["url"], "sessionId": result["session_id"]})
         
     except Exception as e:
         return handle_api_error(e, "Setup Intent Creation")
 
-# 3. Payment Methods Management
+# 2. Payment Methods Management
 @stripe_route.get("/payment-methods")
 @log_execution_time
 async def get_payment_methods(current_user: TokenUser = Security(get_current_user)):
@@ -147,7 +106,7 @@ async def get_payment_methods(current_user: TokenUser = Security(get_current_use
         user = await get_authenticated_user(current_user)
         # This call will automatically sync database status via _sync_payment_method_status
         payment_methods = await stripe_service.get_payment_methods(user, str(current_user.id))
-        return success_response({"payment_methods": payment_methods})
+        return success_response("Payment methods retrieved successfully", {"payment_methods": payment_methods})
         
     except Exception as e:
         return handle_api_error(e, "Get Payment Methods")
@@ -177,42 +136,14 @@ async def remove_payment_method(
             )
         
         await stripe_service.remove_payment_method(payment_method_id, user, str(current_user.id))
-        return success_response({"success": True})
+        return success_response("Payment method removed successfully", {"success": True})
         
     except Exception as e:
         return handle_api_error(e, "Remove Payment Method")
 
-# 4. Spending Limits
-@stripe_route.get("/spending-limit")
-@log_execution_time
-async def get_spending_limit(current_user: TokenUser = Security(get_current_user)):
-    """Get user's spending limit"""
-    try:
-        spending_limit = await stripe_service.get_spending_limit(str(current_user.id))
-        return success_response(spending_limit)
-        
-    except Exception as e:
-        return handle_api_error(e, "Get Spending Limit")
+# Removed - use /billing-status for comprehensive threshold and usage info
 
-@stripe_route.put("/spending-limit")
-@log_execution_time
-async def update_spending_limit(
-    request: SpendingLimitRequest,
-    current_user: TokenUser = Security(get_current_user)
-):
-    """Update user's spending limit"""
-    try:
-        await stripe_service.update_spending_limit(
-            str(current_user.id), 
-            request.amount, 
-            request.period
-        )
-        return success_response({"success": True})
-        
-    except Exception as e:
-        return handle_api_error(e, "Update Spending Limit")
-
-# 5. Checkout Session
+# 3. Checkout Session (Credit Packs Only)
 @stripe_route.post("/create-checkout-session")
 @log_execution_time
 async def create_checkout_session(
@@ -227,24 +158,26 @@ async def create_checkout_session(
         if not request.planId or not isinstance(request.planId, str):
             raise HTTPException(status_code=400, detail="Invalid planId")
         
-        plan = await pricing_service.get_plan_by_name(request.planId)
-        if not plan:
+        # Simple validation - just check against valid plans
+        valid_plans = ['medium', 'special', 'limited']
+        if request.planId not in valid_plans:
             raise HTTPException(status_code=404, detail=f"Plan '{request.planId}' not found")
-        
-        # Validate credit pack exists
-        if 'creditPack' not in plan or not plan['creditPack']:
-            raise HTTPException(status_code=400, detail="Plan does not have credit pack information")
         
         customer_id = await stripe_service.get_or_create_customer(user, str(current_user.id))
         
-        # Get plan details for dynamic pricing
-        credit_pack = plan['creditPack']
-        credits = credit_pack.get('credits', 0)
-        price = credit_pack.get('discountedPrice', credit_pack.get('originalPrice', 0))
+        # Simple hardcoded plan pricing
+        plan_prices = {
+            'medium': {'credits': 250, 'price': 10.0, 'name': 'Medium Pack'},
+            'special': {'credits': 500, 'price': 19.0, 'name': 'Special Pack'},
+            'limited': {'credits': 1000, 'price': 30.0, 'name': 'Limited Pack'}
+        }
         
-        # Validate price
-        if price <= 0:
-            raise HTTPException(status_code=400, detail="Invalid price for credit pack")
+        plan_data = plan_prices.get(request.planId)
+        if not plan_data:
+            raise HTTPException(status_code=400, detail="Invalid plan")
+        
+        credits = plan_data['credits']
+        price = plan_data['price']
         
         session = stripe.checkout.Session.create(
             customer=customer_id,
@@ -254,8 +187,8 @@ async def create_checkout_session(
                 'price_data': {
                     'currency': 'usd',
                     'product_data': {
-                        'name': f"{credit_pack.get('name', 'Credit Pack')}",
-                        'description': f"{credits} credits - {plan.get('description', 'Credit pack for AI services')}"
+                        'name': plan_data['name'],
+                        'description': f"{credits} credits - Credit pack for AI services"
                     },
                     'unit_amount': int(price * 100),  # Convert to cents
                 },
@@ -271,7 +204,7 @@ async def create_checkout_session(
             }
         )
         
-        return success_response({"sessionId": session.id, "url": session.url})
+        return success_response("Checkout session created successfully", {"sessionId": session.id, "url": session.url})
         
     except HTTPException:
         raise
@@ -279,7 +212,7 @@ async def create_checkout_session(
         logger.error(f"Checkout session creation failed: {e}")
         return handle_api_error(e, "Create Checkout Session")
 
-# 6. Payment Verification
+# 4. Payment Verification
 @stripe_route.get("/verify-payment/{session_id}")
 @log_execution_time
 async def verify_payment(session_id: str, current_user: TokenUser = Security(get_current_user)):
@@ -299,25 +232,27 @@ async def verify_payment(session_id: str, current_user: TokenUser = Security(get
         
         if session.status == "complete":
             if session.mode == "setup":
-                # This was a card add session - update database
-                await update_user_payment_method_status(str(current_user.id), session.metadata.get('purpose'))
-                
+                await update_user_payment_method_status(str(current_user.id))
                 result["card_added"] = True
                 result["message"] = "Payment method added successfully"
-                
-                # Check if this was for PAYG - subscription is now automatically created
+
                 if session.metadata.get('purpose') == 'payg_setup':
-                    result["subscription"] = {
-                        "type": "pay as you go",
-                        "status": "active"
-                    }
-                    result["message"] = "Card added and Pay-as-You-Go subscription activated successfully."
+                    # Check if subscription was properly created via webhook
+                    from app.config.database import users_collection
+                    from bson import ObjectId
+                    user_doc = await users_collection.find_one({"_id": ObjectId(current_user.id)}, {"subscription": 1})
+                    subscription_doc = (user_doc or {}).get("subscription", {})
+                    if subscription_doc.get("stripeSubscriptionId"):
+                        result["subscription"] = {
+                            "type": subscription_doc.get("type"),
+                            "status": subscription_doc.get("status"),
+                            "current_period_end": subscription_doc.get("currentPeriodEnd")
+                        }
+                        result["message"] = "Card added and Pay-as-You-Go subscription activated successfully."
             elif session.mode == "subscription":
-                # Handle subscription completion
-                subscription_result = await handle_subscription_completion(session, str(current_user.id))
-                if subscription_result:
-                    result["subscription"] = subscription_result
-                    result["message"] = "Subscription activated successfully"
+                # Simple PAYG activation (no complex subscription handling)
+                result["subscription"] = {"type": "pay as you go", "status": "active"}
+                result["message"] = "Subscription activated successfully"
             else:
                 # Regular payment (credit pack purchase)
                 transaction_result = await transaction_service.handle_checkout_completed(session)
@@ -331,7 +266,7 @@ async def verify_payment(session_id: str, current_user: TokenUser = Security(get
 
 
 
-# 7. Purchase History
+# 5. Purchase History
 @stripe_route.get("/purchase-history")
 @log_execution_time
 async def get_purchase_history(current_user: TokenUser = Security(get_current_user)):
@@ -344,7 +279,7 @@ async def get_purchase_history(current_user: TokenUser = Security(get_current_us
     except Exception as e:
         return handle_api_error(e, "Get Purchase History")
 
-# 8. Customer Portal
+# 6. Customer Portal
 @stripe_route.get("/customer-portal")
 @log_execution_time
 async def create_customer_portal(current_user: TokenUser = Security(get_current_user)):
@@ -358,7 +293,7 @@ async def create_customer_portal(current_user: TokenUser = Security(get_current_
             return_url=f"{settings.FRONTEND_URL}/dashboard"
         )
         
-        return success_response({"url": portal_session.url})
+        return success_response("Customer portal session created successfully", {"url": portal_session.url})
         
     except Exception as e:
         return handle_api_error(e, "Create Customer Portal")
@@ -366,144 +301,178 @@ async def create_customer_portal(current_user: TokenUser = Security(get_current_
 
 
 
-# 9. Pay-as-you-go Subscription with Card Setup
-@stripe_route.post("/create-checkout-asug")
+# 7. Add Payment Method Only
+@stripe_route.post("/add-payment-method")
 @log_execution_time
-async def create_payg_checkout_session(current_user: TokenUser = Security(get_current_user)):
-    """Create pay-as-you-go subscription with payment method setup"""
+async def add_payment_method(current_user: TokenUser = Security(get_current_user)):
+    """Add payment method without activating any subscription"""
     try:
         user = await get_authenticated_user(current_user)
         customer_id = await stripe_service.get_or_create_customer(user, str(current_user.id))
-        # Check if user already has payment methods
-        payment_methods = await stripe_service.get_payment_methods(user, str(current_user.id))
         
-        # If no payment method, redirect to card add widget  
-        if not payment_methods:
-            # Create card add checkout session instead of setup intent
-            session = stripe.checkout.Session.create(
-                customer=customer_id,
-                payment_method_types=['card'],
-                mode='setup',
-                locale='auto',
-                success_url=f"{settings.FRONTEND_URL}/subscription/success?session_id={{CHECKOUT_SESSION_ID}}&action=card_added",
-                cancel_url=f"{settings.FRONTEND_URL}/subscription/cancel",
-                metadata={
-                    'userId': str(current_user.id),
-                    'purpose': 'payg_setup',
-                    'next_action': 'create_subscription'
-                }
-            )
-            
-            return success_response({
-                "sessionId": session.id,
-                "url": session.url,
-                "requiresPaymentMethod": True,
-                "message": "Please add a payment method first to subscribe to Pay-as-You-Go"
-            })
-        
-        # Create subscription with existing payment method
         session = stripe.checkout.Session.create(
             customer=customer_id,
             payment_method_types=['card'],
+            mode='setup',
             locale='auto',
-            line_items=[{
-                'price_data': {
-                    'currency': 'usd',
-                    'product_data': {
-                        'name': 'Pay-as-You-Go Subscription',
-                        'description': 'Weekly subscription with usage-based billing (billed every 7 days)'
-                    },
-                    'unit_amount': 0,  # No upfront cost
-                    'recurring': {
-                        'interval': 'week'  # Changed from 'month' to 'week' for 7-day billing cycles
-                    }
-                },
-                'quantity': 1,
-            }],
-            mode='subscription',
-            success_url=f"{settings.FRONTEND_URL}/subscription/success?session_id={{CHECKOUT_SESSION_ID}}",
+            success_url=f"{settings.FRONTEND_URL}/subscription/success?session_id={{CHECKOUT_SESSION_ID}}&action=card_add",
             cancel_url=f"{settings.FRONTEND_URL}/subscription/cancel",
             metadata={
                 'userId': str(current_user.id),
-                'subscriptionType': 'pay as you go'
+                'purpose': 'card_add'
             }
         )
         
-        return success_response({"sessionId": session.id, "url": session.url})
+        return success_response("Payment method setup session created", {
+            "sessionId": session.id,
+            "url": session.url,
+            "message": "Please add your payment method"
+        })
         
     except Exception as e:
-        return handle_api_error(e, "Create PAYG Checkout Session")
+        return handle_api_error(e, "Add Payment Method")
 
-# 10. Cancel Subscription
-@stripe_route.post("/cancel-subscription")
+# 8. Activate Pay-as-You-Go 
+@stripe_route.post("/activate-payg")
 @log_execution_time
-async def cancel_subscription(current_user: TokenUser = Security(get_current_user)):
-    """Cancel user's pay-as-you-go subscription"""
+async def activate_payg(current_user: TokenUser = Security(get_current_user)):
+    """Activate pay-as-you-go for users who have payment methods"""
     try:
         user = await get_authenticated_user(current_user)
         
-        # Check for outstanding bills first
-        from app.services.credit_service import credit_service
-        outstanding_amount = await credit_service._get_outstanding_billing_amount(str(current_user.id))
-        if outstanding_amount > 0:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Cannot cancel subscription with outstanding bill of ${outstanding_amount:.2f}. Please clear your bill first."
-            )
-        # Get user's subscription ID from database
+        # Check if user has payment methods
+        payment_methods = await stripe_service.get_payment_methods(user, str(current_user.id))
+        if not payment_methods:
+            return error_response("Please add a payment method first", 400)
+        
+        # Activate PAYG
         from app.config.database import users_collection
         from bson import ObjectId
         
-        user_doc = await users_collection.find_one({"_id": ObjectId(current_user.id)})
-        if not user_doc or not user_doc.get("subscription", {}).get("stripeSubscriptionId"):
-            raise HTTPException(status_code=404, detail="No active subscription found")
+        customer_id = await stripe_service.get_or_create_customer(user, str(current_user.id))
         
-        subscription_id = user_doc["subscription"]["stripeSubscriptionId"]
-        
-        # Cancel subscription in Stripe
-        subscription = stripe.Subscription.modify(
-            subscription_id,
-            cancel_at_period_end=True
-        )
-        
-        # Update database
-        updated_result = await users_collection.update_one(
+        await users_collection.update_one(
             {"_id": ObjectId(current_user.id)},
             {
                 "$set": {
-                    "subscription.status": "cancelled",
-                    "subscription.cancelledAt": datetime.now(timezone.utc),
+                    "subscription.type": "pay as you go",
+                    "subscription.status": "active",
+                    "subscription.stripeCustomerId": customer_id,
+                    "subscription.thresholdAmount": 10.0,
                     "updatedAt": datetime.now(timezone.utc)
                 }
             }
         )
-        logger.info(f"============> updated user {updated_result}")
         
-        updated_user = await users_collection.find_one({"_id": ObjectId(current_user.id)})
-        logger.info(f"Updated user subscription: {updated_user.get('subscription', {})}")
-
-        return success_response({
-            "success": True,
-            "message": "Subscription will be cancelled at the end of current period",
+        return success_response("Pay-as-You-Go activated successfully", {
+            "type": "pay as you go",
+            "status": "active",
+            "thresholdAmount": 10.0
         })
         
     except Exception as e:
-        return handle_api_error(e, "Cancel Subscription")
+        return handle_api_error(e, "Activate Pay-as-You-Go")
 
-# 11. Billing History (reuse existing transaction service)
-@stripe_route.get("/billing-history")
+# 9. Deactivate Pay-as-You-Go (Auto switch to Credit Pack)
+@stripe_route.post("/deactivate-payg")
 @log_execution_time
-async def get_billing_history(current_user: TokenUser = Security(get_current_user)):
-    """Get user's billing and purchase history"""
+async def deactivate_payg(current_user: TokenUser = Security(get_current_user)):
+    """Deactivate PAYG and auto-switch to credit pack mode"""
     try:
-        # Use existing transaction service
-        history = await transaction_service.get_purchase_history(str(current_user.id))
-        return JSONResponse(status_code=history["status_code"], content=history["content"])
+        from app.config.database import users_collection
+        from bson import ObjectId
+        
+        # Switch to credit pack mode
+        await users_collection.update_one(
+            {"_id": ObjectId(current_user.id)},
+            {
+                "$set": {
+                    "subscription.type": "credit pack",
+                    "subscription.status": "active",
+                    "updatedAt": datetime.now(timezone.utc)
+                },
+                "$unset": {
+                    "subscription.thresholdAmount": "",
+                    "subscription.stripeCustomerId": ""
+                }
+            }
+        )
+        
+        return success_response("Switched to Credit Pack mode successfully", {
+            "type": "credit pack",
+            "status": "active",
+            "message": "Pay-as-You-Go deactivated. Now using Credit Pack billing."
+        })
         
     except Exception as e:
-        return handle_api_error(e, "Get Billing History")
+        return handle_api_error(e, "Deactivate PAYG")
 
-# 12. Webhook (No auth required)
+# Removed duplicate - use /purchase-history instead
+
+# 9. Comprehensive Billing Status (includes threshold info)
+@stripe_route.get("/billing-status")
+@log_execution_time
+async def get_billing_status(current_user: TokenUser = Security(get_current_user)):
+    """Get comprehensive billing status including threshold info and usage tracking"""
+    try:
+        from app.config.database import users_collection
+        from app.config.credit_constants import CreditRates, ThresholdBilling
+        from bson import ObjectId
+        
+        user = await users_collection.find_one({"_id": ObjectId(current_user.id)})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        subscription = user.get("subscription", {})
+        total_credits = user.get("total_usage", 0.0)
+        cost_usd = total_credits * CreditRates.COST_PER_CREDIT_USD
+        threshold = subscription.get("thresholdAmount", ThresholdBilling.DEFAULT_THRESHOLD_USD)
+        
+        # Calculate when next billing will happen
+        credits_until_billing = max(0, (threshold - cost_usd) / CreditRates.COST_PER_CREDIT_USD)
+        billing_progress_percentage = min(100, (cost_usd / threshold) * 100)
+        
+        # Check if billing is blocked
+        billing_blocked = subscription.get("billingBlocked", False)
+        failed_attempts = subscription.get("billingFailedAttempts", 0)
+        
+        # Handle datetime serialization
+        last_updated = user.get("usage_updated_at") or user.get("updatedAt")
+        last_updated_iso = last_updated.isoformat() if last_updated else None
+        
+        return success_response("Billing status retrieved successfully", {
+            # Basic subscription info
+            "subscription_type": subscription.get("type", "none"),
+            "subscription_status": subscription.get("status", "none"),
+            "has_payment_method": user.get("hasPaymentMethod", False),
+            
+            # Usage tracking
+            "current_usage_credits": total_credits,
+            "current_usage_usd": round(cost_usd, 2),
+            "credits_until_billing": round(credits_until_billing, 2),
+            "billing_progress_percentage": round(billing_progress_percentage, 1),
+            
+            # Threshold info
+            "billing_threshold_usd": threshold,
+            "will_bill_at_usd": threshold,
+            "cost_per_credit": CreditRates.COST_PER_CREDIT_USD,
+            
+            # Billing status
+            "billing_blocked": billing_blocked,
+            "billing_failed_attempts": failed_attempts,
+            "billing_block_reason": subscription.get("billingBlockReason", None),
+            
+            # Stripe info
+            "customer_id": subscription.get("stripeCustomerId", "not-set"),
+            "last_updated": last_updated_iso
+        })
+        
+    except Exception as e:
+        return handle_api_error(e, "Get Billing Status")
+
+
+
+# 10. Webhook (No auth required)
 @stripe_route.post("/webhook")
 async def stripe_webhook(request: Request):
     """Handle Stripe webhooks"""
@@ -515,41 +484,29 @@ async def stripe_webhook(request: Request):
             body, sig_header, settings.STRIPE_WEBHOOK_SECRET
         )
         
-        # Handle different event types
+        # Handle essential events only
         if event['type'] == 'checkout.session.completed':
             session = event['data']['object']
             
-            # Check mode and handle accordingly
-            if session.get('mode') == 'subscription':
-                await handle_subscription_checkout(session)
-            elif session.get('mode') == 'setup':
+            if session.get('mode') == 'setup':
                 await handle_setup_completion(session)
             else:
+                # Regular payment completion
                 await transaction_service.handle_checkout_completed(session)
                 
             logger.info(f"Processed checkout completion for session: {session['id']}")
             
-        elif event['type'] == 'customer.subscription.created':
-            subscription = event['data']['object']
-            await handle_subscription_created(subscription)
-            logger.info(f"Processed subscription created: {subscription['id']}")
-        
-        elif event['type'] == 'customer.subscription.updated':
-            subscription = event['data']['object']
-            await handle_subscription_updated(subscription)
-            logger.info(f"Processed subscription updated: {subscription['id']}")
-            
-        elif event['type'] == 'customer.subscription.deleted':
-            subscription = event['data']['object']
-            await handle_subscription_deleted(subscription)
-            logger.info(f"Processed subscription deleted: {subscription['id']}")
+        elif event['type'] == 'payment_intent.succeeded':
+            payment_intent = event['data']['object']
+            await handle_payment_intent_succeeded(payment_intent)
+            logger.info(f"Processed payment intent succeeded: {payment_intent['id']}")
             
         elif event['type'] == 'setup_intent.succeeded':
             setup_intent = event['data']['object']
             await handle_setup_intent_succeeded(setup_intent)
             logger.info(f"Processed setup intent succeeded: {setup_intent['id']}")
         
-        return success_response({"received": True})
+        return success_response("Webhook processed successfully", {"received": True})
         
     except Exception as e:
         logger.error(f"Webhook error: {e}")
@@ -557,208 +514,20 @@ async def stripe_webhook(request: Request):
 
 # ========== HELPER FUNCTIONS ==========
 
-async def handle_subscription_completion(session: Dict[str, Any], user_id: str) -> Dict[str, Any]:
-    """Handle subscription completion in verify_payment endpoint"""
+async def handle_payment_intent_succeeded(payment_intent: Dict[str, Any]):
+    """Handle successful payment intent (our $10 charges)"""
     try:
-        logger.info(f"Handling subscription completion for user {user_id}, session {session['id']}")
+        user_id = payment_intent.get('metadata', {}).get('userId')
+        billing_type = payment_intent.get('metadata', {}).get('billing_type')
         
-        # Get subscription from Stripe
-        subscription_id = session.get('subscription')
-        if not subscription_id:
-            logger.error(f"No subscription ID in session {session['id']}")
-            return None
-            
-        subscription = stripe.Subscription.retrieve(subscription_id)
-        subscription_type = session['metadata'].get('subscriptionType', 'pay as you go')
-        
-        # Update user subscription in database
-        from app.config.database import users_collection
-        from bson import ObjectId
-        
-        # Safely handle current_period_end
-        current_period_end = None
-        if subscription.get('current_period_end'):
-            current_period_end = datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc)
-
-        logger.info(f"===========> here is the subscription completion: {subscription_id}")
-
-        update_result = await users_collection.update_one(
-            {"_id": ObjectId(user_id)},
-            {
-                "$set": {
-                    "subscription.type": subscription_type,
-                    "subscription.status": subscription.status,
-                    "subscription.stripeSubscriptionId": subscription_id,
-                    "subscription.currentPeriodEnd": current_period_end,
-                    "updatedAt": datetime.now(timezone.utc)
-                }
-            }
-        )
-
-        logger.info(f"========> updated user {update_result}")
-        
-        if update_result.modified_count > 0:
-            logger.info(f"Successfully updated {subscription_type} subscription for user {user_id}")
-            return {
-                "subscription_id": subscription_id,
-                "type": subscription_type,
-                "status": subscription.status,
-                "current_period_end": subscription.current_period_end
-            }
-        else:
-            logger.warning(f"Failed to update subscription for user {user_id}")
-            return None
-            
-    except Exception as e:
-        logger.error(f"Failed to handle subscription completion: {e}")
-        return None
-
-# ========== WEBHOOK HELPER FUNCTIONS ==========
-
-async def handle_subscription_checkout(session: Dict[str, Any]):
-    """Handle completed subscription checkout"""
-    try:
-        user_id = session['metadata'].get('userId')
-        if not user_id:
-            logger.error(f"No userId in subscription session metadata: {session['id']}")
-            return
-        
-        # Get subscription from Stripe
-        subscription_id = session.get('subscription')
-        if subscription_id:
-            subscription = stripe.Subscription.retrieve(subscription_id)
-            
-            # Update user subscription in database
-            from app.config.database import users_collection
-            from bson import ObjectId
-            
-            # Safely handle current_period_end
-            current_period_end = None
-            if subscription.get('current_period_end'):
-                current_period_end = datetime.fromtimestamp(subscription.current_period_end, tz=timezone.utc)
-                
-            await users_collection.update_one(
-                {"_id": ObjectId(user_id)},
-                {
-                    "$set": {
-                        "subscription.type": "pay as you go",
-                        "subscription.status": subscription.status,
-                        "subscription.stripeSubscriptionId": subscription_id,
-                        "subscription.currentPeriodEnd": current_period_end,
-                        "updatedAt": datetime.now(timezone.utc)
-                    }
-                }
-            )
-            
-            logger.info(f"Updated PAYG subscription for user {user_id}")
+        if billing_type == 'threshold' and user_id:
+            logger.info(f"Threshold billing payment succeeded for user {user_id}")
+            # Payment already processed in stripe_service.process_threshold_billing
         
     except Exception as e:
-        logger.error(f"Failed to handle subscription checkout: {e}")
+        logger.error(f"Failed to handle payment intent succeeded: {e}")
 
-async def handle_subscription_created(subscription: Dict[str, Any]):
-    """Handle subscription creation"""
-    try:
-        customer_id = subscription.get('customer')
-        if not customer_id:
-            return
-            
-        # Find user by stripe customer ID
-        from app.config.database import users_collection
-        
-        user = await users_collection.find_one({
-            "subscription.stripeCustomerId": customer_id
-        })
-        
-        if user:
-            # Safely handle current_period_end
-            current_period_end = None
-            if subscription.get('current_period_end'):
-                current_period_end = datetime.fromtimestamp(subscription['current_period_end'], tz=timezone.utc)
-                
-            await users_collection.update_one(
-                {"_id": user["_id"]},
-                {
-                    "$set": {
-                        "subscription.status": subscription['status'],
-                        "subscription.stripeSubscriptionId": subscription['id'],
-                        "subscription.currentPeriodEnd": current_period_end,
-                        "updatedAt": datetime.now(timezone.utc)
-                    }
-                }
-            )
-            
-            logger.info(f"Updated subscription created for user {user['_id']}")
-            
-    except Exception as e:
-        logger.error(f"Failed to handle subscription created: {e}")
-
-async def handle_subscription_updated(subscription: Dict[str, Any]):
-    """Handle subscription status updates"""
-    try:
-        logger.info(f"===========> handle subcription updated")
-        subscription_id = subscription.get('id')
-        if not subscription_id:
-            return
-            
-        # Find user by subscription ID
-        from app.config.database import users_collection
-        user = await users_collection.find_one({
-            "subscription.stripeSubscriptionId": subscription_id
-        })
-        
-        if user:
-            logger.info(f"===========> handle subcription updated user {user}")
-            # Safely handle current_period_end
-            current_period_end = None
-            if subscription.get('current_period_end'):
-                current_period_end = datetime.fromtimestamp(subscription['current_period_end'], tz=timezone.utc)
-                
-            await users_collection.update_one(
-                {"_id": user["_id"]},
-                {
-                    "$set": {
-                        "subscription.status": subscription['status'],
-                        "subscription.currentPeriodEnd": current_period_end,
-                        "updatedAt": datetime.now(timezone.utc)
-                    }
-                }
-            )
-            
-            logger.info(f"Updated subscription status to {subscription['status']} for user {user['_id']}")
-            
-    except Exception as e:
-        logger.error(f"Failed to handle subscription updated: {e}")
-
-async def handle_subscription_deleted(subscription: Dict[str, Any]):
-    """Handle subscription cancellation"""
-    try:
-        subscription_id = subscription.get('id')
-        if not subscription_id:
-            return
-            
-        # Find user by subscription ID
-        from app.config.database import users_collection
-        
-        user = await users_collection.find_one({
-            "subscription.stripeSubscriptionId": subscription_id
-        })
-        
-        if user:
-            await users_collection.update_one(
-                {"_id": user["_id"]},
-                {
-                    "$set": {
-                        "subscription.status": "cancelled",
-                        "subscription.cancelledAt": datetime.now(timezone.utc),
-                        "updatedAt": datetime.now(timezone.utc)
-                    }
-                }
-            )
-            
-            logger.info(f"Marked subscription as cancelled for user {user['_id']}")
-            
-    except Exception as e:
-        logger.error(f"Failed to handle subscription deleted: {e}")
+# ========== SIMPLE WEBHOOK HELPERS ==========
 
 async def handle_setup_completion(session: Dict[str, Any]):
     """Handle completed setup session (card add)"""
@@ -791,8 +560,30 @@ async def handle_setup_completion(session: Dict[str, Any]):
                     else:
                         logger.error(f"Failed to attach payment method: {e}")
             
+            # If this setup was for PAYG, just activate simple threshold billing
+            if purpose == 'payg_setup' and customer_id:
+                try:
+                    from app.config.database import users_collection
+                    from bson import ObjectId
+                    
+                    await users_collection.update_one(
+                        {"_id": ObjectId(user_id)},
+                        {
+                            "$set": {
+                                "subscription.type": "pay as you go",
+                                "subscription.status": "active",
+                                "subscription.stripeCustomerId": customer_id,
+                                "subscription.thresholdAmount": 10.0,
+                                "updatedAt": datetime.now(timezone.utc)
+                            }
+                        }
+                    )
+                    logger.info(f"Simple PAYG activated for user {user_id} with $10 threshold")
+                except Exception as e:
+                    logger.error(f"Failed to activate PAYG for user {user_id}: {e}")
+            
         # Update user's payment method status
-        await update_user_payment_method_status(user_id, purpose)
+        await update_user_payment_method_status(user_id)
             
     except Exception as e:
         logger.error(f"Failed to handle setup completion: {e}")
@@ -829,14 +620,14 @@ async def handle_setup_intent_succeeded(setup_intent: Dict[str, Any]):
         })
         
         if user:
-            await update_user_payment_method_status(str(user['_id']), 'setup_intent')
+            await update_user_payment_method_status(str(user['_id']))
             logger.info(f"Updated payment method status for user {user['_id']}")
             
     except Exception as e:
         logger.error(f"Failed to handle setup intent succeeded: {e}")
 
-async def update_user_payment_method_status(user_id: str, purpose: str):
-    """Helper function to update user payment method status and create PAYG subscription if needed"""
+async def update_user_payment_method_status(user_id: str):
+    """Update user payment method status only"""
     try:
         from app.config.database import users_collection
         from bson import ObjectId
@@ -847,16 +638,7 @@ async def update_user_payment_method_status(user_id: str, purpose: str):
             "paymentMethodAddedAt": datetime.now(timezone.utc),
             "updatedAt": datetime.now(timezone.utc)
         }
-        
-        # If this is for PAYG setup, also update subscription to PAYG
-        if purpose == 'payg_setup':
-            update_data.update({
-                "subscription.type": "pay as you go",
-                "subscription.status": "active"
-            })
-            logger.info(f"Payment method added and PAYG subscription activated for user {user_id}")
-        else:
-            logger.info(f"Payment method successfully added for user {user_id}")
+        logger.info(f"Payment method successfully added for user {user_id}")
         
         await users_collection.update_one(
             {"_id": ObjectId(user_id)},

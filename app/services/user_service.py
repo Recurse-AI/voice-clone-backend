@@ -1,6 +1,6 @@
 from app.config.database import db
 from app.schemas.user import *
-from app.models.user import *
+from app.models.user import User, Subscription, PaymentMethod
 from app.utils.password_helper import hash_password
 from datetime import datetime, timezone
 from fastapi import HTTPException
@@ -38,12 +38,7 @@ async def create_user(user_dict: dict):
     user_dict["hasPaymentMethod"] = False
     user_dict["paymentMethodAddedAt"] = None
 
-    user_dict["spendingLimit"] = {
-        "amount": 0.0, 
-        "period": "weekly",
-        "currentSpent": 0.0,
-        "periodStartDate": None
-    }
+
 
     result = await db["users"].insert_one(user_dict)
     user_dict["id"] = str(result.inserted_id)

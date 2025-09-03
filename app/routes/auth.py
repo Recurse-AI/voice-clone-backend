@@ -38,17 +38,7 @@ def prepare_subscription_data(subscription):
             "currentPeriodEnd": None
         }
 
-def prepare_spending_limit_data(spending_limit):
-    """Helper function to prepare spending limit data for FullUser schema"""
-    if spending_limit:
-        if hasattr(spending_limit, 'model_dump'):
-            return spending_limit.model_dump()
-        elif hasattr(spending_limit, 'dict'):
-            return spending_limit.dict()
-        else:
-            return spending_limit
-    else:
-        return None
+
 
 # Define the security scheme
 security = HTTPBearer(
@@ -151,7 +141,7 @@ async def login_user(req: LoginData):
             )
         # Convert to FullUser schema to include subscription information
         subscription_data = prepare_subscription_data(user.subscription)
-        spending_limit_data = prepare_spending_limit_data(user.spendingLimit)
+
 
         full_user = FullUser(
             id=user.id,
@@ -162,7 +152,7 @@ async def login_user(req: LoginData):
             role=user.role,
             credits=user.credits,
             subscription=subscription_data,
-            spendingLimit=spending_limit_data,
+
             hasPaymentMethod=getattr(user, 'hasPaymentMethod', False),
             paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None)
         )
@@ -204,7 +194,7 @@ async def profile(
 
         # Convert to FullUser schema to include subscription information
         subscription_data = prepare_subscription_data(user.subscription)
-        spending_limit_data = prepare_spending_limit_data(user.spendingLimit)
+
         full_user = FullUser(
             id=user.id,
             name=user.name,
@@ -214,7 +204,7 @@ async def profile(
             role=user.role,
             credits=user.credits,
             subscription=subscription_data,
-            spendingLimit=spending_limit_data,
+
             hasPaymentMethod=getattr(user, 'hasPaymentMethod', False),
             paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None)
         )
@@ -252,7 +242,7 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
         
         # Convert to FullUser schema to include subscription information
         subscription_data = prepare_subscription_data(user.subscription)
-        spending_limit_data = prepare_spending_limit_data(user.spendingLimit)
+
 
         full_user = FullUser(
             id=user.id,
@@ -263,7 +253,7 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
             role=user.role,
             credits=user.credits,
             subscription=subscription_data,
-            spendingLimit=spending_limit_data,
+
             hasPaymentMethod=getattr(user, 'hasPaymentMethod', False),
             paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None)
         )
@@ -508,4 +498,60 @@ async def google_callback(request: Request):
     except Exception as e:
         logger.error(f"Google callback error: {str(e)}")
         return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth")
+
+@auth.delete("/account")
+async def delete_account(current_user: TokenUser = Security(get_current_user)):
+    """Delete user account - checks for outstanding bills first"""
+    try:
+        from app.config.database import users_collection
+        from app.config.credit_constants import CreditRates
+        from bson import ObjectId
+        
+        user_id = current_user.id
+        user = await users_collection.find_one({"_id": ObjectId(user_id)})
+        
+        if not user:
+            return error_response("User not found", status_code=404)
+        
+        # Check for outstanding bills (PAYG users only)
+        subscription = user.get("subscription", {})
+        if subscription.get("type") == "pay as you go":
+            total_usage = user.get("total_usage", 0.0)
+            cost_usd = total_usage * CreditRates.COST_PER_CREDIT_USD
+            
+            # If usage >= $5, user must clear bill first
+            if cost_usd >= 5.0:
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "success": False,
+                        "error": "OUTSTANDING_BILL",
+                        "message": f"Please clear your outstanding bill of ${cost_usd:.2f} before deleting your account.",
+                        "outstanding_amount": cost_usd,
+                        "usage_credits": total_usage
+                    }
+                )
+        
+        # No outstanding bills - proceed with deletion
+        result = await users_collection.delete_one({"_id": ObjectId(user_id)})
+        
+        if result.deleted_count > 0:
+            logger.info(f"Account deleted successfully for user {user_id}")
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "message": "Account deleted successfully"
+                }
+            )
+        else:
+            return error_response("Failed to delete account", status_code=500)
+            
+    except Exception as e:
+        logger.error(f"Account deletion error: {str(e)}")
+        return error_response(
+            message="Failed to delete account",
+            details=str(e),
+            status_code=500
+        )
 

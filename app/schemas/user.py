@@ -3,7 +3,7 @@ from typing import Optional, Literal, Union, Dict, Any
 from datetime import datetime
 
 class Subscription(BaseModel):
-    type: Literal['free', 'pay as you go', 'credit pack', 'premium', 'pro'] = 'free'
+    type: Literal['free', 'pay as you go', 'credit pack'] = 'free'
     status: Literal['active', 'trialing', 'past_due', 'canceled', 'cancelled', 'none'] = 'none'
     stripeCustomerId: Optional[str] = None
     stripeSubscriptionId: Optional[str] = None
@@ -21,11 +21,6 @@ class LoginData(BaseModel):
     email: EmailStr
     password: str
 
-class SpendingLimit(BaseModel):
-    amount: float
-    period: Literal['daily', 'weekly', 'monthly'] = 'monthly'
-    currentSpent: float = 0.0
-    periodStartDate: Optional[datetime] = None
 
 class UserOut(UserBase):
     id: Optional[str]
@@ -39,7 +34,7 @@ class UserOut(UserBase):
 
 class FullUser(UserOut):
     subscription: Optional[Union[Subscription, Dict[str, Any]]] = None
-    spendingLimit: Optional[SpendingLimit] = None 
+ 
     hasPaymentMethod: bool = False
     paymentMethodAddedAt: Optional[datetime] = None
 

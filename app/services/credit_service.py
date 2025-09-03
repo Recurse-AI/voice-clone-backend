@@ -8,11 +8,10 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 
 from app.config.database import db, users_collection, client
-from app.config.credit_constants import BillingType, ErrorCodes, JobType
+from app.config.credit_constants import ErrorCodes, JobType
 from app.utils.decorators import handle_credit_operations, log_execution_time, validate_user_access
 from app.utils.credit_utils import (
-    CreditCalculatorUtil, UserValidationUtil, DatabaseUtil, 
-    ResponseUtil, SpendingLimitUtil
+    CreditCalculatorUtil, UserValidationUtil, ResponseUtil
 )
 from bson import ObjectId
 from app.config.credit_constants import CreditRates
@@ -34,9 +33,7 @@ class CreditService:
     def __init__(self):
         self.calculator = CreditCalculatorUtil()
         self.validator = UserValidationUtil()
-        self.db_util = DatabaseUtil()
         self.response_util = ResponseUtil()
-        self.spending_util = SpendingLimitUtil()
     
     @handle_credit_operations
     @log_execution_time
@@ -63,14 +60,6 @@ class CreditService:
                 ErrorCodes.USER_NOT_FOUND, "User not found"
             )
         
-        # Validate spending limits
-        spending_check = await self._validate_spending_limits(user_id, estimated_cost)
-        if not spending_check["allowed"]:
-            return self.response_util.create_error_response(
-                ErrorCodes.SPENDING_LIMIT_EXCEEDED,
-                "Spending limit exceeded",
-                spending_check.get("message")
-            )
         
         # Determine billing type and handle accordingly
         if self.validator.is_payg_user(user):
@@ -102,11 +91,11 @@ class CreditService:
                 ErrorCodes.JOB_NOT_FOUND, "Job not found"
             )
         
-        billing_type = job.get("billing_type", BillingType.CREDIT_PACK)
+        billing_type = job.get("billing_type", "credit_pack")
         credits_required = job.get("credits_required", 0)
         
         # Handle completion based on billing type
-        if billing_type == BillingType.PAY_AS_YOU_GO:
+        if billing_type == "pay_as_you_go":
             return await self._complete_payg_job(job_id, job_type, user_id, credits_required)
         else:
             return await self._complete_credit_pack_job(job_id, job_type, credits_required)
@@ -131,9 +120,9 @@ class CreditService:
                 ErrorCodes.JOB_NOT_FOUND, "Job not found"
             )
         
-        billing_type = job.get("billing_type", BillingType.CREDIT_PACK)
+        billing_type = job.get("billing_type", "credit_pack")
         
-        if billing_type == BillingType.PAY_AS_YOU_GO:
+        if billing_type == "pay_as_you_go":
             return await self._refund_payg_job(job_id, job_type, reason)
         else:
             return await self._refund_credit_pack_job(job_id, job_type, reason)
@@ -151,27 +140,13 @@ class CreditService:
     async def _get_job_safely(self, job_id: str, job_type: JobType) -> Optional[Dict[str, Any]]:
         """Safely get job data with error handling"""
         try:
-            collection_name = self.db_util.get_collection_name(job_type)
+            collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
             return await db[collection_name].find_one({"job_id": job_id})
         except Exception as e:
             logger.error(f"Failed to get job {job_id}: {e}")
             return None
     
-    async def _validate_spending_limits(self, user_id: str, estimated_cost: float) -> Dict[str, Any]:
-        """Validate spending limits with proper error handling"""
-        try:
-            from app.services.stripe_service import stripe_service
-            
-            spending_allowed = await stripe_service.check_spending_limit(user_id, estimated_cost)
-            
-            return {
-                "allowed": spending_allowed,
-                "message": "Spending limit exceeded" if not spending_allowed else "OK"
-            }
-        except Exception as e:
-            logger.warning(f"Spending limit check failed for user {user_id}: {e}")
-            # Allow by default to avoid blocking users
-            return {"allowed": True, "message": "Spending limit check skipped"}
+
     
     async def _update_user_usage(self, user_id: str, credits_used: float) -> None:
         """Simple: Add credits to user's total usage"""
@@ -209,14 +184,16 @@ class CreditService:
             # Check if user has active PAYG subscription
             subscription = user.get("subscription", {})
             if subscription.get("type") == "pay as you go" and subscription.get("status") == "active":
-                # Check if user has Stripe customer ID (indicates payment setup completed)
-                if not subscription.get("stripeCustomerId") or not subscription.get("stripeSubscriptionId"):
-                    raise ValueError("Pay-as-you-go users must complete payment setup before using services. Please add a card first.")
+                # Check if user is blocked due to billing failure
+                if subscription.get("billingBlocked", False):
+                    block_reason = subscription.get("billingBlockReason", "Payment failed")
+                    raise ValueError(f"Account temporarily suspended: {block_reason}. Please contact support or update payment method.")
                 
-                # Quick check for outstanding bills (optional - can be done later)
-                outstanding_amount = await self._get_outstanding_billing_amount(user_id)
-                if outstanding_amount > 0:
-                    raise ValueError(f"Please clear your outstanding bill of ${outstanding_amount:.2f} before using more services.")
+                # Check if user has payment method
+                if not subscription.get("stripeCustomerId"):
+                    raise ValueError("Pay-as-you-go users must add a payment method first. Please complete payment setup.")
+                
+                logger.info(f"PAYG user {user_id} validated for service usage")
             else:
                 raise ValueError("Pay-as-you-go subscription is required for this service.")
                 
@@ -224,41 +201,7 @@ class CreditService:
             logger.error(f"Payment method validation failed for user {user_id}: {e}")
             raise ValueError(str(e))
     
-    async def _get_outstanding_billing_amount(self, user_id: str) -> float:
-        """Get user's outstanding billing amount from unpaid PAYG usage"""
-        try:
-            # Simple approach: Check if user has PAYG jobs that were completed but not reported to Stripe
-            # This prevents abuse while keeping it simple
-            
-            total_outstanding = 0.0
-            
-            # Check recent PAYG jobs (last 7 days - weekly billing cycle) that might need billing
-            from datetime import timedelta
-            from app.config.credit_constants import BillingPeriod
-            recent_date = datetime.now(timezone.utc) - timedelta(days=BillingPeriod.PAYG_CYCLE_DAYS)
-            
-            for collection_name in ["dub_jobs", "separation_jobs"]:
-                collection = db.get_collection(collection_name)
-                
-                # Find completed PAYG jobs
-                cursor = collection.find({
-                    "userId": user_id,
-                    "billingType": BillingType.PAY_AS_YOU_GO,
-                    "status": {"$in": ["completed", "success"]},
-                    "completedAt": {"$gte": recent_date}
-                })
-                
-                async for job in cursor:
-                    credits_used = job.get("creditsUsed", 0)
-                    if credits_used > 0:
-                        cost = credits_used * CreditRates.COST_PER_CREDIT_USD
-                        total_outstanding += cost
-                        
-            return round(total_outstanding, 2)
-            
-        except Exception as e:
-            logger.warning(f"Failed to check outstanding billing for user {user_id}: {e}")
-            return 0.0
+
     
     async def _handle_payg_reservation(
         self,
@@ -272,36 +215,38 @@ class CreditService:
         # Check if user has valid payment method
         await self._validate_payg_payment_method(user_id)
         
-        collection_name = self.db_util.get_collection_name(job_type)
+        collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
         
-        # Create job data with virtual reservation
-        final_job_data = self.db_util.create_job_data(
-            job_id=job_data["job_id"], user_id=user_id, credits_required=required_credits, 
-            billing_type=BillingType.PAY_AS_YOU_GO, **{k: v for k, v in job_data.items() if k not in ["job_id", "user_id"]}
-        )
+        # Create simple job data for PAYG
+        filtered_job_data = {k: v for k, v in job_data.items() if k not in ["job_id", "user_id"]}
+        final_job_data = {
+            "job_id": job_data["job_id"],
+            "user_id": user_id,
+            "credits_required": required_credits,
+            "billing_type": "pay_as_you_go",
+            "created_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(timezone.utc)
+        }
+        final_job_data.update(filtered_job_data)
         
-        # Insert job
-        async with await client.start_session() as session:
-            async with session.start_transaction():
-                try:
-                    await db[collection_name].insert_one(final_job_data, session=session)
-                    await session.commit_transaction()
-                    
-                    # Update spending tracking
-                    await self._update_spending_tracking(user_id, estimated_cost)
-                    
-                    logger.info(f"Pay-as-you-go reservation: {required_credits} credits for job {job_data['job_id']}")
-                    
-                    return self.response_util.create_credit_operation_response(
-                        True, "Pay-as-you-go job reserved successfully",
-                        credits_reserved=required_credits,
-                        billing_type=BillingType.PAY_AS_YOU_GO,
-                        virtual_reservation=True
-                    )
-                    
-                except Exception as e:
-                    await session.abort_transaction()
-                    raise e
+        # Simple job insertion - no transactions needed for PAYG
+        try:
+            await db[collection_name].insert_one(final_job_data)
+            
+            logger.info(f"Pay-as-you-go reservation: {required_credits} credits for job {job_data['job_id']}")
+            
+            return self.response_util.create_success_response(
+                "Pay-as-you-go job reserved successfully",
+                credits_reserved=required_credits,
+                billing_type="pay_as_you_go"
+            )
+            
+        except Exception as e:
+            logger.error(f"PAYG job creation failed: {e}")
+            return self.response_util.create_error_response(
+                "CREDIT_OPERATION_FAILED",
+                f"Failed to create job: {str(e)}"
+            )
     
     async def _handle_credit_pack_reservation(
         self,
@@ -322,77 +267,89 @@ class CreditService:
                 f"Insufficient credits. Required: {required_credits}, Available: {available_credits}"
             )
         
-        collection_name = self.db_util.get_collection_name(job_type)
+        collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
         
-        # Atomic operation: deduct credits and create job
-        async with await client.start_session() as session:
-            async with session.start_transaction():
-                try:
-                    # Deduct credits from user balance
-                    user_result = await users_collection.find_one_and_update(
-                        {
-                            "_id": ObjectId(user_id),
-                            "credits": {"$gte": required_credits}
-                        },
-                        {
-                            "$inc": {"credits": -required_credits},
-                            "$set": {"updated_at": datetime.now(timezone.utc)}
-                        },
-                        session=session,
-                        return_document=True
-                    )
-                    
-                    if not user_result:
-                        raise ValueError("Insufficient credits (race condition)")
-                    
-                    # Create job data with actual deduction
-                    final_job_data = self.db_util.create_job_data(
-                        job_id=job_data["job_id"], user_id=user_id, credits_required=required_credits,
-                        billing_type=BillingType.CREDIT_PACK, **{k: v for k, v in job_data.items() if k not in ["job_id", "user_id"]}
-                    )
-                    
-                    await db[collection_name].insert_one(final_job_data, session=session)
-                    await session.commit_transaction()
-                    
-                    # Update spending tracking
-                    await self._update_spending_tracking(user_id, estimated_cost)
-                    
-                    remaining_credits = user_result.get("credits", 0)
-                    logger.info(f"Credit pack reservation: {required_credits} credits deducted for job {job_data['job_id']} (remaining: {remaining_credits})")
-                    
-                    return self.response_util.create_credit_operation_response(
-                        True, "Credit pack job reserved successfully",
-                        credits_reserved=required_credits,
-                        remaining_credits=remaining_credits,
-                        billing_type=BillingType.CREDIT_PACK
-                    )
-                    
-                except Exception as e:
-                    await session.abort_transaction()
-                    raise e
+        # Simple credit deduction without complex transactions
+        try:
+            # Deduct credits from user balance
+            user_result = await users_collection.find_one_and_update(
+                {
+                    "_id": ObjectId(user_id),
+                    "credits": {"$gte": required_credits}
+                },
+                {
+                    "$inc": {"credits": -required_credits},
+                    "$set": {"updated_at": datetime.now(timezone.utc)}
+                },
+                return_document=True
+            )
+            
+            if not user_result:
+                return self.response_util.create_error_response(
+                    ErrorCodes.INSUFFICIENT_CREDITS,
+                    "Insufficient credits"
+                )
+            
+            # Create simple job data for credit pack
+            filtered_job_data = {k: v for k, v in job_data.items() if k not in ["job_id", "user_id"]}
+            final_job_data = {
+                "job_id": job_data["job_id"],
+                "user_id": user_id,
+                "credits_required": required_credits,
+                "billing_type": "credit_pack",
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
+            }
+            final_job_data.update(filtered_job_data)
+            
+            await db[collection_name].insert_one(final_job_data)
+            
+            remaining_credits = user_result.get("credits", 0)
+            logger.info(f"Credit pack reservation: {required_credits} credits deducted for job {job_data['job_id']} (remaining: {remaining_credits})")
+            
+            return self.response_util.create_success_response(
+                "Credit pack job reserved successfully",
+                credits_reserved=required_credits,
+                remaining_credits=remaining_credits,
+                billing_type="credit_pack"
+            )
+            
+        except Exception as e:
+            logger.error(f"Credit pack reservation failed: {e}")
+            return self.response_util.create_error_response(
+                "CREDIT_OPERATION_FAILED",
+                f"Failed to reserve credits: {str(e)}"
+            )
     
     async def _complete_payg_job(
         self, job_id: str, job_type: JobType, user_id: str, credits_used: float
     ) -> Dict[str, Any]:
-        """Complete pay-as-you-go job by tracking usage locally (no immediate Stripe sync)"""
+        """Complete pay-as-you-go job with simple threshold billing"""
         try:
-            # Track usage in database only - no immediate Stripe sync
-            collection_name = self.db_util.get_collection_name(job_type)
-            credit_info = self.db_util.create_credit_info(
-                job_type, credits_used, stripe_usage_reported=False  # Will sync later
+            # Update job as completed
+            collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
+            collection = db.get_collection(collection_name)
+            
+            await collection.update_one(
+                {"job_id": job_id},
+                {
+                    "$set": {
+                        "credits_billed": True,
+                        "billing_completed_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
             )
             
-            await self._update_job_details(job_id, job_type, credit_info)
-            
-            # Update user's total usage for billing
+            # Simple usage tracking - no real-time billing
             await self._update_user_usage(user_id, credits_used)
             
-            logger.info(f"Pay-as-you-go completion: Added {credits_used} credits to user usage for job {job_id}")
+            logger.info(f"PAYG job completed: Added {credits_used} credits to user usage for job {job_id}")
             
-            return self.response_util.create_credit_operation_response(
-                True, "Pay-as-you-go job completed successfully",
+            return self.response_util.create_success_response(
+                "Pay-as-you-go job completed successfully",
                 credits_used=credits_used,
-                billing_type=BillingType.PAY_AS_YOU_GO
+                billing_type="pay_as_you_go"
             )
             
         except Exception as e:
@@ -402,21 +359,29 @@ class CreditService:
     async def _complete_credit_pack_job(
         self, job_id: str, job_type: JobType, credits_deducted: float
     ) -> Dict[str, Any]:
-        """Complete credit pack job (credits already deducted)"""
+        """Complete credit pack job - credits already deducted"""
         try:
-            # Update job record to confirm completion
-            credit_info = self.db_util.create_credit_info(
-                job_type, credits_deducted, deducted_amount=credits_deducted
+            # Update job status - credits were already deducted during reservation
+            collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
+            collection = db.get_collection(collection_name)
+            
+            await collection.update_one(
+                {"job_id": job_id},
+                {
+                    "$set": {
+                        "credits_billed": True,
+                        "billing_completed_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
             )
             
-            await self._update_job_details(job_id, job_type, credit_info)
+            logger.info(f"Credit pack job completed: Job {job_id} used {credits_deducted} credits")
             
-            logger.info(f"Credit pack completion: Confirmed {credits_deducted} credits for job {job_id}")
-            
-            return self.response_util.create_credit_operation_response(
-                True, "Credit pack job completed successfully",
-                credits_confirmed=credits_deducted,
-                billing_type=BillingType.CREDIT_PACK
+            return self.response_util.create_success_response(
+                "Credit pack job completed successfully",
+                credits_deducted=credits_deducted,
+                billing_type="credit_pack"
             )
             
         except Exception as e:
@@ -425,7 +390,7 @@ class CreditService:
     
     async def _refund_payg_job(self, job_id: str, job_type: JobType, reason: str) -> Dict[str, Any]:
         """Refund pay-as-you-go job (virtual cancellation)"""
-        collection_name = self.db_util.get_collection_name(job_type)
+        collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
         
         await db[collection_name].update_one(
             {"job_id": job_id},
@@ -441,14 +406,14 @@ class CreditService:
             
         logger.info(f"Pay-as-you-go job {job_id} cancelled (reason: {reason})")
         
-        return self.response_util.create_credit_operation_response(
-            True, "Pay-as-you-go job cancelled successfully",
+        return self.response_util.create_success_response(
+            "Pay-as-you-go job cancelled successfully",
             credits_refunded=0, reason=reason
         )
     
     async def _refund_credit_pack_job(self, job_id: str, job_type: JobType, reason: str) -> Dict[str, Any]:
         """Refund credit pack job (actual credit restoration)"""
-        collection_name = self.db_util.get_collection_name(job_type)
+        collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
         
         # Get job details
         job = await db[collection_name].find_one({"job_id": job_id, "credits_reserved": True})
@@ -461,72 +426,50 @@ class CreditService:
         credits_to_refund = job.get("credits_required", 0)
         user_id = job.get("user_id")
         
-        # Atomic refund operation
-        async with await client.start_session() as session:
-            async with session.start_transaction():
-                try:
-                    # Only refund if credits were actually deducted
-                    if job.get("credits_deducted", False):
-                        await users_collection.update_one(
-                        {"_id": ObjectId(user_id)},
-                        {
-                            "$inc": {"credits": credits_to_refund},
-                            "$set": {"updated_at": datetime.now(timezone.utc)}
-                        },
-                        session=session
-                    )
-                    
-                    # Mark job as refunded
-                    await db[collection_name].update_one(
-                        {"job_id": job_id},
-                        {
-                            "$set": {
-                                "credits_refunded": True,
-                                "credits_refunded_at": datetime.now(timezone.utc),
-                                "refund_reason": reason
-                            },
-                            "$unset": {"credits_reserved": ""}
-                        },
-                        session=session
-                    )
-                    
-                    await session.commit_transaction()
-                    
-                    logger.info(f"Refunded {credits_to_refund} credits for credit pack job {job_id}")
-                    
-                    return self.response_util.create_credit_operation_response(
-                        True, "Credits refunded successfully",
-                        credits_refunded=credits_to_refund, reason=reason
-                    )
-                    
-                except Exception as e:
-                    await session.abort_transaction()
-                    raise e
-    
-    async def _update_spending_tracking(self, user_id: str, amount: float):
-        """Update spending tracking for spending limits"""
+        # Simple refund operation without complex transactions
         try:
-            from app.services.stripe_service import stripe_service
-            await stripe_service.update_current_spending(user_id, amount)
+            # Only refund credit pack jobs
+            if job.get("billing_type") == "credit_pack":
+                # Add credits back to user
+                await users_collection.update_one(
+                    {"_id": ObjectId(user_id)},
+                    {"$inc": {"credits": credits_to_refund}}
+                )
+                
+                # Mark job as refunded
+                await db[collection_name].update_one(
+                    {"job_id": job_id},
+                    {
+                        "$set": {
+                            "credits_refunded": True,
+                            "credits_refunded_at": datetime.now(timezone.utc),
+                            "refund_reason": reason
+                        }
+                    }
+                )
+                
+                logger.info(f"Refunded {credits_to_refund} credits for credit pack job {job_id}")
+                
+                return self.response_util.create_success_response(
+                    "Credits refunded successfully",
+                    credits_refunded=credits_to_refund, 
+                    reason=reason
+                )
+            else:
+                logger.info(f"Skipped refund for PAYG job {job_id}")
+                return self.response_util.create_success_response(
+                    "No refund needed for PAYG job",
+                    reason=reason
+                )
+                
         except Exception as e:
-            logger.warning(f"Failed to update spending tracking for user {user_id}: {e}")
+            logger.error(f"Credit refund failed for job {job_id}: {e}")
+            return self.response_util.create_error_response(
+                "REFUND_FAILED", 
+                f"Failed to refund credits: {str(e)}"
+            )
     
-    async def _update_job_details(self, job_id: str, job_type: JobType, credit_info: Dict[str, Any]):
-        """Update job details with credit information"""
-        try:
-            from app.services.dub_job_service import dub_job_service
-            from app.services.separation_job_service import separation_job_service
-            
-            job_service = dub_job_service if job_type == JobType.DUB else separation_job_service
-            job = await job_service.get_job(job_id)
-            
-            if job and job.details:
-                updated_details = job.details.copy()
-                updated_details.update(credit_info)
-                await job_service.update_details(job_id, updated_details)
-        except Exception as e:
-            logger.warning(f"Failed to update job details for {job_id}: {e}")
-    
+
 
 
 # Create a singleton instance

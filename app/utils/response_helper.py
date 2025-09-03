@@ -7,14 +7,30 @@ from fastapi.responses import JSONResponse
 from typing import Optional, Dict, Any, Callable
 from app.config.constants import *
 import logging
+import json
+from datetime import datetime
+from bson import ObjectId
 
+
+def serialize_datetime_objects(obj):
+    """Recursively convert datetime objects to ISO format strings"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, ObjectId):
+        return str(obj)
+    elif isinstance(obj, dict):
+        return {key: serialize_datetime_objects(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetime_objects(item) for item in obj]
+    else:
+        return obj
 
 def success_response(
     message: str,
     data: Optional[Dict[str, Any]] = None,
     status_code: int = HTTP_STATUS_SUCCESS
 ) -> JSONResponse:
-    """Create standardized success response"""
+    """Create standardized success response with datetime serialization"""
     content = {
         "success": True,
         "message": message
@@ -22,6 +38,9 @@ def success_response(
     
     if data:
         content.update(data)
+    
+    # Serialize datetime objects to prevent JSON serialization errors
+    content = serialize_datetime_objects(content)
     
     return JSONResponse(status_code=status_code, content=content)
 
@@ -32,7 +51,7 @@ def error_response(
     details: Optional[str] = None,
     status_code: int = HTTP_STATUS_INTERNAL_ERROR
 ) -> JSONResponse:
-    """Create standardized error response"""
+    """Create standardized error response with datetime serialization"""
     content = {
         "success": False,
         "error": error_type,
@@ -41,6 +60,9 @@ def error_response(
     
     if details:
         content["details"] = details
+    
+    # Serialize datetime objects to prevent JSON serialization errors
+    content = serialize_datetime_objects(content)
     
     return JSONResponse(status_code=status_code, content=content)
 
