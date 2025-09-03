@@ -34,6 +34,7 @@ class User(BaseModel):
     profilePicture: Optional[str] = None
     role: Literal['user', 'admin'] = 'user'
     subscription: Optional[Subscription] = Subscription()
+    total_usage: Optional[float] = None
     paymentMethods: List[PaymentMethod] = []
     hasPaymentMethod: bool = False
     paymentMethodAddedAt: Optional[datetime] = None

@@ -128,11 +128,26 @@ async def remove_payment_method(
             )
         # Check for outstanding bills first
         from app.services.credit_service import credit_service
-        outstanding_amount = await credit_service._get_outstanding_billing_amount(str(current_user.id))
-        if outstanding_amount > 0:
-            raise HTTPException(
-                status_code=400, 
-                detail=f"Cannot remove payment method with outstanding bill of ${outstanding_amount:.2f}. Please clear your bill first."
+        # Calculate current usage in USD
+        from app.config.credit_constants import CreditRates, ThresholdBilling
+        
+        
+        total_credits = user.total_usage or 0.0
+        cost_usd = total_credits * CreditRates.COST_PER_CREDIT_USD
+        current_usage_usd = round(cost_usd, 2)
+
+        # outstanding_amount = await credit_service._get_outstanding_billing_amount(str(current_user.id))
+        if current_usage_usd > 0:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": False,
+                    "error": "OUTSTANDING_BILL",
+                    "message": f"Cannot remove payment method with outstanding bill of ${current_usage_usd:.2f}. Please clear your bill first.",
+                    "outstanding_amount": current_usage_usd,
+                    "usage_credits": total_credits,
+                    "details": "You must clear your outstanding bill before removing payment methods to ensure proper billing."
+                }
             )
         
         await stripe_service.remove_payment_method(payment_method_id, user, str(current_user.id))
@@ -290,7 +305,7 @@ async def create_customer_portal(current_user: TokenUser = Security(get_current_
         
         portal_session = stripe.billing_portal.Session.create(
             customer=customer_id,
-            return_url=f"{settings.FRONTEND_URL}/dashboard"
+            return_url=f"{settings.FRONTEND_URL}/profile"
         )
         
         return success_response("Customer portal session created successfully", {"url": portal_session.url})
