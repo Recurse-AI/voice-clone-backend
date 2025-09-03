@@ -161,8 +161,8 @@ async def login_user(req: LoginData):
         logger.info(f"get the user : {user_data}")
         remaining_credits = calculate_remaining_seconds(user_data)
         
-        # Calculate current usage in USD
-        total_credits = user_data.get("total_usage", 0.0)
+        # Calculate current usage in USD - Safe handling
+        total_credits = user_data.get("total_usage") or 0.0
         cost_usd = total_credits * CreditRates.COST_PER_CREDIT_USD
         current_usage_usd = round(cost_usd, 2)
         
@@ -218,8 +218,8 @@ async def profile(
         user_data = full_user.model_dump(mode='json')
         remaining_credits = calculate_remaining_seconds(user_data)
 
-        # Calculate current usage in USD
-        total_credits = user_data.get("total_usage", 0.0)
+        # Calculate current usage in USD - Safe handling
+        total_credits = user_data.get("total_usage") or 0.0
         cost_usd = total_credits * CreditRates.COST_PER_CREDIT_USD
         current_usage_usd = round(cost_usd, 2)
 
@@ -272,8 +272,8 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
         user_data = full_user.model_dump(mode='json')
         remaining_credits = calculate_remaining_seconds(user_data)
 
-        # Calculate current usage in USD
-        total_credits = user_data.get("total_usage", 0.0)
+        # Calculate current usage in USD - Safe handling
+        total_credits = user_data.get("total_usage") or 0.0
         cost_usd = total_credits * CreditRates.COST_PER_CREDIT_USD
         current_usage_usd = round(cost_usd, 2)
 
