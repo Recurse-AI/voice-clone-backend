@@ -37,6 +37,7 @@ class FullUser(UserOut):
  
     hasPaymentMethod: bool = False
     paymentMethodAddedAt: Optional[datetime] = None
+    total_usage: Optional[float] = 0.0
 
 class TokenUser(BaseModel):
     id: str

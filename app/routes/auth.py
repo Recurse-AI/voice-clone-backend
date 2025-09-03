@@ -17,6 +17,7 @@ from app.services.google_auth import verify_google_token, handle_google_user
 from app.config.settings import settings
 from authlib.integrations.starlette_client import OAuth
 from bson import ObjectId
+from app.config.credit_constants import CreditRates
 
 auth = APIRouter()
 
@@ -142,7 +143,6 @@ async def login_user(req: LoginData):
         # Convert to FullUser schema to include subscription information
         subscription_data = prepare_subscription_data(user.subscription)
 
-
         full_user = FullUser(
             id=user.id,
             name=user.name,
@@ -152,14 +152,19 @@ async def login_user(req: LoginData):
             role=user.role,
             credits=user.credits,
             subscription=subscription_data,
-
             hasPaymentMethod=getattr(user, 'hasPaymentMethod', False),
-            paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None)
+            paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None),
+            total_usage=getattr(user, 'total_usage', 0.0)
         )
         
         user_data = full_user.model_dump(mode='json')
         logger.info(f"get the user : {user_data}")
         remaining_credits = calculate_remaining_seconds(user_data)
+        
+        # Calculate current usage in USD
+        total_credits = user_data.get("total_usage", 0.0)
+        cost_usd = total_credits * CreditRates.COST_PER_CREDIT_USD
+        current_usage_usd = round(cost_usd, 2)
         
         token = create_jwt_token(user_data)
         return JSONResponse(
@@ -168,7 +173,8 @@ async def login_user(req: LoginData):
                 "message": "Login successfull",
                 "user": user_data,
                 "token": token,
-                "remainingCredits": remaining_credits
+                "remainingCredits": remaining_credits,
+                "current_usage_usd": current_usage_usd
             }
         )
         
@@ -204,20 +210,26 @@ async def profile(
             role=user.role,
             credits=user.credits,
             subscription=subscription_data,
-
             hasPaymentMethod=getattr(user, 'hasPaymentMethod', False),
-            paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None)
+            paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None),
+            total_usage=getattr(user, 'total_usage', 0.0)
         )
         
         user_data = full_user.model_dump(mode='json')
         remaining_credits = calculate_remaining_seconds(user_data)
+
+        # Calculate current usage in USD
+        total_credits = user_data.get("total_usage", 0.0)
+        cost_usd = total_credits * CreditRates.COST_PER_CREDIT_USD
+        current_usage_usd = round(cost_usd, 2)
 
         return JSONResponse(
             status_code=200,
             content={
                 "message": "Profile retrieved successfully",
                 "user": user_data,
-                "remainingCredits": remaining_credits
+                "remainingCredits": remaining_credits,
+                "current_usage_usd": current_usage_usd
             }
         )
 
@@ -243,7 +255,6 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
         # Convert to FullUser schema to include subscription information
         subscription_data = prepare_subscription_data(user.subscription)
 
-
         full_user = FullUser(
             id=user.id,
             name=user.name,
@@ -253,20 +264,26 @@ async def update_profile( data: UpdateProfileRequest, current_user: TokenUser = 
             role=user.role,
             credits=user.credits,
             subscription=subscription_data,
-
             hasPaymentMethod=getattr(user, 'hasPaymentMethod', False),
-            paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None)
+            paymentMethodAddedAt=getattr(user, 'paymentMethodAddedAt', None),
+            total_usage=getattr(user, 'total_usage', 0.0)
         )
         
         user_data = full_user.model_dump(mode='json')
         remaining_credits = calculate_remaining_seconds(user_data)
+
+        # Calculate current usage in USD
+        total_credits = user_data.get("total_usage", 0.0)
+        cost_usd = total_credits * CreditRates.COST_PER_CREDIT_USD
+        current_usage_usd = round(cost_usd, 2)
 
         return JSONResponse(
             status_code=200,
             content={
                 "message": "Profile updated successfully",
                 "user": user_data,
-                "remainingCredits": remaining_credits
+                "remainingCredits": remaining_credits,
+                "current_usage_usd": current_usage_usd
             }
         )
 
@@ -520,7 +537,7 @@ async def delete_account(current_user: TokenUser = Security(get_current_user)):
             cost_usd = total_usage * CreditRates.COST_PER_CREDIT_USD
             
             # If usage >= $5, user must clear bill first
-            if cost_usd >= 5.0:
+            if cost_usd > 0:
                 return JSONResponse(
                     status_code=400,
                     content={
