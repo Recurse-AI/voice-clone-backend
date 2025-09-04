@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     # Where to run alignment models: 'cpu' saves VRAM, 'cuda' is faster but uses VRAM
     WHISPER_ALIGNMENT_DEVICE: str = os.getenv("WHISPER_ALIGNMENT_DEVICE", "cpu")  # cpu | cuda
     
+    # WhisperX Loading Configuration
+    WHISPER_MODEL_TIMEOUT: int = int(os.getenv("WHISPER_MODEL_TIMEOUT", "300"))  # Model loading timeout in seconds
+    
     # GPU Memory Optimization
     PYTORCH_CUDA_ALLOC_CONF: str = os.getenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
     

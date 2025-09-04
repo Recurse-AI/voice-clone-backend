@@ -54,30 +54,41 @@ class WhisperXTranscriptionService:
         logger.info(f"WhisperX configured - Model: {self.model_size}")
     
     def load_model(self) -> bool:
-        """Load WhisperX model with auto-download and aggressive memory management"""
+        """Load WhisperX model with timeout protection"""
+        import concurrent.futures
+        
         try:
             if self.is_initialized:
                 logger.info("WhisperX model already loaded")
                 return True
             
-            # 🧹 AGGRESSIVE MEMORY CLEANUP BEFORE LOADING
-            self._aggressive_gpu_cleanup()
+            logger.info(f"Loading WhisperX model: {self.model_size} on {self.device}")
             
-            import whisperx
-            self.whisperx_model = whisperx.load_model(
-                self.model_size, 
-                device=self.device,
-                compute_type=self.compute_type
-            )
+            def _load_model():
+                # 🧹 AGGRESSIVE MEMORY CLEANUP BEFORE LOADING
+                self._aggressive_gpu_cleanup()
+                
+                import whisperx
+                return whisperx.load_model(
+                    self.model_size, 
+                    device=self.device,
+                    compute_type=self.compute_type
+                )
             
-            self.is_initialized = True
-            return True
-            
+            # Use ThreadPoolExecutor for timeout control
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(_load_model)
+                try:
+                    self.whisperx_model = future.result(timeout=settings.WHISPER_MODEL_TIMEOUT)
+                    self.is_initialized = True
+                    logger.info(f"✅ WhisperX model loaded successfully on {self.device}")
+                    return True
+                except concurrent.futures.TimeoutError:
+                    logger.error(f"❌ Model loading timeout ({settings.WHISPER_MODEL_TIMEOUT}s)")
+                    return False
+                        
         except Exception as e:
             logger.error(f"❌ Failed to load WhisperX model: {e}")
-            # No CPU fallback - GPU required
-            if self.device == "cuda":
-                logger.error("❌ GPU failed and CPU fallback is disabled")
             return False
     
     def _ensure_model_loaded(self):
@@ -93,6 +104,39 @@ class WhisperXTranscriptionService:
     def _aggressive_gpu_cleanup(self):
         """Aggressive GPU memory cleanup before loading models"""
         cleanup_utils.cleanup_aggressive_gpu()
+    
+    def health_check(self) -> dict:
+        """Health check for WhisperX service"""
+        try:
+            status = {
+                "service_initialized": self.is_initialized,
+                "device": self.device,
+                "model_size": self.model_size,
+                "compute_type": self.compute_type,
+                "gpu_available": torch.cuda.is_available(),
+                "gpu_memory_allocated": 0,
+                "gpu_memory_cached": 0
+            }
+            
+            if torch.cuda.is_available():
+                status["gpu_memory_allocated"] = torch.cuda.memory_allocated() / 1024**3  # GB
+                status["gpu_memory_cached"] = torch.cuda.memory_reserved() / 1024**3  # GB
+            
+            return status
+        except Exception as e:
+            return {"error": str(e), "service_initialized": False}
+    
+    def reset_service(self):
+        """Reset the service to recover from stuck state"""
+        logger.warning("🔄 Resetting WhisperX service...")
+        try:
+            self.whisperx_model = None
+            self.is_initialized = False
+            self.preloaded_align_models.clear()
+            self._aggressive_gpu_cleanup()
+            logger.info("✅ WhisperX service reset complete")
+        except Exception as e:
+            logger.error(f"❌ Failed to reset WhisperX service: {e}")
     
 
 
@@ -363,35 +407,21 @@ def get_whisperx_transcription_service() -> WhisperXTranscriptionService:
     return _whisperx_service
 
 def initialize_whisperx_transcription() -> bool:
-    """Initialize WhisperX transcription service with optional preloading"""
+    """Initialize WhisperX transcription service - clean and simple"""
     try:
+        logger.info("Initializing WhisperX transcription service...")
         service = get_whisperx_transcription_service()
         
+        # Load main model
         if not service.load_model():
+            logger.error("Failed to load WhisperX main model")
             return False
         
-        common_languages = ["en", "es", "fr", "de", "it", "pt", "ru", "ja", "ko", "zh", "hi", "ar", "bn"]
-        logger.info(f"Pre-downloading {len(common_languages)} language models...")
-        
-        for lang_code in common_languages:
-            try:
-                import os
-                model_cache_path = os.path.expanduser(f"~/.cache/whisperx/models/{lang_code}")
-                if os.path.exists(model_cache_path):
-                    continue
-                
-                import whisperx
-                whisperx.load_align_model(language_code=lang_code, device="cpu")
-                logger.info(f"Downloaded {lang_code}")
-                
-            except Exception:
-                continue
-        
-        logger.info("WhisperX initialization complete")
+        logger.info("✅ WhisperX initialization complete")
         return True
         
     except Exception as e:
-        logger.error(f"WhisperX initialization failed: {e}")
+        logger.error(f"❌ WhisperX initialization failed: {e}")
         return False
 
 def cleanup_whisperx_transcription():

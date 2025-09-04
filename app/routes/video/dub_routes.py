@@ -29,8 +29,7 @@ from app.services.r2_service import get_r2_service
 from app.services.dub.simple_dubbed_api import get_simple_dubbed_api
 from app.services.job_response_service import job_response_service
 from app.utils.unified_status_manager import (
-    get_unified_status_manager, ProcessingStatus, JobType,
-    JobType as UnifiedJobType
+    get_unified_status_manager, ProcessingStatus, JobType
 )
 from app.config.credit_constants import JobType as CreditJobType
 from app.utils.runpod_service import runpod_service
@@ -153,7 +152,7 @@ async def get_video_dub_status(job_id: str):
         
         # Get status from unified manager (includes queue position and proper caching)  
         manager = get_unified_status_manager()
-        status_data = await manager.get_status(job_id, UnifiedJobType.DUB)
+        status_data = await manager.get_status(job_id, JobType.DUB)
         
         if not status_data:
             # Check if job exists in database but not yet in status manager
@@ -247,7 +246,9 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             # Update to 25% when separation starts
             _update_status_non_blocking(job_id, ProcessingStatus.SEPARATING, 25, {"message": "Starting audio separation...", "phase": "separation"})
             
+            logger.info(f"🚀 Submitting RunPod separation request for job {job_id} with audio URL: {r2_audio_path['url']}")
             request_id = runpod_service.submit_separation_request(r2_audio_path["url"], job_id)
+            logger.info(f"✅ RunPod separation request submitted successfully: {request_id}")
             
             def on_separation_progress(status: str, progress: int):
                 # Map RunPod progress (0-100) to separation range (25-45) as per new spec
@@ -289,8 +290,10 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             status = {"output": monitor_result.get("output", {})}
             
         except Exception as e:
+            error_msg = f"Audio separation job submission failed: {str(e)}"
+            logger.error(f"❌ RunPod submission failed for job {job_id}: {error_msg}")
             _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {
-                "error": f"Audio separation job submission failed: {str(e)}"
+                "error": error_msg
             })
             return
         output = status.get('output', {})
@@ -382,7 +385,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         try:
             from app.utils.unified_status_manager import get_unified_status_manager, ProcessingStatus as PS
             mgr = get_unified_status_manager()
-            current = mgr.get_status_sync(job_id, UnifiedJobType.DUB)
+            current = mgr.get_status_sync(job_id, JobType.DUB)
             in_review_flow = current and current.status in {PS.AWAITING_REVIEW, PS.REVIEWING}
         except Exception:
             in_review_flow = False

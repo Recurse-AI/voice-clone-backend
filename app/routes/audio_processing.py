@@ -21,10 +21,10 @@ from app.services.dub.audio_utils import AudioUtils
 from app.services.dub.fish_speech_service import get_fish_speech_service
 from app.services.r2_service import get_r2_service
 from app.utils.unified_status_manager import (
-    get_unified_status_manager, ProcessingStatus, JobType as UnifiedJobType
+    get_unified_status_manager, ProcessingStatus, JobType
 )
 from app.utils.runpod_service import runpod_service
-from app.config.credit_constants import JobType
+from app.config.credit_constants import JobType as CreditJobType
 from app.config.constants import MAX_ATTEMPTS_DEFAULT, POLLING_INTERVAL_SECONDS, MSG_PROCESSING_STARTED
 from app.config.settings import settings
 from app.utils.cleanup_utils import cleanup_utils
@@ -54,7 +54,7 @@ def _update_separation_status_non_blocking(job_id: str, status: str, progress: i
     
     # Use sync version to avoid event loop issues
     try:
-        manager.update_status_sync(job_id, UnifiedJobType.SEPARATION, status_enum, progress, kwargs)
+        manager.update_status_sync(job_id, JobType.SEPARATION, status_enum, progress, kwargs)
 
     except Exception as e:
         logger.error(f"Failed to update separation status for {job_id}: {e}")
@@ -329,7 +329,7 @@ async def start_audio_separation(
         credit_result = await credit_service.reserve_credits_and_create_job(
             user_id=user_id,
             job_data=job_data,
-            job_type=JobType.SEPARATION,
+            job_type=CreditJobType.SEPARATION,
             duration_seconds=request.duration
         )
 
@@ -347,7 +347,7 @@ async def start_audio_separation(
         except Exception as runpod_error:
             # ❌ RUNPOD FAILED - ROLLBACK CREDITS
             logger.error(f"RunPod request failed, rolling back credits: {runpod_error}")
-            await credit_service.refund_job_credits(job_id, JobType.SEPARATION, "runpod_request_failed")
+            await credit_service.refund_job_credits(job_id, CreditJobType.SEPARATION, "runpod_request_failed")
             raise HTTPException(status_code=500, detail=f"Audio separation request failed: {str(runpod_error)}")
 
         # Job already created with credits reserved, just proceed

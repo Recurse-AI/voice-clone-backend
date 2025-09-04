@@ -355,9 +355,9 @@ async def activate_payg(current_user: TokenUser = Security(get_current_user)):
     try:
         user = await get_authenticated_user(current_user)
         
-        # Check if user has payment methods
-        payment_methods = await stripe_service.get_payment_methods(user, str(current_user.id))
-        if not payment_methods:
+        # Check if user has payment methods (use cached status)
+        has_payment_method = user.get("hasPaymentMethod", False)
+        if not has_payment_method:
             return error_response("Please add a payment method first", 400)
         
         # Activate PAYG
@@ -455,10 +455,11 @@ async def get_billing_status(current_user: TokenUser = Security(get_current_user
         last_updated_iso = last_updated.isoformat() if last_updated else None
         
         return success_response("Billing status retrieved successfully", {
-            # Basic subscription info
+            # Basic subscription info  
             "subscription_type": subscription.get("type", "none"),
             "subscription_status": subscription.get("status", "none"),
             "has_payment_method": user.get("hasPaymentMethod", False),
+            "stripe_customer_id": subscription.get("stripeCustomerId", "not-set"),
             
             # Usage tracking
             "current_usage_credits": total_credits,
@@ -476,8 +477,7 @@ async def get_billing_status(current_user: TokenUser = Security(get_current_user
             "billing_failed_attempts": failed_attempts,
             "billing_block_reason": subscription.get("billingBlockReason", None),
             
-            # Stripe info
-            "customer_id": subscription.get("stripeCustomerId", "not-set"),
+            # Timing info
             "last_updated": last_updated_iso
         })
         
