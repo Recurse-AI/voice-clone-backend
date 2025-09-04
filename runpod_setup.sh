@@ -91,8 +91,8 @@ fi
 
 # Create directories with proper permissions
 echo "📁 Creating directories..."
-mkdir -p ./tmp ./app/logs
-chmod 755 ./tmp ./app/logs
+mkdir -p ./tmp/voice_cloning ./app/logs
+chmod 755 ./tmp/voice_cloning ./app/logs
 
 
 # Setup Python environment
