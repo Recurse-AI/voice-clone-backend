@@ -408,7 +408,6 @@ async def deactivate_payg(current_user: TokenUser = Security(get_current_user)):
                 },
                 "$unset": {
                     "subscription.thresholdAmount": "",
-                    "subscription.stripeCustomerId": ""
                 }
             }
         )
