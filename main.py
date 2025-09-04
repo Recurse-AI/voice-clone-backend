@@ -19,7 +19,6 @@ from app.routes.user_jobs import router as user_jobs_router
 from app.middleware.auth_middleware import AuthMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from app.config.settings import settings
-from app.utils.video_downloader import video_download_service
 from app.schemas import StatusResponse
 from app.utils.event_loop_manager import loop_manager
 from app.utils.cleanup_utils import cleanup_utils

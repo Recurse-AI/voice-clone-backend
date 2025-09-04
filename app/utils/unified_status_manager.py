@@ -396,6 +396,19 @@ class UnifiedStatusManager:
                 # Check cache first (fastest)
                 cached_data = self._cache.get(job_id)
                 if cached_data:
+                    # If cached is pending, verify from DB to avoid stale cache across processes
+                    if cached_data.status == ProcessingStatus.PENDING:
+                        try:
+                            # Prefer provided job_type, else use cached
+                            jtype = job_type or cached_data.job_type
+                            fresh = await self._load_from_database(job_id, jtype)
+                            if fresh and (
+                                fresh.status != cached_data.status or
+                                fresh.updated_at > cached_data.updated_at
+                            ):
+                                return fresh
+                        except Exception:
+                            pass
                     # Refresh queue position for active jobs
                     if cached_data.status in self._processing_states:
                         cached_data.queue_position = await self._get_queue_position(
