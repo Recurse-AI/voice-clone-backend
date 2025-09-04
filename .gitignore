@@ -170,7 +170,7 @@ checkpoints/
 r2_temp/
 
 # Audio processing temp directories
-/tmp/voice_cloning/
+/tmp/
 audio_temp/
 segments/
 cloned_segments/

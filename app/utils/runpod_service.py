@@ -121,7 +121,7 @@ class RunPodService:
                     status = "failed"
                     progress = 0
                 elif runpod_status == 'CANCELLED':
-                    status = "cancelled"
+                    status = "failed"
                     progress = 0
                 
                 # Calculate queue position from delayTime (if available)

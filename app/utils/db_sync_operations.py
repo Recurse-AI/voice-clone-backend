@@ -45,7 +45,7 @@ class SyncDBOperations:
                 existing_job = sync_collection.find_one({"job_id": job_id}, {"started_at": 1})
                 if existing_job and not existing_job.get("started_at"):
                     update_data["started_at"] = datetime.now(timezone.utc)
-            elif status in ['completed', 'failed', 'cancelled']:
+            elif status in ['completed', 'failed']:
                 update_data["completed_at"] = datetime.now(timezone.utc)
             
             # Add additional fields
@@ -82,11 +82,6 @@ class SyncDBOperations:
             current_progress = current_doc.get("progress")
             current_status = current_doc.get("status")
             
-            # 🛑 CRITICAL: Prevent overriding cancelled jobs (soft delete protection)
-            if current_status == "cancelled" and status != "cancelled":
-                logger.warning(f"🛑 Prevented status override for cancelled job {job_id}: cancelled -> {status}")
-                sync_client.close()
-                return False
 
             # Monotonic progress: never decrease progress, with sensible floors per status
             adjusted_progress = progress
@@ -129,7 +124,7 @@ class SyncDBOperations:
                 existing_job = sync_collection.find_one({"job_id": job_id}, {"started_at": 1})
                 if existing_job and not existing_job.get("started_at"):
                     update_data["started_at"] = datetime.now(timezone.utc)
-            elif status in ['completed', 'failed', 'cancelled']:
+            elif status in ['completed', 'failed']:
                 update_data["completed_at"] = datetime.now(timezone.utc)
             
             # Add details
@@ -157,14 +152,14 @@ class SyncDBOperations:
             update_query = {"job_id": job_id}
             
             # For critical status transitions, ensure we're not overwriting newer status
-            if status in ['awaiting_review', 'reviewing', 'completed', 'failed', 'cancelled']:
+            if status in ['awaiting_review', 'reviewing', 'completed', 'failed']:
                 current_status = current_doc.get("status")
                 
                 # Prevent backwards status transitions (except explicit overrides)
                 status_hierarchy = {
                     'pending': 0, 'downloading': 1, 'separating': 2, 'transcribing': 3,
                     'processing': 4, 'awaiting_review': 5, 'reviewing': 6, 
-                    'completed': 7, 'failed': 7, 'cancelled': 7  # terminal states
+                    'completed': 7, 'failed': 7  # terminal states
                 }
                 
                 current_level = status_hierarchy.get(current_status, 0)

@@ -119,7 +119,7 @@ class AudioSeparationResponse(BaseModel):
 
 class SeparationStatusResponse(BaseModel):
     job_id: str
-    status: str  # pending, processing, completed, failed, cancelled
+    status: str  # pending, processing, completed, failed
     progress: int  # 0-100
     queuePosition: Optional[int] = None
     vocalUrl: Optional[str] = None

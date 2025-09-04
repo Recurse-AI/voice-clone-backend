@@ -103,7 +103,7 @@ class WhisperXTranscriptionService:
         Args:
             audio_path: Path to audio file to transcribe
             language: Language code (required)
-            job_id: Optional job ID for cancellation checking
+            job_id: Optional job ID for logging
             
         Returns:
             Dict with success, sentences, and metadata
@@ -191,11 +191,6 @@ class WhisperXTranscriptionService:
             # Load audio
             audio = whisperx.load_audio(audio_path)
             
-            # Check for job cancellation
-            if job_id:
-                from app.utils.shared_memory import is_job_cancelled
-                if is_job_cancelled(job_id):
-                    raise Exception("Job cancelled by user")
             
             # Transcribe with specified language or auto-detect
             if language_code == "auto_detect":

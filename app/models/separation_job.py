@@ -8,7 +8,7 @@ class SeparationJob(BaseModel):
     user_id: str = Field(..., description="User who submitted the job")
     
     # Job Status
-    status: Literal['pending', 'processing', 'completed', 'failed', 'cancelled'] = 'pending'
+    status: Literal['pending', 'processing', 'completed', 'failed'] = 'pending'
     progress: int = Field(0, ge=0, le=100, description="Progress percentage")
     
     # Input
@@ -49,7 +49,7 @@ class SeparationJob(BaseModel):
         # Set timestamps based on status
         if status == 'processing' and not self.started_at:
             self.started_at = datetime.now(timezone.utc)
-        elif status in ['completed', 'failed', 'cancelled']:
+        elif status in ['completed', 'failed']:
             self.completed_at = datetime.now(timezone.utc)
             
         # Update additional fields

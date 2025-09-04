@@ -35,7 +35,6 @@ from app.utils.unified_status_manager import (
 from app.config.credit_constants import JobType as CreditJobType
 from app.utils.runpod_service import runpod_service
 from app.utils.runpod_monitor import monitor_runpod_job
-from app.utils.shared_memory import is_job_cancelled, unmark_job_cancelled
 
 from app.utils.job_utils import job_utils
 from app.utils.cleanup_utils import cleanup_utils
@@ -257,13 +256,6 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
     job_dir = os.path.join(settings.TEMP_DIR, job_id)
     
     try:
-        # Check cancellation first
-        if is_job_cancelled(job_id):
-            _update_status_non_blocking(job_id, ProcessingStatus.CANCELLED, 0, {
-                "message": "Job cancelled by user", 
-                "error": "Job cancelled by user"
-            })
-            return
 
         # Job picked up from queue - validate first before changing status
         if not os.path.exists(job_dir):
@@ -280,12 +272,6 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         audio_path = os.path.join(job_dir, audio_candidates[0])
         
         
-        if is_job_cancelled(job_id):
-            _update_status_non_blocking(job_id, ProcessingStatus.CANCELLED, 0, {
-                "message": "Job cancelled by user", 
-                "error": "Job cancelled by user"
-            })
-            return
             
         # Use R2Service's proper path generation for consistency
         r2_key = r2_service.generate_file_path(job_id, "", f"{job_id}.wav")
@@ -311,9 +297,9 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                     "phase": "separation"
                 })
             
-            def on_separation_cancelled():
-                _update_status_non_blocking(job_id, ProcessingStatus.CANCELLED, 0, {
-                    "message": "Job cancelled by user", "error": "Job cancelled by user"
+            def on_separation_failed():
+                _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {
+                    "message": "Job failed by RunPod", "error": "Job failed by RunPod"
                 })
             
             logger.info(f"🔄 Starting separation monitoring for RunPod job {request_id}")
@@ -322,12 +308,12 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                 job_id=job_id,
                 timeout_seconds=600,
                 on_progress=on_separation_progress,
-                on_cancelled=on_separation_cancelled
+                on_failed=on_separation_failed
             )
             logger.info(f"✅ Separation monitoring completed with result: {monitor_result.get('status')}")
             
             if not monitor_result["success"]:
-                if monitor_result["status"] == "CANCELLED":
+                if monitor_result["status"] == "FAILED":
                     return
                 else:
                     error_msg = monitor_result.get("error", "Audio separation failed")
@@ -361,12 +347,6 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         if not download_success:
             return
             
-        if is_job_cancelled(job_id):
-            _update_status_non_blocking(job_id, ProcessingStatus.CANCELLED, 0, {
-                "message": "Job cancelled by user", 
-                "error": "Job cancelled by user"
-            })
-            return
             
         # Wait for separation to complete before starting transcription
         # This update happens AFTER separation monitor completes
@@ -394,8 +374,6 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         )
         
         if not pipeline_result["success"]:
-            if is_job_cancelled(job_id):
-                return
             _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {"message": "Dubbing pipeline failed.", "error": pipeline_result.get("error"), "details": pipeline_result.get("details")})
             if r2_audio_path.get("r2_key"):
                 r2_service.delete_file(r2_audio_path["r2_key"])
@@ -403,7 +381,6 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
 
         if getattr(request, "humanReview", False):
             # Rely on pipeline to set awaiting_review and manifest details
-            unmark_job_cancelled(job_id)
             if r2_audio_path.get("r2_key"):
                 r2_service.delete_file(r2_audio_path["r2_key"])
             return
@@ -427,8 +404,6 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         del pipeline_result, folder_upload, runpod_urls
         gc.collect()
         
-        from app.utils.shared_memory import unmark_job_cancelled
-        unmark_job_cancelled(job_id)
         
         # Complete credit billing using centralized utility (sync context)
         job_utils.complete_job_billing_sync(job_id, "dub", user_id)
@@ -449,9 +424,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         except Exception:
             in_review_flow = False
 
-        if is_job_cancelled(job_id):
-            logger.info(f"Job {job_id} was cancelled - not overriding with failed status on exception")
-        elif in_review_flow:
+        if in_review_flow:
             logger.info(f"Job {job_id} is in review flow; skipping failure override and cleanup")
         else:
             _update_status_non_blocking(job_id, ProcessingStatus.FAILED, 0, {"message": f"Processing failed: {str(e)}", "error": str(e)})
@@ -547,10 +520,7 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             del result, folder_upload
             gc.collect()
             
-            # ✅ Successfully completed after review - safe to unmark cancellation
-
-            unmark_job_cancelled(job_id)
-            logger.info(f"✅ Job {job_id} completed after review - unmarked cancellation")
+            logger.info(f"✅ Job {job_id} completed after review")
             
             # Confirm credit usage
             # Complete credit billing using centralized utility (sync context)
@@ -706,9 +676,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             # Handle review mode or completion
             if getattr(request_body, "humanReview", False):
                 if result.get("review"):
-                    # Pipeline already sets awaiting_review with manifest; just unmark cancellation
-                    unmark_job_cancelled(redub_job_id)
-                    logger.info(f"✅ Redub job {redub_job_id} reached awaiting_review - unmarked cancellation")
+                    logger.info(f"✅ Redub job {redub_job_id} reached awaiting_review")
                     return
             
             # Complete redub
@@ -725,10 +693,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
                 "parent_job_id": parent_job_id
             })
             
-            # ✅ Successfully completed redub - safe to unmark cancellation
-
-            unmark_job_cancelled(redub_job_id)
-            logger.info(f"✅ Redub job {redub_job_id} completed - unmarked cancellation")
+            logger.info(f"✅ Redub job {redub_job_id} completed")
             
             # Complete credit billing using centralized utility (sync context for redub)
             job_utils.complete_job_billing_sync(redub_job_id, "dub", user_id)

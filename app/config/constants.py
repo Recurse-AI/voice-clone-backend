@@ -46,7 +46,6 @@ JOB_STATUS_PENDING = "pending"
 JOB_STATUS_PROCESSING = "processing"
 JOB_STATUS_COMPLETED = "completed"
 JOB_STATUS_FAILED = "failed"
-JOB_STATUS_CANCELLED = "cancelled"
 
 # Stripe/Payment Constants
 MIN_PAYMENT_AMOUNT_USD = 1  # Minimum $1 payment

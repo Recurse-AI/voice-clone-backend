@@ -24,7 +24,6 @@ from app.utils.unified_status_manager import (
     get_unified_status_manager, ProcessingStatus, JobType as UnifiedJobType
 )
 from app.utils.runpod_service import runpod_service
-from app.utils.shared_memory import is_job_cancelled, unmark_job_cancelled
 from app.config.credit_constants import JobType
 from app.config.constants import MAX_ATTEMPTS_DEFAULT, POLLING_INTERVAL_SECONDS, MSG_PROCESSING_STARTED
 from app.config.settings import settings
@@ -116,24 +115,7 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
         attempt = 0
         
         while attempt < max_attempts:
-            # Check if job was cancelled by user
-
-            is_cancelled = is_job_cancelled(job_id)
-
             
-            if is_cancelled:
-                logger.info(f"🛑 Separation job {job_id} (RunPod: {runpod_request_id}) was cancelled by user")
-                _update_separation_status_non_blocking(
-                    job_id=job_id,
-                    status="cancelled",
-                    progress=0,
-                    error="Job cancelled by user"
-                )
-                _cleanup_separation_files_non_blocking(job_id)
-                # Unmark as cancelled since monitoring is stopping
-
-                unmark_job_cancelled(job_id)
-                break
             
             try:
                 # Check job status from RunPod using RunPod request ID
@@ -151,20 +133,20 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                 
 
                 
-                # Check for cancelled status from RunPod
+                # Check for failed status from RunPod
                 if job_status.upper() == "CANCELLED":
-                    logger.info(f"🛑 RunPod job {runpod_request_id} was CANCELLED - force stopping monitoring")
+                    logger.info(f"🛑 RunPod job {runpod_request_id} was cancelled by RunPod - force stopping monitoring")
                     
                     # Try to update status (but don't fail if it doesn't work)
                     try:
                         _update_separation_status_non_blocking(
                             job_id=job_id,
-                            status="cancelled",
+                            status="failed",
                             progress=0,
-                            error="Job cancelled by user"
+                            error="Job failed by RunPod"
                         )
                     except Exception as e:
-                        logger.warning(f"Failed to update cancelled status for {job_id}: {e}")
+                        logger.warning(f"Failed to update failed status for {job_id}: {e}")
                     
                     # Try cleanup (but don't fail if it doesn't work)
                     try:
@@ -172,16 +154,9 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                     except Exception as e:
                         logger.warning(f"Failed to cleanup files for {job_id}: {e}")
                     
-                    # Always unmark and break regardless of database update success
-    
-                    unmark_job_cancelled(job_id)
-                    logger.info(f"🚫 FORCE STOPPED monitoring for {job_id} due to RunPod CANCELLED")
+                    logger.info(f"🚫 STOPPED monitoring for {job_id} due to RunPod failure")
                     break  # Force stop monitoring
                 
-                # Only update status if job is not cancelled
-
-                
-                # 🛡️ CRITICAL: Check if job is already cancelled in database (soft delete protection)
                 try:
 
                     
@@ -190,10 +165,8 @@ def process_audio_separation_background(job_id: str, runpod_request_id: str, use
                     current_job = sync_collection.find_one({"job_id": job_id})
                     sync_client.close()
                     
-                    if current_job and current_job.get("status") == "cancelled":
-                        logger.info(f"🛡️ Job {job_id} already cancelled in database - stopping background monitoring")
-        
-                        unmark_job_cancelled(job_id)
+                    if current_job and current_job.get("status") == "failed":
+                        logger.info(f"🛡️ Job {job_id} failed - stopping background monitoring")
                         break
                 except Exception as e:
                     logger.warning(f"Failed to check job status in database: {e}")

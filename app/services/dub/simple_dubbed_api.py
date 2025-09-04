@@ -10,7 +10,6 @@ from typing import Optional, Dict, Any
 from app.config.settings import settings
 from app.services.language_service import language_service
 from app.services.openai_service import get_openai_service
-from app.utils.shared_memory import is_job_cancelled
 from .video_processor import VideoProcessor
 from .whisperx_transcription import get_whisperx_transcription_service
 from .fish_speech_service import get_fish_speech_service
@@ -108,7 +107,7 @@ class SimpleDubbedAPI:
                 current_data = manager.get_status_sync(job_id, JobType.DUB)
                 if (current_data and current_data.progress > progress and status == current_data.status and
                     status not in [ProcessingStatus.AWAITING_REVIEW, ProcessingStatus.REVIEWING, 
-                                   ProcessingStatus.COMPLETED, ProcessingStatus.FAILED, ProcessingStatus.CANCELLED]):
+                                   ProcessingStatus.COMPLETED, ProcessingStatus.FAILED]):
                     progress = current_data.progress
             
             manager.update_status_sync(job_id, JobType.DUB, status, progress, details)
@@ -139,22 +138,12 @@ class SimpleDubbedAPI:
             {"message": message, "phase": phase, "sub_progress": sub_progress}
         )
     
-    def _check_cancellation(self, job_id: str) -> bool:
-
-        if is_job_cancelled(job_id):
-            self._update_status(job_id, ProcessingStatus.CANCELLED, 0, {
-                "message": "Job cancelled by user", "error": "Job cancelled by user"
-            }, smart=False)
-            return True
-        return False
     
     def _should_update_progress(self, completed: int, total: int) -> bool:
         return (completed % max(1, total // 10) == 0 or completed == total or completed <= 3)
     
     def dub_text_batch(self, segments: list, target_language: str = "English", batch_size: int = 10, job_id: str = None) -> list:
         """Use dedicated OpenAI service for text dubbing"""
-        if job_id and self._check_cancellation(job_id):
-            return []
         
 
         openai_service = get_openai_service()
@@ -185,18 +174,12 @@ class SimpleDubbedAPI:
             # 2. Use provided output directory (already created by caller)
             process_temp_dir = output_dir
             
-            # 🛡️ Check cancellation before transcription
-            if self._check_cancellation(job_id):
-                return {"success": False, "error": "Job cancelled by user"}
             
             # Get transcription data
             raw_sentences, transcript_id = self._get_transcription_data(
                 job_id, manifest_override, process_temp_dir, source_video_language
             )
             
-            # 🛡️ Check cancellation before dubbing and voice cloning
-            if self._check_cancellation(job_id):
-                return {"success": False, "error": "Job cancelled by user"}
             
             # Process text dubbing and voice cloning
             dubbed_segments = self._process_dubbing_and_cloning(
@@ -276,9 +259,6 @@ class SimpleDubbedAPI:
                     "folder_upload": folder_upload_result
                 }
 
-            # 🛡️ Check cancellation before final output generation
-            if self._check_cancellation(job_id):
-                return {"success": False, "error": "Job cancelled by user"}
             
             # Generate final audio and files
             return self._generate_final_output(
@@ -334,10 +314,6 @@ class SimpleDubbedAPI:
             sample_rate_out = None
             seed_val = None
             for chunk in text_chunks:
-                # 🛡️ Check cancellation before each chunk processing
-                if job_id and self._check_cancellation(job_id):
-                    logger.info(f"🛑 Voice cloning cancelled for job {job_id} during chunk processing")
-                    return None
                 
                 result = self.fish_speech.generate_with_reference_audio(
                     text=chunk,
@@ -349,7 +325,7 @@ class SimpleDubbedAPI:
                     temperature=0.7,
                     seed=seed_val,
                     chunk_length=200,
-                    job_id=job_id  # Pass job_id for cancel checking inside fish speech
+                    job_id=job_id
                 )
                 if result.get("success"):
                     import soundfile as sf
@@ -553,8 +529,6 @@ class SimpleDubbedAPI:
         completed_clones = 0
 
         for i, segment in enumerate(enhanced_sentences):
-            if self._check_cancellation(job_id):
-                return []
             
             seg_id = f"seg_{i+1:03d}"
             start_ms = segment.get("start", 0)
@@ -659,10 +633,6 @@ class SimpleDubbedAPI:
                               target_language: str, transcript_id: str) -> dict:
         """Generate final audio, SRT file, and upload to R2"""
         
-        # 🛡️ Check cancellation before starting final output generation
-        if self._check_cancellation(job_id):
-            logger.info(f"🛑 Job {job_id} cancelled - skipping final output generation")
-            return {"success": False, "error": "Job cancelled by user"}
         
         self._update_phase_progress(job_id, "final_processing", 0.0, "Reconstructing final audio...")
         logger.info("Reconstructing final audio...")
@@ -670,29 +640,17 @@ class SimpleDubbedAPI:
         # Reconstruct final audio
         final_audio_path = self._reconstruct_final_audio(dubbed_segments, None, job_id=job_id, process_temp_dir=process_temp_dir)
         
-        # 🛡️ Check cancellation again before generating files
-        if self._check_cancellation(job_id):
-            logger.info(f"🛑 Job {job_id} cancelled - skipping file generation")
-            return {"success": False, "error": "Job cancelled by user"}
         
         # Generate SRT file and finalize (combining multiple close steps)
         self._update_phase_progress(job_id, "final_processing", 0.5, "Finalizing output files...")
         
         subtitle_path = self._generate_srt_file(job_id, dubbed_segments, process_temp_dir)
         
-        # 🛡️ Check cancellation before creating summary
-        if self._check_cancellation(job_id):
-            logger.info(f"🛑 Job {job_id} cancelled - skipping summary creation")
-            return {"success": False, "error": "Job cancelled by user"}
         
         # Create process summary
         self._create_process_summary(job_id, dubbed_segments, final_audio_path, subtitle_path,
                                    process_temp_dir, target_language, transcript_id)
         
-        # 🛡️ Check cancellation before upload
-        if self._check_cancellation(job_id):
-            logger.info(f"🛑 Job {job_id} cancelled - skipping upload")
-            return {"success": False, "error": "Job cancelled by user"}
         
         # Upload to R2 and get results
         return self._upload_and_finalize(job_id, process_temp_dir, final_audio_path)
@@ -732,37 +690,29 @@ class SimpleDubbedAPI:
                                transcript_id: str) -> None:
         """Create and save process summary JSON"""
         
-        # 🛡️ Check cancellation before creating summary
-        cancelled = self._check_cancellation(job_id)
-        if cancelled:
-            logger.info(f"🛑 Job {job_id} cancelled - creating cancelled summary")
+        # Check for instrument and vocal files
+        instrument_file = f"instrument_{job_id}.wav"
+        vocal_file = f"vocal_{job_id}.wav"
         
-        # Check for instrument and vocal files only if not cancelled
-        instrument_file = f"instrument_{job_id}.wav" if not cancelled else None
-        vocal_file = f"vocal_{job_id}.wav" if not cancelled else None
-        
-        if not cancelled:
-            if not os.path.exists(os.path.join(process_temp_dir, instrument_file)):
-                instrument_file = None
-                
-            if not os.path.exists(os.path.join(process_temp_dir, vocal_file)):
-                vocal_file = None
+        if not os.path.exists(os.path.join(process_temp_dir, instrument_file)):
+            instrument_file = None
+            
+        if not os.path.exists(os.path.join(process_temp_dir, vocal_file)):
+            vocal_file = None
         
         process_summary = {
-            "success": not cancelled,  # Set to False if cancelled
+            "success": True,
             "job_id": job_id,
-            "segments_count": len(dubbed_segments) if not cancelled else 0,
+            "segments_count": len(dubbed_segments),
             "target_language": target_language,
-            "final_audio_file": os.path.basename(final_audio_path) if final_audio_path and not cancelled else None,
-            "subtitle_file": os.path.basename(subtitle_path) if subtitle_path and not cancelled else None,
+            "final_audio_file": os.path.basename(final_audio_path) if final_audio_path else None,
+            "subtitle_file": os.path.basename(subtitle_path) if subtitle_path else None,
             "instrument_file": instrument_file,
             "vocal_file": vocal_file,
             "final_video_file": None,  # Video creation disabled
             "processing_timestamp": int(time.time()),
-            "segments": dubbed_segments if not cancelled else [],
+            "segments": dubbed_segments,
             "transcript_id": transcript_id,
-            "cancelled": cancelled,
-            "cancellation_reason": "Job cancelled by user" if cancelled else None
         }
         
         summary_filename = f"process_summary_{job_id}.json"
@@ -805,10 +755,6 @@ class SimpleDubbedAPI:
         Missing segments will have silent audio automatically.
         """
         
-        # 🛡️ Check cancellation before audio reconstruction
-        if job_id and self._check_cancellation(job_id):
-            logger.info(f"🛑 Job {job_id} cancelled - skipping audio reconstruction")
-            return None
         
         try:
             import soundfile as sf

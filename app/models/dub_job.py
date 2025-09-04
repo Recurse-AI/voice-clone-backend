@@ -8,7 +8,7 @@ class DubJob(BaseModel):
     user_id: str = Field(..., description="User who submitted the job")
     
     # Job Status
-    status: Literal['pending', 'downloading', 'separating', 'transcribing', 'processing', 'uploading', 'completed', 'failed', 'cancelled', 'awaiting_review', 'reviewing'] = 'pending'
+    status: Literal['pending', 'downloading', 'separating', 'transcribing', 'processing', 'uploading', 'completed', 'failed', 'awaiting_review', 'reviewing'] = 'pending'
     progress: int = Field(0, ge=0, le=100, description="Progress percentage")
     
     # Input Details
@@ -63,7 +63,7 @@ class DubJob(BaseModel):
         # Set timestamps based on status
         if status in ['downloading', 'processing'] and not self.started_at:
             self.started_at = datetime.now(timezone.utc)
-        elif status in ['completed', 'failed', 'cancelled']:
+        elif status in ['completed', 'failed']:
             self.completed_at = datetime.now(timezone.utc)
             
         # Update additional fields
@@ -82,7 +82,6 @@ class DubJob(BaseModel):
             'uploading': "Uploading results...",
             'completed': "Processing completed successfully",
             'failed': "Processing failed",
-            'cancelled': "Job cancelled by user",
             'awaiting_review': "Awaiting human review - segments ready for editing",
             'reviewing': "Processing approved segments after human review"
         }

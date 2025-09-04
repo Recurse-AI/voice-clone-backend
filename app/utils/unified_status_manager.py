@@ -35,7 +35,6 @@ class ProcessingStatus(Enum):
     UPLOADING = "uploading"
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
     AWAITING_REVIEW = "awaiting_review"
     REVIEWING = "reviewing"
 
@@ -68,7 +67,6 @@ class StatusData:
             ProcessingStatus.UPLOADING: "Uploading results...",
             ProcessingStatus.COMPLETED: "Processing completed successfully",
             ProcessingStatus.FAILED: "Processing failed",
-            ProcessingStatus.CANCELLED: "Job cancelled by user",
             ProcessingStatus.AWAITING_REVIEW: "Awaiting human review - Please review dubbed text",
             ProcessingStatus.REVIEWING: "Applying human edits and continuing dubbing"
         }
@@ -160,7 +158,7 @@ class UnifiedStatusManager:
         }
         
         self._final_states = {
-            ProcessingStatus.COMPLETED, ProcessingStatus.FAILED, ProcessingStatus.CANCELLED
+            ProcessingStatus.COMPLETED, ProcessingStatus.FAILED
         }
         
         # Progress validation rules - Minimum progress for each status (aligned with phases)
@@ -174,7 +172,6 @@ class UnifiedStatusManager:
             ProcessingStatus.AWAITING_REVIEW: 80,
             ProcessingStatus.REVIEWING: 80,
             ProcessingStatus.FAILED: 0,
-            ProcessingStatus.CANCELLED: 0
         }
         
 
@@ -542,7 +539,7 @@ class UnifiedStatusManager:
                 return current_data.progress
             
             # Block invalid backward progress
-            if status != ProcessingStatus.CANCELLED:
+            if True:
                 logger.warning(f"🛑 Blocked backward transition: {current_data.status.value}({current_data.progress}%) → {status.value}({progress}%)")
                 return current_data.progress
         
@@ -571,12 +568,12 @@ class UnifiedStatusManager:
         if current_status == ProcessingStatus.PROCESSING and new_status == ProcessingStatus.SEPARATING:
             return False  # This is valid - PROCESSING can be separation phase
         
-        return new_order < current_order and new_status not in [ProcessingStatus.FAILED, ProcessingStatus.CANCELLED]
+        return new_order < current_order and new_status not in [ProcessingStatus.FAILED]
 
     def _is_valid_backward_transition(self, current_status: ProcessingStatus, new_status: ProcessingStatus) -> bool:
         """Check if backward progress is allowed for this status transition"""
         # Allow transitions to terminal states from anywhere
-        if new_status in {ProcessingStatus.FAILED, ProcessingStatus.CANCELLED}:
+        if new_status in {ProcessingStatus.FAILED}:
             return True
         
         # Allow PROCESSING → SEPARATING (separation callbacks during processing)
