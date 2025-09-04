@@ -1,11 +1,13 @@
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
+from pymongo import MongoClient
 from app.config.settings import settings  
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Global MongoDB client and database
+# Global MongoDB clients and database
 client = AsyncIOMotorClient(settings.MONGODB_URI)
+sync_client = MongoClient(settings.MONGODB_URI)
 db = client[settings.DB_NAME]
 
 # Collections
@@ -38,13 +40,12 @@ async def create_unique_indexes():
 # Export collections for easy import
 __all__ = [
     "client", 
+    "sync_client",
     "db", 
     "separation_jobs_collection", 
     "dub_jobs_collection", 
     "users_collection", 
     "pricing_collection",
     "transaction_collection",
-
-
     "verify_connection"
 ]
