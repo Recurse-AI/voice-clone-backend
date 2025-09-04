@@ -256,20 +256,59 @@ class WhisperXTranscriptionService:
             raise
     
     def _convert_to_sentences_format(self, whisperx_segments: List[Dict]) -> List[Dict[str, Any]]:
-        """Convert WhisperX segments to simple sentence format - only essential fields"""
+        """Convert WhisperX segments to optimized sentence format for dubbing"""
         sentences = []
+        sentence_id_counter = 0
 
         for i, segment in enumerate(whisperx_segments):
             text = segment.get("text", "").strip()
-            if text:  # Only include non-empty text segments
-                sentences.append({
-                    "text": text,
-                    "start": int(segment.get("start", 0) * 1000),  # Convert to ms
-                    "end": int(segment.get("end", 0) * 1000),
-                    "id": f"sentence_{i}"
-                })
+            if text:
+                start_ms = int(segment.get("start", 0) * 1000)
+                end_ms = int(segment.get("end", 0) * 1000)
+                duration_ms = end_ms - start_ms
+                
+                # If segment is too long (>15 seconds), split it
+                if duration_ms > 15000:
+                    sub_segments = self._split_long_segment(text, start_ms, end_ms, sentence_id_counter)
+                    sentences.extend(sub_segments)
+                    sentence_id_counter += len(sub_segments)
+                else:
+                    sentences.append({
+                        "text": text,
+                        "start": start_ms,
+                        "end": end_ms,
+                        "id": f"sentence_{sentence_id_counter}"
+                    })
+                    sentence_id_counter += 1
 
         return sentences
+    
+    def _split_long_segment(self, text: str, start_ms: int, end_ms: int, start_id: int) -> List[Dict[str, Any]]:
+        """Split long segments into smaller chunks for better dubbing"""
+        from app.services.dub.simple_dubbed_api import smart_chunk
+        
+        chunks = smart_chunk(text, chunk_size=150, min_size=100)
+        duration_ms = end_ms - start_ms
+        total_chars = len(text)
+        
+        sub_segments = []
+        char_count = 0
+        
+        for i, chunk in enumerate(chunks):
+            chunk_chars = len(chunk)
+            # Proportional time allocation based on character count
+            chunk_start = start_ms + (duration_ms * char_count // total_chars)
+            char_count += chunk_chars
+            chunk_end = start_ms + (duration_ms * char_count // total_chars)
+            
+            sub_segments.append({
+                "text": chunk.strip(),
+                "start": chunk_start,
+                "end": min(chunk_end, end_ms),
+                "id": f"sentence_{start_id + i}"
+            })
+        
+        return sub_segments
 
 
 # Global service instance with thread safety

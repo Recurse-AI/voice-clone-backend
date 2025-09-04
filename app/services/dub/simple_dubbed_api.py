@@ -114,6 +114,22 @@ class SimpleDubbedAPI:
         except Exception as e:
             logger.error(f"Failed to update status for {job_id}: {e}")
     
+    def _charge_review_credits(self, job_id: str):
+        """Charge 75% credits when job is ready for review"""
+        from app.utils.job_utils import job_utils
+        from app.config.database import sync_client
+        
+        try:
+            sync_db = sync_client.get_database("runpod")
+            sync_collection = sync_db.get_collection("dub_jobs")
+            job_doc = sync_collection.find_one({"job_id": job_id})
+            if job_doc and job_doc.get("user_id"):
+                job_utils.complete_job_billing_sync(job_id, "dub", job_doc["user_id"], 0.75)
+                logger.info(f"✅ Charged 75% credits for job {job_id} ready for review")
+            sync_client.close()
+        except Exception as e:
+            logger.error(f"Failed to charge 75% credits for job {job_id}: {e}")
+
     def _update_phase_progress(self, job_id: str, phase: str, sub_progress: float, message: str):
         if phase not in self.PROGRESS_PHASES:
             logger.warning(f"Unknown phase '{phase}' for job {job_id}")
@@ -232,6 +248,9 @@ class SimpleDubbedAPI:
                     logger.error(f"Failed to get manifest URL for review mode job {job_id}")
                     return {"success": False, "error": "Failed to generate manifest URL for review"}
                 
+                # Charge 75% credits when ready for review
+                self._charge_review_credits(job_id)
+
                 # Now set awaiting_review status with manifest details using phase system
                 self._update_status(
                     job_id,

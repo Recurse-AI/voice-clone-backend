@@ -405,8 +405,8 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
         gc.collect()
         
         
-        # Complete credit billing using centralized utility (sync context)
-        job_utils.complete_job_billing_sync(job_id, "dub", user_id)
+        # Complete credit billing using centralized utility (sync context) - charge remaining 25%
+        job_utils.complete_job_billing_sync(job_id, "dub", user_id, 0.25)
         
         if r2_audio_path.get("r2_key"):
             r2_service.delete_file(r2_audio_path["r2_key"])
@@ -523,8 +523,8 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             logger.info(f"✅ Job {job_id} completed after review")
             
             # Confirm credit usage
-            # Complete credit billing using centralized utility (sync context)
-            job_utils.complete_job_billing_sync(job_id, "dub", user_id)
+            # Complete credit billing using centralized utility (sync context) - charge remaining 25%
+            job_utils.complete_job_billing_sync(job_id, "dub", user_id, 0.25)
             
             # ✅ Cleanup ONLY after resume is completely finished
 
@@ -695,8 +695,8 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             
             logger.info(f"✅ Redub job {redub_job_id} completed")
             
-            # Complete credit billing using centralized utility (sync context for redub)
-            job_utils.complete_job_billing_sync(redub_job_id, "dub", user_id)
+            # Complete credit billing using centralized utility (sync context for redub) - charge remaining 25%
+            job_utils.complete_job_billing_sync(redub_job_id, "dub", user_id, 0.25)
 
             # Immediate cleanup for this specific completed redub job
 

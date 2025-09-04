@@ -110,18 +110,19 @@ class JobUtils:
     # ===== CREDIT BILLING UTILITIES =====
     
     @staticmethod
-    async def complete_job_billing(job_id: str, job_type: str, user_id: str) -> bool:
+    async def complete_job_billing(job_id: str, job_type: str, user_id: str, billing_percentage: float = 1.0) -> bool:
         """
         Complete credit billing for job completion (async context)
         Centralized utility for reusability across all routes
+        Supports 75%/25% billing split
         """
         try:
             job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
             
-            billing_result = await credit_service.complete_job_billing(job_id, job_type_enum, user_id)
+            billing_result = await credit_service.complete_job_billing(job_id, job_type_enum, user_id, billing_percentage)
             
             if billing_result.get("success"):
-                logger.info(f"Credit billing completed for {job_type} job {job_id}")
+                logger.info(f"Credit billing completed for {job_type} job {job_id} ({billing_percentage*100}%)")
                 return True
             else:
                 logger.warning(f"⚠️ Credit billing failed for {job_type} job {job_id}: {billing_result.get('message')}")
@@ -132,10 +133,11 @@ class JobUtils:
             return False
     
     @staticmethod 
-    def complete_job_billing_sync(job_id: str, job_type: str, user_id: str) -> bool:
+    def complete_job_billing_sync(job_id: str, job_type: str, user_id: str, billing_percentage: float = 1.0) -> bool:
         """
         Complete credit billing for job completion (sync context)
         For use in thread pools and background tasks
+        Supports 75%/25% billing split
         """
         try:
             import asyncio
@@ -149,7 +151,7 @@ class JobUtils:
             if main_loop and main_loop.is_running():
                 # Schedule the coroutine on the main loop from this thread
                 future = asyncio.run_coroutine_threadsafe(
-                    credit_service.complete_job_billing(job_id, job_type_enum, user_id),
+                    credit_service.complete_job_billing(job_id, job_type_enum, user_id, billing_percentage),
                     main_loop
                 )
                 # Wait for the result with timeout
@@ -164,7 +166,7 @@ class JobUtils:
                 return False
             
             if billing_result.get("success"):
-                logger.info(f"Credit billing completed for {job_type} job {job_id}")
+                logger.info(f"Credit billing completed for {job_type} job {job_id} ({billing_percentage*100}%)")
                 return True
             else:
                 logger.warning(f"⚠️ Credit billing failed for {job_type} job {job_id}: {billing_result.get('message')}")

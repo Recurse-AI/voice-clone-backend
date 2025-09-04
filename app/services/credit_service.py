@@ -77,12 +77,13 @@ class CreditService:
         self,
         job_id: str,
         job_type: JobType,
-        user_id: str
+        user_id: str,
+        billing_percentage: float = 1.0
     ) -> Dict[str, Any]:
         """
         Handle job completion billing based on job's billing type
         
-        Simplified and modular implementation
+        Simplified and modular implementation with percentage support for 75%/25% split
         """
         # Get job details
         job = await self._get_job_safely(job_id, job_type)
@@ -94,11 +95,14 @@ class CreditService:
         billing_type = job.get("billing_type", "credit_pack")
         credits_required = job.get("credits_required", 0)
         
+        # Calculate credits to bill based on percentage
+        credits_to_bill = credits_required * billing_percentage
+        
         # Handle completion based on billing type
         if billing_type == "pay_as_you_go":
-            return await self._complete_payg_job(job_id, job_type, user_id, credits_required)
+            return await self._complete_payg_job(job_id, job_type, user_id, credits_to_bill)
         else:
-            return await self._complete_credit_pack_job(job_id, job_type, credits_required)
+            return await self._complete_credit_pack_job(job_id, job_type, credits_to_bill)
     
     @handle_credit_operations
     @log_execution_time
