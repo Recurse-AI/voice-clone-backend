@@ -194,10 +194,30 @@ source venv/bin/activate
 nohup ./venv/bin/python main.py > /dev/null 2>&1 &
 
 # Create logs directory for worker logs
-mkdir -p logs
+mkdir -p app/logs
 
 # Create WhisperX lock directory to prevent race conditions
 mkdir -p ~/.cache/whisperx/locks
+
+# Install and start Redis server
+echo "🔧 Setting up Redis server..."
+if ! command -v redis-server &> /dev/null; then
+    echo "Installing Redis..."
+    apt-get update && apt-get install -y redis-server
+fi
+
+# Start Redis server
+echo "🚀 Starting Redis server..."
+redis-server --daemonize yes --port 6379 --bind 127.0.0.1
+sleep 2
+
+# Verify Redis is running
+if redis-cli ping > /dev/null 2>&1; then
+    echo "✅ Redis server is running"
+else
+    echo "❌ Failed to start Redis server"
+    exit 1
+fi
 
 # Start RQ workers with auto-restart
 echo "🔄 Starting RQ workers with auto-restart..."
@@ -216,11 +236,11 @@ start_worker_with_restart() {
 }
 
 # Start 2 dub workers (SAFE for 31GB RAM - each worker ~12-14GB)
-nohup bash -c "$(declare -f start_worker_with_restart); start_worker_with_restart dub_queue 1" > logs/dub_worker_1.log 2>&1 &
-nohup bash -c "$(declare -f start_worker_with_restart); start_worker_with_restart dub_queue 2" > logs/dub_worker_2.log 2>&1 &
+nohup bash -c "$(declare -f start_worker_with_restart); start_worker_with_restart dub_queue 1" > app/logs/dub_worker_1.log 2>&1 &
+nohup bash -c "$(declare -f start_worker_with_restart); start_worker_with_restart dub_queue 2" > app/logs/dub_worker_2.log 2>&1 &
 
 # Start 1 separation worker (Network API calls only - minimal resources needed)
-nohup bash -c "$(declare -f start_worker_with_restart); start_worker_with_restart separation_queue 1" > logs/sep_worker_1.log 2>&1 &
+nohup bash -c "$(declare -f start_worker_with_restart); start_worker_with_restart separation_queue 1" > app/logs/sep_worker_1.log 2>&1 &
 
 # Wait for services to start
 echo "⏳ Waiting for services to start..."
@@ -234,7 +254,8 @@ echo "  - Separation workers: 1 (Network API only - check logs/sep_worker_1.log)
 echo ""
 echo "💡 Quick monitoring:"
 echo "  - Queue status: ./venv/bin/rq info -u \$REDIS_URL"
-echo "  - Dub logs: tail -f logs/dub_worker_1.log"
+echo "  - Dub logs: tail -f app/logs/dub_worker_1.log"
 echo "  - Memory: free -m"
+echo "  - Redis status: redis-cli ping"
 
 # git pull && pkill -f "python.*main.py" && nohup ./venv/bin/python main.py > /dev/null 2>&1 &
