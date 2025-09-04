@@ -152,6 +152,7 @@ class WhisperXTranscriptionService:
         Returns:
             Dict with success, sentences, and metadata
         """
+        
         start_time = time.time()
         
         try:
