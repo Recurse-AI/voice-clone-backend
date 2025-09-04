@@ -193,9 +193,48 @@ echo "🚀 Starting API server..."
 source venv/bin/activate
 nohup ./venv/bin/python main.py > /dev/null 2>&1 &
 
-# Wait for API to start
-echo "⏳ Waiting for API to start..."
+# Create logs directory for worker logs
+mkdir -p logs
+
+# Create WhisperX lock directory to prevent race conditions
+mkdir -p ~/.cache/whisperx/locks
+
+# Start RQ workers with auto-restart
+echo "🔄 Starting RQ workers with auto-restart..."
+
+# Function to start worker with auto-restart
+start_worker_with_restart() {
+    local queue_name=$1
+    local worker_id=$2
+    
+    while true; do
+        echo "Starting ${queue_name} worker ${worker_id}..."
+        ./venv/bin/rq worker -u "${REDIS_URL:-redis://127.0.0.1:6379}" "${queue_name}"
+        echo "⚠️ ${queue_name} worker ${worker_id} died, restarting in 5 seconds..."
+        sleep 5
+    done
+}
+
+# Start 2 dub workers (SAFE for 31GB RAM - each worker ~12-14GB)
+nohup bash -c "$(declare -f start_worker_with_restart); start_worker_with_restart dub_queue 1" > logs/dub_worker_1.log 2>&1 &
+nohup bash -c "$(declare -f start_worker_with_restart); start_worker_with_restart dub_queue 2" > logs/dub_worker_2.log 2>&1 &
+
+# Start 1 separation worker (Network API calls only - minimal resources needed)
+nohup bash -c "$(declare -f start_worker_with_restart); start_worker_with_restart separation_queue 1" > logs/sep_worker_1.log 2>&1 &
+
+# Wait for services to start
+echo "⏳ Waiting for services to start..."
 
 echo "🎉 Setup complete! Your Voice Cloning API is ready!" 
+
+# Monitor workers status
+echo "📊 Worker Status:"
+echo "  - Dub workers: 2 (Memory optimized - check logs/dub_worker_*.log)"
+echo "  - Separation workers: 1 (Network API only - check logs/sep_worker_1.log)"
+echo ""
+echo "💡 Quick monitoring:"
+echo "  - Queue status: ./venv/bin/rq info -u \$REDIS_URL"
+echo "  - Dub logs: tail -f logs/dub_worker_1.log"
+echo "  - Memory: free -m"
 
 # git pull && pkill -f "python.*main.py" && nohup ./venv/bin/python main.py > /dev/null 2>&1 &

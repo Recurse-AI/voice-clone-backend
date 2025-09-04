@@ -30,46 +30,14 @@ from app.config.settings import settings
 from app.utils.cleanup_utils import cleanup_utils
 from app.utils.separation_utils import separation_utils
 from app.utils.job_utils import job_utils
+from app.queue.rq_setup import get_separation_queue
 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-class SeparationExecutor:
-    def __init__(self):
-        self._executor = None
-        self._lock = threading.Lock()
-        self._last_used = 0
-        self._shutdown = False
 
-    def get_executor(self):
-        with self._lock:
-            if self._shutdown:
-                raise RuntimeError("Executor shutdown")
-
-            current_time = time.time()
-            if self._executor is None or (current_time - self._last_used) > 300:
-                self._create_executor()
-
-            self._last_used = current_time
-            return self._executor
-
-    def _create_executor(self):
-        if self._executor:
-            self._executor.shutdown(wait=True)
-        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="sep")
-
-    def shutdown(self):
-        with self._lock:
-            self._shutdown = True
-            if self._executor:
-                self._executor.shutdown(wait=True)
-                self._executor = None
-
-_separation_manager = SeparationExecutor()
-
-def get_separation_executor():
-    return _separation_manager.get_executor()
+separation_queue = get_separation_queue()
 
 def _update_separation_status_non_blocking(job_id: str, status: str, progress: int = None, **kwargs):
     """Update separation job status using unified status manager"""
@@ -387,9 +355,9 @@ async def start_audio_separation(
         status = runpod_service.get_separation_status(runpod_request_id)
         queue_position = status.get("queue_position") if status else None
         
-        # Run separation monitoring in ThreadPoolExecutor for better resource management
-        executor = get_separation_executor()
-        future = executor.submit(process_audio_separation_background, job_id, runpod_request_id, user_id, request.duration)
+        # Run separation monitoring in RQ
+        from app.queue.dub_tasks import process_audio_separation_task
+        separation_queue.enqueue(process_audio_separation_task, job_id, runpod_request_id, user_id, request.duration)
 
         logger.info(f"Started audio separation job {job_id} (RunPod: {runpod_request_id}) for user {user_id} (duration: {request.duration}s)")
 

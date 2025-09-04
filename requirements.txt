@@ -60,6 +60,10 @@ botocore
 pymongo
 motor
 
+# Queue
+rq
+redis
+
 # Authentication & Security
 bcrypt==3.2.2
 passlib

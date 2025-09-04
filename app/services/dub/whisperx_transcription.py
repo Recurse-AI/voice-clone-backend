@@ -233,9 +233,12 @@ class WhisperXTranscriptionService:
     # Preloading removed: alignment models are loaded on-demand only
     
     def _get_alignment_model(self, language_code: str):
-        """Get alignment model (from cache or load on demand)"""
+        """Get alignment model with file locking to prevent race conditions"""
         try:
             import whisperx
+            import fcntl
+            import os
+            import tempfile
             
             # Check if we have it preloaded
             if language_code in self.preloaded_align_models:
@@ -243,13 +246,46 @@ class WhisperXTranscriptionService:
                 cached = self.preloaded_align_models[language_code]
                 return cached['model'], cached['metadata']
             
-            # Load on demand if not preloaded
-            logger.info(f"🔄 Loading alignment model for '{language_code}' on demand...")
-            model_a, metadata = whisperx.load_align_model(
-                language_code=language_code, 
-                device=self.alignment_device
-            )
-            return model_a, metadata
+            # Create lock file for this language to prevent concurrent downloads
+            lock_dir = os.path.expanduser("~/.cache/whisperx/locks")
+            os.makedirs(lock_dir, exist_ok=True)
+            lock_file_path = os.path.join(lock_dir, f"{language_code}.lock")
+            
+            # Use file locking to prevent race conditions
+            with open(lock_file_path, 'w') as lock_file:
+                try:
+                    # Try to acquire exclusive lock (blocks if another worker is downloading)
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                    logger.info(f"🔒 Acquired lock for '{language_code}' model download")
+                    
+                    # Check if model exists after acquiring lock (another worker might have downloaded it)
+                    model_cache_path = os.path.expanduser(f"~/.cache/whisperx/models/{language_code}")
+                    if os.path.exists(model_cache_path):
+                        logger.info(f"✅ Model for '{language_code}' already exists, loading...")
+                    else:
+                        logger.info(f"🔄 Downloading alignment model for '{language_code}'...")
+                    
+                    # Load model (will download if not exists, or load from cache)
+                    model_a, metadata = whisperx.load_align_model(
+                        language_code=language_code, 
+                        device=self.alignment_device
+                    )
+                    
+                    # Cache in memory for this worker instance
+                    self.preloaded_align_models[language_code] = {
+                        'model': model_a,
+                        'metadata': metadata
+                    }
+                    
+                    logger.info(f"✅ Successfully loaded alignment model for '{language_code}'")
+                    return model_a, metadata
+                    
+                except Exception as download_error:
+                    logger.error(f"❌ Failed to download/load model for '{language_code}': {download_error}")
+                    raise
+                finally:
+                    # Lock is automatically released when file is closed
+                    pass
             
         except Exception as e:
             logger.error(f"❌ Failed to get alignment model for '{language_code}': {e}")
@@ -331,10 +367,27 @@ def initialize_whisperx_transcription() -> bool:
     try:
         service = get_whisperx_transcription_service()
         
-        # Load core model
         if not service.load_model():
             return False
         
+        common_languages = ["en", "es", "fr", "de", "it", "pt", "ru", "ja", "ko", "zh", "hi", "ar", "bn"]
+        logger.info(f"Pre-downloading {len(common_languages)} language models...")
+        
+        for lang_code in common_languages:
+            try:
+                import os
+                model_cache_path = os.path.expanduser(f"~/.cache/whisperx/models/{lang_code}")
+                if os.path.exists(model_cache_path):
+                    continue
+                
+                import whisperx
+                whisperx.load_align_model(language_code=lang_code, device="cpu")
+                logger.info(f"Downloaded {lang_code}")
+                
+            except Exception:
+                continue
+        
+        logger.info("WhisperX initialization complete")
         return True
         
     except Exception as e:

@@ -57,7 +57,7 @@ MAX_THREAD_RETRY_ATTEMPTS = 3
 
 # Cache/Memory Constants
 SHARED_MEMORY_TTL_SECONDS = 3600  # 1 hour TTL for shared memory
-MAX_CONCURRENT_JOBS = 6  # Maximum concurrent processing jobs
+MAX_CONCURRENT_JOBS = 6  # Maximum concurrent processing jobs (2 dub + 1 sep + buffer)
 
 # Audio Processing Constants
 AUDIO_SAMPLE_RATE = 44100
@@ -66,7 +66,7 @@ VOICE_CLONE_TIMEOUT_SECONDS = 300  # 5 minutes timeout for voice cloning
 
 # Queue Position Constants
 MAX_QUEUE_POSITION_CHECKS = 5  # Maximum number of jobs to check queue position for (performance)
-AVERAGE_JOB_PROCESSING_MINUTES = 3  # Average processing time per job for queue position estimation
+AVERAGE_JOB_PROCESSING_MINUTES = 2  # Average processing time per job (optimized with more dub workers)
 PROCESSING_JOB_QUEUE_POSITION = 0  # Queue position for jobs currently being processed
 
 # Database Query Constants

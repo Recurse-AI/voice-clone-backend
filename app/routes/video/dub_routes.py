@@ -39,7 +39,7 @@ from app.utils.runpod_monitor import monitor_runpod_job
 from app.utils.job_utils import job_utils
 from app.utils.cleanup_utils import cleanup_utils
 from app.utils.video_downloader import video_download_service
-from app.services.dub.queue_manager import get_dub_queue_manager
+from app.queue.rq_setup import get_dub_queue
 from app.utils.token_helper import generate_url_safe_token
 from app.utils.separation_utils import separation_utils
 from app.config.database import db
@@ -50,15 +50,8 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# Keep workers consistent across executor and scheduler (max concurrent running jobs)
-DUB_MAX_WORKERS = 10
+dub_queue = get_dub_queue()
 
-# Singleton queue manager instance
-_dub_queue_manager = get_dub_queue_manager(max_concurrency=DUB_MAX_WORKERS)
-
-def get_dub_executor():
-    """Backward-compat: expose executor (not used directly)."""
-    return _dub_queue_manager._get_executor()
 
 def _update_status_non_blocking(job_id: str, status: ProcessingStatus, progress: int, details: dict):
     """Update dub job status using unified status manager"""
@@ -73,13 +66,11 @@ def _update_status_non_blocking(job_id: str, status: ProcessingStatus, progress:
 
 
 def enqueue_dub_job(request: VideoDubRequest, user_id: str) -> None:
-    # Inject runner to avoid circular imports inside manager
-    def _run():
-        process_video_dub_background(request, user_id)
-    _dub_queue_manager.enqueue(request.job_id, _run)
+    from app.queue.dub_tasks import process_video_dub_task
+    dub_queue.enqueue(process_video_dub_task, request.dict(), user_id)
 
 def get_dub_queue_position(job_id: str) -> Optional[int]:
-    return _dub_queue_manager.get_position(job_id)
+    return None
 
 
 @router.post("/video-dub", response_model=VideoDubResponse)
@@ -126,16 +117,8 @@ async def start_video_dub(
 
         manager = get_unified_status_manager()
         
-        # Get queue position before enqueuing (to get proper position)
-        queue_position = _dub_queue_manager.get_next_position()  # Get position it will have
-        
         # Enqueue job 
         enqueue_dub_job(request, user_id)
-        
-        # Verify queue position after enqueue
-        actual_position = get_dub_queue_position(request.job_id)
-        if actual_position is not None:
-            queue_position = actual_position
         
         # Create status with queue information
         await manager.update_status(
@@ -146,13 +129,12 @@ async def start_video_dub(
             details={
                 "user_id": user_id, 
                 "created_at": datetime.now().isoformat(),
-                "queue_position": queue_position,
                 "phase": "queued"
             },
             user_id=user_id
         )
         
-        logger.info(f"Started video dub job {request.job_id} for user {user_id}, queue position: {queue_position}")
+        logger.info(f"Started video dub job {request.job_id} for user {user_id}")
         return VideoDubResponse(
             success=True,
             message="Video dub started successfully",
@@ -188,7 +170,6 @@ async def get_video_dub_status(job_id: str):
                     error=None,
                     details={
                         "files": {},
-                        "queue_position": None,
                         "updated_at": datetime.now().isoformat()
                     }
                 )
@@ -208,22 +189,7 @@ async def get_video_dub_status(job_id: str):
             result_url = None
             error = status_data.details.get("error")
 
-        # Enhanced queue position and status message for PENDING jobs
         enhanced_message = status_data.message
-        enhanced_queue_position = status_data.queue_position
-        
-        if status_data.status == ProcessingStatus.PENDING:
-            # Get real-time queue position for PENDING jobs
-            current_queue_position = get_dub_queue_position(job_id)
-            if current_queue_position is not None:
-                enhanced_queue_position = current_queue_position
-                if current_queue_position == 1:
-                    enhanced_message = "Your job is next in line to start processing"
-                else:
-                    enhanced_message = f"Your job is #{current_queue_position} in queue, waiting to start"
-            else:
-                # Job not in queue, probably about to start
-                enhanced_message = "Job is being prepared for processing..."
         
         return VideoDubStatusResponse(
             job_id=job_id,
@@ -234,10 +200,8 @@ async def get_video_dub_status(job_id: str):
             error=error,
             details={
                 "files": files,
-                "queue_position": enhanced_queue_position,
                 "updated_at": status_data.updated_at.isoformat(),
-                "phase": status_data.details.get("phase"),
-                "in_queue": status_data.status == ProcessingStatus.PENDING and enhanced_queue_position is not None
+                "phase": status_data.details.get("phase")
             }
         )
     except HTTPException:
@@ -472,7 +436,6 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
     manifest = _load_manifest_json(manifest_url)
     
     # Kick off background resume
-    executor = get_dub_executor()
     user_id = current_user.id  # Capture user_id for nested function
     def _resume():
         try:
@@ -544,7 +507,8 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
             # ❌ Cleanup after resume failure too
 
             cleanup_utils.cleanup_job_comprehensive(job_id, "dub")
-    executor.submit(_resume)
+    
+    dub_queue.enqueue(_resume)
     return {"success": True, "message": "Resume started", "job_id": job_id}
 
 @router.post("/video-dub/{job_id}/redub", response_model=RedubResponse)
@@ -717,8 +681,11 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             except Exception:
                 pass
     
-    # Enqueue redub job with proper background runner (like existing dub API)
-    _dub_queue_manager.enqueue(redub_job_id, _run_redub)
+    # Enqueue redub job
+    from app.queue.dub_tasks import process_redub_task
+    dub_queue.enqueue(process_redub_task, redub_job_id, request_body.target_language, 
+                     parent_job.source_video_language, redub_job_dir, manifest, 
+                     bool(getattr(request_body, "humanReview", False)))
 
     logger.info(f"Started redub job {redub_job_id} from parent {parent_job_id} for user {user_id}")
     
