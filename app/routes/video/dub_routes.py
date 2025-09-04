@@ -302,7 +302,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                     "message": "Job failed by RunPod", "error": "Job failed by RunPod"
                 })
             
-            logger.info(f"🔄 Starting separation monitoring for RunPod job {request_id}")
+            logger.info(f"Starting separation monitoring for RunPod job {request_id}")
             monitor_result = monitor_runpod_job(
                 runpod_request_id=request_id,
                 job_id=job_id,
@@ -310,7 +310,7 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
                 on_progress=on_separation_progress,
                 on_failed=on_separation_failed
             )
-            logger.info(f"✅ Separation monitoring completed with result: {monitor_result.get('status')}")
+            logger.info(f"Separation monitoring completed with result: {monitor_result.get('status')}")
             
             if not monitor_result["success"]:
                 if monitor_result["status"] == "FAILED":
@@ -348,18 +348,17 @@ def process_video_dub_background(request: VideoDubRequest, user_id: str):
             return
             
             
-        # Wait for separation to complete before starting transcription
         # This update happens AFTER separation monitor completes
-        logger.info(f"🚀 Separation completed successfully - now starting transcription phase for job {job_id}")
+        logger.info(f"Separation completed successfully - now starting transcription phase for job {job_id}")
         _update_status_non_blocking(job_id, ProcessingStatus.TRANSCRIBING, 45, {"message": "Separation completed - starting transcription...", "phase": "transcription", "runpod_urls": runpod_urls})
 
         # Clean up original audio file after successful separation
         try:
             if os.path.exists(audio_path):
                 os.remove(audio_path)
-                logger.info(f"🗑️ Deleted original audio file after successful separation: {audio_path}")
+                logger.info(f"Deleted original audio file after successful separation: {audio_path}")
         except Exception as e:
-            logger.warning(f"⚠️ Failed to delete original audio file {audio_path}: {e}")
+            logger.warning(f"Failed to delete original audio file {audio_path}: {e}")
         
 
         simple_dubbed_api = get_simple_dubbed_api()
