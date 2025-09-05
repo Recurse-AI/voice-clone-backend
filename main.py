@@ -123,23 +123,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to cleanup status reconciler: {e}")
     
-    try:
-        # Cleanup any remaining ThreadPoolExecutors
-        import concurrent.futures
-        import threading
-        
-        # Force cleanup of any remaining threads
-        for thread in threading.enumerate():
-            if thread != threading.current_thread() and hasattr(thread, '_target'):
-                try:
-                    if hasattr(thread, 'stop'):
-                        thread.stop()
-                except:
-                    pass
-        
-        logger.info("Thread cleanup completed")
-    except Exception as e:
-        logger.error(f"Failed to cleanup threads: {e}")
+   
 
 app = FastAPI(
     title=settings.API_TITLE,

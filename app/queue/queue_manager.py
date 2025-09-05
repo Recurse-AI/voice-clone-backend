@@ -134,7 +134,7 @@ class QueueManager:
             job = queue.enqueue(
                 process_billing_task,
                 operation, kwargs,
-                job_timeout='30s'  # Quick billing operations
+                job_timeout='300s'  # Increased timeout to handle first-time imports/API latency
             )
             
             logger.info(f"✅ Enqueued billing task: {operation} (RQ job: {job.id})")

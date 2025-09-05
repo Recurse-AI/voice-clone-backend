@@ -8,6 +8,7 @@ echo "Setting up Voice Cloning API on RunPod..."
 rm -rf /tmp/* /logs/* 2>/dev/null || true
 chmod 1777 /tmp 2>/dev/null || true
 export TMPDIR=/tmp
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # Find project directory
 if [ -f "requirements.txt" ]; then
@@ -127,10 +128,11 @@ done
 # Start API (Gunicorn)
 echo "Starting API server (Gunicorn)..."
 source venv/bin/activate
-WORKERS=${WORKERS:-2}
+WORKERS=${WORKERS:-1}
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-8000}
-nohup ./venv/bin/gunicorn -k uvicorn.workers.UvicornWorker -w ${WORKERS} -b ${HOST}:${PORT} main:app > logs/api.log 2>&1 &
+# Detach API from GPU to avoid consuming VRAM
+CUDA_VISIBLE_DEVICES="" nohup ./venv/bin/gunicorn -k uvicorn.workers.UvicornWorker -w ${WORKERS} -b ${HOST}:${PORT} main:app > logs/api.log 2>&1 &
 
 # Give API a moment to start
 sleep 3
@@ -155,9 +157,8 @@ echo "Starting workers (using common log)..."
 echo "Starting separation worker..."
 nohup ./venv/bin/python workers_starter.py separation_queue sep_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
-echo "Starting dub workers..."
+echo "Starting dub worker..."
 nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "Starting billing worker..."
 nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
