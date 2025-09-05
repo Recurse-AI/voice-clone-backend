@@ -157,7 +157,7 @@ def _process_dubbing_pipeline(job_id: str, target_language: str,
     try:
         # Update status to processing
         status_service.update_status(
-            job_id, "dub", JobStatus.PROCESSING, 60,
+            job_id, "dub", JobStatus.PROCESSING, 46,
             {"message": "Starting dubbing pipeline", "phase": "dubbing"}
         )
         

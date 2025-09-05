@@ -194,6 +194,14 @@ class SimpleDubbedAPI:
             )
             
             
+            # Transcription complete, bump to 60% before dubbing starts
+            self._update_status(
+                job_id,
+                JobStatus.PROCESSING,
+                60,
+                {"message": "Transcription complete - starting dubbing", "phase": "dubbing"}
+            )
+
             # Process text dubbing and voice cloning
             dubbed_segments = self._process_dubbing_and_cloning(
                 job_id, raw_sentences, target_language, manifest_override, review_mode, process_temp_dir
