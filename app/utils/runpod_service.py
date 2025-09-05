@@ -57,14 +57,14 @@ class RunPodService:
                     data = response.json()
                     request_id = data.get('id')
                     if request_id:
-                        logger.info(f"Submitted separation request {request_id} from {caller_info}")
+                        logger.info(f"Submitted separation request {request_id} for {caller_info}")
                         return request_id
                     else:
                         raise Exception("No request ID returned from RunPod")
                 elif response.status_code == 429:  # Rate limited
                     if attempt < max_retries - 1:
                         wait_time = (attempt + 1) * 5  # Exponential backoff: 5s, 10s, 15s
-                        logger.warning(f"Rate limited (attempt {attempt + 1}/{max_retries}), waiting {wait_time}s...")
+                        logger.warning(f"Rate limited, waiting {wait_time}s (attempt {attempt + 1}/{max_retries})")
                         time.sleep(wait_time)
                         continue
                     else:
@@ -74,14 +74,14 @@ class RunPodService:
 
             except requests.exceptions.Timeout:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Request timeout (attempt {attempt + 1}/{max_retries}), retrying...")
+                    logger.warning(f"Request timeout, retrying (attempt {attempt + 1}/{max_retries})")
                     time.sleep(2)
                     continue
                 else:
                     raise Exception("Request timeout after multiple attempts")
             except requests.exceptions.RequestException as e:
                 if attempt < max_retries - 1:
-                    logger.warning(f"Request failed (attempt {attempt + 1}/{max_retries}): {e}, retrying...")
+                    logger.warning(f"Request failed: {e} (attempt {attempt + 1}/{max_retries})")
                     time.sleep(2)
                     continue
                 else:
@@ -92,72 +92,99 @@ class RunPodService:
     
     def get_separation_status(self, request_id: str) -> Optional[Dict[str, Any]]:
         """Get status of separation request using ClearVocals API format"""
-        try:
-            response = requests.get(
-                f"{self.base_url}/status/{request_id}",
-                headers=self.headers,
-                timeout=60
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
+        max_retries = 2
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(
+                    f"{self.base_url}/status/{request_id}",
+                    headers=self.headers,
+                    timeout=(10, 60)  # (connection_timeout, read_timeout)
+                )
                 
-
-                # Map RunPod status to our simplified status
-                runpod_status = data.get('status')
-                progress = 0
-                status = "pending"
-                
-                if runpod_status == 'IN_QUEUE':
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Map RunPod status to our simplified status
+                    runpod_status = data.get('status')
+                    progress = 0
                     status = "pending"
-                    progress = 10
-                elif runpod_status == 'IN_PROGRESS':
-                    status = "processing" 
-                    progress = 50
-                elif runpod_status == 'COMPLETED':
-                    status = "completed"
-                    progress = 100
-                elif runpod_status == 'FAILED':
-                    status = "failed"
-                    progress = 0
-                elif runpod_status == 'CANCELLED':
-                    status = "failed"
-                    progress = 0
-                
-                # Calculate queue position from delayTime (if available)
-                delay_time = data.get('delayTime')  # in milliseconds
-                queue_position = None
-                if delay_time is not None:
-                    if status == "pending":
-                        # Rough estimate using configurable average processing time
-                        # Convert delayTime (ms) to estimated queue position
-                        estimated_wait_minutes = delay_time / (1000 * 60)  # convert ms to minutes
-                        queue_position = max(1, int(estimated_wait_minutes / AVERAGE_JOB_PROCESSING_MINUTES))
-                    elif status == "processing":
-                        # Job is currently being processed, no queue position
-                        queue_position = PROCESSING_JOB_QUEUE_POSITION
-                
+                    
+                    if runpod_status == 'IN_QUEUE':
+                        status = "pending"
+                        progress = 10
+                    elif runpod_status == 'IN_PROGRESS':
+                        status = "processing" 
+                        progress = 50
+                    elif runpod_status == 'COMPLETED':
+                        status = "completed"
+                        progress = 100
+                    elif runpod_status == 'FAILED':
+                        status = "failed"
+                        progress = 0
+                    elif runpod_status == 'CANCELLED':
+                        status = "failed"
+                        progress = 0
+                    
+                    # Calculate queue position from delayTime (if available)
+                    delay_time = data.get('delayTime')  # in milliseconds
+                    queue_position = None
+                    if delay_time is not None:
+                        if status == "pending":
+                            # Rough estimate using configurable average processing time
+                            # Convert delayTime (ms) to estimated queue position
+                            estimated_wait_minutes = delay_time / (1000 * 60)  # convert ms to minutes
+                            queue_position = max(1, int(estimated_wait_minutes / AVERAGE_JOB_PROCESSING_MINUTES))
+                        elif status == "processing":
+                            # Job is currently being processed, no queue position
+                            queue_position = PROCESSING_JOB_QUEUE_POSITION
+                    
+                    return {
+                        "status": status,
+                        "progress": progress,
+                        "result": data.get('output'),
+                        "error": data.get('error'),
+                        "queue_position": queue_position,
+                        "delay_time": delay_time,  # preserve original delayTime for debugging
+                        "created_at": data.get('created_at') or datetime.now(timezone.utc).isoformat(),
+                        "started_at": data.get('started_at'),
+                        "completed_at": data.get('completed_at')
+                    }
+                elif response.status_code == 404:
+                    logger.warning(f"RunPod job not found: {request_id} (may have expired or been deleted)")
+                    return {
+                        "status": "failed",
+                        "progress": 0,
+                        "error": "Job not found - may have expired or been deleted",
+                        "result": None
+                    }
+                else:
+                    logger.error(f"Failed to get status: {response.status_code} - {response.text}")
+                    return None
+                    
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.DNSError) as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"Network error getting status for {request_id}, retrying (attempt {attempt + 1}/{max_retries}): {e}")
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    continue
+                else:
+                    logger.error(f"Failed to get separation status for {request_id} after {max_retries} attempts: {e}")
+                    return {
+                        "status": "failed", 
+                        "progress": 0,
+                        "error": f"Network timeout after {max_retries} attempts: {str(e)}",
+                        "result": None
+                    }
+            except Exception as e:
+                logger.error(f"Failed to get separation status for {request_id}: {e}")
                 return {
-                    "status": status,
-                    "progress": progress,
-                    "result": data.get('output'),
-                    "error": data.get('error'),
-                    "queue_position": queue_position,
-                    "delay_time": delay_time,  # preserve original delayTime for debugging
-                    "created_at": data.get('created_at') or datetime.now(timezone.utc).isoformat(),
-                    "started_at": data.get('started_at'),
-                    "completed_at": data.get('completed_at')
+                    "status": "failed", 
+                    "progress": 0,
+                    "error": f"Status check failed: {str(e)}",
+                    "result": None
                 }
-            elif response.status_code == 404:
-                logger.error(f"Job not found: {request_id}")
-                return None
-            else:
-                logger.error(f"Failed to get status: {response.status_code} - {response.text}")
-                return None
-                
-        except Exception as e:
-            logger.error(f"Failed to get separation status: {e}")
-            return None
+        
+        # Should not reach here, but just in case
+        return None
     
     def wait_for_completion(self, request_id: str, timeout: int = 900) -> Dict[str, Any]:
         """Wait for separation to complete with non-blocking polling"""

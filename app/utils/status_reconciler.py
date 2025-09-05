@@ -28,9 +28,17 @@ class StatusReconciler:
             self._thread.join(timeout=5)
 
     def _reconciliation_loop(self):
+        cleanup_counter = 0
         while not self._stop_event.is_set():
             try:
                 self._reconcile_statuses()
+                
+                # Run cleanup every 6 cycles (1 hour)
+                cleanup_counter += 1
+                if cleanup_counter >= 6:
+                    cleanup_counter = 0
+                    self._run_periodic_cleanup()
+                    
             except Exception:
                 pass
             time.sleep(600)
@@ -93,5 +101,20 @@ class StatusReconciler:
                 job_utils.complete_job_billing_sync(job_id, "separation", user_id)
 
             cleanup_utils.cleanup_job_comprehensive(job_id, "separation")
+
+    def _run_periodic_cleanup(self):
+        """Run periodic cleanup of old tmp files"""
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            cleaned_count = cleanup_utils.cleanup_old_files(hours_old=1)
+            if cleaned_count > 0:
+                logger.info(f"Periodic cleanup: removed {cleaned_count} old tmp folders")
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Periodic cleanup failed: {e}")
 
 _reconciler = StatusReconciler()

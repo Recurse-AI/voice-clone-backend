@@ -200,7 +200,7 @@ class SyncDBOperations:
 def update_job_status_sync(job_id: str, job_type: str, status: str, progress: int = None, details: Dict[str, Any] = None) -> bool:
     """
     Generic sync function to update job status for any job type
-    Used by unified_status_manager to avoid event loop issues
+    Used by clean workers to avoid event loop issues
     """
     try:
         if job_type.lower() == "dub":
@@ -218,3 +218,35 @@ def update_job_status_sync(job_id: str, job_type: str, status: str, progress: in
 def cleanup_separation_files(job_id: str):
     from app.utils.cleanup_utils import cleanup_utils
     return cleanup_utils.cleanup_job(job_id)
+
+
+def get_dub_job_sync(job_id: str) -> dict:
+    """Get dub job data synchronously"""
+    try:
+        client = MongoClient(settings.MONGODB_URI)
+        db = client[settings.DB_NAME]
+        
+        job = db.dub_jobs.find_one({"job_id": job_id})
+        client.close()
+        
+        return job if job else {}
+        
+    except Exception as e:
+        logger.error(f"Failed to get dub job {job_id}: {e}")
+        return {}
+
+
+def get_separation_job_sync(job_id: str) -> dict:
+    """Get separation job data synchronously"""
+    try:
+        client = MongoClient(settings.MONGODB_URI)
+        db = client[settings.DB_NAME]
+        
+        job = db.separation_jobs.find_one({"job_id": job_id})
+        client.close()
+        
+        return job if job else {}
+        
+    except Exception as e:
+        logger.error(f"Failed to get separation job {job_id}: {e}")
+        return {}

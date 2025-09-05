@@ -109,128 +109,56 @@ class JobUtils:
 
     # ===== CREDIT BILLING UTILITIES =====
     
-    @staticmethod
-    async def complete_job_billing(job_id: str, job_type: str, user_id: str, billing_percentage: float = 1.0) -> bool:
-        """
-        Complete credit billing for job completion (async context)
-        Centralized utility for reusability across all routes
-        Supports 75%/25% billing split
-        """
-        try:
-            job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
-            
-            billing_result = await credit_service.complete_job_billing(job_id, job_type_enum, user_id, billing_percentage)
-            
-            if billing_result.get("success"):
-                logger.info(f"Credit billing completed for {job_type} job {job_id} ({billing_percentage*100}%)")
-                return True
-            else:
-                logger.warning(f"⚠️ Credit billing failed for {job_type} job {job_id}: {billing_result.get('message')}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Credit billing error for {job_type} job {job_id}: {e}")
-            return False
-    
     @staticmethod 
     def complete_job_billing_sync(job_id: str, job_type: str, user_id: str, billing_percentage: float = 1.0) -> bool:
         """
-        Complete credit billing for job completion (sync context)
-        For use in thread pools and background tasks
-        Supports 75%/25% billing split
+        Complete credit billing using RQ queue for main event loop
         """
         try:
-            import asyncio
-            from app.utils.event_loop_manager import loop_manager
+            from app.queue.queue_manager import queue_manager
             
-            job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
+            # Queue billing task to main process
+            billing_job = queue_manager.enqueue_billing_task(
+                'complete_billing',
+                job_id=job_id,
+                job_type=job_type,
+                user_id=user_id,
+                billing_percentage=billing_percentage
+            )
             
-            # Get the main event loop
-            main_loop = loop_manager.get_main_loop()
-            
-            if main_loop and main_loop.is_running():
-                # Schedule the coroutine on the main loop from this thread
-                future = asyncio.run_coroutine_threadsafe(
-                    credit_service.complete_job_billing(job_id, job_type_enum, user_id, billing_percentage),
-                    main_loop
-                )
-                # Wait for the result with timeout
-                try:
-                    billing_result = future.result(timeout=30)
-                except Exception as e:
-                    logger.error(f"Async billing failed for {job_id}: {e}")
-                    billing_result = {"success": False, "error": str(e)}
-            else:
-                # Fallback: No main loop available (shouldn't happen in production)
-                logger.warning(f"Main event loop not available for job {job_id}, skipping billing")
-                return False
-            
-            if billing_result.get("success"):
-                logger.info(f"Credit billing completed for {job_type} job {job_id} ({billing_percentage*100}%)")
+            if billing_job:
+                logger.info(f"✅ Credit billing queued for {job_type} job {job_id}")
                 return True
             else:
-                logger.warning(f"⚠️ Credit billing failed for {job_type} job {job_id}: {billing_result.get('message')}")
+                logger.error(f"❌ Failed to queue billing for {job_id}")
                 return False
                 
         except Exception as e:
             logger.error(f"❌ Credit billing error for {job_type} job {job_id}: {e}")
             return False
     
-    @staticmethod
-    async def refund_job_credits(job_id: str, job_type: str, reason: str = "job_failed") -> bool:
-        """
-        Refund credits for failed jobs (async context)
-        Centralized utility for reusability across all routes
-        """
-        try:
-            job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
-            
-            billing_result = await credit_service.refund_job_credits(job_id, job_type_enum, reason)
-            
-            if billing_result.get("success"):
-                logger.info(f"💰 Credits refunded for {job_type} job {job_id} (reason: {reason})")
-                return True
-            else:
-                logger.warning(f"⚠️ Credit refund failed for {job_type} job {job_id}: {billing_result.get('message')}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"❌ Credit refund error for {job_type} job {job_id}: {e}")
-            return False
     
     @staticmethod
     def refund_job_credits_sync(job_id: str, job_type: str, reason: str = "job_failed") -> bool:
         """
-        Refund credits for failed jobs (sync context)  
-        For use in thread pools and background tasks
+        Refund credits using RQ queue for main event loop
         """
         try:
-            import asyncio
-            from app.utils.event_loop_manager import loop_manager
+            from app.queue.queue_manager import queue_manager
             
-            job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
+            # Queue refund task to main process
+            refund_job = queue_manager.enqueue_billing_task(
+                'refund_credits',
+                job_id=job_id,
+                job_type=job_type,
+                reason=reason
+            )
             
-            # Get the main event loop
-            main_loop = loop_manager.get_main_loop()
-            
-            if main_loop and main_loop.is_running():
-                # Schedule the coroutine on the main loop from this thread
-                future = asyncio.run_coroutine_threadsafe(
-                    credit_service.refund_job_credits(job_id, job_type_enum, reason),
-                    main_loop
-                )
-                # Wait for the result with timeout
-                billing_result = future.result(timeout=30)
-            else:
-                # Fallback: No main loop available (shouldn't happen in production)
-                logger.warning(f"Main event loop not available for job {job_id}, skipping refund")
-                return False
-            
-            if billing_result.get("success"):
-                logger.info(f"💰 Credits refunded for {job_type} job {job_id} (reason: {reason})")
+            if refund_job:
+                logger.info(f"✅ Credit refund queued for {job_type} job {job_id}")
                 return True
             else:
-                logger.warning(f"⚠️ Credit refund failed for {job_type} job {job_id}: {billing_result.get('message')}")
+                logger.error(f"❌ Failed to queue refund for {job_id}")
                 return False
                 
         except Exception as e:

@@ -277,12 +277,11 @@ class WhisperXTranscriptionService:
     # Preloading removed: alignment models are loaded on-demand only
     
     def _get_alignment_model(self, language_code: str):
-        """Get alignment model with file locking to prevent race conditions"""
+        """Get alignment model with cross-platform file locking to prevent race conditions"""
         try:
             import whisperx
-            import fcntl
             import os
-            import tempfile
+            import platform
             
             # Check if we have it preloaded
             if language_code in self.preloaded_align_models:
@@ -295,45 +294,48 @@ class WhisperXTranscriptionService:
             os.makedirs(lock_dir, exist_ok=True)
             lock_file_path = os.path.join(lock_dir, f"{language_code}.lock")
             
-            # Use file locking to prevent race conditions
-            with open(lock_file_path, 'w') as lock_file:
-                try:
-                    # Try to acquire exclusive lock (blocks if another worker is downloading)
+            # Cross-platform file locking
+            if platform.system() == "Windows":
+                # Windows file locking using msvcrt
+                import msvcrt
+                with open(lock_file_path, 'w') as lock_file:
+                    try:
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                        logger.info(f"🔒 Acquired Windows lock for '{language_code}' model download")
+                        return self._load_alignment_model_locked(language_code, whisperx)
+                    finally:
+                        try:
+                            msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                        except:
+                            pass
+            else:
+                # Unix file locking using fcntl
+                import fcntl
+                with open(lock_file_path, 'w') as lock_file:
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-                    logger.info(f"🔒 Acquired lock for '{language_code}' model download")
+                    logger.info(f"🔒 Acquired Unix lock for '{language_code}' model download")
+                    return self._load_alignment_model_locked(language_code, whisperx)
                     
-                    # Check if model exists after acquiring lock (another worker might have downloaded it)
-                    model_cache_path = os.path.expanduser(f"~/.cache/whisperx/models/{language_code}")
-                    if os.path.exists(model_cache_path):
-                        logger.info(f"✅ Model for '{language_code}' already exists, loading...")
-                    else:
-                        logger.info(f"🔄 Downloading alignment model for '{language_code}'...")
-                    
-                    # Load model (will download if not exists, or load from cache)
-                    model_a, metadata = whisperx.load_align_model(
-                        language_code=language_code, 
-                        device=self.alignment_device
-                    )
-                    
-                    # Cache in memory for this worker instance
-                    self.preloaded_align_models[language_code] = {
-                        'model': model_a,
-                        'metadata': metadata
-                    }
-                    
-                    logger.info(f"✅ Successfully loaded alignment model for '{language_code}'")
-                    return model_a, metadata
-                    
-                except Exception as download_error:
-                    logger.error(f"❌ Failed to download/load model for '{language_code}': {download_error}")
-                    raise
-                finally:
-                    # Lock is automatically released when file is closed
-                    pass
-            
         except Exception as e:
             logger.error(f"❌ Failed to get alignment model for '{language_code}': {e}")
             raise
+
+    def _load_alignment_model_locked(self, language_code: str, whisperx):
+        """Load alignment model when file lock is already acquired"""
+        # Load model (will download if not exists, or load from cache)
+        model_a, metadata = whisperx.load_align_model(
+            language_code=language_code, 
+            device=self.alignment_device
+        )
+        
+        # Cache in memory for this worker instance
+        self.preloaded_align_models[language_code] = {
+            'model': model_a,
+            'metadata': metadata
+        }
+        
+        logger.info(f"✅ Successfully loaded alignment model for '{language_code}'")
+        return model_a, metadata
     
     def _convert_to_sentences_format(self, whisperx_segments: List[Dict]) -> List[Dict[str, Any]]:
         """Convert WhisperX segments to optimized sentence format for dubbing"""

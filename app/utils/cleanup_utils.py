@@ -37,11 +37,23 @@ class CleanupUtils:
         cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_old)
         cleaned_count = 0
 
-        for path in temp_dir.glob("dub_*"):
-            if path.is_dir() and self._should_cleanup_folder(path, cutoff_time):
-                shutil.rmtree(path, ignore_errors=True)
-                cleaned_count += 1
-                logger.info(f"Cleaned orphaned folder: {path.name}")
+        # Clean job-specific folders (dub_*, separation_*, etc.)
+        for pattern in ["dub_*", "sep_*", "separation_*", "job_*", "temp_*"]:
+            for path in temp_dir.glob(pattern):
+                if path.is_dir() and self._should_cleanup_folder(path, cutoff_time):
+                    shutil.rmtree(path, ignore_errors=True)
+                    cleaned_count += 1
+                    logger.info(f"Cleaned orphaned folder: {path.name}")
+
+        # Clean old loose files in temp directory
+        for path in temp_dir.iterdir():
+            if path.is_file() and self._should_cleanup_file(path, cutoff_time):
+                try:
+                    path.unlink()
+                    cleaned_count += 1
+                    logger.info(f"Cleaned old file: {path.name}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove file {path.name}: {e}")
 
         return cleaned_count
 
@@ -94,18 +106,9 @@ class CleanupUtils:
     # ===== CACHE & MEMORY CLEANUP =====
 
     def cleanup_expired_cache(self) -> int:
-        try:
-            # Use unified status manager cache; clear all cached entries
-            # and return how many were cleared
-            from app.utils.unified_status_manager import get_unified_status_manager
-            manager = get_unified_status_manager()
-            before_count = manager.get_cache_stats().get("total_cached_jobs", 0)
-            if before_count > 0:
-                manager.clear_cache()
-            return before_count
-        except Exception as e:
-            logger.error(f"Cache cleanup failed: {e}")
-            return 0
+        # Simple status service doesn't use complex caching, so no cleanup needed
+        logger.info("Cache cleanup skipped - using simple status service")
+        return 0
 
     def cleanup_gpu_memory(self) -> bool:
         try:
@@ -205,6 +208,13 @@ class CleanupUtils:
                         return False
 
             return True
+        except Exception:
+            return True
+
+    def _should_cleanup_file(self, path: Path, cutoff_time: datetime) -> bool:
+        try:
+            file_mtime = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+            return file_mtime < cutoff_time
         except Exception:
             return True
 

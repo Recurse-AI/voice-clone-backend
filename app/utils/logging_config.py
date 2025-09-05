@@ -5,7 +5,7 @@ from logging.config import dictConfig
 
 def setup_logging():
     from app.config.settings import settings
-    os.makedirs("app/logs", exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
     
     # Suppress third-party noise
     warnings.filterwarnings("ignore")
@@ -35,7 +35,7 @@ def setup_logging():
             },
             "info_file_handler": {
                 "class": "logging.handlers.RotatingFileHandler",
-                "filename": "app/logs/info.log",
+                "filename": "logs/info.log",
                 "formatter": "customFormatter",
                 "level": "INFO",
                 "maxBytes": 5242880,
@@ -45,7 +45,7 @@ def setup_logging():
 
             "error_file_handler": {
                 "class": "logging.handlers.RotatingFileHandler",
-                "filename": "app/logs/error.log",
+                "filename": "logs/error.log",
                 "formatter": "customFormatter",
                 "level": "ERROR",
                 "maxBytes": 5242880,

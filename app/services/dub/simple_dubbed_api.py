@@ -20,7 +20,7 @@ from .manifest_service import (
     upload_process_dir_to_r2,
 )
 from .audio_utils import AudioUtils
-from app.utils.unified_status_manager import get_unified_status_manager, ProcessingStatus, JobType
+from app.services.simple_status_service import status_service, JobStatus
 
 logger = logging.getLogger(__name__)
 
@@ -100,17 +100,9 @@ class SimpleDubbedAPI:
     def temp_dir(self):
         return settings.TEMP_DIR
     
-    def _update_status(self, job_id: str, status: ProcessingStatus, progress: int, details: dict, smart: bool = True):
-        manager = get_unified_status_manager()
+    def _update_status(self, job_id: str, status: JobStatus, progress: int, details: dict, smart: bool = True):
         try:
-            if smart:
-                current_data = manager.get_status_sync(job_id, JobType.DUB)
-                if (current_data and current_data.progress > progress and status == current_data.status and
-                    status not in [ProcessingStatus.AWAITING_REVIEW, ProcessingStatus.REVIEWING, 
-                                   ProcessingStatus.COMPLETED, ProcessingStatus.FAILED]):
-                    progress = current_data.progress
-            
-            manager.update_status_sync(job_id, JobType.DUB, status, progress, details)
+            status_service.update_status(job_id, "dub", status, progress, details)
         except Exception as e:
             logger.error(f"Failed to update status for {job_id}: {e}")
     
@@ -146,11 +138,11 @@ class SimpleDubbedAPI:
         
         # Map phase to appropriate high-level status for UI consistency
         phase_status = {
-            "separation": ProcessingStatus.SEPARATING,
-            "transcription": ProcessingStatus.TRANSCRIBING,
-            "reviewing": ProcessingStatus.REVIEWING,
-            "upload": ProcessingStatus.UPLOADING,
-        }.get(phase, ProcessingStatus.PROCESSING)
+            "separation": JobStatus.SEPARATING,
+            "transcription": JobStatus.TRANSCRIBING,
+            "reviewing": JobStatus.REVIEWING,
+            "upload": JobStatus.UPLOADING,
+        }.get(phase, JobStatus.PROCESSING)
 
         self._update_status(
             job_id,
@@ -211,14 +203,14 @@ class SimpleDubbedAPI:
                 # Update progress for review preparation
                 self._update_phase_progress(job_id, "review_prep", 0.5, "Preparing segments for human review")
                 
-                # Get vocal and instrument URLs from job details
+                # Get vocal and instrument URLs from job status details
                 vocal_audio_url = None
                 instrument_audio_url = None
                 try:
-                    manager = get_unified_status_manager()
-                    job_data = manager.get_status_sync(job_id, JobType.DUB)
-                    if job_data and job_data.details:
-                        runpod_urls = job_data.details.get("runpod_urls", {})
+                    job_data = status_service.get_status(job_id, "dub")
+                    if job_data and job_data.get("details"):
+                        details = job_data["details"]
+                        runpod_urls = details.get("runpod_urls", {})
                         vocal_audio_url = runpod_urls.get("vocal_audio")
                         instrument_audio_url = runpod_urls.get("instrument_audio")
                 except Exception as e:
@@ -259,7 +251,7 @@ class SimpleDubbedAPI:
                 # Now set awaiting_review status with manifest details using phase system
                 self._update_status(
                     job_id,
-                    ProcessingStatus.AWAITING_REVIEW,
+                    JobStatus.AWAITING_REVIEW,
                     80,
                     {
                         "message": "Awaiting human review - Please review dubbed text",
@@ -541,7 +533,7 @@ class SimpleDubbedAPI:
     def _process_voice_cloning(self, job_id: str, enhanced_sentences: list, dubbed_texts: list, 
                               edited_map: dict, review_mode: bool, process_temp_dir: str) -> list:
         if not review_mode:
-            self._update_status(job_id, ProcessingStatus.PROCESSING, 80, {
+            self._update_status(job_id, JobStatus.PROCESSING, 80, {
                 "message": "Starting AI voice cloning with Fish Speech",
                 "phase": "voice_cloning",
                 "sub_progress": 0.0

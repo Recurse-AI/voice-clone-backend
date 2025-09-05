@@ -12,6 +12,7 @@ from app.services.job_response_service import job_response_service
 from app.dependencies.auth import get_current_user
 from app.config.constants import DEFAULT_QUERY_LIMIT, MAX_QUEUE_POSITION_CHECKS
 from app.utils.runpod_service import runpod_service
+from app.services.simple_status_service import status_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -59,40 +60,33 @@ async def get_user_separations(
         if page < 1:
             raise HTTPException(status_code=400, detail="Page must be greater than 0")
         
-        from app.utils.unified_status_manager import get_unified_status_manager, JobType
-        
-        # Get enriched status data from unified manager
-        manager = get_unified_status_manager()
+        # Get jobs from database
         actual_limit = limit if limit else DEFAULT_QUERY_LIMIT
-        status_data_list = await manager.get_user_jobs_status(str(user_id), JobType.SEPARATION, actual_limit, page)
-        
-        # Get additional job details from database
         jobs, total_count = await separation_job_service.get_user_jobs(str(user_id), page, actual_limit)
         
         # Get job statistics
         statistics = await separation_job_service.get_user_job_statistics(str(user_id))
         
-        # Create job lookup for additional details
-        job_lookup = {job.job_id: job for job in jobs}
-        
-        # Build response with enriched status data
+        # Build response with current status
         user_jobs = []
-        for status_data in status_data_list:
-            job = job_lookup.get(status_data.job_id)
-            if not job:
-                continue  # Skip if job not in current page
+        for job in jobs:
+            # Get current status from simple service
+            status_data = status_service.get_status(job.job_id, "separation")
+            
+            current_status = status_data["status"] if status_data else job.status
+            current_progress = status_data["progress"] if status_data else job.progress
             
             user_job = UserSeparationJob(
-                job_id=status_data.job_id,
-                status=status_data.status.value,
-                progress=status_data.progress,
+                job_id=job.job_id,
+                status=current_status,
+                progress=current_progress,
                 audio_url=job.audio_url,
                 vocal_url=job.vocal_url,
                 instrument_url=job.instrument_url,
                 error=job.error,
-                queuePosition=status_data.queue_position,
+                queuePosition=None,  # Simple implementation
                 created_at=job.created_at.isoformat(),
-                updated_at=status_data.updated_at.isoformat(),
+                updated_at=status_data["updated_at"].isoformat() if status_data and status_data.get("updated_at") else job.updated_at.isoformat(),
                 completed_at=job.completed_at.isoformat() if job.completed_at else None
             )
             user_jobs.append(user_job)
@@ -128,38 +122,36 @@ async def get_separation_job_detail(
     try:
         user_id = current_user.id
         
-        from app.utils.unified_status_manager import get_unified_status_manager, JobType
-        
-        # Get enriched status from unified manager
-        manager = get_unified_status_manager()
-        status_data = await manager.get_status(job_id, JobType.SEPARATION)
+        # Get status from simple service
+        status_data = status_service.get_status(job_id, "separation")
         
         if not status_data:
             raise HTTPException(status_code=404, detail="Separation job not found")
         
-        # Verify user ownership
-        if status_data.user_id != user_id:
-            # Fallback: check database job
-            job = await separation_job_service.get_job(job_id)
-            if not job or job.user_id != user_id:
-                raise HTTPException(status_code=403, detail="Access denied")
-        
-        # Get additional job details from database
+        # Get job details from database
         job = await separation_job_service.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job details not found")
         
+        # Verify user ownership
+        if job.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Use current status if available, otherwise use database status
+        current_status = status_data["status"] if status_data else job.status
+        current_progress = status_data["progress"] if status_data else job.progress
+        
         user_job = UserSeparationJob(
-            job_id=status_data.job_id,
-            status=status_data.status.value,
-            progress=status_data.progress,
+            job_id=job.job_id,
+            status=current_status,
+            progress=current_progress,
             audio_url=job.audio_url,
             vocal_url=job.vocal_url,
             instrument_url=job.instrument_url,
             error=job.error,
-            queuePosition=status_data.queue_position,
+            queuePosition=None,  # Simple implementation
             created_at=job.created_at.isoformat(),
-            updated_at=status_data.updated_at.isoformat(),
+            updated_at=status_data["updated_at"].isoformat() if status_data and status_data.get("updated_at") else job.updated_at.isoformat(),
             completed_at=job.completed_at.isoformat() if job.completed_at else None
         )
         
@@ -190,38 +182,29 @@ async def get_user_dubs(
         if page < 1:
             raise HTTPException(status_code=400, detail="Page must be greater than 0")
         
-        from app.utils.unified_status_manager import get_unified_status_manager, JobType
-        
-        # Get enriched status data from unified manager
-        manager = get_unified_status_manager()
+        # Get jobs from database
         actual_limit = limit if limit else DEFAULT_QUERY_LIMIT
-        status_data_list = await manager.get_user_jobs_status(str(user_id), JobType.DUB, actual_limit, page)
-        
-        # Get additional job details from database
         jobs, total_count = await dub_job_service.get_user_jobs(str(user_id), page, actual_limit)
         
         # Get job statistics
         statistics = await dub_job_service.get_user_job_statistics(str(user_id))
         
-        # Create job lookup for additional details
-        job_lookup = {job.job_id: job for job in jobs}
-        
-        # Enhanced formatting with status data
+        # Build response with current status
         user_jobs = []
-        for status_data in status_data_list:
-            job = job_lookup.get(status_data.job_id)
-            if not job:
-                continue  # Skip if job not in current page
+        for job in jobs:
+            # Get current status from simple service
+            status_data = status_service.get_status(job.job_id, "dub")
             
-            # Use job_response_service for consistent formatting but override status data
+            # Use job_response_service for consistent formatting
             formatted_job = job_response_service.format_dub_job(job)
             
-            # Override with fresh status data
-            formatted_job.status = status_data.status.value
-            formatted_job.progress = status_data.progress
-            formatted_job.queuePosition = status_data.queue_position
-            formatted_job.updated_at = status_data.updated_at.isoformat()
+            # Override with current status data
+            if status_data:
+                formatted_job.status = status_data["status"]
+                formatted_job.progress = status_data["progress"]
+                formatted_job.updated_at = status_data["updated_at"].isoformat() if status_data.get("updated_at") else formatted_job.updated_at
             
+            formatted_job.queuePosition = None  # Simple implementation
             user_jobs.append(formatted_job)
         
         # Calculate pagination metadata
@@ -255,35 +238,28 @@ async def get_dub_job_detail(
     try:
         user_id = current_user.id
         
-        from app.utils.unified_status_manager import get_unified_status_manager, JobType
-        
-        # Get enriched status from unified manager
-        manager = get_unified_status_manager()
-        status_data = await manager.get_status(job_id, JobType.DUB)
-        
-        if not status_data:
-            raise HTTPException(status_code=404, detail="Dub job not found")
-        
-        # Verify user ownership
-        if status_data.user_id != user_id:
-            # Fallback: check database job
-            job = await dub_job_service.get_job(job_id)
-            if not job or job.user_id != user_id:
-                raise HTTPException(status_code=403, detail="Access denied")
-        
-        # Get additional job details from database
+        # Get job details from database
         job = await dub_job_service.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job details not found")
         
-        # Format job using service but override with fresh status
+        # Verify user ownership
+        if job.user_id != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Get current status from simple service
+        status_data = status_service.get_status(job_id, "dub")
+        
+        # Format job using service
         user_job = job_response_service.format_dub_job(job)
         
-        # Override with unified status data
-        user_job.status = status_data.status.value
-        user_job.progress = status_data.progress
-        user_job.queuePosition = status_data.queue_position
-        user_job.updated_at = status_data.updated_at.isoformat()
+        # Override with current status data
+        if status_data:
+            user_job.status = status_data["status"]
+            user_job.progress = status_data["progress"]
+            user_job.updated_at = status_data["updated_at"].isoformat() if status_data.get("updated_at") else user_job.updated_at
+        
+        user_job.queuePosition = None  # Simple implementation
         
         return DubJobDetailResponse(success=True, job=user_job)
         
@@ -314,7 +290,7 @@ async def delete_separation_job(
             raise HTTPException(status_code=403, detail="Access denied")
         
         # Delete from database
-        deleted = await separation_job_service.delete_job(job_id)
+        deleted = await separation_job_service.delete_job(job_id, user_id)
         if not deleted:
             raise HTTPException(status_code=500, detail="Failed to delete job")
         
@@ -348,7 +324,7 @@ async def delete_dub_job(
             raise HTTPException(status_code=403, detail="Access denied")
         
         # Delete from database
-        deleted = await dub_job_service.delete_job(job_id)
+        deleted = await dub_job_service.delete_job(job_id, user_id)
         if not deleted:
             raise HTTPException(status_code=500, detail="Failed to delete job")
         

@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
 from contextlib import asynccontextmanager
-import asyncio
 
 # App routes and configuration
 from app.config.database import verify_connection, create_unique_indexes
@@ -20,7 +19,6 @@ from app.middleware.auth_middleware import AuthMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from app.config.settings import settings
 from app.schemas import StatusResponse
-from app.utils.event_loop_manager import loop_manager
 from app.utils.cleanup_utils import cleanup_utils
 
 setup_logging()
@@ -46,15 +44,12 @@ async def lifespan(app: FastAPI):
     except Exception as cleanup_error:
         logger.warning(f"Failed to cleanup expired resources: {cleanup_error}")
     
-    # Register main event loop and start reconciler
+    # Start status reconciler
     try:
-        loop = asyncio.get_running_loop()
-        loop_manager.set_main_loop(loop)
-        logger.info("Main event loop registered for background tasks")
         from app.utils.status_reconciler import _reconciler
         _reconciler.start()
     except Exception as e:
-        logger.error(f"Failed to register main event loop: {e}")
+        logger.error(f"Failed to start status reconciler: {e}")
 
     # Initialize AI services
     logger.info("Initializing AI services...")
@@ -120,18 +115,30 @@ async def lifespan(app: FastAPI):
         logger.error(f"Failed to cleanup WhisperX transcription: {e}")
     
     try:
-        from app.routes.video.dub_routes import get_dub_executor
-        from app.routes.audio_processing import _separation_manager
-        
-        dub_executor = get_dub_executor()
-
-        
-        dub_executor.shutdown(wait=True)
-        _separation_manager.shutdown()
+        # Cleanup status reconciler if exists
         from app.utils.status_reconciler import _reconciler
         _reconciler.stop()
+        logger.info("Status reconciler stopped")
     except Exception as e:
-        logger.error(f"Failed to cleanup ThreadPoolExecutors: {e}")
+        logger.error(f"Failed to cleanup status reconciler: {e}")
+    
+    try:
+        # Cleanup any remaining ThreadPoolExecutors
+        import concurrent.futures
+        import threading
+        
+        # Force cleanup of any remaining threads
+        for thread in threading.enumerate():
+            if thread != threading.current_thread() and hasattr(thread, '_target'):
+                try:
+                    if hasattr(thread, 'stop'):
+                        thread.stop()
+                except:
+                    pass
+        
+        logger.info("Thread cleanup completed")
+    except Exception as e:
+        logger.error(f"Failed to cleanup threads: {e}")
 
 app = FastAPI(
     title=settings.API_TITLE,

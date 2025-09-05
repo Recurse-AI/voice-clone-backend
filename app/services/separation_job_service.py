@@ -141,6 +141,25 @@ class SeparationJobService(BaseJobService[SeparationJob]):
             logger.error(f"Failed to get jobs by status {status}: {e}")
             return []
     
+    async def update_job_field(self, job_id: str, field_name: str, field_value: Any) -> bool:
+        """Update a specific job field"""
+        try:
+            result = await self.collection.update_one(
+                {"job_id": job_id},
+                {
+                    "$set": {
+                        field_name: field_value,
+                        "updated_at": datetime.now(timezone.utc)
+                    }
+                }
+            )
+            
+            return result.modified_count > 0
+            
+        except Exception as e:
+            logger.error(f"Failed to update separation job field {field_name} for {job_id}: {e}")
+            return False
+    
     async def update_details(self, job_id: str, details: Dict[str, Any]) -> bool:
         """Update job details"""
         try:

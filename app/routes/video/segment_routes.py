@@ -9,7 +9,7 @@ from app.schemas import (
 )
 from app.dependencies.share_token_auth import get_video_dub_user
 from app.services.dub_job_service import dub_job_service
-from app.utils.unified_status_manager import ProcessingStatus
+from app.services.simple_status_service import JobStatus
 
 router = APIRouter()
 
@@ -86,7 +86,7 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
         res = r2.upload_file(manifest_path, r2_key, content_type="application/json")
         manifest_url_out = res.get("url") if res.get("success") else manifest_url
     # Update DB details and status reviewing
-    await dub_job_service.update_job_status(job_id, ProcessingStatus.REVIEWING.value, 79, details={
+    await dub_job_service.update_job_status(job_id, JobStatus.REVIEWING.value, 79, details={
         "review_required": True,
         "review_status": "in_progress",
         "segments_manifest_url": manifest_url_out,
