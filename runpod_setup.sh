@@ -9,6 +9,7 @@ rm -rf /tmp/* /logs/* 2>/dev/null || true
 chmod 1777 /tmp 2>/dev/null || true
 export TMPDIR=/tmp
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export FFMPEG_USE_GPU=0
 
 # Find project directory
 if [ -f "requirements.txt" ]; then
@@ -157,9 +158,8 @@ echo "Starting workers (using common log)..."
 echo "Starting separation worker..."
 nohup ./venv/bin/python workers_starter.py separation_queue sep_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
-echo "Starting dub workers..."
+echo "Starting dub worker..."
 nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "Starting billing worker..."
 nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &

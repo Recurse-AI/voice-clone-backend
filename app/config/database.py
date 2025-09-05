@@ -2,6 +2,8 @@ from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection
 from pymongo import MongoClient
 from app.config.settings import settings  
 import logging
+from typing import Optional
+from contextvars import ContextVar
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,22 @@ pricing_collection: AsyncIOMotorCollection = db.pricing
 transaction_collection: AsyncIOMotorCollection = db.creditTransaction
 
 
+
+_loop_local_async_client: ContextVar[Optional[AsyncIOMotorClient]] = ContextVar(
+    "_loop_local_async_client", default=None
+)
+
+def get_async_db():
+    """Return an AsyncIOMotor database bound to the current event loop.
+
+    Creates a loop-local AsyncIOMotorClient on first use per asyncio context
+    to avoid "Event loop is closed" issues when using asyncio.run in workers.
+    """
+    local_client = _loop_local_async_client.get()
+    if local_client is None:
+        local_client = AsyncIOMotorClient(settings.MONGODB_URI)
+        _loop_local_async_client.set(local_client)
+    return local_client[settings.DB_NAME]
 
 async def verify_connection():
     try:

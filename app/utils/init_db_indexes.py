@@ -30,6 +30,31 @@ async def init_database_indexes():
 
 
     ]
+    # Non-unique performance indexes
+    non_unique_indexes_to_create = [
+        # Optimize user list pagination: filter by user_id, sort by created_at
+        {
+            "collection": dub_jobs_collection,
+            "name": "dub_jobs.user_id_created_at",
+            "fields": [("user_id", 1), ("created_at", -1)]
+        },
+        {
+            "collection": separation_jobs_collection,
+            "name": "separation_jobs.user_id_created_at",
+            "fields": [("user_id", 1), ("created_at", -1)]
+        },
+        # Optimize statistics counts: filter by user_id and status
+        {
+            "collection": dub_jobs_collection,
+            "name": "dub_jobs.user_id_status",
+            "fields": [("user_id", 1), ("status", 1)]
+        },
+        {
+            "collection": separation_jobs_collection,
+            "name": "separation_jobs.user_id_status",
+            "fields": [("user_id", 1), ("status", 1)]
+        },
+    ]
     
     # TTL indexes for automatic cleanup
     ttl_indexes_to_create = []
@@ -56,6 +81,22 @@ async def init_database_indexes():
                     existing_count += 1
                 else:
                     logger.warning(f"⚠️ Failed to create index on {index_config['name']}: {index_error}")
+        # Create non-unique performance indexes
+        for idx in non_unique_indexes_to_create:
+            try:
+                await idx["collection"].create_index(
+                    idx.get("fields") or idx.get("field"),
+                    background=True
+                )
+                logger.info(f"Created index on {idx['name']}")
+                created_count += 1
+            except Exception as e:
+                if any(keyword in str(e).lower() for keyword in 
+                       ["already exists", "index already exists"]):
+                    logger.info(f"📋 Index on {idx['name']} already exists")
+                    existing_count += 1
+                else:
+                    logger.warning(f"⚠️ Failed to create index on {idx['name']}: {e}")
         
         # Create TTL indexes for automatic cleanup
         for ttl_config in ttl_indexes_to_create:

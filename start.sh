@@ -1,6 +1,7 @@
 #!/bin/bash
 
 # Clean API Startup Script
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 echo "Installing dependencies..."
 #activate venv
@@ -35,6 +36,8 @@ sleep 3
 mkdir -p logs
 
 echo "Starting RQ Workers..."
+# Disable FFmpeg GPU usage to avoid GPU contention during dubbing
+export FFMPEG_USE_GPU=0
 
 # Start separation worker
 echo "Starting workers (using common log)..."
@@ -45,9 +48,8 @@ rm -f "$COMMON_LOG" 2>/dev/null || true
 echo "Starting separation worker..."
 nohup python workers_starter.py separation_queue sep_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
-echo "Starting dub workers..."
+echo "Starting dub worker..."
 nohup python workers_starter.py dub_queue dub_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-nohup python workers_starter.py dub_queue dub_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "Starting billing worker..."
 nohup python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &

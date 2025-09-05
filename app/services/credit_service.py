@@ -7,7 +7,7 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 
-from app.config.database import db, users_collection, client
+from app.config.database import db, users_collection, client, get_async_db
 from app.config.credit_constants import ErrorCodes, JobType
 from app.utils.decorators import handle_credit_operations, log_execution_time, validate_user_access
 from app.utils.credit_utils import (
@@ -145,7 +145,8 @@ class CreditService:
         """Safely get job data with error handling"""
         try:
             collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
-            return await db[collection_name].find_one({"job_id": job_id})
+            loop_db = get_async_db()
+            return await loop_db[collection_name].find_one({"job_id": job_id})
         except Exception as e:
             logger.error(f"Failed to get job {job_id}: {e}")
             return None
@@ -155,12 +156,11 @@ class CreditService:
     async def _update_user_usage(self, user_id: str, credits_used: float) -> None:
         """Simple: Add credits to user's total usage"""
         try:
-            from app.config.database import users_collection
             from datetime import datetime, timezone
             from bson import ObjectId
-            
+            loop_db = get_async_db()
             # Simple increment of total usage
-            await users_collection.update_one(
+            await loop_db.get_collection("users").update_one(
                 {"_id": ObjectId(user_id)},
                 {
                     "$inc": {"total_usage": credits_used},
@@ -177,11 +177,10 @@ class CreditService:
     async def _validate_payg_payment_method(self, user_id: str) -> None:
         """Validate that PAYG user has a valid payment method (optimized - no Stripe calls during job creation)"""
         try:
-            from app.config.database import users_collection
             from bson import ObjectId
-            
+            loop_db = get_async_db()
             # Get user details
-            user = await users_collection.find_one({"_id": ObjectId(user_id)})
+            user = await loop_db.get_collection("users").find_one({"_id": ObjectId(user_id)})
             if not user:
                 raise ValueError("User not found")
             
@@ -235,7 +234,8 @@ class CreditService:
         
         # Simple job insertion - no transactions needed for PAYG
         try:
-            await db[collection_name].insert_one(final_job_data)
+            loop_db = get_async_db()
+            await loop_db[collection_name].insert_one(final_job_data)
             
             logger.info(f"Pay-as-you-go reservation: {required_credits} credits for job {job_data['job_id']}")
             
@@ -276,7 +276,8 @@ class CreditService:
         # Simple credit deduction without complex transactions
         try:
             # Deduct credits from user balance
-            user_result = await users_collection.find_one_and_update(
+            loop_db = get_async_db()
+            user_result = await loop_db.get_collection("users").find_one_and_update(
                 {
                     "_id": ObjectId(user_id),
                     "credits": {"$gte": required_credits}
@@ -306,7 +307,8 @@ class CreditService:
             }
             final_job_data.update(filtered_job_data)
             
-            await db[collection_name].insert_one(final_job_data)
+            loop_db = get_async_db()
+            await loop_db[collection_name].insert_one(final_job_data)
             
             remaining_credits = user_result.get("credits", 0)
             logger.info(f"Credit pack reservation: {required_credits} credits deducted for job {job_data['job_id']} (remaining: {remaining_credits})")
@@ -332,7 +334,8 @@ class CreditService:
         try:
             # Update job as completed
             collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
-            collection = db.get_collection(collection_name)
+            loop_db = get_async_db()
+            collection = loop_db.get_collection(collection_name)
             
             await collection.update_one(
                 {"job_id": job_id},
@@ -367,7 +370,8 @@ class CreditService:
         try:
             # Update job status - credits were already deducted during reservation
             collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
-            collection = db.get_collection(collection_name)
+            loop_db = get_async_db()
+            collection = loop_db.get_collection(collection_name)
             
             await collection.update_one(
                 {"job_id": job_id},
@@ -396,7 +400,8 @@ class CreditService:
         """Refund pay-as-you-go job (virtual cancellation)"""
         collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
         
-        await db[collection_name].update_one(
+        loop_db = get_async_db()
+        await loop_db[collection_name].update_one(
             {"job_id": job_id},
                 {
                     "$set": {
@@ -420,7 +425,8 @@ class CreditService:
         collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
         
         # Get job details
-        job = await db[collection_name].find_one({"job_id": job_id, "credits_reserved": True})
+        loop_db = get_async_db()
+        job = await loop_db[collection_name].find_one({"job_id": job_id, "credits_reserved": True})
         
         if not job:
             return self.response_util.create_error_response(
@@ -435,13 +441,15 @@ class CreditService:
             # Only refund credit pack jobs
             if job.get("billing_type") == "credit_pack":
                 # Add credits back to user
-                await users_collection.update_one(
+                loop_db = get_async_db()
+                await loop_db.get_collection("users").update_one(
                     {"_id": ObjectId(user_id)},
                     {"$inc": {"credits": credits_to_refund}}
                 )
                 
                 # Mark job as refunded
-                await db[collection_name].update_one(
+                loop_db = get_async_db()
+                await loop_db[collection_name].update_one(
                     {"job_id": job_id},
                     {
                         "$set": {

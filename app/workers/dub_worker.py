@@ -239,6 +239,14 @@ def enqueue_dub_task(request_dict: dict, user_id: str):
     finally:
         # Memory cleanup after processing
         gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                if hasattr(torch.cuda, "ipc_collect"):
+                    torch.cuda.ipc_collect()
+        except Exception:
+            pass
 
 
 # Redub task processing
