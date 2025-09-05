@@ -132,13 +132,13 @@ WORKERS=${WORKERS:-1}
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-8000}
 # Detach API from GPU to avoid consuming VRAM
-CUDA_VISIBLE_DEVICES="" nohup ./venv/bin/gunicorn -k uvicorn.workers.UvicornWorker -w ${WORKERS} -b ${HOST}:${PORT} main:app > logs/api.log 2>&1 &
+CUDA_VISIBLE_DEVICES="" nohup ./venv/bin/uvicorn main:app --host ${HOST} --port ${PORT} --workers ${WORKERS} > logs/api.log 2>&1 &
 
 # Give API a moment to start
 sleep 3
 
 # Check if API started
-if pgrep -f "gunicorn.*main:app" > /dev/null; then
+if pgrep -f "uvicorn.*main:app" > /dev/null; then
     echo "✅ API server started successfully"
 else
     echo "⚠️ API server may not have started properly, check logs/api.log"
@@ -157,8 +157,9 @@ echo "Starting workers (using common log)..."
 echo "Starting separation worker..."
 nohup ./venv/bin/python workers_starter.py separation_queue sep_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
-echo "Starting dub worker..."
+echo "Starting dub workers..."
 nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "Starting billing worker..."
 nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
