@@ -213,9 +213,9 @@ class DubService:
                 }
             )
             
-            # Complete credit billing with proper user_id
+            # Complete credit billing with full remaining percentage to reach 100%
             from app.utils.job_utils import job_utils
-            job_utils.complete_job_billing_sync(job_id, "dub", user_id, 0.25)
+            job_utils.complete_job_billing_sync(job_id, "dub", user_id, 1.0)
             
             logger.info(f"✅ Dub job completed: {job_id}")
             return True

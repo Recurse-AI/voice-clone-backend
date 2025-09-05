@@ -457,9 +457,6 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             })
             
             logger.info(f"✅ Redub job {redub_job_id} completed")
-            
-            # Complete credit billing using centralized utility (sync context for redub) - charge remaining 25%
-            job_utils.complete_job_billing_sync(redub_job_id, "dub", user_id, 0.25)
 
             # Immediate cleanup for this specific completed redub job
 

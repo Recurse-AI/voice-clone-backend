@@ -133,7 +133,7 @@ WORKERS=${WORKERS:-1}
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-8000}
 # Detach API from GPU to avoid consuming VRAM
-CUDA_VISIBLE_DEVICES="" nohup ./venv/bin/uvicorn main:app --host ${HOST} --port ${PORT} --workers ${WORKERS} > logs/api.log 2>&1 &
+CUDA_VISIBLE_DEVICES="" nohup ./venv/bin/uvicorn main:app --host ${HOST} --port ${PORT} --workers ${WORKERS} > logs/info.log 2>&1 &
 
 # Give API a moment to start
 sleep 3
@@ -142,7 +142,7 @@ sleep 3
 if pgrep -f "uvicorn.*main:app" > /dev/null; then
     echo "✅ API server started successfully"
 else
-    echo "⚠️ API server may not have started properly, check logs/api.log"
+    echo "⚠️ API server may not have started properly, check logs/info.log"
 fi
 
 # Start workers with comprehensive setup
