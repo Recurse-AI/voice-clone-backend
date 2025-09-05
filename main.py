@@ -20,6 +20,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.config.settings import settings
 from app.schemas import StatusResponse
 from app.utils.cleanup_utils import cleanup_utils
+from fastapi.responses import JSONResponse
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -178,6 +179,29 @@ async def root():
         status="active",
         message=f"ClearVocals API is running - Voice Cloning API {settings.API_VERSION}"
     )
+
+@app.get("/health/live")
+async def health_live():
+    # Process is up and FastAPI is serving
+    return {"status": "ok"}
+
+@app.get("/health/ready")
+async def health_ready():
+    # Verify critical dependencies: MongoDB and Redis/RQ
+    try:
+        await verify_connection()
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"status": "fail", "dependency": "mongodb", "error": str(e)[:200]})
+
+    try:
+        from app.queue.queue_manager import queue_manager
+        is_ok = queue_manager.check_health()
+        if not is_ok:
+            return JSONResponse(status_code=503, content={"status": "fail", "dependency": "redis_rq"})
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"status": "fail", "dependency": "redis_rq", "error": str(e)[:200]})
+
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn

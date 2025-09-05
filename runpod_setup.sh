@@ -124,16 +124,19 @@ for i in $(seq 1 $REDIS_RETRIES); do
     fi
 done
 
-# Start API
-echo "Starting API server..."
+# Start API (Gunicorn)
+echo "Starting API server (Gunicorn)..."
 source venv/bin/activate
-nohup ./venv/bin/python main.py > logs/api.log 2>&1 &
+WORKERS=${WORKERS:-2}
+HOST=${HOST:-0.0.0.0}
+PORT=${PORT:-8000}
+nohup ./venv/bin/gunicorn -k uvicorn.workers.UvicornWorker -w ${WORKERS} -b ${HOST}:${PORT} main:app > logs/api.log 2>&1 &
 
 # Give API a moment to start
 sleep 3
 
 # Check if API started
-if pgrep -f "python.*main.py" > /dev/null; then
+if pgrep -f "gunicorn.*main:app" > /dev/null; then
     echo "✅ API server started successfully"
 else
     echo "⚠️ API server may not have started properly, check logs/api.log"
