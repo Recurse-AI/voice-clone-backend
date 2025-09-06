@@ -3,6 +3,7 @@ from fastapi.responses import JSONResponse
 import logging
 import os
 import gc
+import uuid
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 from pymongo import MongoClient
@@ -341,10 +342,8 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to load manifest: {str(e)}")
     
-    # Generate redub job ID
-
-    r2_service = get_r2_service()
-    redub_job_id = r2_service.generate_job_id()
+    # Generate redub job ID with consistent "dub_" prefix
+    redub_job_id = f"dub_{uuid.uuid4()}"
 
     # Get job details for redub
     user_id = current_user.id
