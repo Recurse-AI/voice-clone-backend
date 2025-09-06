@@ -119,79 +119,85 @@ class FishSpeechService:
     def generate_with_reference_audio(self, text: str, reference_audio_bytes: bytes, 
                                      reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:
         """
-        Generate voice cloning with reference audio (proper fish-speech way)
-        
-        Args:
-            text: Text to convert to speech
-            reference_audio_bytes: Reference audio as bytes
-            reference_text: Text that was spoken in reference audio
-            **kwargs: Additional TTS parameters
-            
-        Returns:
-            Dict with generation results including audio bytes
+        Generate voice cloning with reference audio (optimized for speed)
         """
-        # GPU memory monitoring and cleanup before generation
+        import time
+        start_time = time.time()
+        
+        # Aggressive GPU cleanup before generation
         if torch.cuda.is_available():
-            memory_before = torch.cuda.memory_allocated() / 1024**3  # GB
             torch.cuda.empty_cache()
-            memory_after = torch.cuda.memory_allocated() / 1024**3  # GB
-            logger.debug(f"GPU memory: {memory_before:.2f}GB → {memory_after:.2f}GB")
+            torch.cuda.synchronize()
         
         if not self.is_initialized:
+            logger.info("🔄 Fish Speech model not loaded, loading now...")
+            load_start = time.time()
             if not self.load_model():
                 return {"success": False, "error": "Failed to load TTSInferenceEngine"}
+            load_time = time.time() - load_start
+            logger.info(f"⚡ Fish Speech model loaded in {load_time:.2f}s")
         
         try:
-            # Create ServeReferenceAudio object
-            reference = ServeReferenceAudio(
-                audio=reference_audio_bytes,
-                text=reference_text
-            )
+            # Create optimized TTS request with timeout handling
+            import concurrent.futures
+            import threading
             
-            # Create TTS request with reference
-            tts_request = ServeTTSRequest(
-                text=text,
-                references=[reference],
-                max_new_tokens=kwargs.get("max_new_tokens", 2048),
-                top_p=kwargs.get("top_p", 0.9),
-                repetition_penalty=kwargs.get("repetition_penalty", 1.2),
-                temperature=kwargs.get("temperature", 0.8),
-                format="wav",
-                chunk_length=kwargs.get("chunk_length", 200)
-            )
+            def _generate_audio():
+                reference = ServeReferenceAudio(
+                    audio=reference_audio_bytes,
+                    text=reference_text
+                )
+                
+                # User preferred parameters
+                tts_request = ServeTTSRequest(
+                    text=text,
+                    references=[reference],
+                    max_new_tokens=kwargs.get("max_new_tokens", 1024),  # User preference
+                    top_p=kwargs.get("top_p", 0.6),                     # Optimized for speed
+                    repetition_penalty=kwargs.get("repetition_penalty", 1.05),  # Minimal penalty
+                    temperature=kwargs.get("temperature", 0.6),         # Lower for speed
+                    format="wav",
+                    chunk_length=kwargs.get("chunk_length", 200)        # User preference
+                )
+                
+                # Generate with timeout protection
+                audio_data = b""
+                sample_rate = 44100
+                
+                for result in self.inference_engine.inference(tts_request):
+                    if result.code in ("chunk", "final"):
+                        sample_rate, audio_chunk = result.audio
+                        if isinstance(audio_chunk, np.ndarray):
+                            import soundfile as sf
+                            import io
+                            audio_buffer = io.BytesIO()
+                            sf.write(audio_buffer, audio_chunk, sample_rate, format='WAV')
+                            audio_data += audio_buffer.getvalue()
+                    elif result.code == "error":
+                        return {"success": False, "error": str(result.error)}
+                
+                return {"success": True, "audio_data": audio_data, "sample_rate": sample_rate}
             
-            logger.info(f"Generating voice with reference audio for text: {text[:50]}...")
-            
-            # Generate audio using TTSInferenceEngine
-            audio_data = b""
-            for result in self.inference_engine.inference(tts_request):
-                if result.code in ("chunk", "final"):
-                    # Accumulate audio chunks
-                    sample_rate, audio_chunk = result.audio
-                    if isinstance(audio_chunk, np.ndarray):
-                        # Convert numpy array to bytes
-                        import soundfile as sf
-                        import io
-                        audio_buffer = io.BytesIO()
-                        sf.write(audio_buffer, audio_chunk, sample_rate, format='WAV')
-                        audio_data += audio_buffer.getvalue()
-                elif result.code == "error":
-                    logger.error(f"Voice generation error: {result.error}")
-                    return {"success": False, "error": str(result.error)}
-            
-            if audio_data:
-                logger.info("Voice generation with reference completed")
-                return {
-                    "success": True,
-                    "audio_data": audio_data,
-                    "sample_rate": sample_rate if 'sample_rate' in locals() else 44100
-                }
-            else:
-                return {"success": False, "error": "No audio data generated"}
+            # Execute with timeout (60 seconds max per segment)
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                future = executor.submit(_generate_audio)
+                try:
+                    result = future.result(timeout=60)
+                    elapsed = time.time() - start_time
+                    logger.info(f"Voice generation completed in {elapsed:.2f}s for text: {text[:30]}...")
+                    return result
+                except concurrent.futures.TimeoutError:
+                    logger.error(f"Voice generation timeout (60s) for text: {text[:30]}...")
+                    return {"success": False, "error": "Generation timeout after 60 seconds"}
                 
         except Exception as e:
-            logger.error(f"Error in voice generation with reference: {e}")
+            elapsed = time.time() - start_time
+            logger.error(f"Voice generation error after {elapsed:.2f}s: {e}")
             return {"success": False, "error": str(e)}
+        finally:
+            # Final cleanup
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def cleanup(self):
         """Clean up TTSInferenceEngine and free memory"""

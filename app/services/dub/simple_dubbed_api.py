@@ -324,7 +324,9 @@ class SimpleDubbedAPI:
             if not os.path.exists(reference_audio_path):
                 logger.warning(f"Reference audio file not found: {reference_audio_path} for {segment_id}")
                 return None
-            logger.info(f"Voice cloning {segment_id} using reference: {reference_audio_path}")
+            import time
+            segment_start_time = time.time()
+            logger.info(f"🎯 Voice cloning {segment_id} starting at {time.strftime('%H:%M:%S')} using reference: {reference_audio_path}")
             import soundfile as sf
             import io
             audio_data, sample_rate = sf.read(reference_audio_path)
@@ -357,19 +359,23 @@ class SimpleDubbedAPI:
             sample_rate_out = None
             seed_val = None
             for chunk in text_chunks:
+                import time
+                chunk_start = time.time()
                 
                 result = self.fish_speech.generate_with_reference_audio(
                     text=chunk,
                     reference_audio_bytes=reference_audio_bytes,
                     reference_text=original_text or "Reference audio",
-                    max_new_tokens=1024,  # Reduced from 2048 for faster generation
-                    top_p=0.7,          # Increased for faster sampling
-                    repetition_penalty=1.1,  # Reduced for speed
-                    temperature=0.8,    # Slightly higher for faster generation
-                    seed=seed_val,
-                    chunk_length=200,   # Reduced chunk size
+                    max_new_tokens=1024,  # User preference restored
+                    top_p=0.6,           # Optimized for faster sampling
+                    repetition_penalty=1.05,  # Minimal penalty
+                    temperature=0.6,     # Lower for faster generation
+                    chunk_length=200,    # User preference restored
                     job_id=job_id
                 )
+                
+                chunk_time = time.time() - chunk_start
+                logger.info(f"Chunk generation took {chunk_time:.2f}s for text: {chunk[:30]}...")
                 if result.get("success"):
                     import soundfile as sf
                     import io
@@ -387,6 +393,8 @@ class SimpleDubbedAPI:
                 with open(cloned_path, "wb") as f:
                     f.write(buffer.getvalue())
                 duration_ms = int(len(final_audio) / sample_rate_out * 1000)
+                total_time = time.time() - segment_start_time
+                logger.info(f"✅ Voice cloning {segment_id} completed in {total_time:.2f}s at {time.strftime('%H:%M:%S')}")
                 return {"path": cloned_path, "duration_ms": duration_ms}
             return None
                 
@@ -395,30 +403,79 @@ class SimpleDubbedAPI:
             return None
     
     def _process_voice_clone_batch(self, batch_data: list, job_id: str, process_temp_dir: str) -> list:
-        """Process each segment with its own reference audio"""
-        results = []
+        """Process 3 segments in parallel with ThreadPoolExecutor"""
+        import time
+        import concurrent.futures
+        from app.config.pipeline_settings import pipeline_settings
+        
+        batch_start = time.time()
+        max_workers = pipeline_settings.VOICE_CLONE_PARALLEL_WORKERS
+        
+        logger.info(f"Processing {len(batch_data)} segments in parallel with {max_workers} workers")
         
         try:
-            for data in batch_data:
-                clone_result = self._voice_clone_segment(
-                    data["dubbed_text"], 
-                    data["original_audio_path"], 
-                    data["seg_id"], 
-                    data["original_text"], 
-                    job_id=job_id, 
-                    process_temp_dir=process_temp_dir
-                )
-                results.append(clone_result)
-            
-            # Memory cleanup after batch processing
+            # Initial GPU cleanup
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+            
+            def clone_single_segment(data):
+                """Clone a single segment with timeout and error handling"""
+                try:
+                    segment_start = time.time()
+                    
+                    # Individual GPU cleanup for each worker
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
+                    result = self._voice_clone_segment(
+                        data["dubbed_text"], 
+                        data["original_audio_path"], 
+                        data["seg_id"], 
+                        data["original_text"], 
+                        job_id=job_id, 
+                        process_temp_dir=process_temp_dir
+                    )
+                    
+                    segment_time = time.time() - segment_start
+                    logger.info(f"✅ Segment {data['seg_id']} cloned in {segment_time:.2f}s")
+                    
+                    return result
+                    
+                except Exception as e:
+                    logger.error(f"❌ Failed to clone segment {data.get('seg_id', 'unknown')}: {e}")
+                    return None
+            
+            # Process segments in parallel with proper ordering
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all tasks and maintain order
+                futures = [executor.submit(clone_single_segment, data) for data in batch_data]
+                
+                results = []
+                for i, future in enumerate(futures):
+                    try:
+                        result = future.result(timeout=90)  # 90 second timeout per segment
+                        results.append(result)
+                    except concurrent.futures.TimeoutError:
+                        logger.error(f"⏰ Segment {batch_data[i].get('seg_id', 'unknown')} timed out after 90 seconds")
+                        results.append(None)
+                    except Exception as e:
+                        logger.error(f"💥 Segment {batch_data[i].get('seg_id', 'unknown')} failed: {e}")
+                        results.append(None)
+            
+            # Final cleanup
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            batch_time = time.time() - batch_start
+            successful = sum(1 for r in results if r is not None)
+            logger.info(f"🚀 Parallel batch completed: {successful}/{len(batch_data)} segments in {batch_time:.2f}s")
             
             return results
             
         except Exception as e:
-            logger.error(f"Batch voice cloning error: {str(e)}")
+            logger.error(f"💥 Parallel batch processing error: {str(e)}")
             return [None] * len(batch_data)
     
     

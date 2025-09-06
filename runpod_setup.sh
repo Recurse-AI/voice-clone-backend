@@ -174,8 +174,34 @@ echo "Starting workers..."
 echo "  - Starting separation worker..."
 nohup ./venv/bin/python workers_starter.py separation_queue sep_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
-echo "  - Starting dub worker with AI models..."
-LOAD_AI_MODELS=true nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+# Auto-detect optimal dub worker count based on VRAM
+echo "🔍 Detecting optimal dub worker count..."
+if command -v nvidia-smi >/dev/null 2>&1; then
+    # Get VRAM in MB
+    VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
+    VRAM_GB=$((VRAM_MB / 1024))
+    
+    if [ "$VRAM_GB" -ge 24 ]; then
+        DUB_WORKERS=2
+        echo "  - GPU: ${VRAM_GB}GB VRAM detected → 3 dub workers"
+    elif [ "$VRAM_GB" -ge 16 ]; then
+        DUB_WORKERS=1
+        echo "  - GPU: ${VRAM_GB}GB VRAM detected → 2 dub workers"
+    else
+        DUB_WORKERS=1
+        echo "  - GPU: ${VRAM_GB}GB VRAM detected → 1 dub worker"
+    fi
+else
+    DUB_WORKERS=1
+    echo "  - No GPU detected → 1 dub worker"
+fi
+
+echo "  - Starting ${DUB_WORKERS} dub worker(s) with AI models..."
+for i in $(seq 1 $DUB_WORKERS); do
+    echo "    - Starting dub_worker_${i}..."
+    LOAD_AI_MODELS=true nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+    sleep 2  # Stagger startup to prevent VRAM conflicts
+done
 
 echo "  - Starting billing worker..."
 nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
