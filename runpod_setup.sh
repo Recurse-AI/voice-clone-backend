@@ -231,7 +231,6 @@ nohup ./venv/bin/uvicorn main:app \
   --host ${HOST} \
   --port ${PORT} \
   --workers ${WORKERS} \
-  --worker-class uvicorn.workers.UvicornWorker \
   --access-log \
   --log-level info \
   > logs/info.log 2>&1 &
