@@ -174,43 +174,91 @@ async def health_ready():
     """Enhanced health check with queue monitoring and system stats"""
     from datetime import datetime
     import redis
+    import os
     
-    result = {"status": "ok", "timestamp": datetime.now().isoformat()}
+    result = {
+        "status": "ok", 
+        "timestamp": datetime.now().isoformat(),
+        "service": "ClearVocals API"
+    }
     
     # Check MongoDB
     try:
         await verify_connection()
         result["mongodb"] = "ok"
     except Exception as e:
-        result["mongodb"] = f"fail: {str(e)[:100]}"
+        error_msg = str(e)[:100]
+        result["mongodb"] = f"fail: {error_msg}"
+        result["status"] = "degraded"
+        logger.error(f"MongoDB health check failed: {error_msg}")
         return JSONResponse(status_code=503, content=result)
     
     # Check Redis/RQ and get queue stats
+    redis_status = "unknown"
     try:
         from app.queue.queue_manager import queue_manager
+        
+        # First check queue manager health
         is_ok = queue_manager.check_health()
         if not is_ok:
-            result["redis"] = "fail"
+            result["redis"] = "fail: queue_manager health check failed"
+            result["status"] = "degraded"
             return JSONResponse(status_code=503, content=result)
         
-        # Get queue info for monitoring
-        r = redis.Redis(host='localhost', port=6379, db=0)
+        # Get Redis URL from environment or default
+        redis_url = os.getenv("REDIS_URL", "redis://127.0.0.1:6379")
+        
+        # Try to connect to Redis directly
+        try:
+            r = redis.Redis.from_url(redis_url)
+            r.ping()  # Test connection
+            redis_status = "ok"
+        except redis.ConnectionError:
+            # Fallback to localhost if Redis URL fails
+            r = redis.Redis(host='localhost', port=6379, db=0)
+            r.ping()
+            redis_status = "ok"
+        
+        # Get queue statistics
         dub_queue = r.llen('rq:queue:dub_queue')
         billing_queue = r.llen('rq:queue:billing_queue')
+        separation_queue = r.llen('rq:queue:separation_queue')
         workers = len(r.smembers('rq:workers'))
         failed_jobs = r.llen('rq:queue:failed')
         
-        result["redis"] = "ok"
+        result["redis"] = redis_status
         result["queues"] = {
-            "dub_queue": {"length": dub_queue, "status": "healthy" if dub_queue < 50 else "overloaded"},
-            "billing_queue": {"length": billing_queue, "status": "healthy" if billing_queue < 20 else "overloaded"},
+            "dub_queue": {
+                "length": dub_queue, 
+                "status": "healthy" if dub_queue < 50 else "overloaded"
+            },
+            "billing_queue": {
+                "length": billing_queue, 
+                "status": "healthy" if billing_queue < 20 else "overloaded"
+            },
+            "separation_queue": {
+                "length": separation_queue,
+                "status": "healthy" if separation_queue < 30 else "overloaded"
+            },
             "failed_queue": {"length": failed_jobs}
         }
         result["workers"] = {"active_count": workers}
-        result["metrics"] = {"total_queue_load": dub_queue + billing_queue}
+        result["metrics"] = {
+            "total_queue_load": dub_queue + billing_queue + separation_queue,
+            "redis_url": redis_url.split('@')[-1] if '@' in redis_url else redis_url  # Hide auth info
+        }
         
+    except redis.ConnectionError as e:
+        error_msg = f"Redis connection failed: {str(e)[:100]}"
+        result["redis"] = f"fail: {error_msg}"
+        result["status"] = "degraded"
+        logger.error(error_msg)
+        return JSONResponse(status_code=503, content=result)
     except Exception as e:
-        result["redis"] = f"fail: {str(e)[:100]}"
+        error_msg = f"Redis health check error: {str(e)[:100]}"
+        result["redis"] = f"fail: {error_msg}"
+        result["status"] = "degraded"
+        logger.error(error_msg)
         return JSONResponse(status_code=503, content=result)
     
     # Add system resources if available
@@ -220,14 +268,25 @@ async def health_ready():
         memory = psutil.virtual_memory()
         
         result["system"] = {
-            "cpu_percent": cpu,
-            "memory_percent": memory.percent,
-            "memory_available_gb": round(memory.available / (1024**3), 1)
+            "cpu_percent": round(cpu, 1),
+            "memory_percent": round(memory.percent, 1),
+            "memory_available_gb": round(memory.available / (1024**3), 1),
+            "status": "healthy" if cpu < 80 and memory.percent < 85 else "stressed"
         }
     except ImportError:
-        result["system"] = "psutil_not_available"
+        result["system"] = {"status": "psutil_not_available"}
     except Exception as e:
-        result["system"] = f"error: {str(e)[:50]}"
+        result["system"] = {"status": f"error: {str(e)[:50]}"}
+    
+    # Final status determination
+    if result["status"] == "ok":
+        all_healthy = (
+            result["mongodb"] == "ok" and
+            result["redis"] == "ok" and
+            result.get("queues", {}).get("failed_queue", {}).get("length", 0) < 10
+        )
+        if not all_healthy:
+            result["status"] = "degraded"
     
     return result
 

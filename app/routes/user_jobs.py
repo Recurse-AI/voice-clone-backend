@@ -18,13 +18,29 @@ logger = logging.getLogger(__name__)
 
 
 # Workspace Status API
-@router.get("/workspace/status", response_model=WorkspaceStatusResponse)
+@router.get("/workspace/status", 
+           response_model=WorkspaceStatusResponse,
+           summary="Get Workspace Status",
+           description="Get lightweight workspace status with summary statistics and recent jobs",
+           tags=["workspace"])
 async def get_workspace_status(
     request: Request,
-    recent_limit: int = Query(5, description="Number of recent jobs to return"),
+    recent_limit: int = Query(5, ge=1, le=20, description="Number of recent jobs to return (1-20)"),
     current_user = Depends(get_current_user)
 ):
-    """Get lightweight workspace status with summary statistics and recent jobs"""
+    """
+    Get comprehensive workspace status including:
+    - Total statistics (dubs, separations, completed jobs)
+    - Recent dubs and separations
+    - Processing job counts
+    
+    **Parameters:**
+    - recent_limit: Number of recent jobs to return (1-20, default: 5)
+    
+    **Returns:**
+    - Workspace statistics
+    - Recent job summaries
+    """
     try:
         user_id = current_user.id
         if not user_id:
