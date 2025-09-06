@@ -169,12 +169,8 @@ class FishSpeechService:
             if not self.load_model():
                 return {"success": False, "error": "Failed to reload model"}
         
-        # Smart GPU cleanup - only if memory usage is high
-        if torch.cuda.is_available():
-            current_memory = torch.cuda.memory_allocated() / 1024**3  # GB
-            if current_memory > 2.0:  # Only cleanup if using > 2GB
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
+        # Skip per-generation cleanup for stable GPU utilization
+        # Cleanup will be handled by the calling service
         
         if not self.is_initialized:
             logger.info("🔄 Fish Speech model not loaded, loading now...")
@@ -242,9 +238,8 @@ class FishSpeechService:
             logger.error(f"Voice generation error after {elapsed:.2f}s: {e}")
             return {"success": False, "error": str(e)}
         finally:
-            # Final cleanup
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            # Skip final cleanup for stable GPU performance
+            pass
 
     def cleanup(self):
         """Clean up TTSInferenceEngine and free memory"""
