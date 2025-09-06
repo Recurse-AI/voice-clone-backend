@@ -57,14 +57,13 @@ MAX_THREAD_RETRY_ATTEMPTS = 3
 
 # Cache/Memory Constants
 SHARED_MEMORY_TTL_SECONDS = 3600  # 1 hour TTL for shared memory
-# Concurrency handled by pipeline_settings.py
-GPU_TRANSCRIPTION_LIMIT = 1  # Max concurrent transcription jobs (4GB VRAM each)
-GPU_VOICE_CLONING_LIMIT = 1  # Max concurrent voice cloning jobs (12GB VRAM each)
+GPU_TRANSCRIPTION_LIMIT = 1
+GPU_VOICE_CLONING_LIMIT = 1
 
 # Audio Processing Constants
 AUDIO_SAMPLE_RATE = 44100
 AUDIO_DEFAULT_FORMAT = "wav"
-VOICE_CLONE_TIMEOUT_SECONDS = 300  # 5 minutes timeout for voice cloning
+VOICE_CLONE_TIMEOUT_SECONDS = 1800
 
 # Queue Position Constants
 MAX_QUEUE_POSITION_CHECKS = 5  # Maximum number of jobs to check queue position for (performance)

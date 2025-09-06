@@ -209,7 +209,7 @@ echo "🚀 Starting ClearVocals API server..."
 source venv/bin/activate
 
 # Environment setup
-WORKERS=${WORKERS:-1}
+WORKERS=${WORKERS:-10}
 HOST=${HOST:-0.0.0.0} 
 PORT=${PORT:-8000}
 
@@ -220,46 +220,34 @@ echo "  - Host: ${HOST}:${PORT}"
 echo "  - Workers: ${WORKERS}"
 echo "  - Log: logs/info.log"
 
-# Start with better process management
+# API Server with lightweight workers (no AI models)
+export OMP_NUM_THREADS=8
+export TORCH_NUM_THREADS=4
+export MKL_NUM_THREADS=8
+export LOAD_AI_MODELS=false
+
+echo "🚀 Starting API server with ${WORKERS} lightweight workers..."
 nohup ./venv/bin/uvicorn main:app \
   --host ${HOST} \
   --port ${PORT} \
   --workers ${WORKERS} \
+  --worker-class uvicorn.workers.UvicornWorker \
   --access-log \
   --log-level info \
   > logs/info.log 2>&1 &
 
 API_PID=$!
-echo "  - API PID: $API_PID"
+echo "✅ API started with ${WORKERS} workers, PID: $API_PID"
 
-# Enhanced startup verification
-echo "⏳ Waiting for API initialization..."
-sleep 5
 
-# Multiple checks for API readiness
-API_READY=false
-for i in {1..10}; do
-    if pgrep -f "uvicorn.*main:app" > /dev/null; then
-        echo "  ✓ Process check passed ($i/10)"
-        if curl -s http://localhost:${PORT}/health/live > /dev/null 2>&1; then
-            echo "✅ API server ready and responding!"
-            API_READY=true
-            break
-        else
-            echo "  - API process running but not responding yet... ($i/10)"
-        fi
-    else
-        echo "  ✗ API process not found ($i/10)"
-    fi
-    sleep 2
-done
+# API verification
+echo "⏳ Initializing API..."
+sleep 8
 
-if [ "$API_READY" = false ]; then
-    echo "⚠️ API server startup verification failed"
-    echo "📋 Recent logs:"
-    tail -10 logs/info.log || echo "No logs available"
+if pgrep -f "uvicorn.*main:app" > /dev/null; then
+    echo "✅ API server running"
 else
-    echo "🎯 API server startup successful"
+    echo "⚠️ API startup failed, check logs/info.log"
 fi
 
 # Start workers with comprehensive setup
@@ -270,13 +258,20 @@ mkdir -p logs
 COMMON_LOG="logs/workers.log"
 rm -f "$COMMON_LOG" 2>/dev/null || true
 
+echo "Checking for existing workers..."
+if pgrep -f "workers_starter.py" > /dev/null; then
+    echo "Workers already running. Stopping existing workers first..."
+    pkill -f "workers_starter.py"
+    sleep 2
+fi
+
 echo "Starting workers (using common log)..."
 
 echo "Starting separation worker..."
 nohup ./venv/bin/python workers_starter.py separation_queue sep_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
-echo "Starting dub worker..."
-nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+echo "Starting dub worker with AI models..."
+LOAD_AI_MODELS=true nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "Starting billing worker..."
 nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
@@ -292,7 +287,7 @@ echo "🎉 RunPod setup complete! API is ready."
 echo "📊 Monitor workers: tail -f logs/workers.log"
 echo "🔍 Check status: ./venv/bin/python check_workers.py"
 echo "📈 Queue info: ./venv/bin/rq info -u redis://127.0.0.1:6379"
-echo "🌐 API should be accessible on port 8000"
+echo "🌐 API accessible on port ${PORT}"
 echo ""
 echo "🖥️  GPU Monitoring Commands:"
 echo "   nvidia-smi -l 2  # Monitor GPU every 2 seconds"
@@ -300,5 +295,6 @@ echo "   watch -n 1 'nvidia-smi --query-gpu=memory.used,memory.free --format=csv
 echo ""
 echo "📊 Performance Tips:"
 echo "   - Monitor GPU memory: nvidia-smi"
-echo "   - Check API response: curl http://localhost:8000/health/ready"
+echo "   - Check API response: curl http://localhost:${PORT}/health/ready"
+echo "   - View API logs: tail -f logs/info.log"
 echo "   - View pipeline stats: check pipeline metrics in logs"

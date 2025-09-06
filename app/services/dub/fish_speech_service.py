@@ -43,9 +43,9 @@ class FishSpeechService:
         self.checkpoint_path = "checkpoints/openaudio-s1-mini"
         self.decoder_checkpoint_path = "checkpoints/openaudio-s1-mini/codec.pth"
         
-        # Memory optimization flags
         self.use_memory_efficient_attention = True
         self.use_flash_attention = torch.cuda.is_available()
+        self.max_batch_size = 3
         self.is_initialized = False
         
         # TTSInferenceEngine components

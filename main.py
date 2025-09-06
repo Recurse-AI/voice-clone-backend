@@ -52,43 +52,34 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start status reconciler: {e}")
 
-    # Initialize AI services
-    logger.info("Initializing AI services...")
+    # AI services initialization (shared across all workers)
+    if settings.LOAD_AI_MODELS:
+        logger.info("🔥 Loading AI services...")
+        
+        try:
+            from app.services.dub.fish_speech_service import initialize_fish_speech
+            initialize_fish_speech()
+            logger.info("✅ Fish Speech ready")
+        except Exception as e:
+            logger.warning(f"❌ Fish Speech failed: {str(e)[:50]}...")
 
-    # Fish Speech initialization
-    try:
-        from app.services.dub.fish_speech_service import initialize_fish_speech
-        logger.info("Loading Fish Speech models...")
-        if initialize_fish_speech():
-            logger.info("Fish Speech service ready")
-        else:
-            logger.info("Fish Speech models not found - voice cloning disabled")
-    except Exception as e:
-        logger.warning(f"Fish Speech initialization failed: {str(e)[:100]}...")
+        try:
+            from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
+            initialize_whisperx_transcription()
+            logger.info("✅ WhisperX ready")
+        except Exception as e:
+            logger.warning(f"❌ WhisperX failed: {str(e)[:50]}...")
 
-    # WhisperX initialization
-    try:
-        from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
-        logger.info("Loading WhisperX transcription models...")
-        if initialize_whisperx_transcription():
-            logger.info("WhisperX service ready with preloaded models")
-        else:
-            logger.error("WhisperX initialization failed")
-    except Exception as e:
-        logger.error(f"WhisperX error: {str(e)[:100]}...")
-
-    # OpenAI service initialization
-    try:
-        from app.services.openai_service import initialize_openai_service
-        logger.info("Initializing OpenAI service...")
-        if initialize_openai_service():
-            logger.info("OpenAI service ready")
-        else:
-            logger.warning("OpenAI service unavailable - translation features disabled")
-    except Exception as e:
-        logger.warning(f"OpenAI initialization failed: {str(e)[:100]}...")
-
-    logger.info("AI services initialization complete")
+        try:
+            from app.services.openai_service import initialize_openai_service
+            initialize_openai_service()
+            logger.info("✅ OpenAI ready")
+        except Exception as e:
+            logger.warning(f"❌ OpenAI failed: {str(e)[:50]}...")
+            
+        logger.info("🎉 AI services loaded")
+    else:
+        logger.info("🚀 Lightweight mode - AI models skipped")
     
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     
@@ -101,27 +92,30 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    logger.info("Shutting down...")
+    logger.info("🔄 Shutting down...")
     
-    try:
-        from app.services.dub.fish_speech_service import cleanup_fish_speech
-        cleanup_fish_speech()
-    except Exception as e:
-        logger.error(f"Failed to cleanup Fish Speech: {e}")
+    # Only cleanup models if they were loaded
+    load_ai_models = settings.LOAD_AI_MODELS
     
-    try:
-        from app.services.dub.whisperx_transcription import cleanup_whisperx_transcription
-        cleanup_whisperx_transcription()
-    except Exception as e:
-        logger.error(f"Failed to cleanup WhisperX transcription: {e}")
+    if load_ai_models:
+        try:
+            from app.services.dub.fish_speech_service import cleanup_fish_speech
+            from app.services.dub.whisperx_transcription import cleanup_whisperx_transcription
+            cleanup_fish_speech()
+            cleanup_whisperx_transcription()
+            logger.info("🧹 AI models cleaned up")
+        except Exception as e:
+            logger.error(f"❌ Cleanup failed: {e}")
+    else:
+        logger.info("🚀 No cleanup needed")
     
     try:
         # Cleanup status reconciler if exists
         from app.utils.status_reconciler import _reconciler
         _reconciler.stop()
-        logger.info("Status reconciler stopped")
+        logger.info("✅ Status reconciler stopped")
     except Exception as e:
-        logger.error(f"Failed to cleanup status reconciler: {e}")
+        logger.error(f"❌ Failed to cleanup status reconciler: {e}")
     
    
 

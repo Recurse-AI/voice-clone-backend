@@ -83,20 +83,17 @@ class Settings(BaseSettings):
     # WhisperX Configuration
     WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "large-v2")  # Options: tiny, base, small, medium, large-v2, large-v3
     WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "auto")  # auto, float16, int8
-    # Where to run alignment models: 'cpu' saves VRAM, 'cuda' is faster but uses VRAM
-    WHISPER_ALIGNMENT_DEVICE: str = os.getenv("WHISPER_ALIGNMENT_DEVICE", "cpu")  # cpu | cuda
+    WHISPER_ALIGNMENT_DEVICE: str = os.getenv("WHISPER_ALIGNMENT_DEVICE", "cpu")
     
     # WhisperX Loading Configuration
     WHISPER_MODEL_TIMEOUT: int = int(os.getenv("WHISPER_MODEL_TIMEOUT", "300"))  # Model loading timeout in seconds
     
-    # GPU Memory Optimization
-    PYTORCH_CUDA_ALLOC_CONF: str = os.getenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+    PYTORCH_CUDA_ALLOC_CONF: str = os.getenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:512")
     
-    # Fish Speech Memory Configuration
-    FISH_SPEECH_LOW_MEMORY: bool = os.getenv("FISH_SPEECH_LOW_MEMORY", "true").lower() == "true"
-    FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "false").lower() == "true"
+    FISH_SPEECH_LOW_MEMORY: bool = os.getenv("FISH_SPEECH_LOW_MEMORY", "false").lower() == "true"
+    FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "true").lower() == "true"
     
-
+    LOAD_AI_MODELS: bool = os.getenv("LOAD_AI_MODELS", "false").lower() == "true"
     
     # RunPod Configuration for Audio Separation
     API_ACCESS_TOKEN: str = os.getenv("API_ACCESS_TOKEN", "")
@@ -107,7 +104,7 @@ class Settings(BaseSettings):
     # Voice cloning configuration
     MAX_REFERENCE_SECONDS: int = int(os.getenv('MAX_REFERENCE_SECONDS', '20'))  # Maximum seconds of reference audio to feed into TTS
     # FFmpeg Configuration
-    FFMPEG_USE_GPU: bool = bool(int(os.getenv('FFMPEG_USE_GPU', '1')))  # 1 to enable GPU (NVENC)
+    FFMPEG_USE_GPU: bool = bool(int(os.getenv('FFMPEG_USE_GPU', '0')))  # 1 to enable GPU (NVENC)
     
     model_config = {"env_file": ".env", "case_sensitive": True, "extra": "ignore"}
 

@@ -1,7 +1,7 @@
 import os
 
 class PipelineSettings:
-    DUB_CONCURRENCY_LIMIT: int = int(os.getenv("DUB_CONCURRENCY_LIMIT", "5"))
+    DUB_CONCURRENCY_LIMIT: int = int(os.getenv("DUB_CONCURRENCY_LIMIT", "6"))
     MAX_TRANSCRIPTION_JOBS: int = int(os.getenv("MAX_TRANSCRIPTION_JOBS", "1"))
     MAX_VOICE_CLONING_JOBS: int = int(os.getenv("MAX_VOICE_CLONING_JOBS", "1"))
     
@@ -9,6 +9,7 @@ class PipelineSettings:
     BATCH_DUBBING_SIZE: int = int(os.getenv("BATCH_DUBBING_SIZE", "4"))
     BATCH_UPLOAD_SIZE: int = int(os.getenv("BATCH_UPLOAD_SIZE", "2"))
     BATCH_TIMEOUT: int = int(os.getenv("BATCH_TIMEOUT", "30"))
+    VOICE_CLONE_BATCH_SIZE: int = int(os.getenv("VOICE_CLONE_BATCH_SIZE", "3"))
     
     REDIS_DUB_ACTIVE: str = "dub:active"
     REDIS_DUB_STAGE: str = "dub:stage"
@@ -16,6 +17,6 @@ class PipelineSettings:
     REDIS_RESUME_JOBS: str = "dub:resume"
     REDIS_BATCH_QUEUE: str = "dub:batch"
     
-    JOB_TIMEOUT: int = 3600
+    JOB_TIMEOUT: int = 7200
 
 pipeline_settings = PipelineSettings()
