@@ -76,6 +76,8 @@ class FishSpeechService:
         self.decoder_model = None
         self.inference_engine = None
         
+        # Note: Reference audio encoding optimization handled by Fish Speech library internally
+        
         logger.info(f"Fish Speech Service initializing on device: {self.device} (compile: {self._compile_enabled})")
     
     def _check_model_health(self) -> bool:

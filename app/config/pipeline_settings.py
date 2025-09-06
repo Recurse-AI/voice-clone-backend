@@ -3,7 +3,7 @@ import os
 class PipelineSettings:
     DUB_CONCURRENCY_LIMIT: int = int(os.getenv("DUB_CONCURRENCY_LIMIT", "6"))
     MAX_TRANSCRIPTION_JOBS: int = int(os.getenv("MAX_TRANSCRIPTION_JOBS", "3"))  # 3 WhisperX jobs parallel
-    MAX_VOICE_CLONING_JOBS: int = int(os.getenv("MAX_VOICE_CLONING_JOBS", "1"))
+    MAX_VOICE_CLONING_JOBS: int = int(os.getenv("MAX_VOICE_CLONING_JOBS", "1"))  # Keep 1 job - GPU already at 100%
     
     BATCH_SEPARATION_SIZE: int = int(os.getenv("BATCH_SEPARATION_SIZE", "3"))
     BATCH_DUBBING_SIZE: int = int(os.getenv("BATCH_DUBBING_SIZE", "4"))

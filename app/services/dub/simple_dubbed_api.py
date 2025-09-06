@@ -414,8 +414,9 @@ class SimpleDubbedAPI:
             try:
                 segment_start = time.time()
                 
-                # Skip per-segment cleanup for better GPU stability
-                # Memory will be cleaned up at the end of all segments
+                # Add small delay between segments to control GPU utilization
+                if i > 0:  # Skip delay for first segment
+                    time.sleep(0.2)  # 200ms breathing room for GPU
                 
                 result = self._voice_clone_segment(
                     data["dubbed_text"], 
@@ -434,12 +435,41 @@ class SimpleDubbedAPI:
                 
                 results.append(result)
                 
+                # Update progress after each segment completion
+                completed_segments = i + 1
+                progress_percent = (completed_segments / total_segments) * 0.9  # 90% of voice_cloning phase
+                progress_percent += 0.1  # Add initial 10% for segmentation
+                
+                message = f"Voice cloning: {completed_segments}/{total_segments} segments completed"
+                try:
+                    self._update_phase_progress(job_id, "voice_cloning", progress_percent, message)
+                except Exception as progress_error:
+                    logger.warning(f"Failed to update progress: {progress_error}")
+                
             except Exception as e:
                 logger.error(f"💥 Segment {data.get('seg_id', 'unknown')} failed: {e}")
                 results.append(None)
+                
+                # Update progress even for failed segments
+                completed_segments = i + 1
+                progress_percent = (completed_segments / total_segments) * 0.9  # 90% of voice_cloning phase
+                progress_percent += 0.1  # Add initial 10% for segmentation
+                
+                message = f"Voice cloning: {completed_segments}/{total_segments} segments processed (some failed)"
+                try:
+                    self._update_phase_progress(job_id, "voice_cloning", progress_percent, message)
+                except Exception as progress_error:
+                    logger.warning(f"Failed to update progress: {progress_error}")
         
         successful = sum(1 for r in results if r is not None)
         logger.info(f"🎯 Sequential processing completed: {successful}/{total_segments} segments successful")
+        
+        # Final progress update
+        final_message = f"Voice cloning completed: {successful}/{total_segments} segments successful"
+        try:
+            self._update_phase_progress(job_id, "voice_cloning", 1.0, final_message)
+        except Exception as progress_error:
+            logger.warning(f"Failed to update final progress: {progress_error}")
         
         return results
     
@@ -614,8 +644,18 @@ class SimpleDubbedAPI:
                 from app.utils.pipeline_utils import can_start_stage_with_priority, update_dub_job_stage
                 import time
                 
+                wait_start = time.time()
+                wait_count = 0
                 while not can_start_stage_with_priority("voice_cloning", job_id):
-                    time.sleep(1)
+                    wait_count += 1
+                    if wait_count % 10 == 0:  # Log every 5 seconds
+                        elapsed = time.time() - wait_start
+                        logger.warning(f"⏳ Voice cloning queue wait: {elapsed:.1f}s (job: {job_id})")
+                    time.sleep(0.5)  # Faster queue check - 500ms instead of 1s
+                
+                if wait_count > 0:
+                    total_wait = time.time() - wait_start
+                    logger.info(f"✅ Voice cloning queue cleared after {total_wait:.1f}s wait")
                 
                 update_dub_job_stage(job_id, "voice_cloning")
             except Exception:

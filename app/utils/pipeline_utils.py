@@ -129,15 +129,30 @@ def remove_resume_job(job_id: str) -> bool:
         return False
 
 def can_start_stage_with_priority(stage: str, job_id: str) -> bool:
-    if is_resume_job(job_id):
-        return can_start_stage(stage)
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    is_resume = is_resume_job(job_id)
+    if is_resume:
+        result = can_start_stage(stage)
+        if not result:
+            current_count = get_stage_jobs_count(stage)
+            logger.warning(f"🔍 Resume job {job_id} blocked: {stage} has {current_count} active jobs")
+        return result
     
     if stage == "voice_cloning":
         resume_jobs_waiting = get_resume_jobs_for_stage("voice_cloning")
         if resume_jobs_waiting > 0:
+            logger.warning(f"🔍 Job {job_id} blocked: {resume_jobs_waiting} resume jobs waiting for voice_cloning")
             return False
     
-    return can_start_stage(stage)
+    result = can_start_stage(stage)
+    if not result:
+        current_count = get_stage_jobs_count(stage)
+        max_allowed = getattr(pipeline_settings, f'MAX_{stage.upper()}_JOBS', 1)
+        logger.warning(f"🔍 Job {job_id} blocked: {stage} has {current_count}/{max_allowed} jobs")
+    
+    return result
 
 def get_resume_jobs_for_stage(stage: str) -> int:
     try:
