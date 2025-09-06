@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Request, Query
+from fastapi import APIRouter, HTTPException, Depends, Query
 import logging
 from app.schemas import (
     UserSeparationListResponse, UserDubListResponse, 
@@ -21,10 +21,8 @@ logger = logging.getLogger(__name__)
 @router.get("/workspace/status", 
            response_model=WorkspaceStatusResponse,
            summary="Get Workspace Status",
-           description="Get lightweight workspace status with summary statistics and recent jobs",
-           tags=["workspace"])
+           description="Get lightweight workspace status with summary statistics and recent jobs")
 async def get_workspace_status(
-    request: Request,
     recent_limit: int = Query(5, ge=1, le=20, description="Number of recent jobs to return (1-20)"),
     current_user = Depends(get_current_user)
 ):

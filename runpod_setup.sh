@@ -93,26 +93,100 @@ if [ ! -z "${HF_TOKEN}" ]; then
     huggingface-cli download fishaudio/openaudio-s1-mini --local-dir checkpoints/openaudio-s1-mini || true
 fi
 
-# Stop existing processes
-echo "Stopping existing processes..."
-pkill -f "python.*main.py" 2>/dev/null || true
-pkill -f "rq.*worker" 2>/dev/null || true
+# Stop existing processes - COMPREHENSIVE CLEANUP
+echo "🧹 Performing comprehensive cleanup..."
+
+# Show current processes before cleanup
+echo "📊 Current processes before cleanup:"
+ps aux | grep -E "(uvicorn|python.*main|rq.*worker|redis-server)" | grep -v grep | head -10 || echo "  - No relevant processes found"
+
+# Kill API servers (multiple patterns to catch all)
+echo "⛔ Stopping API servers..."
+pkill -f "uvicorn" 2>/dev/null || true
+pkill -f "python.*main" 2>/dev/null || true
+pkill -f "fastapi" 2>/dev/null || true
+pkill -f "gunicorn" 2>/dev/null || true
+
+# Kill ALL Python processes (aggressive but necessary for clean restart)
+echo "🐍 Stopping Python processes..."
+pkill -f "python.*worker" 2>/dev/null || true
 pkill -f "workers_starter.py" 2>/dev/null || true
-pkill -f "redis-server" 2>/dev/null || true
-sleep 3
+pkill -f "rq.*worker" 2>/dev/null || true
+# Kill any Python process using significant memory (likely AI models)
+ps aux | awk '/python/ && $6 > 1000000 {print $2}' | xargs -r kill -TERM 2>/dev/null || true
 
-# Force clean workers
-echo "Force cleaning all workers..."
-python cleanup_workers.py 2>/dev/null || echo "Cleanup script not available"
-
-# Start Redis with better configuration
-echo "Starting Redis server..."
-# Clean any leftover Redis data
-rm -f dump.rdb 2>/dev/null || true
-
-# Start Redis with proper config
-redis-server --daemonize yes --port 6379 --bind 127.0.0.1 --save "" --appendonly no
+# Kill Redis gracefully first, then forcefully
+echo "📊 Stopping Redis..."
+redis-cli shutdown 2>/dev/null || true
 sleep 2
+pkill -f "redis-server" 2>/dev/null || true
+
+# Kill processes using critical ports
+echo "🔌 Freeing ports..."
+fuser -k 8000/tcp 2>/dev/null || true
+fuser -k 6379/tcp 2>/dev/null || true
+
+# Wait for graceful shutdown
+echo "⏳ Waiting for graceful shutdown..."
+sleep 8
+
+# Force clean workers with comprehensive error handling
+echo "🔧 Deep cleaning workers and cache..."
+if [ -f "cleanup_workers.py" ]; then
+    python cleanup_workers.py 2>/dev/null || echo "  - Worker cleanup completed with warnings"
+else
+    echo "  - Manual worker cleanup"
+    # Manual Redis cleanup
+    redis-cli flushall 2>/dev/null || true
+    redis-cli flushdb 2>/dev/null || true
+fi
+
+# FORCE KILL remaining processes (nuclear option)
+echo "💥 Force killing remaining processes..."
+pkill -9 -f "uvicorn" 2>/dev/null || true
+pkill -9 -f "python.*main" 2>/dev/null || true
+pkill -9 -f "worker" 2>/dev/null || true
+pkill -9 -f "redis-server" 2>/dev/null || true
+
+# Clean any high-memory Python processes
+ps aux | awk '/python/ && $6 > 1000000 {print $2}' | xargs -r kill -9 2>/dev/null || true
+
+# Clean temp files and caches
+echo "🧽 Cleaning temporary files..."
+rm -rf /tmp/tmp* 2>/dev/null || true
+rm -rf ./tmp/* 2>/dev/null || true
+rm -rf ./logs/*.pid 2>/dev/null || true
+
+# Final verification
+echo "✅ Cleanup verification:"
+sleep 3
+REMAINING=$(ps aux | grep -E "(uvicorn|python.*main|rq.*worker|redis-server)" | grep -v grep | wc -l)
+if [ "$REMAINING" -gt 0 ]; then
+    echo "⚠️  Warning: $REMAINING processes may still be running"
+    ps aux | grep -E "(uvicorn|python.*main|rq.*worker|redis-server)" | grep -v grep | head -5 || true
+else
+    echo "✅ All target processes cleaned successfully"
+fi
+
+# Start Redis with better configuration  
+echo "🚀 Starting fresh Redis server..."
+# Clean any leftover Redis data
+rm -f dump.rdb appendonly.aof 2>/dev/null || true
+rm -rf /var/lib/redis/* 2>/dev/null || true
+
+# Start Redis with optimized config for AI workload
+echo "  - Configuring Redis for high-performance..."
+redis-server --daemonize yes \
+  --port 6379 \
+  --bind 127.0.0.1 \
+  --save "" \
+  --appendonly no \
+  --maxmemory 2gb \
+  --maxmemory-policy allkeys-lru \
+  --tcp-keepalive 60 \
+  --timeout 300
+  
+sleep 3
 
 # Verify Redis with retry
 REDIS_RETRIES=5
@@ -130,23 +204,62 @@ for i in $(seq 1 $REDIS_RETRIES); do
     fi
 done
 
-# Start API (Gunicorn)
-echo "Starting API server (Gunicorn)..."
+# Start API server with enhanced monitoring
+echo "🚀 Starting ClearVocals API server..."
 source venv/bin/activate
+
+# Environment setup
 WORKERS=${WORKERS:-1}
-HOST=${HOST:-0.0.0.0}
+HOST=${HOST:-0.0.0.0} 
 PORT=${PORT:-8000}
-# Allow API access to GPU for model initialization while limiting VRAM usage
-nohup ./venv/bin/uvicorn main:app --host ${HOST} --port ${PORT} --workers ${WORKERS} > logs/info.log 2>&1 &
 
-# Give API a moment to start
-sleep 3
+# Clear old logs
+> logs/info.log 2>/dev/null || true
 
-# Check if API started
-if pgrep -f "uvicorn.*main:app" > /dev/null; then
-    echo "✅ API server started successfully"
+echo "  - Host: ${HOST}:${PORT}"
+echo "  - Workers: ${WORKERS}"
+echo "  - Log: logs/info.log"
+
+# Start with better process management
+nohup ./venv/bin/uvicorn main:app \
+  --host ${HOST} \
+  --port ${PORT} \
+  --workers ${WORKERS} \
+  --access-log \
+  --log-level info \
+  > logs/info.log 2>&1 &
+
+API_PID=$!
+echo "  - API PID: $API_PID"
+
+# Enhanced startup verification
+echo "⏳ Waiting for API initialization..."
+sleep 5
+
+# Multiple checks for API readiness
+API_READY=false
+for i in {1..10}; do
+    if pgrep -f "uvicorn.*main:app" > /dev/null; then
+        echo "  ✓ Process check passed ($i/10)"
+        if curl -s http://localhost:${PORT}/health/live > /dev/null 2>&1; then
+            echo "✅ API server ready and responding!"
+            API_READY=true
+            break
+        else
+            echo "  - API process running but not responding yet... ($i/10)"
+        fi
+    else
+        echo "  ✗ API process not found ($i/10)"
+    fi
+    sleep 2
+done
+
+if [ "$API_READY" = false ]; then
+    echo "⚠️ API server startup verification failed"
+    echo "📋 Recent logs:"
+    tail -10 logs/info.log || echo "No logs available"
 else
-    echo "⚠️ API server may not have started properly, check logs/info.log"
+    echo "🎯 API server startup successful"
 fi
 
 # Start workers with comprehensive setup
