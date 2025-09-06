@@ -30,16 +30,34 @@ async def lifespan(app: FastAPI):
     logger.info("Starting up — checking MongoDB connection...")
     await verify_connection()
 
-    await create_unique_indexes()
+    # Use startup synchronization to prevent duplicate initialization
+    from app.utils.startup_sync import startup_sync
     
-    try:
-        from app.utils.init_db_indexes import init_database_indexes
-        await init_database_indexes()
-    except Exception as e:
-        logger.warning(f"Database indexes init failed: {e}")
+    # Database initialization - only one worker should do this
+    db_lock_acquired = await startup_sync.acquire_startup_lock("database_init", timeout=60)
+    
+    if db_lock_acquired:
+        try:
+            logger.info("Initializing database...")
+            await create_unique_indexes()
+            
+            from app.utils.init_db_indexes import init_database_indexes
+            await init_database_indexes()
+            
+            await startup_sync.mark_task_complete("database_init")
+            logger.info("Database initialization completed")
+            
+        except Exception as e:
+            logger.error(f"Database initialization failed: {e}")
+        finally:
+            await startup_sync.release_startup_lock("database_init")
+    else:
+        logger.info("Waiting for database initialization...")
+        await startup_sync.wait_for_task_completion("database_init")
     
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
     
+    # Cleanup - each worker can do its own cleanup safely
     try:
         cleanup_utils.cleanup_all_expired()
     except Exception as cleanup_error:
@@ -52,70 +70,75 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start status reconciler: {e}")
 
-    # AI services initialization (shared across all workers)
     if settings.LOAD_AI_MODELS:
-        logger.info("🔥 Loading AI services...")
+        logger.info("Loading AI services...")
         
         try:
             from app.services.dub.fish_speech_service import initialize_fish_speech
             initialize_fish_speech()
-            logger.info("✅ Fish Speech ready")
+            logger.info("Fish Speech ready")
         except Exception as e:
-            logger.warning(f"❌ Fish Speech failed: {str(e)[:50]}...")
+            logger.warning(f"Fish Speech failed: {str(e)[:50]}")
 
         try:
             from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
             initialize_whisperx_transcription()
-            logger.info("✅ WhisperX ready")
+            logger.info("WhisperX ready")
         except Exception as e:
-            logger.warning(f"❌ WhisperX failed: {str(e)[:50]}...")
+            logger.warning(f"WhisperX failed: {str(e)[:50]}")
 
         try:
             from app.services.openai_service import initialize_openai_service
             initialize_openai_service()
-            logger.info("✅ OpenAI ready")
+            logger.info("OpenAI ready")
         except Exception as e:
-            logger.warning(f"❌ OpenAI failed: {str(e)[:50]}...")
+            logger.warning(f"OpenAI failed: {str(e)[:50]}")
             
-        logger.info("🎉 AI services loaded")
+        logger.info("AI services loaded")
     else:
-        logger.info("🚀 Lightweight mode - AI models skipped")
+        logger.info("Lightweight mode - AI models skipped")
     
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     
-    try:
-        from app.services.r2_service import get_r2_service, reset_r2_service
-        reset_r2_service()
-        get_r2_service()
-    except Exception as e:
-        logger.error(f"Failed to initialize R2 service: {e}")
+    # R2 service initialization - only one worker should do this
+    r2_lock_acquired = await startup_sync.acquire_startup_lock("r2_init", timeout=30)
+    
+    if r2_lock_acquired:
+        try:
+            logger.info("Initializing R2 service...")
+            from app.services.r2_service import get_r2_service, reset_r2_service
+            reset_r2_service()
+            get_r2_service()
+            await startup_sync.mark_task_complete("r2_init")
+            logger.info("R2 service initialization completed")
+        except Exception as e:
+            logger.error(f"Failed to initialize R2 service: {e}")
+        finally:
+            await startup_sync.release_startup_lock("r2_init")
+    else:
+        logger.info("R2 service being initialized by another worker...")
+        await startup_sync.wait_for_task_completion("r2_init")
     
     yield
     
-    logger.info("🔄 Shutting down...")
+    logger.info("Shutting down...")
     
-    # Only cleanup models if they were loaded
-    load_ai_models = settings.LOAD_AI_MODELS
-    
-    if load_ai_models:
+    if settings.LOAD_AI_MODELS:
         try:
             from app.services.dub.fish_speech_service import cleanup_fish_speech
             from app.services.dub.whisperx_transcription import cleanup_whisperx_transcription
             cleanup_fish_speech()
             cleanup_whisperx_transcription()
-            logger.info("🧹 AI models cleaned up")
+            logger.info("AI models cleaned up")
         except Exception as e:
-            logger.error(f"❌ Cleanup failed: {e}")
-    else:
-        logger.info("🚀 No cleanup needed")
+            logger.error(f"Cleanup failed: {e}")
     
     try:
-        # Cleanup status reconciler if exists
         from app.utils.status_reconciler import _reconciler
         _reconciler.stop()
-        logger.info("✅ Status reconciler stopped")
+        logger.info("Status reconciler stopped")
     except Exception as e:
-        logger.error(f"❌ Failed to cleanup status reconciler: {e}")
+        logger.error(f"Failed to cleanup status reconciler: {e}")
     
    
 
