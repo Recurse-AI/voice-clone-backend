@@ -109,10 +109,12 @@ class SimpleDubbedAPI:
     def _charge_review_credits(self, job_id: str):
         """Charge 75% credits when job is ready for review"""
         from app.utils.job_utils import job_utils
-        from app.config.database import sync_client
+        from pymongo import MongoClient
         
+        sync_client = None
         try:
-            # Use configured DB name instead of hardcoded one
+            # Create new client instance instead of using global one
+            sync_client = MongoClient(settings.MONGODB_URI)
             sync_db = sync_client.get_database(settings.DB_NAME)
             sync_collection = sync_db.get_collection("dub_jobs")
             job_doc = sync_collection.find_one({"job_id": job_id})
@@ -122,10 +124,11 @@ class SimpleDubbedAPI:
         except Exception as e:
             logger.error(f"Failed to charge 75% credits for job {job_id}: {e}")
         finally:
-            try:
-                sync_client.close()
-            except Exception:
-                pass
+            if sync_client:
+                try:
+                    sync_client.close()
+                except Exception:
+                    pass
 
     def _update_phase_progress(self, job_id: str, phase: str, sub_progress: float, message: str):
         if phase not in self.PROGRESS_PHASES:

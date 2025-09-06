@@ -96,12 +96,12 @@ class FishSpeechService:
                 precision=self.precision,
             )
             
-            # Warm up with dry run
+            # Warm up with dry run - shorter text for faster compilation
             list(self.inference_engine.inference(
                 ServeTTSRequest(
-                    text="Hello world.",
+                    text="Hello",
                     references=[],
-                    max_new_tokens=1024,
+                    max_new_tokens=128,
                     format="wav"
                 )
             ))

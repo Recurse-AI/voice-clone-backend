@@ -17,6 +17,6 @@ class PipelineSettings:
     REDIS_RESUME_JOBS: str = "dub:resume"
     REDIS_BATCH_QUEUE: str = "dub:batch"
     
-    JOB_TIMEOUT: int = 7200
+    JOB_TIMEOUT: int = 10800
 
 pipeline_settings = PipelineSettings()
