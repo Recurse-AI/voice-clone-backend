@@ -356,14 +356,13 @@ async def activate_payg(current_user: TokenUser = Security(get_current_user)):
         user = await get_authenticated_user(current_user)
         
         # Check if user has payment methods (use cached status)
-        has_payment_method = user.get("hasPaymentMethod", False)
+        has_payment_method = user.hasPaymentMethod
         if not has_payment_method:
             return error_response("Please add a payment method first", 400)
         
         # Activate PAYG
         from app.config.database import users_collection
         from bson import ObjectId
-        
         customer_id = await stripe_service.get_or_create_customer(user, str(current_user.id))
         
         await users_collection.update_one(

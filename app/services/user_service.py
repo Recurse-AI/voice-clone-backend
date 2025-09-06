@@ -108,7 +108,6 @@ async def get_user_email(email: EmailStr) -> User:
     try:
         user_data = await db["users"].find_one({"email": email})
         if not user_data:
-            logger.error(f"User not found with email {email}")
             raise HTTPException(status_code=404, detail="User not found with this email")
     except HTTPException:
         # Re-raise HTTPException without logging again
