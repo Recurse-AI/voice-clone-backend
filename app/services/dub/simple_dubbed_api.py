@@ -154,7 +154,6 @@ class SimpleDubbedAPI:
             {"message": message, "phase": phase, "sub_progress": sub_progress}
         )
     
-    
     def _should_update_progress(self, completed: int, total: int) -> bool:
         return (completed % max(1, total // 10) == 0 or completed == total or completed <= 3)
     
@@ -353,8 +352,8 @@ class SimpleDubbedAPI:
             segment_index = int(segment_id.split('_')[1]) - 1
             cloned_filename = f"cloned_{job_id}_{segment_index:03d}.wav"
             cloned_path = os.path.join(process_temp_dir, cloned_filename).replace('\\', '/')
-            # Split dubbed text into manageable chunks
-            text_chunks = smart_chunk(dubbed_text, chunk_size=200, min_size=180)
+            # Split dubbed text into smaller, faster chunks for better performance
+            text_chunks = smart_chunk(dubbed_text, chunk_size=180, min_size=150)
             audio_chunks = []
             sample_rate_out = None
             seed_val = None
@@ -366,11 +365,11 @@ class SimpleDubbedAPI:
                     text=chunk,
                     reference_audio_bytes=reference_audio_bytes,
                     reference_text=original_text or "Reference audio",
-                    max_new_tokens=1024,  # User preference restored
-                    top_p=0.6,           # Optimized for faster sampling
-                    repetition_penalty=1.05,  # Minimal penalty
-                    temperature=0.6,     # Lower for faster generation
-                    chunk_length=200,    # User preference restored
+                    max_new_tokens=1024,  # Better quality with 1024 tokens
+                    top_p=0.6,           # Balanced for quality
+                    repetition_penalty=1.05,  # Standard penalty
+                    temperature=0.6,     # Balanced temperature
+                    chunk_length=180,    # Matched with text chunk size
                     job_id=job_id
                 )
                 
@@ -402,81 +401,49 @@ class SimpleDubbedAPI:
             logger.error(f"Voice cloning error for {segment_id}: {str(e)}")
             return None
     
-    def _process_voice_clone_batch(self, batch_data: list, job_id: str, process_temp_dir: str) -> list:
-        """Process 3 segments in parallel with ThreadPoolExecutor"""
+    def _process_voice_cloning_sequential(self, segments_data: list, job_id: str, process_temp_dir: str) -> list:
+        """Process voice cloning one segment at a time for better GPU stability"""
         import time
-        import concurrent.futures
-        from app.config.pipeline_settings import pipeline_settings
         
-        batch_start = time.time()
-        max_workers = pipeline_settings.VOICE_CLONE_PARALLEL_WORKERS
+        results = []
+        total_segments = len(segments_data)
         
-        logger.info(f"Processing {len(batch_data)} segments in parallel with {max_workers} workers")
+        logger.info(f"🎯 Processing {total_segments} segments sequentially for stable GPU usage")
         
-        try:
-            # Initial GPU cleanup
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-            
-            def clone_single_segment(data):
-                """Clone a single segment with timeout and error handling"""
-                try:
-                    segment_start = time.time()
-                    
-                    # Individual GPU cleanup for each worker
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    
-                    result = self._voice_clone_segment(
-                        data["dubbed_text"], 
-                        data["original_audio_path"], 
-                        data["seg_id"], 
-                        data["original_text"], 
-                        job_id=job_id, 
-                        process_temp_dir=process_temp_dir
-                    )
-                    
-                    segment_time = time.time() - segment_start
-                    logger.info(f"✅ Segment {data['seg_id']} cloned in {segment_time:.2f}s")
-                    
-                    return result
-                    
-                except Exception as e:
-                    logger.error(f"❌ Failed to clone segment {data.get('seg_id', 'unknown')}: {e}")
-                    return None
-            
-            # Process segments in parallel with proper ordering
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all tasks and maintain order
-                futures = [executor.submit(clone_single_segment, data) for data in batch_data]
+        for i, data in enumerate(segments_data):
+            try:
+                segment_start = time.time()
                 
-                results = []
-                for i, future in enumerate(futures):
-                    try:
-                        result = future.result(timeout=90)  # 90 second timeout per segment
-                        results.append(result)
-                    except concurrent.futures.TimeoutError:
-                        logger.error(f"⏰ Segment {batch_data[i].get('seg_id', 'unknown')} timed out after 90 seconds")
-                        results.append(None)
-                    except Exception as e:
-                        logger.error(f"💥 Segment {batch_data[i].get('seg_id', 'unknown')} failed: {e}")
-                        results.append(None)
-            
-            # Final cleanup
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            
-            batch_time = time.time() - batch_start
-            successful = sum(1 for r in results if r is not None)
-            logger.info(f"🚀 Parallel batch completed: {successful}/{len(batch_data)} segments in {batch_time:.2f}s")
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"💥 Parallel batch processing error: {str(e)}")
-            return [None] * len(batch_data)
+                # GPU cleanup before each segment
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                
+                result = self._voice_clone_segment(
+                    data["dubbed_text"], 
+                    data["original_audio_path"], 
+                    data["seg_id"], 
+                    data["original_text"], 
+                    job_id=job_id, 
+                    process_temp_dir=process_temp_dir
+                )
+                
+                segment_time = time.time() - segment_start
+                if result:
+                    logger.info(f"✅ Segment {data['seg_id']} ({i+1}/{total_segments}) cloned in {segment_time:.2f}s")
+                else:
+                    logger.error(f"❌ Segment {data['seg_id']} ({i+1}/{total_segments}) failed after {segment_time:.2f}s")
+                
+                results.append(result)
+                
+            except Exception as e:
+                logger.error(f"💥 Segment {data.get('seg_id', 'unknown')} failed: {e}")
+                results.append(None)
+        
+        successful = sum(1 for r in results if r is not None)
+        logger.info(f"🎯 Sequential processing completed: {successful}/{total_segments} segments successful")
+        
+        return results
     
     
     def _get_transcription_data(self, job_id: str, manifest_override: Optional[Dict[str, Any]],
@@ -665,88 +632,92 @@ class SimpleDubbedAPI:
         dubbed_segments = []
         dub_idx = 0
         cloneable_count = sum(1 for s in enhanced_sentences if s.get("text", "").strip()) if not review_mode else 0
-        completed_clones = 0
-
-        # Clean batch processing implementation
-        from app.config.pipeline_settings import pipeline_settings
-        batch_size = pipeline_settings.VOICE_CLONE_BATCH_SIZE
         
-        for batch_start in range(0, len(enhanced_sentences), batch_size):
-            batch_end = min(batch_start + batch_size, len(enhanced_sentences))
-            batch_segments = enhanced_sentences[batch_start:batch_end]
+        # Prepare all segments data
+        segments_data = []
+        for i, segment in enumerate(enhanced_sentences):
+            seg_id = f"seg_{i+1:03d}"
+            start_ms = segment.get("start", 0)
+            end_ms = segment.get("end", 0)
+            original_text = segment.get("text", "")
+            original_audio_path = segment.get("output_path", "")
             
-            batch_data = []
-            for i, segment in enumerate(batch_segments):
-                global_idx = batch_start + i
-                seg_id = f"seg_{global_idx+1:03d}"
-                start_ms = segment.get("start", 0)
-                end_ms = segment.get("end", 0)
-                original_text = segment.get("text", "")
-                original_audio_path = segment.get("output_path", "")
+            if not original_text.strip():
+                continue
                 
-                if not original_text.strip():
-                    continue
-                    
-                dubbed_text = dubbed_texts[dub_idx] if dub_idx < len(dubbed_texts) else ""
-                dub_idx += 1
-                
-                if seg_id in edited_map:
-                    dubbed_text = edited_map[seg_id]
-                
-                batch_data.append({
-                    "seg_id": seg_id, "global_idx": global_idx, "start_ms": start_ms,
-                    "end_ms": end_ms, "original_text": original_text, "dubbed_text": dubbed_text,
-                    "original_audio_path": original_audio_path
-                })
+            dubbed_text = dubbed_texts[dub_idx] if dub_idx < len(dubbed_texts) else ""
+            dub_idx += 1
             
-            if not review_mode and batch_data:
-                batch_results = self._process_voice_clone_batch(batch_data, job_id, process_temp_dir)
+            if seg_id in edited_map:
+                dubbed_text = edited_map[seg_id]
+            
+            segments_data.append({
+                "seg_id": seg_id, "global_idx": i, "start_ms": start_ms,
+                "end_ms": end_ms, "original_text": original_text, "dubbed_text": dubbed_text,
+                "original_audio_path": original_audio_path
+            })
+        
+        if not review_mode and segments_data:
+            # Process sequentially instead of batch
+            results = self._process_voice_cloning_sequential(segments_data, job_id, process_temp_dir)
+            
+            for i, data in enumerate(segments_data):
+                result = results[i] if i < len(results) else None
+                cloned_audio_path = result.get("path") if result else None
+                cloned_duration_ms = result.get("duration_ms", data["end_ms"] - data["start_ms"]) if result else data["end_ms"] - data["start_ms"]
                 
-                for j, data in enumerate(batch_data):
-                    result = batch_results[j] if j < len(batch_results) else None
-                    cloned_audio_path = result.get("path") if result else None
-                    cloned_duration_ms = result.get("duration_ms", data["end_ms"] - data["start_ms"]) if result else data["end_ms"] - data["start_ms"]
-                    
-                    segment_json = self._create_segment_info(
-                        data["seg_id"], data["global_idx"], data["start_ms"], cloned_duration_ms,
-                        data["original_text"], data["dubbed_text"], data["original_audio_path"],
-                        cloned_audio_path, job_id, process_temp_dir
-                    )
-                    dubbed_segments.append(segment_json)
-                    
-                    if cloneable_count > 0:
-                        completed_clones += 1
-                        if self._should_update_progress(completed_clones, cloneable_count):
-                            try:
-                                sub_progress = completed_clones / cloneable_count
-                                self._update_phase_progress(job_id, "voice_cloning", sub_progress,
-                                    f"Voice cloning: {completed_clones}/{cloneable_count} segments")
-                            except Exception:
-                                pass
-            else:
-                for data in batch_data:
-                    segment_json = self._create_segment_info(
-                        data["seg_id"], data["global_idx"], data["start_ms"], data["end_ms"] - data["start_ms"],
-                        data["original_text"], data["dubbed_text"], data["original_audio_path"],
-                        None, job_id, process_temp_dir
-                    )
-                    dubbed_segments.append(segment_json)
+                segment_json = self._create_segment_info(
+                    data["seg_id"], data["global_idx"], data["start_ms"], cloned_duration_ms,
+                    data["original_text"], data["dubbed_text"], data["original_audio_path"],
+                    cloned_audio_path, job_id, process_temp_dir
+                )
+                dubbed_segments.append(segment_json)
+                
+                # Update progress
+                if cloneable_count > 0:
+                    completed_clones = i + 1
+                    if self._should_update_progress(completed_clones, cloneable_count):
+                        try:
+                            sub_progress = completed_clones / cloneable_count
+                            self._update_phase_progress(job_id, "voice_cloning", sub_progress,
+                                f"Voice cloning: {completed_clones}/{cloneable_count} segments")
+                        except Exception:
+                            pass
+        else:
+            # Review mode - no cloning
+            for data in segments_data:
+                segment_json = self._create_segment_info(
+                    data["seg_id"], data["global_idx"], data["start_ms"], data["end_ms"] - data["start_ms"],
+                    data["original_text"], data["dubbed_text"], data["original_audio_path"],
+                    None, job_id, process_temp_dir
+                )
+                dubbed_segments.append(segment_json)
         
         return dubbed_segments
 
     def _process_dubbing_and_cloning(self, job_id: str, raw_sentences: list, target_language: str,
                                      manifest_override: Optional[Dict[str, Any]], review_mode: bool, 
                                      process_temp_dir: str) -> list:
-        if not manifest_override:
-            self._update_phase_progress(job_id, "dubbing", 0.0, "Starting AI text translation with OpenAI")
-        
-        
         segments_to_dub, segment_indices = self._prepare_dubbing_segments(raw_sentences)
         target_language_code = language_service.normalize_language_input(target_language)
-        dubbed_texts = self.dub_text_batch(segments_to_dub, target_language_code, batch_size=15, job_id=job_id)
         
-        self._update_phase_progress(job_id, "dubbing", 1.0, "Reviewing and editing with AI")
+        # Check if we have manifest with already dubbed texts (resume after review)
         edited_map = self._get_edited_text_map(manifest_override, target_language)
+        
+        if manifest_override and edited_map:
+            # Use existing dubbed texts from manifest - no OpenAI call needed
+            logger.info(f"✅ RESUME MODE: Using existing dubbed texts from manifest ({len(edited_map)} segments) - skipping OpenAI translation")
+            dubbed_texts = []
+            for i, segment in enumerate(segments_to_dub):
+                seg_id = f"seg_{i+1:03d}"
+                dubbed_text = edited_map.get(seg_id, segment.get("text", ""))
+                dubbed_texts.append(dubbed_text)
+            self._update_phase_progress(job_id, "dubbing", 1.0, "Using reviewed dubbed texts")
+        else:
+            # Fresh translation needed - call OpenAI
+            self._update_phase_progress(job_id, "dubbing", 0.0, "Starting AI text translation with OpenAI")
+            dubbed_texts = self.dub_text_batch(segments_to_dub, target_language_code, batch_size=15, job_id=job_id)
+            self._update_phase_progress(job_id, "dubbing", 1.0, "Reviewing and editing with AI")
         
         enhanced_sentences = raw_sentences
         if not review_mode:

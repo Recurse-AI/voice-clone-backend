@@ -9,8 +9,6 @@ class PipelineSettings:
     BATCH_DUBBING_SIZE: int = int(os.getenv("BATCH_DUBBING_SIZE", "4"))
     BATCH_UPLOAD_SIZE: int = int(os.getenv("BATCH_UPLOAD_SIZE", "2"))
     BATCH_TIMEOUT: int = int(os.getenv("BATCH_TIMEOUT", "30"))
-    VOICE_CLONE_BATCH_SIZE: int = int(os.getenv("VOICE_CLONE_BATCH_SIZE", "3"))  # 3 segments parallel processing
-    VOICE_CLONE_PARALLEL_WORKERS: int = int(os.getenv("VOICE_CLONE_PARALLEL_WORKERS", "3"))  # 3 parallel workers
     
     REDIS_DUB_ACTIVE: str = "dub:active"
     REDIS_DUB_STAGE: str = "dub:stage"

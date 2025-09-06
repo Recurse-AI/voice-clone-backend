@@ -178,17 +178,17 @@ class FishSpeechService:
                 
                 return {"success": True, "audio_data": audio_data, "sample_rate": sample_rate}
             
-            # Execute with timeout (60 seconds max per segment)
+            # Execute with timeout (120 seconds max per segment for better reliability)
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(_generate_audio)
                 try:
-                    result = future.result(timeout=60)
+                    result = future.result(timeout=120)
                     elapsed = time.time() - start_time
                     logger.info(f"Voice generation completed in {elapsed:.2f}s for text: {text[:30]}...")
                     return result
                 except concurrent.futures.TimeoutError:
-                    logger.error(f"Voice generation timeout (60s) for text: {text[:30]}...")
-                    return {"success": False, "error": "Generation timeout after 60 seconds"}
+                    logger.error(f"Voice generation timeout (120s) for text: {text[:30]}...")
+                    return {"success": False, "error": "Generation timeout after 120 seconds"}
                 
         except Exception as e:
             elapsed = time.time() - start_time
