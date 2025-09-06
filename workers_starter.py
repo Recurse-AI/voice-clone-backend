@@ -36,6 +36,42 @@ def register_job_functions():
         logger.error(f"Failed to register job functions: {e}")
         return False
 
+def initialize_ai_models():
+    """Initialize AI models if LOAD_AI_MODELS is true"""
+    from app.config.settings import settings
+    
+    if not settings.LOAD_AI_MODELS:
+        logger.info("AI models initialization skipped (LOAD_AI_MODELS=false)")
+        return
+    
+    logger.info("🚀 Loading AI models in worker...")
+    
+    # Initialize OpenAI (lightweight)
+    try:
+        from app.services.openai_service import initialize_openai_service
+        initialize_openai_service()
+        logger.info("✅ OpenAI ready")
+    except Exception as e:
+        logger.warning(f"OpenAI failed: {str(e)[:50]}")
+
+    # Initialize FishSpeech
+    try:
+        from app.services.dub.fish_speech_service import initialize_fish_speech
+        initialize_fish_speech()
+        logger.info("✅ FishSpeech preloaded")
+    except Exception as e:
+        logger.warning(f"FishSpeech failed: {str(e)[:50]}")
+
+    # Initialize WhisperX
+    try:
+        from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
+        initialize_whisperx_transcription()
+        logger.info("✅ WhisperX preloaded")
+    except Exception as e:
+        logger.warning(f"WhisperX failed: {str(e)[:50]}")
+    
+    logger.info("🎯 AI models initialization completed")
+
 def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://127.0.0.1:6379"):
     try:
         import time
@@ -44,6 +80,9 @@ def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://12
         if not register_job_functions():
             logger.error("Failed to register job functions")
             return False
+        
+        # Initialize AI models for this worker
+        initialize_ai_models()
         
         redis_conn = redis.Redis.from_url(redis_url)
         redis_conn.ping()
