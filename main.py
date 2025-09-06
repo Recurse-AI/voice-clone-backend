@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
     
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
     
-    # Cleanup - each worker can do its own cleanup safely
+    # Simple cleanup - each worker can do its own cleanup
     try:
         cleanup_utils.cleanup_all_expired()
     except Exception as cleanup_error:
@@ -73,13 +73,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start status reconciler: {e}")
 
-    # Initialize lightweight services regardless of LOAD_AI_MODELS
-    try:
-        from app.services.openai_service import initialize_openai_service
-        initialize_openai_service()
-        logger.info("OpenAI ready")
-    except Exception as e:
-        logger.warning(f"OpenAI failed: {str(e)[:50]}")
+    # Initialize only lightweight OpenAI service in API workers
+    if not settings.LOAD_AI_MODELS:
+        try:
+            from app.services.openai_service import initialize_openai_service
+            initialize_openai_service()
+            logger.info("OpenAI ready")
+        except Exception as e:
+            logger.warning(f"OpenAI failed: {str(e)[:50]}")
 
     if settings.LOAD_AI_MODELS:
         logger.info("Loading heavy AI models...")

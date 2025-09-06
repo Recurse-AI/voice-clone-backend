@@ -47,6 +47,7 @@ class FishSpeechService:
         self.use_flash_attention = torch.cuda.is_available()
         self.max_batch_size = 3
         self.is_initialized = False
+        self.is_compiled = False  # Track compilation status
         
         # GPU optimization for faster compilation
         if torch.cuda.is_available():
@@ -107,17 +108,20 @@ class FishSpeechService:
                 precision=self.precision,
             )
             
-            # Warm up with dry run - shorter text for faster compilation
+            # Warm up with minimal dry run for faster compilation
+            logger.info("🔥 Warming up model compilation...")
             list(self.inference_engine.inference(
                 ServeTTSRequest(
-                    text="Hello",
+                    text="Hi",
                     references=[],
-                    max_new_tokens=128,
+                    max_new_tokens=32,
                     format="wav"
                 )
             ))
             
             self.is_initialized = True
+            self.is_compiled = True
+            logger.info("✅ Model compilation completed and cached")
             return True
             
         except Exception as e:
@@ -140,6 +144,13 @@ class FishSpeechService:
         Returns:
             Dict with generation results including audio bytes
         """
+        # GPU memory monitoring and cleanup before generation
+        if torch.cuda.is_available():
+            memory_before = torch.cuda.memory_allocated() / 1024**3  # GB
+            torch.cuda.empty_cache()
+            memory_after = torch.cuda.memory_allocated() / 1024**3  # GB
+            logger.debug(f"GPU memory: {memory_before:.2f}GB → {memory_after:.2f}GB")
+        
         if not self.is_initialized:
             if not self.load_model():
                 return {"success": False, "error": "Failed to load TTSInferenceEngine"}

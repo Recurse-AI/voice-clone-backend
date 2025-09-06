@@ -362,12 +362,12 @@ class SimpleDubbedAPI:
                     text=chunk,
                     reference_audio_bytes=reference_audio_bytes,
                     reference_text=original_text or "Reference audio",
-                    max_new_tokens=2048,
-                    top_p=0.7,
-                    repetition_penalty=1.2,
-                    temperature=0.7,
+                    max_new_tokens=1024,  # Reduced from 2048 for faster generation
+                    top_p=0.7,          # Increased for faster sampling
+                    repetition_penalty=1.1,  # Reduced for speed
+                    temperature=0.8,    # Slightly higher for faster generation
                     seed=seed_val,
-                    chunk_length=200,
+                    chunk_length=200,   # Reduced chunk size
                     job_id=job_id
                 )
                 if result.get("success"):

@@ -44,16 +44,16 @@ def initialize_ai_models():
         logger.info("AI models initialization skipped (LOAD_AI_MODELS=false)")
         return
     
-    logger.info("🚀 Loading AI models in worker...")
+    logger.info("🚀 Loading heavy AI models in worker...")
     
-    # Initialize OpenAI (lightweight)
+    # Initialize OpenAI for dub worker
     try:
         from app.services.openai_service import initialize_openai_service
         initialize_openai_service()
         logger.info("✅ OpenAI ready")
     except Exception as e:
         logger.warning(f"OpenAI failed: {str(e)[:50]}")
-
+    
     # Initialize FishSpeech
     try:
         from app.services.dub.fish_speech_service import initialize_fish_speech
