@@ -14,16 +14,18 @@ logger = logging.getLogger(__name__)
 
 
 def process_dub_task(request_dict: dict, user_id: str):
-    """
-    Clean dub task processing
-    Single responsibility: Process video dubbing workflow
-    """
     job_id = request_dict.get("job_id")
     target_language = request_dict.get("target_language")
     source_video_language = request_dict.get("source_video_language")
     human_review = request_dict.get("humanReview", False)
     
-    logger.info(f"DUB WORKER: Processing job {job_id}")
+    from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, can_start_dub_job, update_dub_job_stage
+    
+    import time
+    while not can_start_dub_job():
+        time.sleep(1)  # Reduced delay for faster queue processing
+    
+    mark_dub_job_active(job_id, "initialization")
     
     try:
         # Step 1: Validate uploaded files
@@ -56,6 +58,8 @@ def process_dub_task(request_dict: dict, user_id: str):
             return
         
         # Step 4: Process dubbing pipeline
+        update_dub_job_stage(job_id, "dubbing")
+        
         success = _process_dubbing_pipeline(
             job_id, target_language, source_video_language, 
             job_dir, human_review
@@ -68,26 +72,51 @@ def process_dub_task(request_dict: dict, user_id: str):
         # Step 5: Cleanup
         _cleanup_r2_file(r2_key)
         
-        logger.info(f"DUB WORKER: Completed job {job_id}")
-        
     except Exception as e:
-        logger.error(f"DUB WORKER: Failed job {job_id}: {e}")
         try:
             dub_service.fail_job(job_id, f"Worker error: {str(e)}", "worker_error")
         except:
-            pass  # Avoid double error
+            pass
+    finally:
+        mark_dub_job_inactive(job_id)
 
 
 def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> bool:
-    """Process audio separation step"""
     try:
-        # Update status to separation
+        from app.utils.pipeline_utils import update_dub_job_stage
+        update_dub_job_stage(job_id, "separation")
+        
         status_service.update_status(
             job_id, "dub", JobStatus.SEPARATING, 25,
             {"message": "Starting audio separation", "phase": "separation"}
         )
         
-        # Submit to RunPod
+        # Smart batch separation processing
+        from app.utils.pipeline_utils import (can_batch_separation_requests, get_batchable_jobs, 
+                                            should_wait_for_batch, execute_separation_batch)
+        from app.config.pipeline_settings import pipeline_settings
+        import time
+        
+        # Check if we should batch this separation
+        if can_batch_separation_requests():
+            batch_jobs = get_batchable_jobs("separation", pipeline_settings.BATCH_SEPARATION_SIZE)
+            if job_id in batch_jobs:
+                logger.info(f"Executing separation batch: {batch_jobs}")
+                batch_result = execute_separation_batch(batch_jobs)
+                
+                if batch_result["status"] == "processing":
+                    logger.info(f"Batch {batch_result['batch_id']} started for {len(batch_jobs)} jobs")
+        
+        elif should_wait_for_batch("separation", job_id):
+            logger.info(f"Waiting for separation batch formation: {job_id}")
+            time.sleep(2)  # Reduced batch wait time
+            
+            if can_batch_separation_requests():
+                batch_jobs = get_batchable_jobs("separation", pipeline_settings.BATCH_SEPARATION_SIZE)
+                if job_id in batch_jobs:
+                    batch_result = execute_separation_batch(batch_jobs)
+                    logger.info(f"Late batch formed: {batch_result['batch_id']}")
+        
         logger.info(f"Submitting RunPod separation for {job_id}")
         runpod_request_id = runpod_service.submit_separation_request(audio_url, job_id)
         
@@ -153,12 +182,18 @@ def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> bool
 def _process_dubbing_pipeline(job_id: str, target_language: str, 
                             source_video_language: str, job_dir: str,
                             human_review: bool) -> bool:
-    """Process the dubbing pipeline using simplified API"""
     try:
-        # Update status to processing
+        from app.utils.pipeline_utils import update_dub_job_stage, can_start_stage_with_priority
+        import time
+        
+        while not can_start_stage_with_priority("transcription", job_id):
+            time.sleep(1)  # Faster stage transition checking
+        
+        update_dub_job_stage(job_id, "transcription")
+        
         status_service.update_status(
-            job_id, "dub", JobStatus.PROCESSING, 46,
-            {"message": "Starting dubbing pipeline", "phase": "dubbing"}
+            job_id, "dub", JobStatus.TRANSCRIBING, 46,
+            {"message": "Starting transcription and dubbing pipeline", "phase": "transcription"}
         )
         
         # Use simplified dubbing API
@@ -230,21 +265,17 @@ def _cleanup_temp_files(job_id: str):
 
 # Task function for RQ
 def enqueue_dub_task(request_dict: dict, user_id: str):
-    """RQ task wrapper"""
-    # Memory cleanup before processing
+    """RQ task wrapper with memory management"""
     gc.collect()
     
     try:
         process_dub_task(request_dict, user_id)
     finally:
-        # Memory cleanup after processing
         gc.collect()
         try:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-                if hasattr(torch.cuda, "ipc_collect"):
-                    torch.cuda.ipc_collect()
         except Exception:
             pass
 

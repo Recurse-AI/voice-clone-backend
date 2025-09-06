@@ -99,7 +99,6 @@ class QueueManager:
             return False
     
     def enqueue_dub_task(self, request_dict: dict, user_id: str) -> bool:
-        """Enqueue dub task with error handling"""
         try:
             queue = self.get_dub_queue()
             if not queue:
@@ -111,7 +110,7 @@ class QueueManager:
             job = queue.enqueue(
                 enqueue_dub_task,
                 request_dict, user_id,
-                job_timeout='2h'  # 2 hour timeout for dub jobs
+                job_timeout='2h'
             )
             
             logger.info(f"✅ Enqueued dub task: {request_dict.get('job_id')} (RQ job: {job.id})")

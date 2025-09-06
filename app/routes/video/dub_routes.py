@@ -189,9 +189,12 @@ async def get_video_dub_status(job_id: str):
 from app.services.dub.manifest_service import load_manifest as _load_manifest_json, ensure_job_dir as _ensure_job_dir
 
 def _resume_approved_job(job_id: str, manifest: dict, target_language: str, source_video_language: str, user_id: str):
-    """Module-level function to resume approved job for RQ compatibility"""
     try:
-        # Update status message to show processing is continuing
+        from app.utils.pipeline_utils import mark_resume_job, mark_dub_job_active, mark_dub_job_inactive
+        
+        mark_resume_job(job_id)
+        mark_dub_job_active(job_id, "voice_cloning")
+        
         _update_status_non_blocking(job_id, JobStatus.REVIEWING, 80, {
             "message": "Processing approved edits...",
             "review_status": "approved",
@@ -248,7 +251,6 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
         # Complete credit billing using centralized utility (sync context) - charge remaining 25%
         job_utils.complete_job_billing_sync(job_id, "dub", user_id, 0.25)
         
-        # ✅ Cleanup ONLY after resume is completely finished
         cleanup_utils.cleanup_job_comprehensive(job_id, "dub")
         
     except Exception as e:
@@ -259,12 +261,12 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
             "error": str(e)
         })
         
-        # Refund credits on failure
-        # Refund credits for failed job (sync context)
         job_utils.refund_job_credits_sync(job_id, "dub", "approval_failed")
-        
-        # ❌ Cleanup after resume failure too
         cleanup_utils.cleanup_job_comprehensive(job_id, "dub")
+    finally:
+        from app.utils.pipeline_utils import remove_resume_job
+        mark_dub_job_inactive(job_id)
+        remove_resume_job(job_id)
 
 @router.post("/video-dub/{job_id}/approve")
 async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(get_current_user)):

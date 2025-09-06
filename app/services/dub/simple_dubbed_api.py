@@ -156,8 +156,19 @@ class SimpleDubbedAPI:
         return (completed % max(1, total // 10) == 0 or completed == total or completed <= 3)
     
     def dub_text_batch(self, segments: list, target_language: str = "English", batch_size: int = 10, job_id: str = None) -> list:
-        """Use dedicated OpenAI service for text dubbing"""
+        """Enhanced batch dubbing with pipeline optimization"""
+        from app.utils.pipeline_utils import can_batch_dubbing_requests, execute_dubbing_batch, get_batchable_jobs
+        from app.config.pipeline_settings import pipeline_settings
         
+        # Check for batch dubbing opportunity
+        if job_id and can_batch_dubbing_requests():
+            batch_jobs = get_batchable_jobs("dubbing", pipeline_settings.BATCH_DUBBING_SIZE)
+            if job_id in batch_jobs:
+                logger.info(f"Executing dubbing batch for jobs: {batch_jobs}")
+                batch_result = execute_dubbing_batch(batch_jobs)
+                
+                if batch_result["status"] == "processing":
+                    logger.info(f"Dubbing batch {batch_result['batch_id']} processing {len(batch_jobs)} jobs")
 
         openai_service = get_openai_service()
         
@@ -208,7 +219,12 @@ class SimpleDubbedAPI:
             )
             
             if review_mode:
-                # Update progress for review preparation
+                try:
+                    from app.utils.pipeline_utils import update_dub_job_stage
+                    update_dub_job_stage(job_id, "review_prep")
+                except Exception:
+                    pass
+                    
                 self._update_phase_progress(job_id, "review_prep", 0.5, "Preparing segments for human review")
                 
                 # Get vocal and instrument URLs from job status details
@@ -541,6 +557,17 @@ class SimpleDubbedAPI:
     def _process_voice_cloning(self, job_id: str, enhanced_sentences: list, dubbed_texts: list, 
                               edited_map: dict, review_mode: bool, process_temp_dir: str) -> list:
         if not review_mode:
+            try:
+                from app.utils.pipeline_utils import can_start_stage_with_priority, update_dub_job_stage
+                import time
+                
+                while not can_start_stage_with_priority("voice_cloning", job_id):
+                    time.sleep(1)  # Faster voice cloning stage entry
+                
+                update_dub_job_stage(job_id, "voice_cloning")
+            except Exception:
+                pass
+            
             self._update_status(job_id, JobStatus.PROCESSING, 80, {
                 "message": "Starting AI voice cloning with Fish Speech",
                 "phase": "voice_cloning",

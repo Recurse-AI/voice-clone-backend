@@ -4,8 +4,8 @@ All hardcoded values should be defined here for maintainability and configurabil
 """
 
 # Processing Constants
-MAX_ATTEMPTS_DEFAULT = 90  # Default max attempts for background jobs (30 minutes with 20s intervals)
-POLLING_INTERVAL_SECONDS = 20  # Default polling interval for background jobs
+MAX_ATTEMPTS_DEFAULT = 180  # Default max attempts for background jobs (30 minutes with 10s intervals)
+POLLING_INTERVAL_SECONDS = 10  # Optimized polling interval for faster status updates
 TIMEOUT_MINUTES = 30  # Default timeout for long-running jobs
 
 MIN_CREDIT_CHECK_DURATION = 0.1  # Minimum duration to check credits for
@@ -57,7 +57,9 @@ MAX_THREAD_RETRY_ATTEMPTS = 3
 
 # Cache/Memory Constants
 SHARED_MEMORY_TTL_SECONDS = 3600  # 1 hour TTL for shared memory
-MAX_CONCURRENT_JOBS = 6  # Maximum concurrent processing jobs (2 dub + 1 sep + buffer)
+# Concurrency handled by pipeline_settings.py
+GPU_TRANSCRIPTION_LIMIT = 1  # Max concurrent transcription jobs (4GB VRAM each)
+GPU_VOICE_CLONING_LIMIT = 1  # Max concurrent voice cloning jobs (12GB VRAM each)
 
 # Audio Processing Constants
 AUDIO_SAMPLE_RATE = 44100

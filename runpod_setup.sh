@@ -10,6 +10,8 @@ chmod 1777 /tmp 2>/dev/null || true
 export TMPDIR=/tmp
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export FFMPEG_USE_GPU=0
+export CUDA_LAUNCH_BLOCKING=0
+export TORCH_BACKENDS_CUDNN_DETERMINISTIC=0
 
 # Find project directory
 if [ -f "requirements.txt" ]; then
@@ -47,7 +49,9 @@ apt-get install -y \
 echo "Checking GPU..."
 if command -v nvidia-smi &> /dev/null; then
     echo "GPU detected:"
-    nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+    nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader
+    echo "GPU Memory Status:"
+    nvidia-smi --query-gpu=memory.used,memory.free,memory.total --format=csv,noheader,nounits
 else
     echo "No GPU detected, running on CPU"
 fi
@@ -132,8 +136,8 @@ source venv/bin/activate
 WORKERS=${WORKERS:-1}
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-8000}
-# Detach API from GPU to avoid consuming VRAM
-CUDA_VISIBLE_DEVICES="" nohup ./venv/bin/uvicorn main:app --host ${HOST} --port ${PORT} --workers ${WORKERS} > logs/info.log 2>&1 &
+# Allow API access to GPU for model initialization while limiting VRAM usage
+nohup ./venv/bin/uvicorn main:app --host ${HOST} --port ${PORT} --workers ${WORKERS} > logs/info.log 2>&1 &
 
 # Give API a moment to start
 sleep 3
@@ -165,7 +169,7 @@ echo "Starting billing worker..."
 nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "Waiting for workers to initialize..."
-sleep 5
+sleep 3
 
 echo "Checking worker status..."
 ./venv/bin/python check_workers.py || echo "Worker status check completed"
@@ -176,3 +180,12 @@ echo "📊 Monitor workers: tail -f logs/workers.log"
 echo "🔍 Check status: ./venv/bin/python check_workers.py"
 echo "📈 Queue info: ./venv/bin/rq info -u redis://127.0.0.1:6379"
 echo "🌐 API should be accessible on port 8000"
+echo ""
+echo "🖥️  GPU Monitoring Commands:"
+echo "   nvidia-smi -l 2  # Monitor GPU every 2 seconds"
+echo "   watch -n 1 'nvidia-smi --query-gpu=memory.used,memory.free --format=csv,noheader,nounits'"
+echo ""
+echo "📊 Performance Tips:"
+echo "   - Monitor GPU memory: nvidia-smi"
+echo "   - Check API response: curl http://localhost:8000/health/ready"
+echo "   - View pipeline stats: check pipeline metrics in logs"

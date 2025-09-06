@@ -1,109 +1,99 @@
 from fastapi import APIRouter, HTTPException, Depends, Request, Query
 import logging
-from typing import Optional
 from app.schemas import (
     UserSeparationListResponse, UserDubListResponse, 
     SeparationJobDetailResponse, DubJobDetailResponse,
-    UserSeparationJob, UserDubJob
+    UserSeparationJob, UserDubJob, WorkspaceStatusResponse
 )
 from app.services.separation_job_service import separation_job_service
 from app.services.dub_job_service import dub_job_service
 from app.services.job_response_service import job_response_service
+from app.services.workspace_service import workspace_service
 from app.dependencies.auth import get_current_user
-from app.config.constants import DEFAULT_QUERY_LIMIT, MAX_QUEUE_POSITION_CHECKS
-from app.utils.runpod_service import runpod_service
+from app.config.constants import DEFAULT_QUERY_LIMIT
 from app.services.simple_status_service import status_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def get_job_queue_position(job) -> Optional[int]:
-    """Get queue position for a job from RunPod service"""
-    if not job.runpod_request_id or job.status not in ['pending', 'processing']:
-        return None
-    
+# Workspace Status API
+@router.get("/workspace/status", response_model=WorkspaceStatusResponse)
+async def get_workspace_status(
+    request: Request,
+    recent_limit: int = Query(5, description="Number of recent jobs to return"),
+    current_user = Depends(get_current_user)
+):
+    """Get lightweight workspace status with summary statistics and recent jobs"""
     try:
-        runpod_status = runpod_service.get_separation_status(job.runpod_request_id)
-        if runpod_status:
-            queue_position = runpod_status.get("queue_position")
-            delay_time = runpod_status.get("delay_time")
-            
-            # Log RunPod response for debugging (only for pending jobs)
-            if job.status == 'pending' and (queue_position is not None or delay_time is not None):
-                logger.info(f"Job {job.job_id}: queue_position={queue_position}, delay_time={delay_time}ms")
-            
-            return queue_position
-        else:
-
-            return None
+        user_id = current_user.id
+        if not user_id:
+            raise HTTPException(status_code=401, detail="User ID not found")
+        
+        # Validate recent_limit
+        if recent_limit < 1 or recent_limit > 20:
+            raise HTTPException(status_code=400, detail="recent_limit must be between 1 and 20")
+        
+        # Get workspace status data
+        workspace_data = await workspace_service.get_workspace_status(str(user_id), recent_limit)
+        
+        return WorkspaceStatusResponse(
+            success=True,
+            message=f"Workspace status retrieved successfully",
+            stats=workspace_data["stats"],
+            recent_dubs=workspace_data["recent_dubs"],
+            recent_separations=workspace_data["recent_separations"]
+        )
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.warning(f"Failed to get RunPod queue position for job {job.job_id}: {e}")
-        return None
+        logger.error(f"Failed to get workspace status: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get workspace status")
+
+
 
 
 # Separation Job APIs
 @router.get("/separations", response_model=UserSeparationListResponse)
 async def get_user_separations(
-    request: Request,
     page: int = 1,
     limit: int = None,
     current_user = Depends(get_current_user)
 ):
     """Get paginated separation jobs for current user"""
     try:
-        user_id = current_user.id
-        if not user_id:
-            raise HTTPException(status_code=401, detail="User ID not found")
+        user_id = str(current_user.id)
+        page = max(1, page)
+        actual_limit = limit or DEFAULT_QUERY_LIMIT
         
-        # Validate pagination parameters
-        if page < 1:
-            raise HTTPException(status_code=400, detail="Page must be greater than 0")
+        jobs, total_count = await separation_job_service.get_user_jobs(user_id, page, actual_limit)
         
-        # Get jobs from database
-        actual_limit = limit if limit else DEFAULT_QUERY_LIMIT
-        jobs, total_count = await separation_job_service.get_user_jobs(str(user_id), page, actual_limit)
-        
-        # Get job statistics
-        statistics = await separation_job_service.get_user_job_statistics(str(user_id))
-        
-        # Build response with current status
         user_jobs = []
         for job in jobs:
-            # Get current status from simple service
-            status_data = status_service.get_status(job.job_id, "separation")
-            
-            current_status = status_data["status"] if status_data else job.status
-            current_progress = status_data["progress"] if status_data else job.progress
-            
             user_job = UserSeparationJob(
                 job_id=job.job_id,
-                status=current_status,
-                progress=current_progress,
+                status=job.status,
+                progress=job.progress,
                 audio_url=job.audio_url,
                 vocal_url=job.vocal_url,
                 instrument_url=job.instrument_url,
                 error=job.error,
-                queuePosition=None,  # Simple implementation
+                queuePosition=None,
                 created_at=job.created_at.isoformat(),
-                updated_at=status_data["updated_at"].isoformat() if status_data and status_data.get("updated_at") else job.updated_at.isoformat(),
+                updated_at=job.updated_at.isoformat(),
                 completed_at=job.completed_at.isoformat() if job.completed_at else None
             )
             user_jobs.append(user_job)
         
-        # Calculate pagination metadata
-        total_pages = (total_count + actual_limit - 1) // actual_limit  # Ceiling division
-        
         return UserSeparationListResponse(
             success=True,
-            message=f"Found {len(user_jobs)} separation jobs (page {page})",
+            message=f"Found {len(user_jobs)} separation jobs",
             jobs=user_jobs,
             total=total_count,
             page=page,
             limit=actual_limit,
-            total_pages=total_pages,
-            total_completed=statistics["completed"],
-            total_processing=statistics["processing"]
+            total_pages=(total_count + actual_limit - 1) // actual_limit
         )
         
     except HTTPException:
@@ -167,59 +157,32 @@ async def get_separation_job_detail(
 # Dub Job APIs
 @router.get("/dubs", response_model=UserDubListResponse)
 async def get_user_dubs(
-    request: Request,
     page: int = 1,
     limit: int = None,
     current_user = Depends(get_current_user)
 ):
     """Get paginated dub jobs for current user"""
     try:
-        user_id = current_user.id
-        if not user_id:
-            raise HTTPException(status_code=401, detail="User ID not found")
+        user_id = str(current_user.id)
+        page = max(1, page)
+        actual_limit = limit or DEFAULT_QUERY_LIMIT
         
-        # Validate pagination parameters
-        if page < 1:
-            raise HTTPException(status_code=400, detail="Page must be greater than 0")
+        jobs, total_count = await dub_job_service.get_user_jobs(user_id, page, actual_limit)
         
-        # Get jobs from database
-        actual_limit = limit if limit else DEFAULT_QUERY_LIMIT
-        jobs, total_count = await dub_job_service.get_user_jobs(str(user_id), page, actual_limit)
-        
-        # Get job statistics
-        statistics = await dub_job_service.get_user_job_statistics(str(user_id))
-        
-        # Build response with current status
         user_jobs = []
         for job in jobs:
-            # Get current status from simple service
-            status_data = status_service.get_status(job.job_id, "dub")
-            
-            # Use job_response_service for consistent formatting
             formatted_job = job_response_service.format_dub_job(job)
-            
-            # Override with current status data
-            if status_data:
-                formatted_job.status = status_data["status"]
-                formatted_job.progress = status_data["progress"]
-                formatted_job.updated_at = status_data["updated_at"].isoformat() if status_data.get("updated_at") else formatted_job.updated_at
-            
-            formatted_job.queuePosition = None  # Simple implementation
+            formatted_job.queuePosition = None
             user_jobs.append(formatted_job)
-        
-        # Calculate pagination metadata
-        total_pages = (total_count + actual_limit - 1) // actual_limit  # Ceiling division
         
         return UserDubListResponse(
             success=True,
-            message=f"Found {len(user_jobs)} dub jobs (page {page})",
+            message=f"Found {len(user_jobs)} dub jobs",
             jobs=user_jobs,
             total=total_count,
             page=page,
             limit=actual_limit,
-            total_pages=total_pages,
-            total_completed=statistics["completed"],
-            total_processing=statistics["processing"]
+            total_pages=(total_count + actual_limit - 1) // actual_limit
         )
         
     except HTTPException:

@@ -226,6 +226,7 @@ class CreditService:
             "job_id": job_data["job_id"],
             "user_id": user_id,
             "credits_required": required_credits,
+            "credits_reserved": True,  # Add missing flag for refund checking
             "billing_type": "pay_as_you_go",
             "created_at": datetime.now(timezone.utc),
             "updated_at": datetime.now(timezone.utc)
@@ -301,6 +302,7 @@ class CreditService:
                 "job_id": job_data["job_id"],
                 "user_id": user_id,
                 "credits_required": required_credits,
+                "credits_reserved": True,  # Add missing flag for refund checking
                 "billing_type": "credit_pack",
                 "created_at": datetime.now(timezone.utc),
                 "updated_at": datetime.now(timezone.utc)

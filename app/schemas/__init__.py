@@ -300,8 +300,6 @@ class UserSeparationListResponse(BaseModel):
     page: Optional[int] = None
     limit: Optional[int] = None
     total_pages: Optional[int] = None
-    total_completed: Optional[int] = None
-    total_processing: Optional[int] = None
 
 class FileInfo(BaseModel):
     filename: str
@@ -332,8 +330,29 @@ class UserDubListResponse(BaseModel):
     page: Optional[int] = None
     limit: Optional[int] = None
     total_pages: Optional[int] = None
-    total_completed: Optional[int] = None
-    total_processing: Optional[int] = None
+
+# Workspace Status Schemas
+class JobSummary(BaseModel):
+    job_id: str
+    status: str
+    progress: int
+    created_at: str
+    completed_at: Optional[str] = None
+
+class WorkspaceStats(BaseModel):
+    total_dubs: int
+    total_separations: int
+    total_completed_dubs: int
+    total_completed_separations: int
+    total_processing_dubs: int
+    total_processing_separations: int
+
+class WorkspaceStatusResponse(BaseModel):
+    success: bool
+    message: str
+    stats: WorkspaceStats
+    recent_dubs: List[JobSummary]
+    recent_separations: List[JobSummary]
 
 # Individual Job Detail Schemas
 class SeparationJobDetailResponse(BaseModel):

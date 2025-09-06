@@ -56,26 +56,26 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing AI services...")
 
     # Fish Speech initialization
-    try:
-        from app.services.dub.fish_speech_service import initialize_fish_speech
-        logger.info("Loading Fish Speech models...")
-        if initialize_fish_speech():
-            logger.info("Fish Speech service ready")
-        else:
-            logger.info("Fish Speech models not found - voice cloning disabled")
-    except Exception as e:
-        logger.warning(f"Fish Speech initialization failed: {str(e)[:100]}...")
+    # try:
+    #     from app.services.dub.fish_speech_service import initialize_fish_speech
+    #     logger.info("Loading Fish Speech models...")
+    #     if initialize_fish_speech():
+    #         logger.info("Fish Speech service ready")
+    #     else:
+    #         logger.info("Fish Speech models not found - voice cloning disabled")
+    # except Exception as e:
+    #     logger.warning(f"Fish Speech initialization failed: {str(e)[:100]}...")
 
     # WhisperX initialization
-    try:
-        from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
-        logger.info("Loading WhisperX transcription models...")
-        if initialize_whisperx_transcription():
-            logger.info("WhisperX service ready with preloaded models")
-        else:
-            logger.error("WhisperX initialization failed")
-    except Exception as e:
-        logger.error(f"WhisperX error: {str(e)[:100]}...")
+    # try:
+    #     from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
+    #     logger.info("Loading WhisperX transcription models...")
+    #     if initialize_whisperx_transcription():
+    #         logger.info("WhisperX service ready with preloaded models")
+    #     else:
+    #         logger.error("WhisperX initialization failed")
+    # except Exception as e:
+    #     logger.error(f"WhisperX error: {str(e)[:100]}...")
 
     # OpenAI service initialization
     try:
@@ -171,21 +171,65 @@ async def health_live():
 
 @app.get("/health/ready")
 async def health_ready():
-    # Verify critical dependencies: MongoDB and Redis/RQ
+    """Enhanced health check with queue monitoring and system stats"""
+    from datetime import datetime
+    import redis
+    
+    result = {"status": "ok", "timestamp": datetime.now().isoformat()}
+    
+    # Check MongoDB
     try:
         await verify_connection()
+        result["mongodb"] = "ok"
     except Exception as e:
-        return JSONResponse(status_code=503, content={"status": "fail", "dependency": "mongodb", "error": str(e)[:200]})
-
+        result["mongodb"] = f"fail: {str(e)[:100]}"
+        return JSONResponse(status_code=503, content=result)
+    
+    # Check Redis/RQ and get queue stats
     try:
         from app.queue.queue_manager import queue_manager
         is_ok = queue_manager.check_health()
         if not is_ok:
-            return JSONResponse(status_code=503, content={"status": "fail", "dependency": "redis_rq"})
+            result["redis"] = "fail"
+            return JSONResponse(status_code=503, content=result)
+        
+        # Get queue info for monitoring
+        r = redis.Redis(host='localhost', port=6379, db=0)
+        dub_queue = r.llen('rq:queue:dub_queue')
+        billing_queue = r.llen('rq:queue:billing_queue')
+        workers = len(r.smembers('rq:workers'))
+        failed_jobs = r.llen('rq:queue:failed')
+        
+        result["redis"] = "ok"
+        result["queues"] = {
+            "dub_queue": {"length": dub_queue, "status": "healthy" if dub_queue < 50 else "overloaded"},
+            "billing_queue": {"length": billing_queue, "status": "healthy" if billing_queue < 20 else "overloaded"},
+            "failed_queue": {"length": failed_jobs}
+        }
+        result["workers"] = {"active_count": workers}
+        result["metrics"] = {"total_queue_load": dub_queue + billing_queue}
+        
     except Exception as e:
-        return JSONResponse(status_code=503, content={"status": "fail", "dependency": "redis_rq", "error": str(e)[:200]})
-
-    return {"status": "ok"}
+        result["redis"] = f"fail: {str(e)[:100]}"
+        return JSONResponse(status_code=503, content=result)
+    
+    # Add system resources if available
+    try:
+        import psutil
+        cpu = psutil.cpu_percent(interval=0.1)
+        memory = psutil.virtual_memory()
+        
+        result["system"] = {
+            "cpu_percent": cpu,
+            "memory_percent": memory.percent,
+            "memory_available_gb": round(memory.available / (1024**3), 1)
+        }
+    except ImportError:
+        result["system"] = "psutil_not_available"
+    except Exception as e:
+        result["system"] = f"error: {str(e)[:50]}"
+    
+    return result
 
 if __name__ == "__main__":
     import uvicorn
@@ -194,5 +238,5 @@ if __name__ == "__main__":
         host=settings.HOST,
         port=settings.PORT,
         workers=1,
-        reload=False
+        reload=True
     ) 

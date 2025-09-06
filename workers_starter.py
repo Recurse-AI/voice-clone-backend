@@ -37,33 +37,22 @@ def register_job_functions():
         return False
 
 def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://127.0.0.1:6379"):
-    """Start simple RQ worker"""
     try:
-        # Make worker name unique with timestamp
         import time
         unique_worker_name = f"{worker_name}_{int(time.time())}"
         
-        logger.info(f"Starting worker: {unique_worker_name} for queue: {queue_name}")
-        logger.info(f"Redis URL: {redis_url}")
-        
-        # Register job functions first
         if not register_job_functions():
             logger.error("Failed to register job functions")
             return False
         
-        # Connect to Redis
         redis_conn = redis.Redis.from_url(redis_url)
         redis_conn.ping()
-        logger.info("Redis connection successful")
         
-        # Create queue and worker (SimpleWorker for Windows compatibility)
         queue = Queue(queue_name, connection=redis_conn)
         worker = SimpleWorker([queue], connection=redis_conn, name=unique_worker_name)
         
-        logger.info(f"Worker {unique_worker_name} starting for queue {queue_name}...")
-        
-        # Start worker - no forking
-        worker.work(with_scheduler=True)
+        # Optimized worker settings for faster queue processing
+        worker.work(with_scheduler=True, burst=False)
         
     except KeyboardInterrupt:
         logger.info(f"Worker {unique_worker_name} stopped by user")
