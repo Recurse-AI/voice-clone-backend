@@ -92,8 +92,14 @@ class Settings(BaseSettings):
     
     # PyTorch configuration (set in runpod_setup.sh)
     
+    # Fish Speech Configuration
     FISH_SPEECH_LOW_MEMORY: bool = os.getenv("FISH_SPEECH_LOW_MEMORY", "false").lower() == "true"
     FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "true").lower() == "true"
+    FISH_SPEECH_CHECKPOINT: str = os.getenv("FISH_SPEECH_CHECKPOINT", "checkpoints/openaudio-s1-mini")
+    FISH_SPEECH_DECODER: str = os.getenv("FISH_SPEECH_DECODER", "checkpoints/openaudio-s1-mini/codec.pth")
+    FISH_SPEECH_DEVICE: str = os.getenv("FISH_SPEECH_DEVICE", "auto")  # auto, cuda, cpu
+    FISH_SPEECH_PRECISION: str = os.getenv("FISH_SPEECH_PRECISION", "auto")  # auto, float16, float32
+    FISH_SPEECH_MAX_BATCH_SIZE: int = int(os.getenv("FISH_SPEECH_MAX_BATCH_SIZE", "3"))
     
     LOAD_AI_MODELS: bool = os.getenv("LOAD_AI_MODELS", "false").lower() == "true"
     

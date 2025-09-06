@@ -38,18 +38,35 @@ class FishSpeechService:
     """Service for voice cloning using Fish Speech models"""
     
     def __init__(self):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.precision = torch.half if torch.cuda.is_available() else torch.float32
-        self.checkpoint_path = "checkpoints/openaudio-s1-mini"
-        self.decoder_checkpoint_path = "checkpoints/openaudio-s1-mini/codec.pth"
+        from app.config.settings import settings
         
-        self.use_memory_efficient_attention = True
-        self.use_flash_attention = torch.cuda.is_available()
-        self.max_batch_size = 3
+        # Device configuration from settings
+        if settings.FISH_SPEECH_DEVICE == "auto":
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            self.device = settings.FISH_SPEECH_DEVICE
+        
+        # Precision configuration from settings
+        if settings.FISH_SPEECH_PRECISION == "auto":
+            self.precision = torch.half if self.device == "cuda" else torch.float32
+        elif settings.FISH_SPEECH_PRECISION == "float16":
+            self.precision = torch.half
+        else:
+            self.precision = torch.float32
+        
+        # Model paths from settings
+        self.checkpoint_path = settings.FISH_SPEECH_CHECKPOINT
+        self.decoder_checkpoint_path = settings.FISH_SPEECH_DECODER
+        
+        # Model configuration from settings
+        self.use_memory_efficient_attention = not settings.FISH_SPEECH_LOW_MEMORY
+        self.use_flash_attention = self.device == "cuda" and not settings.FISH_SPEECH_LOW_MEMORY
+        self.max_batch_size = settings.FISH_SPEECH_MAX_BATCH_SIZE
         self.is_initialized = False
+        self._compile_enabled = settings.FISH_SPEECH_COMPILE
         
         # GPU optimization for faster compilation
-        if torch.cuda.is_available():
+        if self.device == "cuda":
             torch.backends.cudnn.benchmark = True
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
@@ -59,12 +76,31 @@ class FishSpeechService:
         self.decoder_model = None
         self.inference_engine = None
         
-        logger.info(f"Fish Speech Service initializing on device: {self.device}")
+        logger.info(f"Fish Speech Service initializing on device: {self.device} (compile: {self._compile_enabled})")
+    
+    def _check_model_health(self) -> bool:
+        """Check if models are still loaded and healthy"""
+        try:
+            if not self.is_initialized:
+                return False
+            
+            # Check if model components exist
+            if self.inference_engine is None or self.llama_queue is None or self.decoder_model is None:
+                logger.warning("Model components missing - will reinitialize...")
+                self.is_initialized = False
+                return False
+            
+            return True
+        except Exception as e:
+            logger.warning(f"Model health check failed: {e}")
+            self.is_initialized = False
+            return False
     
     def load_model(self) -> bool:
         """Load Fish Speech TTSInferenceEngine for proper reference audio support"""
         try:
-            if self.is_initialized:
+            # Check model health first
+            if self._check_model_health():
                 return True
             
             # Quick validation
@@ -75,12 +111,15 @@ class FishSpeechService:
             import warnings
             warnings.filterwarnings("ignore")
             
-            # Load LLAMA model queue - disable compilation for speed
-            compile_model = False  # Disable compilation to avoid re-compilation delays
+            # Use compile setting from constructor (based on settings)
+            compile_model = self._compile_enabled
             checkpoint_path = Path(self.checkpoint_path)
             decoder_path = Path(self.decoder_checkpoint_path)
             
-            logger.info("🚀 Loading model without compilation for faster startup")
+            if compile_model:
+                logger.info("🚀 Loading model with compilation for optimized performance")
+            else:
+                logger.info("🚀 Loading model without compilation for faster startup")
             
             self.llama_queue = launch_thread_safe_queue(
                 checkpoint_path=checkpoint_path,
@@ -124,10 +163,18 @@ class FishSpeechService:
         import time
         start_time = time.time()
         
-        # Aggressive GPU cleanup before generation
+        # Health check and auto-reload if needed
+        if not self._check_model_health():
+            logger.info("Model unhealthy, reloading...")
+            if not self.load_model():
+                return {"success": False, "error": "Failed to reload model"}
+        
+        # Smart GPU cleanup - only if memory usage is high
         if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+            current_memory = torch.cuda.memory_allocated() / 1024**3  # GB
+            if current_memory > 2.0:  # Only cleanup if using > 2GB
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
         
         if not self.is_initialized:
             logger.info("🔄 Fish Speech model not loaded, loading now...")

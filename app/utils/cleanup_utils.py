@@ -130,15 +130,22 @@ class CleanupUtils:
             if not torch.cuda.is_available():
                 return False
 
-            for i in range(3):
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
+            # Smart cleanup - preserve loaded AI models
+            current_memory = torch.cuda.memory_allocated() / 1024**3  # GB
+            if current_memory < 1.0:  # Skip aggressive cleanup if memory usage is low
+                logger.info(f"Skipping aggressive cleanup - memory usage is low ({current_memory:.2f}GB)")
+                return True
 
+            # Single cache clear instead of multiple - preserve model weights
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
             gc.collect()
-            logger.info("Aggressive GPU cleanup completed")
+            
+            new_memory = torch.cuda.memory_allocated() / 1024**3
+            logger.info(f"Smart GPU cleanup: {current_memory:.2f}GB → {new_memory:.2f}GB")
             return True
         except Exception as e:
-            logger.warning(f"Aggressive GPU cleanup failed: {e}")
+            logger.warning(f"Smart GPU cleanup failed: {e}")
         return False
 
     # ===== R2 STORAGE CLEANUP =====
