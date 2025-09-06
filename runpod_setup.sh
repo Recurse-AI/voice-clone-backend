@@ -11,6 +11,10 @@ export FFMPEG_USE_GPU=0
 export CUDA_LAUNCH_BLOCKING=0
 export TORCH_BACKENDS_CUDNN_DETERMINISTIC=0
 
+# AI Model optimization
+export FISH_SPEECH_COMPILE=true
+export TORCH_JIT_LOG_LEVEL=ERROR
+
 
 
 # Activate virtual environment

@@ -90,6 +90,8 @@ class Settings(BaseSettings):
     
     PYTORCH_CUDA_ALLOC_CONF: str = os.getenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:512")
     
+    # PyTorch configuration (set in runpod_setup.sh)
+    
     FISH_SPEECH_LOW_MEMORY: bool = os.getenv("FISH_SPEECH_LOW_MEMORY", "false").lower() == "true"
     FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "true").lower() == "true"
     

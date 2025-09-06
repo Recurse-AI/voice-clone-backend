@@ -42,6 +42,11 @@ class WhisperXTranscriptionService:
                 self.compute_type = "float16"
             else:
                 self.compute_type = settings.WHISPER_COMPUTE_TYPE
+                
+            # Enable TF32 for faster GPU operations
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+            
             logger.info(f"WhisperX service initialized on GPU (CUDA) with {self.compute_type} precision")
         else:
             self.device = "cpu"

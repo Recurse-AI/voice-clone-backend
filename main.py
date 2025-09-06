@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import os
 import logging
+import torch
 from contextlib import asynccontextmanager
 
 # App routes and configuration
@@ -24,6 +25,8 @@ from fastapi.responses import JSONResponse
 
 setup_logging()
 logger = logging.getLogger(__name__)
+
+# Environment variables are set in runpod_setup.sh
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -70,8 +73,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start status reconciler: {e}")
 
+    # Initialize lightweight services regardless of LOAD_AI_MODELS
+    try:
+        from app.services.openai_service import initialize_openai_service
+        initialize_openai_service()
+        logger.info("OpenAI ready")
+    except Exception as e:
+        logger.warning(f"OpenAI failed: {str(e)[:50]}")
+
     if settings.LOAD_AI_MODELS:
-        logger.info("Loading AI services...")
+        logger.info("Loading heavy AI models...")
         
         try:
             from app.services.dub.fish_speech_service import initialize_fish_speech
@@ -86,17 +97,10 @@ async def lifespan(app: FastAPI):
             logger.info("WhisperX ready")
         except Exception as e:
             logger.warning(f"WhisperX failed: {str(e)[:50]}")
-
-        try:
-            from app.services.openai_service import initialize_openai_service
-            initialize_openai_service()
-            logger.info("OpenAI ready")
-        except Exception as e:
-            logger.warning(f"OpenAI failed: {str(e)[:50]}")
             
-        logger.info("AI services loaded")
+        logger.info("Heavy AI models loaded")
     else:
-        logger.info("Lightweight mode - AI models skipped")
+        logger.info("Lightweight mode - heavy models will load on-demand")
     
     logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     

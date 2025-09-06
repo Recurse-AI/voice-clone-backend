@@ -48,6 +48,12 @@ class FishSpeechService:
         self.max_batch_size = 3
         self.is_initialized = False
         
+        # GPU optimization for faster compilation
+        if torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+        
         # TTSInferenceEngine components
         self.llama_queue = None
         self.decoder_model = None
@@ -69,10 +75,15 @@ class FishSpeechService:
             import warnings
             warnings.filterwarnings("ignore")
             
-            # Load LLAMA model queue
-            compile_model = getattr(settings, 'FISH_SPEECH_COMPILE', False)
+            # Load LLAMA model queue with GPU compilation
+            compile_model = getattr(settings, 'FISH_SPEECH_COMPILE', True)  # Enable by default
             checkpoint_path = Path(self.checkpoint_path)
             decoder_path = Path(self.decoder_checkpoint_path)
+            
+            # Force GPU compilation if available for faster inference
+            if torch.cuda.is_available():
+                compile_model = True
+                logger.info("🚀 GPU detected - enabling model compilation for faster inference")
             
             self.llama_queue = launch_thread_safe_queue(
                 checkpoint_path=checkpoint_path,
@@ -233,8 +244,17 @@ def get_fish_speech_service() -> FishSpeechService:
 def initialize_fish_speech() -> bool:
     """Initialize Fish Speech service (called from main.py)"""
     try:
+        logger.info("🚀 Preloading FishSpeech model during startup...")
         service = get_fish_speech_service()
-        return service.load_model()
+        
+        # Force model loading during startup for better performance
+        success = service.load_model()
+        if success:
+            logger.info("✅ FishSpeech model preloaded successfully!")
+        else:
+            logger.warning("⚠️ FishSpeech model preloading failed - will load on first use")
+        
+        return success
     except Exception as e:
         logger.error(f"Failed to initialize Fish Speech: {e}")
         return False
