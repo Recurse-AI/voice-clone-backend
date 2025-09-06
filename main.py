@@ -56,26 +56,26 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing AI services...")
 
     # Fish Speech initialization
-    # try:
-    #     from app.services.dub.fish_speech_service import initialize_fish_speech
-    #     logger.info("Loading Fish Speech models...")
-    #     if initialize_fish_speech():
-    #         logger.info("Fish Speech service ready")
-    #     else:
-    #         logger.info("Fish Speech models not found - voice cloning disabled")
-    # except Exception as e:
-    #     logger.warning(f"Fish Speech initialization failed: {str(e)[:100]}...")
+    try:
+        from app.services.dub.fish_speech_service import initialize_fish_speech
+        logger.info("Loading Fish Speech models...")
+        if initialize_fish_speech():
+            logger.info("Fish Speech service ready")
+        else:
+            logger.info("Fish Speech models not found - voice cloning disabled")
+    except Exception as e:
+        logger.warning(f"Fish Speech initialization failed: {str(e)[:100]}...")
 
     # WhisperX initialization
-    # try:
-    #     from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
-    #     logger.info("Loading WhisperX transcription models...")
-    #     if initialize_whisperx_transcription():
-    #         logger.info("WhisperX service ready with preloaded models")
-    #     else:
-    #         logger.error("WhisperX initialization failed")
-    # except Exception as e:
-    #     logger.error(f"WhisperX error: {str(e)[:100]}...")
+    try:
+        from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
+        logger.info("Loading WhisperX transcription models...")
+        if initialize_whisperx_transcription():
+            logger.info("WhisperX service ready with preloaded models")
+        else:
+            logger.error("WhisperX initialization failed")
+    except Exception as e:
+        logger.error(f"WhisperX error: {str(e)[:100]}...")
 
     # OpenAI service initialization
     try:
@@ -238,5 +238,5 @@ if __name__ == "__main__":
         host=settings.HOST,
         port=settings.PORT,
         workers=1,
-        reload=True
+        reload=False
     ) 
