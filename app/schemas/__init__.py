@@ -336,6 +336,8 @@ class JobSummary(BaseModel):
     job_id: str
     status: str
     progress: int
+    vocal_url: Optional[str] = None
+    instrument_url: Optional[str] = None
     created_at: str
     completed_at: Optional[str] = None
 

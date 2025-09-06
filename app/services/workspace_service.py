@@ -103,30 +103,41 @@ class WorkspaceService:
     async def _get_recent_jobs(self, collection, user_id: str, limit: int) -> List[JobSummary]:
         """Get recent jobs with minimal data"""
         try:
-            # Only fetch required fields for performance
             projection = {
                 "job_id": 1,
                 "status": 1,
                 "progress": 1,
                 "created_at": 1,
                 "completed_at": 1,
+                "vocal_url": 1,
+                "instrument_url": 1,
                 "_id": 0
             }
-            
+
             cursor = collection.find(
-                {"user_id": user_id}, 
+                {"user_id": user_id},
                 projection
             ).sort("created_at", -1).limit(limit)
             
             jobs = []
             async for job_data in cursor:
-                job_summary = JobSummary(
-                    job_id=job_data["job_id"],
-                    status=job_data["status"],
-                    progress=job_data.get("progress", 0),
-                    created_at=job_data["created_at"].isoformat(),
-                    completed_at=job_data["completed_at"].isoformat() if job_data.get("completed_at") else None
-                )
+                # Create base data dictionary
+                job_summary_data = {
+                    "job_id": job_data["job_id"],
+                    "status": job_data["status"],
+                    "progress": job_data.get("progress", 0),
+                    "created_at": job_data["created_at"].isoformat(),
+                    "completed_at": job_data["completed_at"].isoformat() if job_data.get("completed_at") else None
+                }
+
+                if "vocal_url" in job_data and job_data["vocal_url"]:
+                    job_summary_data["vocal_url"] = job_data["vocal_url"]
+                
+                if "instrument_url" in job_data and job_data["instrument_url"]:
+                    job_summary_data["instrument_url"] = job_data["instrument_url"]
+                
+                # Create JobSummary from dictionary
+                job_summary = JobSummary(**job_summary_data)
                 jobs.append(job_summary)
             
             return jobs
