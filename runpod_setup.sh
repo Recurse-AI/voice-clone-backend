@@ -116,8 +116,8 @@ done
 # START API SERVER
 echo "🚀 Starting ClearVocals API server..."
 
-# Server configuration
-WORKERS=${WORKERS:-10}
+# Server configuration - Optimized for RunPod
+WORKERS=${WORKERS:-4}  # Reduced from 10 to 4 for efficiency
 HOST=${HOST:-0.0.0.0} 
 PORT=${PORT:-8000}
 
@@ -134,7 +134,7 @@ export TORCH_NUM_THREADS=4
 export MKL_NUM_THREADS=8
 export LOAD_AI_MODELS=false
 
-echo "🚀 Starting API server with ${WORKERS} lightweight workers..."
+echo "🚀 Starting API server with ${WORKERS} optimized workers..."
 nohup ./venv/bin/uvicorn main:app \
   --host ${HOST} \
   --port ${PORT} \
