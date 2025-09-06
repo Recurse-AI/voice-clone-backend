@@ -352,8 +352,7 @@ class SimpleDubbedAPI:
             segment_index = int(segment_id.split('_')[1]) - 1
             cloned_filename = f"cloned_{job_id}_{segment_index:03d}.wav"
             cloned_path = os.path.join(process_temp_dir, cloned_filename).replace('\\', '/')
-            # Split dubbed text into optimized chunks for better GPU utilization
-            from app.config.settings import settings
+            # Split dubbed text into optimized chunks for better GPU utilization  
             text_chunks = smart_chunk(dubbed_text, chunk_size=settings.FISH_SPEECH_CHUNK_SIZE, min_size=150)
             audio_chunks = []
             sample_rate_out = None
@@ -441,17 +440,6 @@ class SimpleDubbedAPI:
         
         successful = sum(1 for r in results if r is not None)
         logger.info(f"🎯 Sequential processing completed: {successful}/{total_segments} segments successful")
-        
-        # Comprehensive cleanup after all segments processed
-        import torch
-        import gc
-        if torch.cuda.is_available():
-            memory_before = torch.cuda.memory_allocated() / 1024**3  # GB
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            gc.collect()
-            memory_after = torch.cuda.memory_allocated() / 1024**3  # GB
-            logger.info(f"🧹 Final GPU cleanup: {memory_before:.2f}GB → {memory_after:.2f}GB")
         
         return results
     
