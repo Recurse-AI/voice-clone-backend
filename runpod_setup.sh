@@ -14,6 +14,8 @@ export TORCH_BACKENDS_CUDNN_DETERMINISTIC=0
 # AI Model optimization
 export FISH_SPEECH_COMPILE=true
 export TORCH_JIT_LOG_LEVEL=ERROR
+export TORCH_COMPILE_MODE=reduce-overhead
+export TORCH_COMPILE_BACKEND=inductor
 
 
 

@@ -47,7 +47,6 @@ class FishSpeechService:
         self.use_flash_attention = torch.cuda.is_available()
         self.max_batch_size = 3
         self.is_initialized = False
-        self.is_compiled = False  # Track compilation status
         
         # GPU optimization for faster compilation
         if torch.cuda.is_available():
@@ -76,15 +75,12 @@ class FishSpeechService:
             import warnings
             warnings.filterwarnings("ignore")
             
-            # Load LLAMA model queue with GPU compilation
-            compile_model = getattr(settings, 'FISH_SPEECH_COMPILE', True)  # Enable by default
+            # Load LLAMA model queue - disable compilation for speed
+            compile_model = False  # Disable compilation to avoid re-compilation delays
             checkpoint_path = Path(self.checkpoint_path)
             decoder_path = Path(self.decoder_checkpoint_path)
             
-            # Force GPU compilation if available for faster inference
-            if torch.cuda.is_available():
-                compile_model = True
-                logger.info("🚀 GPU detected - enabling model compilation for faster inference")
+            logger.info("🚀 Loading model without compilation for faster startup")
             
             self.llama_queue = launch_thread_safe_queue(
                 checkpoint_path=checkpoint_path,
@@ -100,7 +96,7 @@ class FishSpeechService:
                 device=self.device,
             )
             
-            # Create TTSInferenceEngine
+            # Create TTSInferenceEngine without compilation
             self.inference_engine = TTSInferenceEngine(
                 llama_queue=self.llama_queue,
                 decoder_model=self.decoder_model,
@@ -108,20 +104,10 @@ class FishSpeechService:
                 precision=self.precision,
             )
             
-            # Warm up with minimal dry run for faster compilation
-            logger.info("🔥 Warming up model compilation...")
-            list(self.inference_engine.inference(
-                ServeTTSRequest(
-                    text="Hi",
-                    references=[],
-                    max_new_tokens=32,
-                    format="wav"
-                )
-            ))
+            # No warmup needed - ready to use immediately
+            logger.info("✅ Model loaded without compilation - ready for immediate use")
             
             self.is_initialized = True
-            self.is_compiled = True
-            logger.info("✅ Model compilation completed and cached")
             return True
             
         except Exception as e:
