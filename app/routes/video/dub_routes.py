@@ -194,7 +194,8 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
         from app.utils.pipeline_utils import mark_resume_job, mark_dub_job_active, mark_dub_job_inactive
         
         mark_resume_job(job_id)
-        mark_dub_job_active(job_id, "voice_cloning")
+        # Do not pre-mark voice_cloning to avoid occupying the slot prematurely
+        mark_dub_job_active(job_id, "review_prep")
         
         _update_status_non_blocking(job_id, JobStatus.REVIEWING, 80, {
             "message": "Processing approved edits...",

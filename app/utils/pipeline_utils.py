@@ -140,11 +140,8 @@ def can_start_stage_with_priority(stage: str, job_id: str) -> bool:
             logger.warning(f"🔍 Resume job {job_id} blocked: {stage} has {current_count} active jobs")
         return result
     
-    if stage == "voice_cloning":
-        resume_jobs_waiting = get_resume_jobs_for_stage("voice_cloning")
-        if resume_jobs_waiting > 0:
-            logger.warning(f"🔍 Job {job_id} blocked: {resume_jobs_waiting} resume jobs waiting for voice_cloning")
-            return False
+    # Do not block regular jobs just because resume jobs exist.
+    # Let capacity control via can_start_stage handle admission.
     
     result = can_start_stage(stage)
     if not result:
