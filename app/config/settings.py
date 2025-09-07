@@ -84,7 +84,7 @@ class Settings(BaseSettings):
     WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "large-v2")  # Options: tiny, base, small, medium, large-v2, large-v3
     WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "auto")  # auto, float16, int8
     WHISPER_ALIGNMENT_DEVICE: str = os.getenv("WHISPER_ALIGNMENT_DEVICE", "cpu")
-    WHISPER_POOL_SIZE: int = int(os.getenv("WHISPER_POOL_SIZE", "2"))
+    WHISPER_POOL_SIZE: int = int(os.getenv("WHISPER_POOL_SIZE", "3"))
     WHISPER_MODEL_TIMEOUT: int = int(os.getenv("WHISPER_MODEL_TIMEOUT", "300"))
     
     PYTORCH_CUDA_ALLOC_CONF: str = os.getenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:512")

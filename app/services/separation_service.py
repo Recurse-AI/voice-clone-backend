@@ -185,39 +185,34 @@ class SeparationService:
     def _send_completion_email(self, job_id: str, user_id: str, vocal_url: str = None, instrument_url: str = None):
         """Send completion email notification for separation jobs"""
         try:
-            # Get user details
-            import asyncio
-            from app.services.user_service import get_user_id
+            # Get user synchronously to avoid async conflicts
+            from app.utils.db_sync_operations import get_user_sync
+            user = get_user_sync(user_id)
 
-            # Handle async call properly in sync context
-            try:
-                loop = asyncio.get_running_loop()
-                # If we're already in an event loop, create task
-                user = loop.run_until_complete(get_user_id(user_id))
-            except RuntimeError:
-                # No running loop, use asyncio.run
-                user = asyncio.run(get_user_id(user_id))
+            if not user:
+                logger.warning(f"User {user_id} not found, skipping email")
+                return
 
-            logger.info(f"Sending completion email to user {user_id} ({user.email}) for separation job {job_id}")
+            logger.info(f"Sending completion email to user {user_id} ({user.get('email')}) for separation job {job_id}")
 
             # Prepare download URLs
             download_urls = {}
             if vocal_url:
-                download_urls["separation_url"] = vocal_url  # Use vocal as main separation download
+                download_urls["separation_url"] = vocal_url
             if instrument_url:
                 download_urls["instrument_url"] = instrument_url
 
-            # Send email
+            # Send email synchronously
             from fastapi import BackgroundTasks
             from app.utils.email_helper import send_job_completion_email_background_task
 
             background_tasks = BackgroundTasks()
             send_job_completion_email_background_task(
-                background_tasks, user.email, user.name,
+                background_tasks, user.get('email'), user.get('name', 'User'),
                 "separation", job_id, download_urls
             )
 
-            # Execute background tasks immediately
+            # Execute immediately
             for task in background_tasks.tasks:
                 task()
 

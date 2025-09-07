@@ -241,12 +241,28 @@ def get_separation_job_sync(job_id: str) -> dict:
     try:
         client = MongoClient(settings.MONGODB_URI)
         db = client[settings.DB_NAME]
-        
+
         job = db.separation_jobs.find_one({"job_id": job_id})
         client.close()
-        
+
         return job if job else {}
-        
+
     except Exception as e:
         logger.error(f"Failed to get separation job {job_id}: {e}")
+        return {}
+
+
+def get_user_sync(user_id: str) -> dict:
+    """Get user data synchronously"""
+    try:
+        client = MongoClient(settings.MONGODB_URI)
+        db = client[settings.DB_NAME]
+
+        user = db.users.find_one({"_id": ObjectId(user_id)})
+        client.close()
+
+        return user if user else {}
+
+    except Exception as e:
+        logger.error(f"Failed to get user {user_id}: {e}")
         return {}
