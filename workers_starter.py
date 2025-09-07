@@ -113,11 +113,10 @@ def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://12
         logger.info(f"🚀 Worker {unique_worker_name} ready for instant job pickup")
         
         # Optimized worker settings for INSTANT job pickup
+        # Note: poll_interval not supported in this RQ version
         worker.work(
             with_scheduler=True, 
-            burst=False,
-            poll_interval=0.1,  # Check queue every 100ms instead of default 1s
-            max_jobs=0  # Process unlimited jobs without restarting
+            burst=False
         )
         
     except KeyboardInterrupt:
