@@ -310,21 +310,6 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
     if not job or job.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Job not found")
     
-    # Validate job status - must be awaiting_review to approve
-    if job.status != "awaiting_review":
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Job cannot be approved. Current status: {job.status}. Only jobs with 'awaiting_review' status can be approved."
-        )
-    
-    # Validate review_status if available
-    review_status = job.review_status or (job.details or {}).get("review_status")
-    if review_status and review_status not in ["awaiting", "in_progress"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Job cannot be approved. Review status: {review_status}. Job may already be processed."
-        )
-    
     manifest_url = job.segments_manifest_url or (job.details or {}).get("segments_manifest_url")
     if not manifest_url:
         raise HTTPException(status_code=400, detail="No manifest available for this job")
