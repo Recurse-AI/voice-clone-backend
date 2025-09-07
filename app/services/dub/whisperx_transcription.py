@@ -145,16 +145,22 @@ class WhisperXTranscriptionService:
     def transcribe_audio_file(self, audio_path: str, language: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         """Fast transcribe audio file with WhisperX"""
         try:
+            # Check service worker FIRST (before any model loading)
+            from app.config.pipeline_settings import pipeline_settings
+            logger.info(f"🔧 Service worker config: {pipeline_settings.USE_WHISPERX_SERVICE_WORKER}")
+            
+            if pipeline_settings.USE_WHISPERX_SERVICE_WORKER:
+                logger.info("🎯 Routing to WhisperX service worker (fast path)")
+                return self._transcribe_via_service_worker(audio_path, language, job_id)
+            
+            # Fallback to direct transcription (load model if needed)
+            logger.info("📝 Using direct transcription (slow path)")
             if not self.is_initialized:
+                logger.info("🔄 Loading WhisperX model for direct transcription...")
                 if not self.load_model():
                     raise Exception("Failed to load WhisperX model")
             
-            # Use service worker if available
-            from app.config.pipeline_settings import pipeline_settings
-            if pipeline_settings.USE_WHISPERX_SERVICE_WORKER:
-                return self._transcribe_via_service_worker(audio_path, language, job_id)
-            else:
-                return self._transcribe_direct(audio_path, language, job_id)
+            return self._transcribe_direct(audio_path, language, job_id)
                 
         except Exception as e:
             logger.error(f"Transcription failed for {audio_path}: {e}")
