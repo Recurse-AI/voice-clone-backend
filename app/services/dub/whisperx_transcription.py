@@ -24,6 +24,10 @@ class WhisperXTranscriptionService:
     """Optimized WhisperX service for fastest transcription with 2 workers"""
     
     def __init__(self):
+        # Check if this will only be used for service worker routing
+        from app.config.pipeline_settings import pipeline_settings
+        self._service_worker_mode = pipeline_settings.USE_WHISPERX_SERVICE_WORKER
+        
         self.model = None
         self.is_initialized = False
         self.preloaded_align_models = {}
@@ -31,8 +35,16 @@ class WhisperXTranscriptionService:
         self.model_size = settings.WHISPER_MODEL_SIZE
         self.alignment_device = settings.WHISPER_ALIGNMENT_DEVICE
         self.cache_dir = settings.WHISPER_CACHE_DIR
-        self._setup_device_config()
-        self._setup_cache_directory()
+        
+        if self._service_worker_mode:
+            logger.info("⚡ WhisperX service created for routing (fast mode)")
+            # Minimal setup for routing only
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.compute_type = "float16"
+        else:
+            logger.info("🔧 WhisperX service created for direct processing (full setup)")
+            self._setup_device_config()
+            self._setup_cache_directory()
         
         logger.info(f"WhisperX service configured - Model: {self.model_size}, Device: {self.device}, Cache: {self.cache_dir}")
     
@@ -294,7 +306,9 @@ def get_whisperx_transcription_service() -> WhisperXTranscriptionService:
     if _whisperx_service is None:
         with _service_lock:
             if _whisperx_service is None:
+                logger.info("🚀 Creating WhisperX service instance")
                 _whisperx_service = WhisperXTranscriptionService()
+                logger.info("✅ WhisperX service instance created")
     
     return _whisperx_service
 

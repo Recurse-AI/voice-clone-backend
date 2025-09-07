@@ -40,45 +40,64 @@ class FishSpeechService:
     def __init__(self):
         from app.config.settings import settings
         
-        # Force CUDA setup first
-        os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+        # Check if this will only be used for service worker routing
+        from app.config.pipeline_settings import pipeline_settings
+        self._service_worker_mode = pipeline_settings.USE_FISH_SPEECH_SERVICE_WORKER
         
-        # Device configuration from settings
-        if settings.FISH_SPEECH_DEVICE == "auto":
-            cuda_available = torch.cuda.is_available()
-            logger.info(f"CUDA Available: {cuda_available}")
-            self.device = "cuda" if cuda_available else "cpu"
-            if cuda_available:
-                logger.info("✅ Fish Speech configured for GPU")
+        if self._service_worker_mode:
+            logger.info("⚡ Fish Speech service created for routing (fast mode)")
+            # Minimal setup for routing only
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        else:
+            logger.info("🔧 Fish Speech service created for direct processing (full setup)")
+            # Force CUDA setup first
+            os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+            
+            # Device configuration from settings
+            if settings.FISH_SPEECH_DEVICE == "auto":
+                cuda_available = torch.cuda.is_available()
+                logger.info(f"CUDA Available: {cuda_available}")
+                self.device = "cuda" if cuda_available else "cpu"
+                if cuda_available:
+                    logger.info("✅ Fish Speech configured for GPU")
+                else:
+                    logger.warning("⚠️ CUDA not available, Fish Speech falling back to CPU")
             else:
-                logger.warning("⚠️ CUDA not available, Fish Speech falling back to CPU")
-        else:
-            self.device = settings.FISH_SPEECH_DEVICE
+                self.device = settings.FISH_SPEECH_DEVICE
         
-        # Precision configuration from settings
-        if settings.FISH_SPEECH_PRECISION == "auto":
+        # Configuration setup - minimal for routing mode, full for direct mode
+        if self._service_worker_mode:
+            # Minimal configuration for routing only
             self.precision = torch.half if self.device == "cuda" else torch.float32
-        elif settings.FISH_SPEECH_PRECISION == "float16":
-            self.precision = torch.half
+            self.checkpoint_path = settings.FISH_SPEECH_CHECKPOINT
+            self.decoder_checkpoint_path = settings.FISH_SPEECH_DECODER
+            self.is_initialized = False
         else:
-            self.precision = torch.float32
-        
-        # Model paths from settings
-        self.checkpoint_path = settings.FISH_SPEECH_CHECKPOINT
-        self.decoder_checkpoint_path = settings.FISH_SPEECH_DECODER
-        
-        # Model configuration from settings
-        self.use_memory_efficient_attention = not settings.FISH_SPEECH_LOW_MEMORY
-        self.use_flash_attention = self.device == "cuda" and not settings.FISH_SPEECH_LOW_MEMORY
-        self.max_batch_size = settings.FISH_SPEECH_MAX_BATCH_SIZE
-        self.is_initialized = False
-        self._compile_enabled = settings.FISH_SPEECH_COMPILE
-        
-        # GPU optimization for faster compilation
-        if self.device == "cuda":
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
+            # Full configuration for direct processing
+            # Precision configuration from settings
+            if settings.FISH_SPEECH_PRECISION == "auto":
+                self.precision = torch.half if self.device == "cuda" else torch.float32
+            elif settings.FISH_SPEECH_PRECISION == "float16":
+                self.precision = torch.half
+            else:
+                self.precision = torch.float32
+            
+            # Model paths from settings
+            self.checkpoint_path = settings.FISH_SPEECH_CHECKPOINT
+            self.decoder_checkpoint_path = settings.FISH_SPEECH_DECODER
+            
+            # Model configuration from settings
+            self.use_memory_efficient_attention = not settings.FISH_SPEECH_LOW_MEMORY
+            self.use_flash_attention = self.device == "cuda" and not settings.FISH_SPEECH_LOW_MEMORY
+            self.max_batch_size = settings.FISH_SPEECH_MAX_BATCH_SIZE
+            self.is_initialized = False
+            self._compile_enabled = settings.FISH_SPEECH_COMPILE
+            
+            # GPU optimization for faster compilation
+            if self.device == "cuda":
+                torch.backends.cudnn.benchmark = True
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
         
         # TTSInferenceEngine components
         self.llama_queue = None

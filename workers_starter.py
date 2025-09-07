@@ -53,26 +53,39 @@ def initialize_ai_models():
     except Exception as e:
         logger.warning(f"OpenAI failed: {str(e)[:50]}")
     
-    # Initialize specific models based on flags
-    if load_fish_speech:
-        try:
-            from app.services.dub.fish_speech_service import initialize_fish_speech
-            initialize_fish_speech()
-            logger.info("✅ FishSpeech preloaded")
-        except Exception as e:
-            logger.warning(f"FishSpeech failed: {str(e)[:50]}")
+    # Check if service workers are enabled to skip model preloading
+    from app.config.pipeline_settings import pipeline_settings
+    service_workers_enabled = (
+        pipeline_settings.USE_WHISPERX_SERVICE_WORKER and 
+        pipeline_settings.USE_FISH_SPEECH_SERVICE_WORKER
+    )
+    
+    if service_workers_enabled:
+        logger.info("⚡ Service workers enabled - skipping AI model preloading for faster startup")
+        logger.info("⏭️ WhisperX loading skipped (service worker active)")
+        logger.info("⏭️ FishSpeech loading skipped (service worker active)")
     else:
-        logger.info("⏭️ FishSpeech loading skipped")
+        logger.info("🔧 Service workers disabled - preloading AI models")
+        # Initialize specific models based on flags
+        if load_fish_speech:
+            try:
+                from app.services.dub.fish_speech_service import initialize_fish_speech
+                initialize_fish_speech()
+                logger.info("✅ FishSpeech preloaded")
+            except Exception as e:
+                logger.warning(f"FishSpeech failed: {str(e)[:50]}")
+        else:
+            logger.info("⏭️ FishSpeech loading skipped")
 
-    if load_whisperx:
-        try:
-            from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
-            initialize_whisperx_transcription()
-            logger.info("✅ WhisperX preloaded")
-        except Exception as e:
-            logger.warning(f"WhisperX failed: {str(e)[:50]}")
-    else:
-        logger.info("⏭️ WhisperX loading skipped")
+        if load_whisperx:
+            try:
+                from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
+                initialize_whisperx_transcription()
+                logger.info("✅ WhisperX preloaded")
+            except Exception as e:
+                logger.warning(f"WhisperX failed: {str(e)[:50]}")
+        else:
+            logger.info("⏭️ WhisperX loading skipped")
     
     logger.info("🎯 AI models initialization completed")
 
@@ -98,18 +111,18 @@ def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://12
             max_connections=20
         )
         
-        # Test connection with retry
-        for attempt in range(5):
+        # Fast Redis connection test with reduced retry time
+        for attempt in range(3):  # Reduced from 5 to 3 attempts
             try:
                 redis_conn.ping()
                 logger.info(f"✅ Redis connection established for {unique_worker_name}")
                 break
             except Exception as e:
-                if attempt == 4:
-                    raise Exception(f"Failed to connect to Redis after 5 attempts: {e}")
+                if attempt == 2:  # Last attempt
+                    raise Exception(f"Failed to connect to Redis after 3 attempts: {e}")
                 logger.warning(f"Redis connection attempt {attempt + 1} failed for {unique_worker_name}: {e}")
                 import time
-                time.sleep(2)
+                time.sleep(0.5)  # Reduced from 2s to 0.5s
         
         queue = Queue(queue_name, connection=redis_conn)
         worker = SimpleWorker([queue], connection=redis_conn, name=unique_worker_name)

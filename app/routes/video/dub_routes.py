@@ -209,26 +209,35 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
     try:
         from app.utils.pipeline_utils import mark_resume_job, mark_dub_job_active, mark_dub_job_inactive
         
-        mark_resume_job(job_id)
-        # Do not pre-mark voice_cloning to avoid occupying the slot prematurely
-        mark_dub_job_active(job_id, "review_prep")
-        
-        status_service.update_status(job_id, "dub", JobStatus.REVIEWING, 80, {
-            "message": "Processing approved edits...",
-            "review_status": "approved",
-            "phase": "voice_cloning"
+        # Immediate status update - worker started
+        logger.info(f"⚡ WORKER STARTED: Resume job worker started for {job_id}")
+        status_service.update_status(job_id, "dub", JobStatus.PROCESSING, 80, {
+            "message": "Review prep started", 
+            "phase": "reviewing"
         })
+        
+        mark_resume_job(job_id)
+        # Do not pre-mark voice_cloning to avoid occupying the slot prematurely  
+        mark_dub_job_active(job_id, "review_prep")
 
+        # Fast path: get API and job directory
+        import time
+        logger.info(f"🚀 Resume job starting for {job_id}")
+        resume_start = time.time()
+        
         api = get_simple_dubbed_api()
         job_dir = _ensure_job_dir(job_id)
         
-        # Download missing files before processing
+        # Quick missing files check (non-blocking)
         logger.info(f"Checking for missing files in job directory: {job_dir}")
         try:
             api._download_missing_files(job_id, manifest, job_dir)
             logger.info(f"✅ Missing files check completed for job {job_id}")
         except Exception as e:
             logger.warning(f"⚠️ Missing files download failed for job {job_id}: {e}")
+            
+        resume_prep_time = time.time() - resume_start
+        logger.info(f"⚡ Resume preparation completed in {resume_prep_time:.2f}s for {job_id}")
         
         result = api.process_dubbed_audio(
             job_id=job_id,

@@ -1008,5 +1008,10 @@ def get_simple_dubbed_api() -> SimpleDubbedAPI:
     if _simple_dubbed_api_instance is None:
         with _api_lock:
             if _simple_dubbed_api_instance is None:
+                import time
+                logger.info("🚀 Creating SimpleDubbedAPI instance...")
+                start_time = time.time()
                 _simple_dubbed_api_instance = SimpleDubbedAPI()
+                creation_time = time.time() - start_time
+                logger.info(f"✅ SimpleDubbedAPI created in {creation_time:.2f}s")
     return _simple_dubbed_api_instance
