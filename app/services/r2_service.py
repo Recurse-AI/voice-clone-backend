@@ -2,6 +2,7 @@ import boto3
 import os
 import logging
 import uuid
+import time
 from typing import Dict, Any, List
 from app.config.settings import settings
 
@@ -30,24 +31,37 @@ class R2Service:
         try:
             if not os.path.exists(local_path):
                 return {"success": False, "error": f"File not found: {local_path}"}
-            
+
             file_size = os.path.getsize(local_path)
-            
+
             # Use chunked upload for files larger than 100MB
             from app.config.constants import LARGE_FILE_THRESHOLD_MB
             threshold_bytes = LARGE_FILE_THRESHOLD_MB * 1024 * 1024
-            
-            if file_size > threshold_bytes:
-                return self._chunked_upload(local_path, r2_key, content_type)
-            else:
-                return self._standard_upload(local_path, r2_key, content_type)
-                
-        except Exception as e:
-            logger.error(f"❌ Upload failed: {r2_key} → {e}")
-            return {
-                "success": False,
-                "error": str(e)
-            }
+
+            def _do_upload():
+                if file_size > threshold_bytes:
+                    return self._chunked_upload(local_path, r2_key, content_type)
+                else:
+                    return self._standard_upload(local_path, r2_key, content_type)
+
+            # Simple exponential backoff retry
+            max_attempts = 4
+            base_delay = 0.5
+            last_error = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return _do_upload()
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_attempts:
+                        delay = base_delay * (2 ** (attempt - 1))
+                        logger.warning(f"Upload attempt {attempt} failed for {r2_key}: {e}. Retrying in {delay:.1f}s...")
+                        time.sleep(delay)
+                    else:
+                        break
+
+            logger.error(f"❌ Upload failed after retries: {r2_key} → {last_error}")
+            return {"success": False, "error": str(last_error) if last_error else "Upload failed"}
     
     def _standard_upload(self, local_path: str, r2_key: str, content_type: str) -> Dict[str, Any]:
         """Standard upload for smaller files"""

@@ -207,7 +207,8 @@ class SimpleDubbedAPI:
             )
             
             
-            # Transcription complete, bump to 60% before dubbing starts
+            # Transcription complete, bump to 60% before dubbing starts (ensure 46–60% range used)
+            self._update_phase_progress(job_id, "transcription", 1.0, "Transcription completed")
             self._update_status(
                 job_id,
                 JobStatus.PROCESSING,
@@ -287,7 +288,12 @@ class SimpleDubbedAPI:
                         "transcript_id": transcript_id
                     })
 
-                # Don't remove temp directory in review mode - needed for segments access
+                # Schedule auto cleanup after review window (1h)
+                try:
+                    from app.utils.cleanup_utils import cleanup_utils
+                    cleanup_utils.schedule_auto_cleanup(job_id, delay_minutes=60)
+                except Exception:
+                    pass
                 logger.info(f"Review mode: preserving temp directory for segments access: {process_temp_dir}")
                 return {
                     "success": True,
@@ -819,7 +825,13 @@ class SimpleDubbedAPI:
         self._create_process_summary(job_id, dubbed_segments, final_audio_path, subtitle_path,
                                    process_temp_dir, target_language, transcript_id)
         
-        
+        # Save final manifest (for normal dub / redub lineage)
+        try:
+            manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments)
+            save_manifest_to_dir(manifest, process_temp_dir, job_id)
+        except Exception:
+            pass
+
         # Upload to R2 and get results
         return self._upload_and_finalize(job_id, process_temp_dir, final_audio_path)
     

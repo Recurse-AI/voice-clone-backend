@@ -304,3 +304,128 @@ def send_reset_email_background_task(background_tasks: BackgroundTasks, email: s
 
     # Send HTML email
     background_tasks.add_task(send_email, sender_email, email, subject, html_body, password, True)
+
+
+def create_job_completion_template(name: str, job_type: str, job_id: str, download_urls: dict) -> str:
+    """Job completion email template"""
+    job_title = "Video Dubbing" if job_type == "dub" else "Audio Separation"
+    emoji = "🎬" if job_type == "dub" else "🎵"
+    
+    # Create download links HTML
+    download_links_html = ""
+    if job_type == "dub":
+        if download_urls.get("audio_url"):
+            download_links_html += f'<p><a href="{download_urls["audio_url"]}" class="download-button">🎵 Download Dubbed Audio</a></p>'
+        if download_urls.get("video_url"):
+            download_links_html += f'<p><a href="{download_urls["video_url"]}" class="download-button">🎬 Download Dubbed Video</a></p>'
+    else:
+        if download_urls.get("separation_url"):
+            download_links_html += f'<p><a href="{download_urls["separation_url"]}" class="download-button">🎵 Download Separated Audio</a></p>'
+    
+    return f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>{job_title} Completed - ClearVocals</title>
+        <style>
+            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }}
+            .email-container {{ max-width: 600px; margin: 0 auto; background-color: #ffffff; }}
+            .header {{ background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 40px 20px; text-align: center; }}
+            .logo {{ color: #ffffff; font-size: 28px; font-weight: bold; margin-bottom: 10px; }}
+            .header-subtitle {{ color: #d1fae5; font-size: 16px; }}
+            .content {{ padding: 40px 30px; }}
+            .greeting {{ font-size: 24px; color: #333333; margin-bottom: 20px; }}
+            .message {{ font-size: 16px; color: #666666; line-height: 1.6; margin-bottom: 30px; }}
+            .download-button {{ display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); 
+                               color: #ffffff; text-decoration: none; padding: 15px 30px; border-radius: 8px; 
+                               font-size: 16px; font-weight: bold; text-align: center; margin: 10px 0; 
+                               box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4); transition: all 0.3s ease; }}
+            .download-button:hover {{ transform: translateY(-2px); box-shadow: 0 6px 16px rgba(16, 185, 129, 0.5); }}
+            .job-info {{ background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 20px; 
+                        border-radius: 8px; margin: 25px 0; }}
+            .job-info-text {{ font-size: 14px; color: #166534; }}
+            .footer {{ background-color: #f8f9fa; padding: 30px; text-align: center; border-top: 1px solid #e9ecef; }}
+            .footer-text {{ font-size: 14px; color: #666666; margin-bottom: 10px; }}
+            @media only screen and (max-width: 600px) {{
+                .content {{ padding: 20px 15px; }}
+                .header {{ padding: 30px 15px; }}
+                .greeting {{ font-size: 20px; }}
+                .download-button {{ padding: 12px 24px; font-size: 14px; }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="email-container">
+            <div class="header">
+                <div class="logo">{emoji} ClearVocals</div>
+                <div class="header-subtitle">{job_title} Complete!</div>
+            </div>
+            
+            <div class="content">
+                <h1 class="greeting">Great news, {name}! ✨</h1>
+                
+                <p class="message">
+                    Your {job_title.lower()} job has been completed successfully! 
+                    You can now download your processed files using the links below.
+                </p>
+                
+                <div style="text-align: center;">
+                    {download_links_html}
+                </div>
+                
+                <div class="job-info">
+                    <p class="job-info-text">
+                        📋 <strong>Job Details:</strong><br>
+                        • Job ID: {job_id}<br>
+                        • Type: {job_title}<br>
+                        • Status: Completed<br>
+                        • Processed: {time.strftime('%Y-%m-%d %H:%M:%S UTC')}
+                    </p>
+                </div>
+                
+                <p class="message">
+                    Need to process more audio or video? Visit your ClearVocals workspace to start new jobs:
+                    <br><br>
+                    <a href="{settings.FRONTEND_URL}/workspace" style="color: #10b981; text-decoration: none; font-weight: bold;">
+                        🚀 Go to Workspace
+                    </a>
+                </p>
+            </div>
+            
+            <div class="footer">
+                <p class="footer-text">
+                    <strong>ClearVocals Team</strong><br>
+                    Your AI-powered voice companion
+                </p>
+                
+                <p class="footer-text">
+                    Need help? <a href="mailto:support@clearvocals.io" style="color: #10b981;">support@clearvocals.io</a>
+                </p>
+                
+                <p style="font-size: 12px; color: #999999; margin-top: 15px;">
+                    © 2024 ClearVocals. All rights reserved.
+                </p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+
+
+def send_job_completion_email_background_task(background_tasks: BackgroundTasks, email: str, name: str, 
+                                             job_type: str, job_id: str, download_urls: dict):
+    """Send job completion notification email"""
+    job_title = "Video Dubbing" if job_type == "dub" else "Audio Separation"
+    emoji = "🎬" if job_type == "dub" else "🎵"
+    
+    subject = f"{emoji} Your {job_title} is Ready - ClearVocals"
+    
+    html_body = create_job_completion_template(name, job_type, job_id, download_urls)
+
+    sender_email = settings.EMAIL_HOST_USER
+    password = settings.EMAIL_HOST_PASSWORD
+
+    background_tasks.add_task(send_email, sender_email, email, subject, html_body, password, True)

@@ -217,6 +217,9 @@ class DubService:
             from app.utils.job_utils import job_utils
             job_utils.complete_job_billing_sync(job_id, "dub", user_id, 1.0)
             
+            # Send completion email
+            self._send_completion_email(job_id, user_id, result_url, details)
+            
             logger.info(f"✅ Dub job completed: {job_id}")
             return True
             
@@ -247,6 +250,42 @@ class DubService:
         except Exception as e:
             logger.error(f"Failed to fail dub job {job_id}: {e}")
             return False
+    
+    def _send_completion_email(self, job_id: str, user_id: str, result_url: str = None, details: Dict[str, Any] = None):
+        """Send completion email notification"""
+        try:
+            # Get user details
+            import asyncio
+            from app.services.user_service import get_user_id
+            user = asyncio.run(get_user_id(user_id))
+            
+            # Prepare download URLs with dynamic frontend URLs (matching user's format)
+            download_urls = {}
+            if details and details.get("result_urls"):
+                result_urls = details["result_urls"]
+                if result_urls.get("audio_url"):
+                    download_urls["audio_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/audio-download/dub_{job_id}"
+                if result_urls.get("video_url"):
+                    download_urls["video_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/video-download/dub_{job_id}"
+            
+            # Send email
+            from fastapi import BackgroundTasks
+            from app.utils.email_helper import send_job_completion_email_background_task
+            
+            background_tasks = BackgroundTasks()
+            send_job_completion_email_background_task(
+                background_tasks, user.email, user.name, 
+                "dub", job_id, download_urls
+            )
+            
+            # Execute background tasks immediately
+            for task in background_tasks.tasks:
+                task()
+            
+            logger.info(f"Completion email sent for dub job {job_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to send completion email for dub job {job_id}: {e}")
     
     async def update_review_status(self, job_id: str, review_status: str,
                                  manifest_url: str = None) -> bool:

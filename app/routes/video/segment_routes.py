@@ -77,21 +77,27 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
     _write_temp_json(manifest, manifest_path)
     from app.services.r2_service import get_r2_service
     r2 = get_r2_service()
+    manifest_key_out = manifest_key
     if manifest_key:
         up_res = r2.upload_file(manifest_path, manifest_key, content_type="application/json")
         manifest_url_out = (up_res or {}).get("url") or manifest_url
     else:
-        # If key not known, upload new copy
+        # If key not known, upload new copy and persist key for future overwrites
         r2_key = r2.generate_file_path(job_id, "", os.path.basename(manifest_path))
         res = r2.upload_file(manifest_path, r2_key, content_type="application/json")
         manifest_url_out = res.get("url") if res.get("success") else manifest_url
-    # Keep job in awaiting_review during edits to allow approval
-    await dub_job_service.update_job_status(job_id, JobStatus.AWAITING_REVIEW.value, 80, details={
+        if res.get("success"):
+            manifest_key_out = r2_key
+    # Only update job details (no status/progress change during edits)
+    current_details = (job.details or {}).copy()
+    current_details.update({
         "review_required": True,
         "review_status": "in_progress",
         "segments_manifest_url": manifest_url_out,
+        "segments_manifest_key": manifest_key_out,
         "edited_segments_version": (job.edited_segments_version or 0) + 1,
     })
+    await dub_job_service.update_details(job_id, current_details)
     return SegmentsResponse(
         job_id=job_id, 
         segments=manifest.get("segments", []), 
