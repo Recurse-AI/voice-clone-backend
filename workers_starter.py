@@ -98,18 +98,9 @@ def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://12
             max_connections=20
         )
         
-        # Fast Redis connection test with reduced retry time
-        for attempt in range(3):  # Reduced from 5 to 3 attempts
-            try:
-                redis_conn.ping()
-                logger.info(f"✅ Redis connection established for {unique_worker_name}")
-                break
-            except Exception as e:
-                if attempt == 2:  # Last attempt
-                    raise Exception(f"Failed to connect to Redis after 3 attempts: {e}")
-                logger.warning(f"Redis connection attempt {attempt + 1} failed for {unique_worker_name}: {e}")
-                import time
-                time.sleep(0.5)  # Reduced from 2s to 0.5s
+        # Fast Redis connection with persistent connection
+        redis_conn.ping()  # Single immediate test
+        logger.info(f"✅ Redis connection ready for {unique_worker_name}")
         
         queue = Queue(queue_name, connection=redis_conn)
         # Set environment variable so services can detect which worker they're in
@@ -118,8 +109,16 @@ def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://12
         
         worker = SimpleWorker([queue], connection=redis_conn, name=unique_worker_name)
         
-        # Optimized worker settings for faster queue processing
-        worker.work(with_scheduler=True, burst=False)
+        # Pre-warm worker connections to prevent cold starts
+        logger.info(f"🚀 Worker {unique_worker_name} ready for instant job pickup")
+        
+        # Optimized worker settings for INSTANT job pickup
+        worker.work(
+            with_scheduler=True, 
+            burst=False,
+            poll_interval=0.1,  # Check queue every 100ms instead of default 1s
+            max_jobs=0  # Process unlimited jobs without restarting
+        )
         
     except KeyboardInterrupt:
         logger.info(f"Worker {unique_worker_name} stopped by user")
