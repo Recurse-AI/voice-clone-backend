@@ -202,21 +202,30 @@ class SeparationService:
             if instrument_url:
                 download_urls["instrument_url"] = instrument_url
 
-            # Send email synchronously
+            # Send email using BackgroundTasks approach like verification email
             from fastapi import BackgroundTasks
             from app.utils.email_helper import send_job_completion_email_background_task
 
+            # Create background tasks instance
             background_tasks = BackgroundTasks()
+            
+            # Use the same background task approach as verification email
             send_job_completion_email_background_task(
-                background_tasks, user.get('email'), user.get('name', 'User'),
-                "separation", job_id, download_urls
+                background_tasks, 
+                user.get('email'), 
+                user.get('name', 'User'),
+                "separation", 
+                job_id, 
+                download_urls
             )
 
-            # Execute immediately
+            # Execute background tasks immediately (sync execution)
             for task in background_tasks.tasks:
-                task()
-
-            logger.info(f"✅ Completion email sent for separation job {job_id}")
+                try:
+                    task()
+                    logger.info(f"✅ Completion email sent for separation job {job_id}")
+                except Exception as task_error:
+                    logger.error(f"❌ Email task failed for separation job {job_id}: {task_error}")
 
         except Exception as e:
             logger.error(f"❌ Failed to send completion email for separation job {job_id}: {e}")

@@ -254,22 +254,17 @@ class DubService:
     def _send_completion_email(self, job_id: str, user_id: str, result_url: str = None, details: Dict[str, Any] = None):
         """Send completion email notification"""
         try:
-            # Get user details
-            import asyncio
-            from app.services.user_service import get_user_id
+            # Get user synchronously to avoid async conflicts
+            from app.utils.db_sync_operations import get_user_sync
+            user = get_user_sync(user_id)
 
-            # Handle async call properly in sync context
-            try:
-                loop = asyncio.get_running_loop()
-                # If we're already in an event loop, create task
-                user = loop.run_until_complete(get_user_id(user_id))
-            except RuntimeError:
-                # No running loop, use asyncio.run
-                user = asyncio.run(get_user_id(user_id))
+            if not user:
+                logger.warning(f"User {user_id} not found, skipping email")
+                return
 
-            logger.info(f"Sending completion email to user {user_id} ({user.email}) for job {job_id}")
+            logger.info(f"Sending completion email to user {user_id} ({user.get('email')}) for dub job {job_id}")
 
-            # Prepare download URLs with dynamic frontend URLs (matching user's format)
+            # Prepare download URLs with dynamic frontend URLs
             download_urls = {}
             if details and details.get("result_urls"):
                 result_urls = details["result_urls"]
@@ -278,21 +273,30 @@ class DubService:
                 if result_urls.get("video_url"):
                     download_urls["video_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/video-download/dub_{job_id}"
 
-            # Send email
+            # Send email using BackgroundTasks approach like verification email
             from fastapi import BackgroundTasks
             from app.utils.email_helper import send_job_completion_email_background_task
 
+            # Create background tasks instance
             background_tasks = BackgroundTasks()
+            
+            # Use the same background task approach as verification email
             send_job_completion_email_background_task(
-                background_tasks, user.email, user.name,
-                "dub", job_id, download_urls
+                background_tasks, 
+                user.get('email'), 
+                user.get('name', 'User'),
+                "dub", 
+                job_id, 
+                download_urls
             )
 
-            # Execute background tasks immediately
+            # Execute background tasks immediately (sync execution)
             for task in background_tasks.tasks:
-                task()
-
-            logger.info(f"✅ Completion email sent for dub job {job_id}")
+                try:
+                    task()
+                    logger.info(f"✅ Completion email sent for dub job {job_id}")
+                except Exception as task_error:
+                    logger.error(f"❌ Email task failed for dub job {job_id}: {task_error}")
 
         except Exception as e:
             logger.error(f"❌ Failed to send completion email for dub job {job_id}: {e}")

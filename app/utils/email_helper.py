@@ -45,9 +45,11 @@ def send_email(sender_email: str, receiver_email: str, subject: str, body: str, 
 
     except smtplib.SMTPAuthenticationError as e:
         logger.error(f"❌ SMTP Authentication failed: {e}")
+        logger.error("Check EMAIL_HOST_USER and EMAIL_HOST_PASSWORD in environment variables")
         raise HTTPException(status_code=500, detail="SMTP authentication failed")
     except smtplib.SMTPConnectError as e:
         logger.error(f"❌ SMTP Connection failed: {e}")
+        logger.error("Check network connectivity and Gmail SMTP settings")
         raise HTTPException(status_code=500, detail="SMTP connection failed")
     except Exception as e:
         logger.error(f"❌ Failed to send email to {receiver_email}: {e}")
