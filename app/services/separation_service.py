@@ -188,7 +188,15 @@ class SeparationService:
             # Get user details
             import asyncio
             from app.services.user_service import get_user_id
-            user = asyncio.run(get_user_id(user_id))
+
+            # Handle async call properly in sync context
+            try:
+                loop = asyncio.get_running_loop()
+                # If we're already in an event loop, create task
+                user = loop.run_until_complete(get_user_id(user_id))
+            except RuntimeError:
+                # No running loop, use asyncio.run
+                user = asyncio.run(get_user_id(user_id))
 
             logger.info(f"Sending completion email to user {user_id} ({user.email}) for separation job {job_id}")
 
