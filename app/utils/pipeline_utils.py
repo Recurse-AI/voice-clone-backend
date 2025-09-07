@@ -84,12 +84,16 @@ def can_start_dub_job() -> bool:
     return current_count < pipeline_settings.DUB_CONCURRENCY_LIMIT
 
 def can_start_stage(stage: str) -> bool:
-    if stage == "transcription":
-        current_count = get_stage_jobs_count("transcription")
+    current_count = get_stage_jobs_count(stage)
+    
+    if stage == "separation":
+        return current_count < pipeline_settings.MAX_SEPARATION_JOBS
+    elif stage == "transcription":
         return current_count < pipeline_settings.MAX_TRANSCRIPTION_JOBS
     elif stage == "voice_cloning":
-        current_count = get_stage_jobs_count("voice_cloning")
         return current_count < pipeline_settings.MAX_VOICE_CLONING_JOBS
+    elif stage == "dubbing":
+        return current_count < pipeline_settings.MAX_DUBBING_JOBS
     else:
         return True
 
@@ -176,13 +180,23 @@ def get_batchable_jobs(stage: str, min_batch_size: int = 2) -> list:
         if not redis_client:
             return []
             
+        # Get jobs currently in this stage
         jobs_in_stage = redis_client.smembers(f"{pipeline_settings.REDIS_DUB_STAGE}:{stage}")
-        jobs_list = [job.decode('utf-8') for job in jobs_in_stage]
+        stage_jobs = [job.decode('utf-8') for job in jobs_in_stage]
         
-        if len(jobs_list) >= min_batch_size:
-            return jobs_list[:min_batch_size]
+        # Get active jobs waiting for this stage
+        active_jobs = redis_client.smembers(pipeline_settings.REDIS_DUB_ACTIVE)
+        waiting_jobs = [
+            job_bytes.decode('utf-8') for job_bytes in active_jobs
+            if redis_client.get(f"{pipeline_settings.REDIS_DUB_STAGE}:{job_bytes.decode('utf-8')}")
+            and redis_client.get(f"{pipeline_settings.REDIS_DUB_STAGE}:{job_bytes.decode('utf-8')}").decode('utf-8') == stage
+        ]
         
-        return []
+        # Combine unique jobs
+        all_jobs = list(set(stage_jobs + waiting_jobs))
+        
+        return all_jobs[:min_batch_size] if len(all_jobs) >= min_batch_size else []
+        
     except Exception:
         return []
 
