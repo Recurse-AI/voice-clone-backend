@@ -153,11 +153,15 @@ class WhisperXTranscriptionService:
     def _transcribe_via_service_worker(self, audio_path: str, language_code: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         """Submit transcription to service worker for processing"""
         try:
+            # Normalize language input using language service
+            normalized_language = language_service.get_language_code_for_transcription(language_code)
+            logger.info(f"Service worker transcription: {audio_path} (language: {language_code} -> {normalized_language})")
+            
             request_id = f"whisperx_{job_id}_{uuid.uuid4().hex[:8]}"
             request_data = {
                 "request_id": request_id,
                 "audio_path": audio_path,
-                "language_code": language_code,
+                "language_code": normalized_language,  # Send normalized language to worker
                 "job_id": job_id
             }
             
@@ -192,12 +196,21 @@ class WhisperXTranscriptionService:
         try:
             import whisperx
             
+            # Normalize language input using language service
+            normalized_language = language_service.get_language_code_for_transcription(language_code)
+            logger.info(f"Transcribing: {audio_path} (language: {language_code} -> {normalized_language})")
+            
             # Load and transcribe audio
             audio = whisperx.load_audio(audio_path)
-            result = self.model.transcribe(audio, batch_size=16, language=language_code)
+            result = self.model.transcribe(
+                audio, 
+                batch_size=16, 
+                language=normalized_language if normalized_language != "auto_detect" else None
+            )
             
-            # Get alignment model and align
-            model_a, metadata = self._get_alignment_model(language_code)
+            # Get alignment model and align (use detected language if auto-detect was used)
+            detected_language = result.get("language", normalized_language)
+            model_a, metadata = self._get_alignment_model(detected_language)
             if model_a:
                 result = whisperx.align(result["segments"], model_a, metadata, audio, self.alignment_device, return_char_alignments=False)
             
@@ -268,14 +281,14 @@ def get_whisperx_transcription_service() -> WhisperXTranscriptionService:
 def initialize_whisperx_transcription() -> bool:
     """Initialize WhisperX transcription service for fastest performance"""
     try:
-        logger.info("Initializing WhisperX for maximum speed...")
+        logger.info("🚀 Initializing WhisperX for auto-load and maximum speed...")
         service = get_whisperx_transcription_service()
         
         if not service.load_model():
-            logger.error("Failed to load WhisperX model")
+            logger.error("❌ Failed to load WhisperX model")
             return False
         
-        logger.info("✅ WhisperX ready for fastest transcription")
+        logger.info("✅ WhisperX preloaded and ready for fastest transcription (language weights load on-demand)")
         return True
         
     except Exception as e:

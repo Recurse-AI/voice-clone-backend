@@ -104,8 +104,8 @@ class Settings(BaseSettings):
     
     
     # Specific model loading controls for service workers
-    LOAD_WHISPERX_MODEL: bool = os.getenv("LOAD_WHISPERX_MODEL", "false").lower() == "true"
-    LOAD_FISH_SPEECH_MODEL: bool = os.getenv("LOAD_FISH_SPEECH_MODEL", "false").lower() == "true"
+    LOAD_WHISPERX_MODEL: bool = os.getenv("LOAD_WHISPERX_MODEL", "true").lower() == "true"  # Auto-load for fast processing
+    LOAD_FISH_SPEECH_MODEL: bool = os.getenv("LOAD_FISH_SPEECH_MODEL", "true").lower() == "true"
     
     # RunPod Configuration for Audio Separation
     API_ACCESS_TOKEN: str = os.getenv("API_ACCESS_TOKEN", "")
