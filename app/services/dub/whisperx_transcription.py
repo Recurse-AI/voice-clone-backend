@@ -38,12 +38,22 @@ class WhisperXTranscriptionService:
     
     def _setup_device_config(self):
         """Setup device and compute type configuration"""
-        if torch.cuda.is_available():
+        # Force CUDA setup first
+        os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+        
+        # Verify CUDA is available
+        cuda_available = torch.cuda.is_available()
+        logger.info(f"CUDA Available: {cuda_available}")
+        
+        if cuda_available:
             self.device = "cuda"
             self.compute_type = "float16" if settings.WHISPER_COMPUTE_TYPE == "auto" else settings.WHISPER_COMPUTE_TYPE
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
+            torch.backends.cudnn.benchmark = True
+            logger.info(f"✅ WhisperX configured for GPU: {self.device}")
         else:
+            logger.warning("⚠️ CUDA not available, falling back to CPU")
             self.device = "cpu"
             self.compute_type = "int8" if settings.WHISPER_COMPUTE_TYPE == "auto" else settings.WHISPER_COMPUTE_TYPE
     

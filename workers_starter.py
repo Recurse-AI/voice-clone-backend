@@ -88,8 +88,31 @@ def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://12
         # Initialize AI models for this worker
         initialize_ai_models()
         
-        redis_conn = redis.Redis.from_url(redis_url)
-        redis_conn.ping()
+        # Robust Redis connection with retry
+        redis_conn = redis.Redis.from_url(
+            redis_url,
+            socket_keepalive=True,
+            socket_keepalive_options={},
+            health_check_interval=30,
+            retry_on_timeout=True,
+            connection_pool_kwargs={
+                'max_connections': 20,
+                'retry_on_timeout': True
+            }
+        )
+        
+        # Test connection with retry
+        for attempt in range(5):
+            try:
+                redis_conn.ping()
+                logger.info(f"✅ Redis connection established for {unique_worker_name}")
+                break
+            except Exception as e:
+                if attempt == 4:
+                    raise Exception(f"Failed to connect to Redis after 5 attempts: {e}")
+                logger.warning(f"Redis connection attempt {attempt + 1} failed for {unique_worker_name}: {e}")
+                import time
+                time.sleep(2)
         
         queue = Queue(queue_name, connection=redis_conn)
         worker = SimpleWorker([queue], connection=redis_conn, name=unique_worker_name)

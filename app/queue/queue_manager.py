@@ -31,21 +31,51 @@ class QueueManager:
         self._fish_speech_service_queue = None
     
     def _get_redis_client(self) -> Optional[Redis]:
-        """Get Redis client with connection validation"""
-        if self._redis_client is None:
+        """Get Redis client with connection validation and retry"""
+        if self._redis_client is None or not self._test_redis_connection():
             try:
                 redis_url = os.getenv("REDIS_URL", "redis://127.0.0.1:6379")
-                self._redis_client = Redis.from_url(redis_url)
+                self._redis_client = Redis.from_url(
+                    redis_url,
+                    socket_keepalive=True,
+                    socket_keepalive_options={},
+                    health_check_interval=30,
+                    retry_on_timeout=True,
+                    retry_on_error=[ConnectionError],
+                    connection_pool_kwargs={
+                        'max_connections': 50,
+                        'retry_on_timeout': True
+                    }
+                )
                 
-                # Test connection
-                self._redis_client.ping()
-                logger.info(f"✅ Redis connected: {redis_url}")
+                # Test connection with retry
+                for attempt in range(3):
+                    try:
+                        self._redis_client.ping()
+                        logger.info(f"✅ Redis connected: {redis_url}")
+                        break
+                    except Exception as e:
+                        if attempt == 2:
+                            raise
+                        logger.warning(f"Redis connection attempt {attempt + 1} failed: {e}")
+                        import time
+                        time.sleep(1)
                 
             except ConnectionError as e:
                 logger.error(f"❌ Redis connection failed: {e}")
                 self._redis_client = None
                 
         return self._redis_client
+    
+    def _test_redis_connection(self) -> bool:
+        """Test if Redis connection is still alive"""
+        if self._redis_client is None:
+            return False
+        try:
+            self._redis_client.ping()
+            return True
+        except:
+            return False
     
     def get_dub_queue(self) -> Optional[Queue]:
         """Get dub queue with lazy initialization"""

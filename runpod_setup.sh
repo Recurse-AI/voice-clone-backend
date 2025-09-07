@@ -11,6 +11,14 @@ export FFMPEG_USE_GPU=0
 export CUDA_LAUNCH_BLOCKING=0
 export TORCH_BACKENDS_CUDNN_DETERMINISTIC=0
 
+# GPU Configuration - Force CUDA usage
+export CUDA_VISIBLE_DEVICES=0
+export CUDA_DEVICE_ORDER=PCI_BUS_ID  
+export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6"
+
+# Force GPU detection 
+export FORCE_CUDA=1
+
 # AI Model optimization - Smart compilation
 export FISH_SPEECH_COMPILE=true  # Enable compilation for optimized performance
 export TORCH_JIT_LOG_LEVEL=ERROR
@@ -98,8 +106,10 @@ redis-server --daemonize yes \
   --appendonly no \
   --maxmemory 2gb \
   --maxmemory-policy allkeys-lru \
-  --tcp-keepalive 60 \
-  --timeout 300
+  --tcp-keepalive 300 \
+  --timeout 0 \
+  --maxclients 10000 \
+  --tcp-backlog 1024
 
 sleep 3
 

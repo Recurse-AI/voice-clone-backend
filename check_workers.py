@@ -25,8 +25,8 @@ def check_workers_status():
             status = "🟢 ACTIVE" if worker.state == 'busy' else "🟡 IDLE"
             logger.info(f"  - {worker.name}: {status} (Queue: {worker.queue_names()})")
         
-        # Check queues
-        queues = ['dub_queue', 'separation_queue', 'billing_queue']
+        # Check queues (including service worker queues)
+        queues = ['dub_queue', 'separation_queue', 'billing_queue', 'whisperx_service_queue', 'fish_speech_service_queue']
         logger.info("\n📋 Queue Status:")
         
         for queue_name in queues:
@@ -34,7 +34,8 @@ def check_workers_status():
                 queue = Queue(queue_name, connection=r)
                 job_count = len(queue)
                 workers_count = Worker.count(queue=queue)
-                logger.info(f"  - {queue_name}: {job_count} jobs, {workers_count} workers")
+                status_emoji = "🟢" if job_count > 0 else "🟡" if workers_count > 0 else "🔴"
+                logger.info(f"  - {queue_name}: {status_emoji} {job_count} jobs, {workers_count} workers")
             except Exception as e:
                 logger.error(f"  - {queue_name}: ERROR - {e}")
         

@@ -40,9 +40,18 @@ class FishSpeechService:
     def __init__(self):
         from app.config.settings import settings
         
+        # Force CUDA setup first
+        os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+        
         # Device configuration from settings
         if settings.FISH_SPEECH_DEVICE == "auto":
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            cuda_available = torch.cuda.is_available()
+            logger.info(f"CUDA Available: {cuda_available}")
+            self.device = "cuda" if cuda_available else "cpu"
+            if cuda_available:
+                logger.info("✅ Fish Speech configured for GPU")
+            else:
+                logger.warning("⚠️ CUDA not available, Fish Speech falling back to CPU")
         else:
             self.device = settings.FISH_SPEECH_DEVICE
         
