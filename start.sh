@@ -111,7 +111,7 @@ COMMON_LOG="logs/workers.log"
 rm -f "$COMMON_LOG" 2>/dev/null || true
 
 echo "🔍 Setting up separation workers..."
-SEPARATION_WORKERS=${MAX_SEPARATION_WORKERS:-2}
+SEPARATION_WORKERS=${MAX_SEPARATION_WORKERS:-1}
 
 echo "Starting ${SEPARATION_WORKERS} separation worker(s)..."
 for i in $(seq 1 $SEPARATION_WORKERS); do
@@ -121,7 +121,7 @@ for i in $(seq 1 $SEPARATION_WORKERS); do
 done
 
 echo "🔍 Setting up dub orchestration workers..."
-DUB_WORKERS=${MAX_DUB_ORCHESTRATION_WORKERS:-2}
+DUB_WORKERS=${MAX_DUB_ORCHESTRATION_WORKERS:-1}
 
 echo "Starting ${DUB_WORKERS} dub orchestration worker(s)..."
 for i in $(seq 1 $DUB_WORKERS); do
@@ -137,7 +137,7 @@ echo "🎯 Starting VRAM service workers..."
 
 echo "  - Starting WhisperX service workers (2 parallel VRAM workers)..."
 LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup python workers_starter.py whisperx_service_queue whisperx_service_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+# LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup python workers_starter.py whisperx_service_queue whisperx_service_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "  - Starting Fish Speech service worker (VRAM serial)..." # manully off for debugging
 LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=true nohup python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &

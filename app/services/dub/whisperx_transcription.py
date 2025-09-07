@@ -5,7 +5,9 @@ WhisperX Transcription Service - Optimized for fastest transcription with 2 work
 import logging
 import os
 import threading
+import uuid
 from typing import Dict, Any, List, Optional
+from pathlib import Path
 import torch
 
 # Optimize PyTorch memory allocation
@@ -28,9 +30,11 @@ class WhisperXTranscriptionService:
         
         self.model_size = settings.WHISPER_MODEL_SIZE
         self.alignment_device = settings.WHISPER_ALIGNMENT_DEVICE
+        self.cache_dir = settings.WHISPER_CACHE_DIR
         self._setup_device_config()
+        self._setup_cache_directory()
         
-        logger.info(f"WhisperX service configured - Model: {self.model_size}, Device: {self.device}")
+        logger.info(f"WhisperX service configured - Model: {self.model_size}, Device: {self.device}, Cache: {self.cache_dir}")
     
     def _setup_device_config(self):
         """Setup device and compute type configuration"""
@@ -42,6 +46,19 @@ class WhisperXTranscriptionService:
         else:
             self.device = "cpu"
             self.compute_type = "int8" if settings.WHISPER_COMPUTE_TYPE == "auto" else settings.WHISPER_COMPUTE_TYPE
+    
+    def _setup_cache_directory(self):
+        """Setup persistent cache directory for WhisperX models"""
+        # Create cache directory if it doesn't exist
+        cache_path = Path(self.cache_dir)
+        cache_path.mkdir(parents=True, exist_ok=True)
+        
+        # Set HuggingFace cache environment variables to prevent repeated downloads
+        os.environ['HUGGINGFACE_HUB_CACHE'] = str(cache_path / "huggingface")
+        os.environ['HF_HOME'] = str(cache_path / "huggingface")
+        os.environ['TRANSFORMERS_CACHE'] = str(cache_path / "transformers")
+        
+        logger.info(f"Cache directory configured: {self.cache_dir}")
     
     def load_model(self) -> bool:
         """Load WhisperX model optimized for fastest transcription with 2 workers"""
@@ -59,12 +76,12 @@ class WhisperXTranscriptionService:
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             
-            # Load model with optimal settings for speed
+            # Load model with persistent cache for reuse
             self.model = whisperx.load_model(
                 self.model_size, 
                 device=self.device, 
                 compute_type=self.compute_type,
-                download_root=None  # Use default cache - no cleanup needed
+                download_root=self.cache_dir  # Use persistent cache directory
             )
             
             self._optimize_cuda_performance()
@@ -136,9 +153,6 @@ class WhisperXTranscriptionService:
     def _transcribe_via_service_worker(self, audio_path: str, language_code: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         """Submit transcription to service worker for processing"""
         try:
-            from app.utils.pipeline_utils import submit_service_request, get_service_result
-            import uuid
-            
             request_id = f"whisperx_{job_id}_{uuid.uuid4().hex[:8]}"
             request_data = {
                 "request_id": request_id,
@@ -147,15 +161,22 @@ class WhisperXTranscriptionService:
                 "job_id": job_id
             }
             
-            # Submit to service worker
-            submit_success = submit_service_request("whisperx", request_id, request_data)
-            if not submit_success:
+            # Enqueue request to service worker via queue manager
+            from app.queue.queue_manager import queue_manager
+            success = queue_manager.enqueue_whisperx_service_task(request_data)
+            
+            if not success:
+                logger.error(f"Failed to enqueue WhisperX request for {job_id}")
                 raise Exception("Failed to submit to WhisperX service worker")
             
-            # Get result from service worker
-            result = get_service_result("whisperx", request_id, timeout=300)
-            if not result.get("success"):
+            # Wait for result from service worker
+            from app.utils.pipeline_utils import wait_for_service_result, cleanup_service_result
+            result = wait_for_service_result("whisperx", request_id, timeout=300)
+            if "error" in result:
                 raise Exception(f"WhisperX service worker error: {result['error']}")
+            
+            # Cleanup result after use
+            cleanup_service_result("whisperx", request_id)
             
             return {
                 "segments": result["segments"],

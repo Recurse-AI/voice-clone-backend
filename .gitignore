@@ -180,6 +180,9 @@ reconstructed/
 .cache/
 transformers_cache/
 
+# WhisperX and model cache
+cache/
+
 # CUDA
 *.cubin
 *.fatbin
