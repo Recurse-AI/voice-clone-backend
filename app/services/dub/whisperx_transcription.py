@@ -183,7 +183,9 @@ class WhisperXTranscriptionService:
             cleanup_service_result("whisperx", request_id)
             
             return {
+                "success": True,
                 "segments": result["segments"],
+                "sentences": result["segments"],  # Alias for compatibility
                 "language": result["language"]
             }
             
@@ -228,7 +230,9 @@ class WhisperXTranscriptionService:
                 })
             
             return {
+                "success": True,
                 "segments": segments,
+                "sentences": segments,  # Alias for compatibility
                 "language": result.get("language", language_code)
             }
             

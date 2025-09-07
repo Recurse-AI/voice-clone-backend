@@ -104,9 +104,9 @@ class Settings(BaseSettings):
     
     
     # Specific model loading controls for service workers (16GB VRAM Optimized)
-    # NOTE: Models load separately in dedicated workers - see runpod_setup.sh
-    LOAD_WHISPERX_MODEL: bool = os.getenv("LOAD_WHISPERX_MODEL", "false").lower() == "true"  # Load only in WhisperX workers
-    LOAD_FISH_SPEECH_MODEL: bool = os.getenv("LOAD_FISH_SPEECH_MODEL", "false").lower() == "true"  # Load only in Fish Speech workers
+    # NOTE: Models auto-load in dedicated workers for faster processing
+    LOAD_WHISPERX_MODEL: bool = os.getenv("LOAD_WHISPERX_MODEL", "true").lower() == "true"  # Auto-load in WhisperX workers
+    LOAD_FISH_SPEECH_MODEL: bool = os.getenv("LOAD_FISH_SPEECH_MODEL", "true").lower() == "true"  # Auto-load in Fish Speech workers
     
     # RunPod Configuration for Audio Separation
     API_ACCESS_TOKEN: str = os.getenv("API_ACCESS_TOKEN", "")
