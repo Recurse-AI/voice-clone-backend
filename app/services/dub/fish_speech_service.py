@@ -196,7 +196,7 @@ class FishSpeechService:
             from app.config.settings import settings
             output_dir = os.path.join(settings.TEMP_DIR, job_id or "temp")
             os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, f"fish_speech_output_{request_id}.wav")
+            output_path = os.path.join(output_dir, f"output_{request_id}.wav")
         
         # Prepare request data
         request_data = {

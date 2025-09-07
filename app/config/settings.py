@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     
     # Fish Speech Configuration (Optimized for 16GB VRAM)
     FISH_SPEECH_LOW_MEMORY: bool = os.getenv("FISH_SPEECH_LOW_MEMORY", "true").lower() == "true"  # Enable for 16GB VRAM
-    FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "false").lower() == "true"  # Disable compilation to save memory
+    FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "false").lower() == "true"  # Disabled for faster startup
     FISH_SPEECH_CHECKPOINT: str = os.getenv("FISH_SPEECH_CHECKPOINT", "checkpoints/openaudio-s1-mini")
     FISH_SPEECH_DECODER: str = os.getenv("FISH_SPEECH_DECODER", "checkpoints/openaudio-s1-mini/codec.pth")
     FISH_SPEECH_DEVICE: str = os.getenv("FISH_SPEECH_DEVICE", "auto")  # auto, cuda, cpu

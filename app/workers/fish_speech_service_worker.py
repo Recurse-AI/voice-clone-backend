@@ -100,8 +100,18 @@ def process_fish_speech_request(request_data: dict) -> dict:
         
         # Perform actual voice cloning using existing logic
         cloning_result = fish_speech_service._generate_direct(
-            text, reference_audio_bytes, output_path
+            text, reference_audio_bytes, "", request_id  # reference_text not needed, job_id for context
         )
+        
+        # Save audio data to file if cloning was successful
+        if cloning_result.get("success") and cloning_result.get("audio_data"):
+            try:
+                with open(output_path, "wb") as f:
+                    f.write(cloning_result["audio_data"])
+                logger.info(f"✅ Saved voice cloning output to: {output_path}")
+            except Exception as e:
+                logger.error(f"❌ Failed to save output file {output_path}: {e}")
+                cloning_result = {"success": False, "error": f"Failed to save output file: {str(e)}"}
         
         processing_time = time.time() - start_time
         logger.info(f"✅ Fish Speech voice cloning completed in {processing_time:.2f}s")
