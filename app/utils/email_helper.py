@@ -9,7 +9,7 @@ import time
 logger = logging.getLogger(__name__) 
 
 # Function to send HTML email using smtplib
-def send_email(sender_email: str, receiver_email: str, subject: str, body: str, password: str, is_html: bool = False):
+def send_email(sender_email: str, receiver_email: str, subject: str, body: str, password: str, is_html: bool = False, raise_on_error: bool = True):
     try:
         logger.info(f"📤 Sending email to {receiver_email} from {sender_email}")
 
@@ -42,18 +42,25 @@ def send_email(sender_email: str, receiver_email: str, subject: str, body: str, 
             server.sendmail(sender_email, receiver_email, msg.as_string())  # Send email
 
         logger.info(f"✅ Email sent successfully to {receiver_email}")
+        return True
 
     except smtplib.SMTPAuthenticationError as e:
         logger.error(f"❌ SMTP Authentication failed: {e}")
         logger.error("Check EMAIL_HOST_USER and EMAIL_HOST_PASSWORD in environment variables")
-        raise HTTPException(status_code=500, detail="SMTP authentication failed")
+        if raise_on_error:
+            raise HTTPException(status_code=500, detail="SMTP authentication failed")
+        return False
     except smtplib.SMTPConnectError as e:
         logger.error(f"❌ SMTP Connection failed: {e}")
         logger.error("Check network connectivity and Gmail SMTP settings")
-        raise HTTPException(status_code=500, detail="SMTP connection failed")
+        if raise_on_error:
+            raise HTTPException(status_code=500, detail="SMTP connection failed")
+        return False
     except Exception as e:
         logger.error(f"❌ Failed to send email to {receiver_email}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error sending email: {str(e)}")
+        if raise_on_error:
+            raise HTTPException(status_code=500, detail=f"Error sending email: {str(e)}")
+        return False
 
 
 def create_email_verification_template(name: str, verification_link: str) -> str:

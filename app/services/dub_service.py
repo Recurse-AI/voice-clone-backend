@@ -273,30 +273,38 @@ class DubService:
                 if result_urls.get("video_url"):
                     download_urls["video_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/video-download/dub_{job_id}"
 
-            # Send email using BackgroundTasks approach like verification email
-            from fastapi import BackgroundTasks
-            from app.utils.email_helper import send_job_completion_email_background_task
+            # Send email directly without BackgroundTasks to avoid async issues
+            from app.utils.email_helper import send_email, create_job_completion_template
+            from app.config.settings import settings
 
-            # Create background tasks instance
-            background_tasks = BackgroundTasks()
-            
-            # Use the same background task approach as verification email
-            send_job_completion_email_background_task(
-                background_tasks, 
-                user.get('email'), 
-                user.get('name', 'User'),
-                "dub", 
-                job_id, 
-                download_urls
+            # Create email content
+            html_body = create_job_completion_template(
+                user.get('name', 'User'), "dub", job_id, download_urls
             )
 
-            # Execute background tasks immediately (sync execution)
-            for task in background_tasks.tasks:
-                try:
-                    task()
-                    logger.info(f"✅ Completion email sent for dub job {job_id}")
-                except Exception as task_error:
-                    logger.error(f"❌ Email task failed for dub job {job_id}: {task_error}")
+            subject = f"🎬 Your Video Dubbing is Ready - ClearVocals"
+
+            # Check if email credentials are configured
+            if not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD:
+                logger.warning(f"⚠️ Email credentials not configured - skipping email for dub job {job_id}")
+                return
+
+            # Send email directly and handle errors gracefully
+            email_sent = send_email(
+                sender_email=settings.EMAIL_HOST_USER,
+                receiver_email=user.get('email'),
+                subject=subject,
+                body=html_body,
+                password=settings.EMAIL_HOST_PASSWORD,
+                is_html=True,
+                raise_on_error=False  # Don't raise exceptions in worker context
+            )
+            
+            if email_sent:
+                logger.info(f"✅ Completion email sent for dub job {job_id}")
+            else:
+                logger.error(f"❌ Email failed for dub job {job_id}")
+                # Don't raise exception, just log the error so job completion isn't affected
 
         except Exception as e:
             logger.error(f"❌ Failed to send completion email for dub job {job_id}: {e}")
