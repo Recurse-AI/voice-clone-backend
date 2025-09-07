@@ -123,7 +123,7 @@ class WhisperXTranscriptionService:
                     raise Exception("Failed to load WhisperX model")
             
             # Use service worker if available
-            from app.config import pipeline_settings
+            from app.config.pipeline_settings import pipeline_settings
             if pipeline_settings.USE_WHISPERX_SERVICE_WORKER:
                 return self._transcribe_via_service_worker(audio_path, language, job_id)
             else:
