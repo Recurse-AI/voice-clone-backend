@@ -9,9 +9,9 @@ class PipelineSettings:
     MAX_DUBBING_JOBS: int = int(os.getenv("MAX_DUBBING_JOBS", "3"))                  # Final video processing
     
     
-    # === VRAM SERVICE WORKERS (Serial Processing) ===
-    # These control VRAM-intensive tasks - run one at a time
-    MAX_WHISPERX_SERVICE_WORKERS: int = int(os.getenv("MAX_WHISPERX_SERVICE_WORKERS", "2"))
+    # === VRAM SERVICE WORKERS (16GB VRAM Optimized) ===
+    # Reduced for 16GB VRAM - prevent OOM errors
+    MAX_WHISPERX_SERVICE_WORKERS: int = int(os.getenv("MAX_WHISPERX_SERVICE_WORKERS", "1"))  # 1 worker for 16GB
     MAX_FISH_SPEECH_SERVICE_WORKERS: int = int(os.getenv("MAX_FISH_SPEECH_SERVICE_WORKERS", "1"))
     
     # === LEGACY SETTINGS (Deprecated) ===

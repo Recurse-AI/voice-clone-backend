@@ -208,11 +208,10 @@ nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis:
 # VRAM Service Workers (Serial Processing)
 echo "🎯 Starting VRAM service workers..."
 
-echo "  - Starting WhisperX service workers (2 parallel VRAM workers)..."
+echo "  - Starting WhisperX service worker (1 worker for 16GB VRAM)..."
 LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
-echo "  - Starting Fish Speech service worker (VRAM serial)..."
+echo "  - Starting Fish Speech service worker (1 worker for 16GB VRAM)..."
 LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=true nohup ./venv/bin/python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "⏳ Waiting for VRAM workers to load models..."

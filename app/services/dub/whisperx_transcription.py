@@ -94,12 +94,12 @@ class WhisperXTranscriptionService:
             return False
     
     def _setup_optimal_memory(self):
-        """Setup optimal memory allocation for 2-worker setup"""
+        """Setup optimal memory allocation for 16GB VRAM"""
         if self.device == "cuda":
-            # Optimal memory fraction for 2 workers
-            torch.cuda.set_per_process_memory_fraction(0.4)
-            # Optimized memory allocation
-            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:128'
+            # Conservative memory fraction for 16GB VRAM
+            torch.cuda.set_per_process_memory_fraction(0.6)  # Increased for single worker
+            # Memory allocation optimized for 16GB
+            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:256'
     
     def _optimize_cuda_performance(self):
         """Apply CUDA optimizations for fastest inference"""
