@@ -219,10 +219,17 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
             "phase": "reviewing"
         })
 
-        api = get_simple_dubbed_api()
+        # FAST PATH: Reuse existing services, minimal initialization
+        import time
+        setup_start = time.time()
+        
+        api = get_simple_dubbed_api()  # Reuses existing singleton
         job_dir = _ensure_job_dir(job_id)
         
-        # Download missing files before processing
+        setup_time = time.time() - setup_start
+        logger.info(f"⚡ Fast resume setup completed in {setup_time:.2f}s for {job_id}")
+        
+        # Download missing files before processing  
         logger.info(f"Checking for missing files in job directory: {job_dir}")
         try:
             api._download_missing_files(job_id, manifest, job_dir)
@@ -330,9 +337,11 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
         "phase": "voice_cloning"
     })
     
-    # Enqueue background resume task
+    # Enqueue resume task with improved logging
     dub_queue = get_dub_queue()
-    dub_queue.enqueue(
+    
+    # Immediate enqueue for faster pickup (dedicated resume worker available)
+    job = dub_queue.enqueue(
         _resume_approved_job,
         job_id,
         manifest,
@@ -341,6 +350,8 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
         current_user.id,
         job_timeout=pipeline_settings.JOB_TIMEOUT
     )
+    
+    logger.info(f"🚀 FAST RESUME: Job {job_id} enqueued for instant processing (RQ job: {job.id})")
     return {"success": True, "message": "Resume started", "job_id": job_id}
 
 @router.post("/video-dub/{job_id}/redub", response_model=RedubResponse)

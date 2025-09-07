@@ -212,6 +212,11 @@ for i in $(seq 1 $DUB_WORKERS); do
     sleep 1  # Quick stagger for clean startup
 done
 
+echo "  - Starting 2 dedicated RESUME workers for instant job resumption..."
+LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py dub_queue resume_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+sleep 1
+LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py dub_queue resume_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+
 echo "  - Starting billing worker..."
 nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 

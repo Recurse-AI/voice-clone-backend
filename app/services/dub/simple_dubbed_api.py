@@ -362,8 +362,18 @@ class SimpleDubbedAPI:
                 if result.get("success"):
                     import soundfile as sf
                     import io
-                    buffer = io.BytesIO(result["audio_data"])
-                    audio, sample_rate = sf.read(buffer)
+                    # Handle both audio_data (direct) and output_path (service worker) responses
+                    if "audio_data" in result:
+                        # Direct generation response
+                        buffer = io.BytesIO(result["audio_data"])
+                        audio, sample_rate = sf.read(buffer)
+                    elif "output_path" in result and os.path.exists(result["output_path"]):
+                        # Service worker response
+                        audio, sample_rate = sf.read(result["output_path"])
+                    else:
+                        logger.error(f"No audio data or output path in Fish Speech result: {result}")
+                        return None
+                    
                     if len(audio.shape) > 1:
                         audio = audio[:, 0]
                     audio_chunks.append(audio)
