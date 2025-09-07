@@ -73,14 +73,11 @@ def process_separation_task(job_id: str, runpod_request_id: str, user_id: str, d
                         # Complete credit billing
                         from app.utils.job_utils import job_utils
                         job_utils.complete_job_billing_sync(job_id, "separation", user_id)
-                        
-                        # Send completion email
-                        _send_completion_email(job_id, user_id, "separation")
-                        
+
                         # Cleanup temp files
                         from app.utils.cleanup_utils import cleanup_utils
                         cleanup_utils.cleanup_job_comprehensive(job_id, "separation")
-                        
+
                         logger.info(f"Separation job {job_id} completed successfully")
                     else:
                         separation_service.fail_separation_job(job_id, "Failed to process results", "processing_failed")
@@ -116,40 +113,6 @@ def process_separation_task(job_id: str, runpod_request_id: str, user_id: str, d
     
     finally:
         logger.info(f"SEPARATION WORKER: Finished job {job_id}")
-
-
-def _send_completion_email(job_id: str, user_id: str, job_type: str):
-    """Send completion email notification"""
-    try:
-        # Get user details
-        from app.services.user_service import get_user_id
-        user = asyncio.run(get_user_id(user_id))
-        
-        # Prepare download URLs
-        download_urls = {
-            "separation_url": f"{settings.FRONTEND_URL}/workspace/separation"
-        }
-        
-        # Send email
-        from fastapi import BackgroundTasks
-        from app.utils.email_helper import send_job_completion_email_background_task
-        from app.config.settings import settings
-        
-        background_tasks = BackgroundTasks()
-        send_job_completion_email_background_task(
-            background_tasks, user.email, user.name, 
-            job_type, job_id, download_urls
-        )
-        
-        # Execute background tasks immediately
-        import asyncio
-        for task in background_tasks.tasks:
-            task()
-        
-        logger.info(f"Completion email sent for job {job_id}")
-        
-    except Exception as e:
-        logger.error(f"Failed to send completion email for {job_id}: {e}")
 
 
 # Task function for RQ

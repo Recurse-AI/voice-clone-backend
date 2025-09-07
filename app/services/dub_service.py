@@ -258,7 +258,9 @@ class DubService:
             import asyncio
             from app.services.user_service import get_user_id
             user = asyncio.run(get_user_id(user_id))
-            
+
+            logger.info(f"Sending completion email to user {user_id} ({user.email}) for job {job_id}")
+
             # Prepare download URLs with dynamic frontend URLs (matching user's format)
             download_urls = {}
             if details and details.get("result_urls"):
@@ -267,25 +269,26 @@ class DubService:
                     download_urls["audio_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/audio-download/dub_{job_id}"
                 if result_urls.get("video_url"):
                     download_urls["video_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/video-download/dub_{job_id}"
-            
+
             # Send email
             from fastapi import BackgroundTasks
             from app.utils.email_helper import send_job_completion_email_background_task
-            
+
             background_tasks = BackgroundTasks()
             send_job_completion_email_background_task(
-                background_tasks, user.email, user.name, 
+                background_tasks, user.email, user.name,
                 "dub", job_id, download_urls
             )
-            
+
             # Execute background tasks immediately
             for task in background_tasks.tasks:
                 task()
-            
-            logger.info(f"Completion email sent for dub job {job_id}")
-            
+
+            logger.info(f"✅ Completion email sent for dub job {job_id}")
+
         except Exception as e:
-            logger.error(f"Failed to send completion email for dub job {job_id}: {e}")
+            logger.error(f"❌ Failed to send completion email for dub job {job_id}: {e}")
+            logger.error(f"Email error details: user_id={user_id}, error={str(e)}")
     
     async def update_review_status(self, job_id: str, review_status: str,
                                  manifest_url: str = None) -> bool:

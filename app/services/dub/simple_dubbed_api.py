@@ -208,7 +208,6 @@ class SimpleDubbedAPI:
             
             
             # Transcription complete, bump to 60% before dubbing starts (ensure 46–60% range used)
-            self._update_phase_progress(job_id, "transcription", 1.0, "Transcription completed")
             self._update_status(
                 job_id,
                 JobStatus.PROCESSING,
@@ -534,6 +533,7 @@ class SimpleDubbedAPI:
 
             transcript_id = f"whisperx_{int(time.time())}"
             logger.info(f"Found {len(raw_sentences)} raw sentences (segmentation deferred)")
+            self._update_phase_progress(job_id, "transcription", 1.0, "Transcription completed")
         
         return raw_sentences, transcript_id
 

@@ -11,12 +11,14 @@ logger = logging.getLogger(__name__)
 # Function to send HTML email using smtplib
 def send_email(sender_email: str, receiver_email: str, subject: str, body: str, password: str, is_html: bool = False):
     try:
+        logger.info(f"📤 Sending email to {receiver_email} from {sender_email}")
+
         # Create the email content
         msg = MIMEMultipart('alternative')
         msg['From'] = sender_email
         msg['To'] = receiver_email
         msg['Subject'] = subject
-        
+
         # Attach both plain text and HTML versions
         if is_html:
             # Create plain text version as fallback
@@ -24,10 +26,10 @@ def send_email(sender_email: str, receiver_email: str, subject: str, body: str, 
             # Remove HTML tags for plain text version
             import re
             plain_text = re.sub('<[^<]+?>', '', plain_text)
-            
+
             text_part = MIMEText(plain_text, 'plain', 'utf-8')
             html_part = MIMEText(body, 'html', 'utf-8')
-            
+
             msg.attach(text_part)
             msg.attach(html_part)
         else:
@@ -38,10 +40,18 @@ def send_email(sender_email: str, receiver_email: str, subject: str, body: str, 
             server.starttls()  # Upgrade connection to a secure encrypted SSL/TLS connection
             server.login(sender_email, password)  # Login with sender's email credentials
             server.sendmail(sender_email, receiver_email, msg.as_string())  # Send email
-        logger.info(f"Email sent to {receiver_email}")
+
+        logger.info(f"✅ Email sent successfully to {receiver_email}")
+
+    except smtplib.SMTPAuthenticationError as e:
+        logger.error(f"❌ SMTP Authentication failed: {e}")
+        raise HTTPException(status_code=500, detail="SMTP authentication failed")
+    except smtplib.SMTPConnectError as e:
+        logger.error(f"❌ SMTP Connection failed: {e}")
+        raise HTTPException(status_code=500, detail="SMTP connection failed")
     except Exception as e:
-        logger.error(f"Failed to send email: {e}")
-        raise HTTPException(status_code=500, detail="Error sending verification email")
+        logger.error(f"❌ Failed to send email to {receiver_email}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error sending email: {str(e)}")
 
 
 def create_email_verification_template(name: str, verification_link: str) -> str:
@@ -415,17 +425,28 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
     """
 
 
-def send_job_completion_email_background_task(background_tasks: BackgroundTasks, email: str, name: str, 
+def send_job_completion_email_background_task(background_tasks: BackgroundTasks, email: str, name: str,
                                              job_type: str, job_id: str, download_urls: dict):
     """Send job completion notification email"""
-    job_title = "Video Dubbing" if job_type == "dub" else "Audio Separation"
-    emoji = "🎬" if job_type == "dub" else "🎵"
-    
-    subject = f"{emoji} Your {job_title} is Ready - ClearVocals"
-    
-    html_body = create_job_completion_template(name, job_type, job_id, download_urls)
+    try:
+        job_title = "Video Dubbing" if job_type == "dub" else "Audio Separation"
+        emoji = "🎬" if job_type == "dub" else "🎵"
 
-    sender_email = settings.EMAIL_HOST_USER
-    password = settings.EMAIL_HOST_PASSWORD
+        subject = f"{emoji} Your {job_title} is Ready - ClearVocals"
 
-    background_tasks.add_task(send_email, sender_email, email, subject, html_body, password, True)
+        html_body = create_job_completion_template(name, job_type, job_id, download_urls)
+
+        sender_email = settings.EMAIL_HOST_USER
+        password = settings.EMAIL_HOST_PASSWORD
+
+        logger.info(f"📧 Preparing email: from={sender_email}, to={email}, job={job_id}")
+
+        if not sender_email or not password:
+            logger.warning(f"⚠️ Email credentials not configured - skipping email for job {job_id}")
+            return
+
+        background_tasks.add_task(send_email, sender_email, email, subject, html_body, password, True)
+        logger.info(f"✅ Email task queued for job {job_id}")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to prepare completion email for job {job_id}: {e}")

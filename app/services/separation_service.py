@@ -142,7 +142,15 @@ class SeparationService:
                     "instrument_url": instrument_url
                 }
             )
-            
+
+            # Send completion email
+            # Get user_id from job data
+            from app.utils.db_sync_operations import get_separation_job_sync
+            job_data = get_separation_job_sync(job_id)
+            user_id = job_data.get("user_id") if job_data else None
+            if user_id:
+                self._send_completion_email(job_id, user_id, vocal_url, instrument_url)
+
             logger.info(f"✅ Separation results processed for job {job_id}")
             return True
             
@@ -174,6 +182,43 @@ class SeparationService:
             logger.error(f"Failed to fail separation job {job_id}: {e}")
             return False
     
+    def _send_completion_email(self, job_id: str, user_id: str, vocal_url: str = None, instrument_url: str = None):
+        """Send completion email notification for separation jobs"""
+        try:
+            # Get user details
+            import asyncio
+            from app.services.user_service import get_user_id
+            user = asyncio.run(get_user_id(user_id))
+
+            logger.info(f"Sending completion email to user {user_id} ({user.email}) for separation job {job_id}")
+
+            # Prepare download URLs
+            download_urls = {}
+            if vocal_url:
+                download_urls["separation_url"] = vocal_url  # Use vocal as main separation download
+            if instrument_url:
+                download_urls["instrument_url"] = instrument_url
+
+            # Send email
+            from fastapi import BackgroundTasks
+            from app.utils.email_helper import send_job_completion_email_background_task
+
+            background_tasks = BackgroundTasks()
+            send_job_completion_email_background_task(
+                background_tasks, user.email, user.name,
+                "separation", job_id, download_urls
+            )
+
+            # Execute background tasks immediately
+            for task in background_tasks.tasks:
+                task()
+
+            logger.info(f"✅ Completion email sent for separation job {job_id}")
+
+        except Exception as e:
+            logger.error(f"❌ Failed to send completion email for separation job {job_id}: {e}")
+            logger.error(f"Email error details: user_id={user_id}, error={str(e)}")
+
     async def get_job_status(self, job_id: str) -> Optional[Dict[str, Any]]:
         """Get separation job status"""
         return await separation_repo.get_by_id(job_id)

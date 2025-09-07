@@ -24,83 +24,91 @@ class WhisperXTranscriptionService:
     """Clean WhisperX transcription service - transcription only, no audio manipulation"""
     
     def __init__(self):
-        """Initialize WhisperX service"""
-        self.whisperx_model = None
+        """Initialize WhisperX service with model pool for concurrent processing"""
+        self.model_pool = []
+        self.pool_size = getattr(settings, 'WHISPER_POOL_SIZE', 2)
+        self.pool_semaphore = threading.Semaphore(self.pool_size)
         self.is_initialized = False
-        self.preloaded_align_models = {}  # Cache for language alignment models
+        self.preloaded_align_models = {}
+        self._pool_lock = threading.Lock()
         
 
-        # Get configuration from settings
         self.model_size = settings.WHISPER_MODEL_SIZE
-        # No static preloading; alignment models load on demand only
         self.alignment_device = settings.WHISPER_ALIGNMENT_DEVICE
+        self._setup_device_config()
         
-        # Device and compute type setup
+        logger.info(f"WhisperX pool configured - Size: {self.pool_size}, Model: {self.model_size}")
+    
+    def _setup_device_config(self):
+        """Setup device and compute type configuration"""
         if torch.cuda.is_available():
             self.device = "cuda"
-            if settings.WHISPER_COMPUTE_TYPE == "auto":
-                self.compute_type = "float16"
-            else:
-                self.compute_type = settings.WHISPER_COMPUTE_TYPE
-                
-            # Enable TF32 for faster GPU operations
+            self.compute_type = "float16" if settings.WHISPER_COMPUTE_TYPE == "auto" else settings.WHISPER_COMPUTE_TYPE
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
-            
-            logger.info(f"WhisperX service initialized on GPU (CUDA) with {self.compute_type} precision")
         else:
             self.device = "cpu"
-            if settings.WHISPER_COMPUTE_TYPE == "auto":
-                self.compute_type = "int8"
-            else:
-                self.compute_type = settings.WHISPER_COMPUTE_TYPE
-            logger.info(f"WhisperX service initialized on CPU with {self.compute_type} precision")
-        
-        logger.info(f"WhisperX configured - Model: {self.model_size}")
+            self.compute_type = "int8" if settings.WHISPER_COMPUTE_TYPE == "auto" else settings.WHISPER_COMPUTE_TYPE
     
     def load_model(self) -> bool:
-        """Load WhisperX model with timeout protection"""
-        import concurrent.futures
-        
+        """Load WhisperX model pool for concurrent processing"""
+        if self.is_initialized:
+            return True
+            
         try:
-            if self.is_initialized:
-                logger.info("WhisperX model already loaded")
-                return True
+            logger.info(f"Loading {self.pool_size} WhisperX models ({self.model_size})")
             
-            logger.info(f"Loading WhisperX model: {self.model_size} on {self.device}")
-            
-            def _load_model():
-                # 🧹 AGGRESSIVE MEMORY CLEANUP BEFORE LOADING
-                self._aggressive_gpu_cleanup()
-                
-                import whisperx
-                return whisperx.load_model(
-                    self.model_size, 
-                    device=self.device,
-                    compute_type=self.compute_type
-                )
-            
-            # Use ThreadPoolExecutor for timeout control
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                future = executor.submit(_load_model)
-                try:
-                    self.whisperx_model = future.result(timeout=settings.WHISPER_MODEL_TIMEOUT)
-                    self.is_initialized = True
-                    logger.info(f"✅ WhisperX model loaded successfully on {self.device}")
-                    return True
-                except concurrent.futures.TimeoutError:
-                    logger.error(f"❌ Model loading timeout ({settings.WHISPER_MODEL_TIMEOUT}s)")
+            for i in range(self.pool_size):
+                model = self._load_single_model_with_timeout()
+                if not model:
                     return False
-                        
+                self.model_pool.append(model)
+                logger.info(f"Model {i+1}/{self.pool_size} loaded")
+            
+            self.is_initialized = True
+            logger.info(f"✅ WhisperX pool ready: {len(self.model_pool)} models")
+            return True
+            
         except Exception as e:
-            logger.error(f"❌ Failed to load WhisperX model: {e}")
+            logger.error(f"Failed to load model pool: {e}")
             return False
     
+    def _load_single_model_with_timeout(self):
+        """Load single WhisperX model with timeout"""
+        import concurrent.futures
+        import whisperx
+        
+        def _load():
+            self._aggressive_gpu_cleanup()
+            return whisperx.load_model(self.model_size, device=self.device, compute_type=self.compute_type)
+        
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(_load)
+            try:
+                return future.result(timeout=settings.WHISPER_MODEL_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                logger.error(f"Model loading timeout ({settings.WHISPER_MODEL_TIMEOUT}s)")
+                return None
+    
     def _ensure_model_loaded(self):
-        """Ensure model is loaded before use"""
-        if not self.is_initialized:
-            if not self.load_model():
-                raise Exception("Failed to load WhisperX model")
+        """Ensure model pool is loaded before use"""
+        if not self.is_initialized and not self.load_model():
+            raise Exception("Failed to load WhisperX model pool")
+    
+    def _get_model_from_pool(self):
+        """Get available model from pool"""
+        self.pool_semaphore.acquire()
+        with self._pool_lock:
+            if not self.model_pool:
+                self.pool_semaphore.release()
+                raise Exception("No models available")
+            return self.model_pool.pop()
+    
+    def _return_model_to_pool(self, model):
+        """Return model to pool"""
+        with self._pool_lock:
+            self.model_pool.append(model)
+        self.pool_semaphore.release()
     
     def _cleanup_gpu_memory(self):
         """Clean up GPU memory to prevent CUDA OOM errors"""
@@ -113,8 +121,14 @@ class WhisperXTranscriptionService:
     def health_check(self) -> dict:
         """Health check for WhisperX service"""
         try:
+            with self._pool_lock:
+                available_models = len(self.model_pool)
+            
             status = {
                 "service_initialized": self.is_initialized,
+                "pool_size": self.pool_size,
+                "available_models": available_models,
+                "busy_models": self.pool_size - available_models if self.is_initialized else 0,
                 "device": self.device,
                 "model_size": self.model_size,
                 "compute_type": self.compute_type,
@@ -135,7 +149,9 @@ class WhisperXTranscriptionService:
         """Reset the service to recover from stuck state"""
         logger.warning("🔄 Resetting WhisperX service...")
         try:
-            self.whisperx_model = None
+            # Clear model pool
+            with self._pool_lock:
+                self.model_pool.clear()
             self.is_initialized = False
             self.preloaded_align_models.clear()
             self._aggressive_gpu_cleanup()
@@ -233,51 +249,40 @@ class WhisperXTranscriptionService:
         return normalized
     
     def _transcribe_with_whisperx(self, audio_path: str, language_code: str, job_id: Optional[str] = None) -> Dict[str, Any]:
-        """Core transcription method using WhisperX"""
+        """Core transcription using model pool for concurrent processing"""
+        model = self._get_model_from_pool()
+        
         try:
             import whisperx
-            
-            # Load audio
             audio = whisperx.load_audio(audio_path)
             
-            
-            # Transcribe with specified language or auto-detect
             if language_code == "auto_detect":
-                logger.info("Transcribing with auto language detection")
-                result = self.whisperx_model.transcribe(audio)
+                result = model.transcribe(audio)
             else:
-                logger.info(f"Transcribing with language: {language_code}")
-                result = self.whisperx_model.transcribe(audio, language=language_code)
-            
+                result = model.transcribe(audio, language=language_code)
+        
             used_language = result.get("language", language_code)
-            logger.info(f"Used language: {used_language}")
             
-            # Word-level alignment for better timestamps
+            # Word-level alignment
             try:
                 model_a, metadata = self._get_alignment_model(used_language)
                 aligned_result = whisperx.align(
-                    result["segments"], 
-                    model_a, 
-                    metadata, 
-                    audio, 
-                    self.alignment_device,
-                    return_char_alignments=False
+                    result["segments"], model_a, metadata, audio, 
+                    self.alignment_device, return_char_alignments=False
                 )
-                logger.info(f"✅ Word-level alignment completed for '{used_language}'")
                 return {
                     "segments": aligned_result.get("segments", result.get("segments", [])),
                     "language": used_language
                 }
             except Exception as e:
-                logger.warning(f"⚠️ Alignment failed for '{used_language}', using base transcription: {e}")
-                return {
-                    "segments": result.get("segments", []),
-                    "language": used_language
-                }
+                logger.warning(f"Alignment failed for '{used_language}': {e}")
+                return {"segments": result.get("segments", []), "language": used_language}
             
         except Exception as e:
-            logger.error(f"WhisperX transcription failed: {e}")
+            logger.error(f"Transcription failed: {e}")
             raise Exception(f"Transcription failed: {str(e)}")
+        finally:
+            self._return_model_to_pool(model)
     
     # Preloading removed: alignment models are loaded on-demand only
     
@@ -333,11 +338,12 @@ class WhisperXTranscriptionService:
             device=self.alignment_device
         )
         
-        # Cache in memory for this worker instance
-        self.preloaded_align_models[language_code] = {
-            'model': model_a,
-            'metadata': metadata
-        }
+        # Cache alignment model (limit to 3 for memory efficiency)
+        if len(self.preloaded_align_models) >= 3:
+            oldest_lang = next(iter(self.preloaded_align_models))
+            del self.preloaded_align_models[oldest_lang]
+        
+        self.preloaded_align_models[language_code] = {'model': model_a, 'metadata': metadata}
         
         logger.info(f"✅ Successfully loaded alignment model for '{language_code}'")
         return model_a, metadata
@@ -436,7 +442,7 @@ def cleanup_whisperx_transcription():
     global _whisperx_service
     try:
         if _whisperx_service:
-            # Clean up preloaded models
+            # Clean up preloaded alignment models
             if hasattr(_whisperx_service, 'preloaded_align_models'):
                 for lang_code in list(_whisperx_service.preloaded_align_models.keys()):
                     try:
@@ -445,10 +451,15 @@ def cleanup_whisperx_transcription():
                         logger.warning(f"Failed to cleanup alignment model for {lang_code}: {e}")
                 _whisperx_service.preloaded_align_models.clear()
             
-            # Clean up main model
-            if hasattr(_whisperx_service, 'whisperx_model') and _whisperx_service.whisperx_model:
-                del _whisperx_service.whisperx_model
-                _whisperx_service.whisperx_model = None
+            # Clean up model pool
+            if hasattr(_whisperx_service, 'model_pool'):
+                with _whisperx_service._pool_lock:
+                    for model in _whisperx_service.model_pool:
+                        try:
+                            del model
+                        except Exception as e:
+                            logger.warning(f"Failed to cleanup model: {e}")
+                    _whisperx_service.model_pool.clear()
             
             # Clear CUDA cache if available
             if torch.cuda.is_available():
