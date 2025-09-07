@@ -81,7 +81,7 @@ def process_separation_task(job_id: str, runpod_request_id: str, user_id: str, d
                         logger.info(f"Separation job {job_id} completed successfully")
                     else:
                         separation_service.fail_separation_job(job_id, "Failed to process results", "processing_failed")
-                    
+
                     break
                 
                 elif job_status == "failed":
