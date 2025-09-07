@@ -483,15 +483,24 @@ class SimpleDubbedAPI:
             logger.info("Starting fresh transcription (no segmentation)")
 
             # Get vocal audio path
+            logger.info(f"🔍 Checking for vocal file: {job_id}")
             vocal_file_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
+            logger.info(f"🔍 Vocal file path: {vocal_file_path}")
 
             if not os.path.exists(vocal_file_path):
                 raise Exception(f"Vocal file not found at {vocal_file_path}. Make sure separation completed successfully.")
 
             # Only transcribe, don't segment
+            logger.info(f"🎤 Starting transcription call for {job_id}")
+            import time
+            transcription_start = time.time()
+            
             transcription_result = self.transcription_service.transcribe_audio_file(
                 vocal_file_path, source_video_language, job_id
             )
+            
+            transcription_time = time.time() - transcription_start
+            logger.info(f"🎤 Transcription completed in {transcription_time:.2f}s for {job_id}")
 
             if not transcription_result["success"]:
                 logger.error(f"Transcription failed: {transcription_result.get('error')}")

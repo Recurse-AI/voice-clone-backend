@@ -19,8 +19,8 @@ export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6"
 # Force GPU detection 
 export FORCE_CUDA=1
 
-# AI Model optimization - Smart compilation
-export FISH_SPEECH_COMPILE=true  # Enable compilation for optimized performance
+# AI Model optimization - Disabled compilation for faster processing
+export FISH_SPEECH_COMPILE=false  # Disabled for instant voice cloning
 export TORCH_JIT_LOG_LEVEL=ERROR
 export TORCH_COMPILE_MODE=reduce-overhead
 export TORCH_COMPILE_BACKEND=inductor
