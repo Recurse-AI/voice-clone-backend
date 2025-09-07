@@ -16,13 +16,12 @@ logger = logging.getLogger(__name__)
 
 def process_separation_task(job_id: str, runpod_request_id: str, user_id: str, duration_seconds: float):
     """
-    Clean separation task processing
+    Enhanced separation task processing with parallel support
     Single responsibility: Monitor RunPod job and update status
     """
     logger.info(f"SEPARATION WORKER: Processing job {job_id} (RunPod: {runpod_request_id})")
     
     try:
-        # Update status to processing
         status_service.update_status(
             job_id, "separation", JobStatus.PROCESSING, 5,
             {"message": "Worker started processing", "phase": "initialization"}

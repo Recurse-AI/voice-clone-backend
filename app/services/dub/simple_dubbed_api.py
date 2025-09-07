@@ -80,7 +80,7 @@ class SimpleDubbedAPI:
         "dubbing": {"start": 60, "end": 75},
         "review_prep": {"start": 75, "end": 80},
         "reviewing": {"start": 80, "end": 81},
-        "voice_cloning": {"start": 81, "end": 96},
+        "voice_cloning": {"start": 81, "end": 91},
         "final_processing": {"start": 91, "end": 96},
         "upload": {"start": 96, "end": 100}
     }
@@ -100,7 +100,7 @@ class SimpleDubbedAPI:
     def temp_dir(self):
         return settings.TEMP_DIR
     
-    def _update_status(self, job_id: str, status: JobStatus, progress: int, details: dict, smart: bool = True):
+    def _update_status(self, job_id: str, status: JobStatus, progress: int, details: dict):
         try:
             status_service.update_status(job_id, "dub", status, progress, details)
         except Exception as e:
@@ -158,22 +158,7 @@ class SimpleDubbedAPI:
         return (completed % max(1, total // 10) == 0 or completed == total or completed <= 3)
     
     def dub_text_batch(self, segments: list, target_language: str = "English", batch_size: int = 10, job_id: str = None) -> list:
-        """Enhanced batch dubbing with pipeline optimization"""
-        from app.utils.pipeline_utils import can_batch_dubbing_requests, execute_dubbing_batch, get_batchable_jobs
-        from app.config.pipeline_settings import pipeline_settings
-        
-        # Check for batch dubbing opportunity
-        if job_id and can_batch_dubbing_requests():
-            batch_jobs = get_batchable_jobs("dubbing", pipeline_settings.BATCH_DUBBING_SIZE)
-            if job_id in batch_jobs:
-                logger.info(f"Executing dubbing batch for jobs: {batch_jobs}")
-                batch_result = execute_dubbing_batch(batch_jobs)
-                
-                if batch_result["status"] == "processing":
-                    logger.info(f"Dubbing batch {batch_result['batch_id']} processing {len(batch_jobs)} jobs")
-
         openai_service = get_openai_service()
-        
         return openai_service.translate_dubbing_batch(segments, target_language, batch_size)
 
 
@@ -181,7 +166,8 @@ class SimpleDubbedAPI:
     def process_dubbed_audio(self, job_id: str, target_language: str,
                            source_video_language: str = None,
                            output_dir: str = None, review_mode: bool = False,
-                           manifest_override: Optional[Dict[str, Any]] = None) -> dict:
+                           manifest_override: Optional[Dict[str, Any]] = None,
+                           separation_urls: Optional[Dict[str, str]] = None) -> dict:
         """
         Complete dubbed audio processing with clean, modular approach.
         Always generates SRT file. No audio mixing or conditional processing.
@@ -221,35 +207,27 @@ class SimpleDubbedAPI:
             )
             
             if review_mode:
-                try:
-                    from app.utils.pipeline_utils import update_dub_job_stage
-                    update_dub_job_stage(job_id, "review_prep")
-                except Exception:
-                    pass
-                    
                 self._update_phase_progress(job_id, "review_prep", 0.5, "Preparing segments for human review")
                 
-                # Get vocal and instrument URLs from job status details
-                vocal_audio_url = None
-                instrument_audio_url = None
-                try:
-                    job_data = status_service.get_status(job_id, "dub")
-                    if job_data and job_data.get("details"):
-                        details = job_data["details"]
-                        runpod_urls = details.get("runpod_urls", {})
-                        vocal_audio_url = runpod_urls.get("vocal_audio")
-                        instrument_audio_url = runpod_urls.get("instrument_audio")
-                except Exception as e:
-                    logger.warning(f"Could not retrieve vocal/instrument URLs for manifest: {e}")
-
-                # Use existing manifest if available (for redub), otherwise build new
+                # Handle URLs based on whether this is redub or original dub
                 if manifest_override:
-                    # For redub: use existing manifest, only update segments
+                    # For redub: use existing manifest which already has URLs
                     manifest = manifest_override.copy()
-                    # Update only segments with new dubbed text - URLs remain from parent
                     manifest["segments"] = dubbed_segments
+                    # URLs already preserved from original manifest
+                    vocal_audio_url = manifest.get("vocal_audio_url")
+                    instrument_audio_url = manifest.get("instrument_audio_url")
+                    logger.info(f"Redub using existing URLs for {job_id}: vocal={bool(vocal_audio_url)}, instrument={bool(instrument_audio_url)}")
                 else:
-                    # For original dub: build manifest from scratch
+                    # For original dub: get URLs from separation results
+                    vocal_audio_url = None
+                    instrument_audio_url = None
+                    if separation_urls:
+                        vocal_audio_url = separation_urls.get("vocal_audio")
+                        instrument_audio_url = separation_urls.get("instrument_audio")
+                        logger.info(f"Original dub using separation URLs for {job_id}: vocal={bool(vocal_audio_url)}, instrument={bool(instrument_audio_url)}")
+                    
+                    # Build manifest from scratch with separation URLs
                     manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
                                             vocal_audio_url, instrument_audio_url)
                 manifest_path = save_manifest_to_dir(manifest, process_temp_dir, job_id)
@@ -361,7 +339,6 @@ class SimpleDubbedAPI:
             text_chunks = smart_chunk(dubbed_text, chunk_size=settings.FISH_SPEECH_CHUNK_SIZE, min_size=150)
             audio_chunks = []
             sample_rate_out = None
-            seed_val = None
             for chunk in text_chunks:
                 import time
                 chunk_start = time.time()
@@ -646,32 +623,11 @@ class SimpleDubbedAPI:
     def _process_voice_cloning(self, job_id: str, enhanced_sentences: list, dubbed_texts: list, 
                               edited_map: dict, review_mode: bool, process_temp_dir: str) -> list:
         if not review_mode:
-            try:
-                from app.utils.pipeline_utils import can_start_stage_with_priority, update_dub_job_stage
-                import time
-                
-                wait_start = time.time()
-                wait_count = 0
-                while not can_start_stage_with_priority("voice_cloning", job_id):
-                    wait_count += 1
-                    if wait_count % 10 == 0:  # Log every 5 seconds
-                        elapsed = time.time() - wait_start
-                        logger.warning(f"⏳ Voice cloning queue wait: {elapsed:.1f}s (job: {job_id})")
-                    time.sleep(0.5)  # Faster queue check - 500ms instead of 1s
-                
-                if wait_count > 0:
-                    total_wait = time.time() - wait_start
-                    logger.info(f"✅ Voice cloning queue cleared after {total_wait:.1f}s wait")
-                
-                update_dub_job_stage(job_id, "voice_cloning")
-            except Exception:
-                pass
-            
             self._update_status(job_id, JobStatus.PROCESSING, 80, {
                 "message": "Starting AI voice cloning with Fish Speech",
                 "phase": "voice_cloning",
                 "sub_progress": 0.0
-            }, smart=False)
+            })
 
         dubbed_segments = []
         dub_idx = 0

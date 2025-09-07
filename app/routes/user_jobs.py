@@ -11,10 +11,21 @@ from app.services.job_response_service import job_response_service
 from app.services.workspace_service import workspace_service
 from app.dependencies.auth import get_current_user
 from app.config.constants import DEFAULT_QUERY_LIMIT
-from app.services.simple_status_service import status_service
+from app.services.status_api_service import api_status_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def safe_isoformat(value):
+    """Safely convert datetime or string to ISO format string"""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value  # Already a string, assume it's in ISO format
+    if hasattr(value, 'isoformat'):
+        return value.isoformat()  # DateTime object
+    return str(value)  # Fallback to string conversion
 
 
 # Workspace Status API
@@ -126,8 +137,8 @@ async def get_separation_job_detail(
     try:
         user_id = current_user.id
         
-        # Get status from simple service
-        status_data = status_service.get_status(job_id, "separation")
+        # Get latest status from API service
+        status_data = api_status_service.get_job_status(job_id, "separation")
         
         if not status_data:
             raise HTTPException(status_code=404, detail="Separation job not found")
@@ -155,7 +166,7 @@ async def get_separation_job_detail(
             error=job.error,
             queuePosition=None,  # Simple implementation
             created_at=job.created_at.isoformat(),
-            updated_at=status_data["updated_at"].isoformat() if status_data and status_data.get("updated_at") else job.updated_at.isoformat(),
+            updated_at=safe_isoformat(status_data.get("updated_at")) if status_data and status_data.get("updated_at") else job.updated_at.isoformat(),
             completed_at=job.completed_at.isoformat() if job.completed_at else None
         )
         
@@ -224,8 +235,8 @@ async def get_dub_job_detail(
         if job.user_id != user_id:
             raise HTTPException(status_code=403, detail="Access denied")
         
-        # Get current status from simple service
-        status_data = status_service.get_status(job_id, "dub")
+        # Get latest status from API service
+        status_data = api_status_service.get_job_status(job_id, "dub")
         
         # Format job using service
         user_job = job_response_service.format_dub_job(job)
@@ -234,7 +245,7 @@ async def get_dub_job_detail(
         if status_data:
             user_job.status = status_data["status"]
             user_job.progress = status_data["progress"]
-            user_job.updated_at = status_data["updated_at"].isoformat() if status_data.get("updated_at") else user_job.updated_at
+            user_job.updated_at = safe_isoformat(status_data.get("updated_at")) if status_data.get("updated_at") else user_job.updated_at
         
         user_job.queuePosition = None  # Simple implementation
         

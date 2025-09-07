@@ -160,8 +160,74 @@ class FishSpeechService:
     def generate_with_reference_audio(self, text: str, reference_audio_bytes: bytes, 
                                      reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:
         """
-        Generate voice cloning with reference audio (optimized for speed)
+        Generate voice cloning - routes through Redis queue if enabled, otherwise direct processing
         """
+        from app.config.pipeline_settings import pipeline_settings
+        
+        # Route through Redis service worker if enabled
+        if pipeline_settings.USE_FISH_SPEECH_SERVICE_WORKER:
+            return self._generate_via_service_worker(text, reference_audio_bytes, reference_text, job_id, **kwargs)
+        else:
+            # Fallback to direct processing
+            return self._generate_direct(text, reference_audio_bytes, reference_text, job_id, **kwargs)
+    
+    def _generate_via_service_worker(self, text: str, reference_audio_bytes: bytes, 
+                                   reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:
+        """Route voice cloning through Redis service worker for serial processing"""
+        import uuid
+        import time
+        import base64
+        import os
+        
+        request_id = f"fish_speech_{job_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        
+        # Generate output path
+        output_path = kwargs.get('output_path')
+        if not output_path:
+            from app.config.settings import settings
+            output_dir = os.path.join(settings.TEMP_DIR, job_id or "temp")
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, f"fish_speech_output_{request_id}.wav")
+        
+        # Prepare request data
+        request_data = {
+            "request_id": request_id,
+            "text": text,
+            "reference_audio_bytes": base64.b64encode(reference_audio_bytes).decode(),
+            "output_path": output_path
+        }
+        
+        # Enqueue request to service worker
+        from app.queue.queue_manager import queue_manager
+        success = queue_manager.enqueue_fish_speech_service_task(request_data)
+        
+        if not success:
+            logger.error(f"Failed to enqueue Fish Speech request for {job_id}")
+            # Fallback to direct processing
+            return self._generate_direct(text, reference_audio_bytes, reference_text, job_id, **kwargs)
+        
+        # Wait for result with timeout
+        from app.utils.pipeline_utils import wait_for_service_result, cleanup_service_result
+        result = wait_for_service_result("fish_speech", request_id, timeout=1800)  # 30 min timeout
+        
+        # Cleanup result from Redis
+        cleanup_service_result("fish_speech", request_id)
+        
+        if "error" in result:
+            logger.error(f"Fish Speech service worker error: {result['error']}")
+            return {"success": False, "error": result["error"]}
+        
+        # Return in expected format
+        return {
+            "success": True,
+            "output_path": result.get("output_path"),
+            "audio_duration": result.get("audio_duration"),
+            "processing_time": result.get("processing_time", 0)
+        }
+    
+    def _generate_direct(self, text: str, reference_audio_bytes: bytes, 
+                        reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:
+        """Direct voice cloning processing (fallback/legacy method)"""
         import time
         start_time = time.time()
         

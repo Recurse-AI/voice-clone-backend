@@ -352,20 +352,20 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
             body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }}
             .email-container {{ max-width: 600px; margin: 0 auto; background-color: #ffffff; }}
-            .header {{ background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 40px 20px; text-align: center; }}
+            .header {{ background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); padding: 40px 20px; text-align: center; }}
             .logo {{ color: #ffffff; font-size: 28px; font-weight: bold; margin-bottom: 10px; }}
-            .header-subtitle {{ color: #d1fae5; font-size: 16px; }}
+            .header-subtitle {{ color: #fed7aa; font-size: 16px; }}
             .content {{ padding: 40px 30px; }}
             .greeting {{ font-size: 24px; color: #333333; margin-bottom: 20px; }}
             .message {{ font-size: 16px; color: #666666; line-height: 1.6; margin-bottom: 30px; }}
-            .download-button {{ display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); 
+            .download-button {{ display: inline-block; background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); 
                                color: #ffffff; text-decoration: none; padding: 15px 30px; border-radius: 8px; 
                                font-size: 16px; font-weight: bold; text-align: center; margin: 10px 0; 
-                               box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4); transition: all 0.3s ease; }}
-            .download-button:hover {{ transform: translateY(-2px); box-shadow: 0 6px 16px rgba(16, 185, 129, 0.5); }}
-            .job-info {{ background-color: #f0fdf4; border: 1px solid #bbf7d0; padding: 20px; 
+                               box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4); transition: all 0.3s ease; }}
+            .download-button:hover {{ transform: translateY(-2px); box-shadow: 0 6px 16px rgba(249, 115, 22, 0.5); }}
+            .job-info {{ background-color: #fff7ed; border: 1px solid #fed7aa; padding: 20px; 
                         border-radius: 8px; margin: 25px 0; }}
-            .job-info-text {{ font-size: 14px; color: #166534; }}
+            .job-info-text {{ font-size: 14px; color: #9a3412; }}
             .footer {{ background-color: #f8f9fa; padding: 30px; text-align: center; border-top: 1px solid #e9ecef; }}
             .footer-text {{ font-size: 14px; color: #666666; margin-bottom: 10px; }}
             @media only screen and (max-width: 600px) {{
@@ -408,7 +408,7 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
                 <p class="message">
                     Need to process more audio or video? Visit your ClearVocals workspace to start new jobs:
                     <br><br>
-                    <a href="{settings.FRONTEND_URL}/workspace" style="color: #10b981; text-decoration: none; font-weight: bold;">
+                    <a href="{settings.FRONTEND_URL}/workspace" style="color: #f97316; text-decoration: none; font-weight: bold;">
                         🚀 Go to Workspace
                     </a>
                 </p>
@@ -421,7 +421,7 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
                 </p>
                 
                 <p class="footer-text">
-                    Need help? <a href="mailto:support@clearvocals.io" style="color: #10b981;">support@clearvocals.io</a>
+                    Need help? <a href="mailto:support@clearvocals.io" style="color: #f97316;">support@clearvocals.io</a>
                 </p>
                 
                 <p style="font-size: 12px; color: #999999; margin-top: 15px;">

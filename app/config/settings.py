@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
     
     # WhisperX Configuration
-    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "large-v2")  # Options: tiny, base, small, medium, large-v2, large-v3
+    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "medium")  # Options: tiny, base, small, medium, large-v2, large-v3
     WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "auto")  # auto, float16, int8
     WHISPER_ALIGNMENT_DEVICE: str = os.getenv("WHISPER_ALIGNMENT_DEVICE", "cpu")
     WHISPER_POOL_SIZE: int = int(os.getenv("WHISPER_POOL_SIZE", "2"))
@@ -101,7 +101,10 @@ class Settings(BaseSettings):
     FISH_SPEECH_MAX_BATCH_SIZE: int = int(os.getenv("FISH_SPEECH_MAX_BATCH_SIZE", "8"))  # Increased for better GPU utilization
     FISH_SPEECH_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_CHUNK_SIZE", "200"))  # Larger chunks for efficiency
     
-    LOAD_AI_MODELS: bool = os.getenv("LOAD_AI_MODELS", "false").lower() == "true"
+    
+    # Specific model loading controls for service workers
+    LOAD_WHISPERX_MODEL: bool = os.getenv("LOAD_WHISPERX_MODEL", "false").lower() == "true"
+    LOAD_FISH_SPEECH_MODEL: bool = os.getenv("LOAD_FISH_SPEECH_MODEL", "false").lower() == "true"
     
     # RunPod Configuration for Audio Separation
     API_ACCESS_TOKEN: str = os.getenv("API_ACCESS_TOKEN", "")
@@ -113,6 +116,12 @@ class Settings(BaseSettings):
     MAX_REFERENCE_SECONDS: int = int(os.getenv('MAX_REFERENCE_SECONDS', '20'))  # Maximum seconds of reference audio to feed into TTS
     # FFmpeg Configuration
     FFMPEG_USE_GPU: bool = bool(int(os.getenv('FFMPEG_USE_GPU', '0')))  # 1 to enable GPU (NVENC)
+    
+    # Redis Configuration
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "127.0.0.1")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
+    REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
+    REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
     
     model_config = {"env_file": ".env", "case_sensitive": True, "extra": "ignore"}
 

@@ -20,12 +20,9 @@ def process_dub_task(request_dict: dict, user_id: str):
     source_video_language = request_dict.get("source_video_language")
     human_review = request_dict.get("humanReview", False)
     
-    from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, can_start_dub_job, update_dub_job_stage
+    from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, update_dub_job_stage
     
-    import time
-    while not can_start_dub_job():
-        time.sleep(1)  # Reduced delay for faster queue processing
-    
+    # No artificial job limits - start immediately
     mark_dub_job_active(job_id, "initialization")
     
     try:
@@ -53,17 +50,17 @@ def process_dub_task(request_dict: dict, user_id: str):
         r2_key = upload_result["r2_key"]
         
         # Step 3: Start audio separation
-        success = _process_audio_separation(job_id, audio_url, job_dir)
-        if not success:
+        separation_result = _process_audio_separation(job_id, audio_url, job_dir)
+        if not separation_result["success"]:
             _cleanup_r2_file(r2_key)
             return
         
-        # Step 4: Process dubbing pipeline
+        # Step 4: Process dubbing pipeline with separation URLs
         update_dub_job_stage(job_id, "dubbing")
         
         success = _process_dubbing_pipeline(
             job_id, target_language, source_video_language, 
-            job_dir, human_review
+            job_dir, human_review, separation_result["runpod_urls"]
         )
         
         if not success:
@@ -82,9 +79,11 @@ def process_dub_task(request_dict: dict, user_id: str):
         mark_dub_job_inactive(job_id)
 
 
-def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> bool:
+def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> dict:
     try:
         from app.utils.pipeline_utils import update_dub_job_stage
+        
+        # No waiting logic needed - separation workers handle queuing
         update_dub_job_stage(job_id, "separation")
         
         status_service.update_status(
@@ -92,39 +91,9 @@ def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> bool
             {"message": "Starting audio separation", "phase": "separation"}
         )
         
-        # Smart batch separation processing
-        from app.utils.pipeline_utils import can_batch_separation_requests, get_batchable_jobs, execute_separation_batch
-        from app.config.pipeline_settings import pipeline_settings
-        
-        # Dynamic batch processing - immediate if capacity available
-        from app.utils.pipeline_utils import can_start_stage
-        
-        # Check separation capacity for dynamic processing
-        if not can_start_stage("separation"):
-            logger.info(f"Separation capacity full - waiting for slot: {job_id}")
-            max_wait = 30  # Max 30s wait for separation slot
-            wait_start = time.time()
-            
-            while not can_start_stage("separation"):
-                if time.time() - wait_start > max_wait:
-                    logger.warning(f"Separation wait timeout - proceeding: {job_id}")
-                    break
-                time.sleep(1)
-        
-        # Batch processing opportunity
-        if can_batch_separation_requests():
-            batch_jobs = get_batchable_jobs("separation", pipeline_settings.BATCH_SEPARATION_SIZE)
-            if job_id in batch_jobs and len(batch_jobs) > 1:
-                logger.info(f"🔥 Batch separation: {len(batch_jobs)} jobs → {batch_jobs}")
-                execute_separation_batch(batch_jobs)
-        
-        # Submit RunPod request (individual or batched)
         logger.info(f"Submitting RunPod separation for {job_id}")
         runpod_request_id = runpod_service.submit_separation_request(audio_url, job_id)
-        
-        # Monitor separation progress
         def on_progress(status: str, progress: int):
-            # Map RunPod progress (0-100) to separation range (25-45)
             separation_progress = 25 + int((progress / 100.0) * 20)
             status_service.update_status(
                 job_id, "dub", JobStatus.SEPARATING, separation_progress,
@@ -134,7 +103,6 @@ def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> bool
         def on_failed():
             dub_service.fail_job(job_id, "Audio separation failed by RunPod", "separation_failed")
         
-        # Monitor RunPod job
         monitor_result = monitor_runpod_job(
             runpod_request_id=runpod_request_id,
             job_id=job_id,
@@ -146,9 +114,8 @@ def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> bool
         if not monitor_result["success"]:
             error_msg = monitor_result.get("error", "Audio separation failed")
             dub_service.fail_job(job_id, error_msg, "separation_failed")
-            return False
+            return {"success": False}
         
-        # Download separation files
         output = monitor_result.get("output", {})
         runpod_urls = separation_utils.extract_urls_from_clearvocals_response(output)
         
@@ -160,9 +127,11 @@ def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> bool
         )
         
         if not download_success:
-            return False
+            return {"success": False}
         
-        # Update status with separation complete
+        # 🚀 CRITICAL FIX: Update pipeline stage tracking to free up separation slot
+        update_dub_job_stage(job_id, "transcription")
+        
         status_service.update_status(
             job_id, "dub", JobStatus.TRANSCRIBING, 45,
             {
@@ -173,39 +142,28 @@ def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> bool
         )
         
         logger.info(f"Separation completed for {job_id}")
-        return True
+        return {"success": True, "runpod_urls": runpod_urls}
         
     except Exception as e:
         logger.error(f"Separation failed for {job_id}: {e}")
         dub_service.fail_job(job_id, f"Separation error: {str(e)}", "separation_error")
-        return False
+        return {"success": False}
 
 
 def _process_dubbing_pipeline(job_id: str, target_language: str, 
                             source_video_language: str, job_dir: str,
-                            human_review: bool) -> bool:
+                            human_review: bool, runpod_urls: dict = None) -> bool:
     try:
-        from app.utils.pipeline_utils import update_dub_job_stage, can_start_stage_with_priority
-        import time
+        from app.utils.pipeline_utils import update_dub_job_stage
         
-        # Stage admission control with timeout
-        max_wait_time = 10
-        wait_start = time.time()
-        
-        while not can_start_stage_with_priority("transcription", job_id):
-            if time.time() - wait_start > max_wait_time:
-                logger.warning(f"Stage admission timeout for {job_id} - proceeding")
-                break
-            time.sleep(0.5)
-        
-        update_dub_job_stage(job_id, "transcription")
+        # No waiting logic needed - service workers handle VRAM queuing
+        update_dub_job_stage(job_id, "dubbing")
         
         status_service.update_status(
             job_id, "dub", JobStatus.TRANSCRIBING, 46,
-            {"message": "Starting transcription and dubbing pipeline", "phase": "transcription"}
+            {"message": "Starting dubbing pipeline", "phase": "transcription"}
         )
         
-        # Use simplified dubbing API
         from app.services.dub.simple_dubbed_api import get_simple_dubbed_api
         api = get_simple_dubbed_api()
         
@@ -214,7 +172,8 @@ def _process_dubbing_pipeline(job_id: str, target_language: str,
             target_language=target_language,
             source_video_language=source_video_language,
             output_dir=job_dir,
-            review_mode=human_review
+            review_mode=human_review,
+            separation_urls=runpod_urls
         )
         
         if not pipeline_result["success"]:
@@ -293,28 +252,20 @@ def enqueue_dub_task(request_dict: dict, user_id: str):
 def process_redub_task(redub_job_id: str, target_language: str, 
                       source_video_language: str, redub_job_dir: str, 
                       manifest: dict, human_review: bool):
-    """Process redub task with existing manifest - respects pipeline limits"""
+    """Process redub task with existing manifest"""
     logger.info(f"REDUB WORKER: Processing job {redub_job_id}")
     
     try:
-        # Respect pipeline concurrency limits for redub jobs
-        from app.utils.pipeline_utils import can_start_dub_job, mark_dub_job_active, mark_dub_job_inactive, can_start_stage
+        from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, update_dub_job_stage
         
-        # Wait for dubbing capacity
-        max_wait = 30
-        wait_start = time.time()
-        while not can_start_dub_job() or not can_start_stage("dubbing"):
-            if time.time() - wait_start > max_wait:
-                logger.warning(f"Redub capacity wait timeout - proceeding: {redub_job_id}")
-                break
-            time.sleep(1)
-        
+        # Simplified redub processing - service workers handle VRAM queuing
         mark_dub_job_active(redub_job_id, "redub")
+        update_dub_job_stage(redub_job_id, "redub")
         
         try:
             status_service.update_status(
-                redub_job_id, "dub", JobStatus.PROCESSING, 45,
-                {"message": f"Redubbing to {target_language}", "phase": "voice_cloning"}
+                redub_job_id, "dub", JobStatus.PROCESSING, 60,
+                {"message": f"Redubbing to {target_language}", "phase": "dubbing"}
             )
             
             # Use simplified API with manifest override

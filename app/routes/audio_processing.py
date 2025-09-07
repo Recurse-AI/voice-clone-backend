@@ -101,7 +101,6 @@ async def start_audio_separation(
         
         audio_url = audio_upload_result["url"]
         
-        # Use clean separation service
         from app.services.separation_service import separation_service
         
         result = await separation_service.create_separation_job(
@@ -116,7 +115,6 @@ async def start_audio_separation(
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result["error"])
         
-        # Enqueue background task
         success = queue_manager.enqueue_separation_task(
             job_id, result["runpod_request_id"], user_id, request.duration
         )

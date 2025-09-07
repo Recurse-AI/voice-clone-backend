@@ -1,14 +1,11 @@
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse
 import logging
-import os
 import gc
 import uuid
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-from pymongo import MongoClient
 
-from app.config.settings import settings
 from app.schemas import (
     VideoDubRequest,
     VideoDubResponse,
@@ -19,23 +16,19 @@ from app.schemas import (
 from app.dependencies.auth import get_current_user
 from app.services.dub_job_service import dub_job_service
 from app.services.credit_service import credit_service
-from app.services.dub.audio_utils import AudioUtils
-from app.services.r2_service import get_r2_service
 from app.services.dub.simple_dubbed_api import get_simple_dubbed_api
 from app.services.job_response_service import job_response_service
 from app.services.simple_status_service import status_service, JobStatus
+from app.services.status_api_service import api_status_service
 from app.config.credit_constants import JobType as CreditJobType
-from app.utils.runpod_service import runpod_service
-from app.utils.runpod_monitor import monitor_runpod_job
 
 from app.utils.job_utils import job_utils
 from app.queue.queue_manager import get_dub_queue
-from app.utils.cleanup_utils import cleanup_utils
-from app.utils.video_downloader import video_download_service
 from app.queue.queue_manager import queue_manager
+from app.utils.cleanup_utils import cleanup_utils
 from app.utils.token_helper import generate_url_safe_token
-from app.utils.separation_utils import separation_utils
 from app.config.database import db
+from app.config.pipeline_settings import pipeline_settings
 
 
 router = APIRouter()
@@ -43,12 +36,17 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _update_status_non_blocking(job_id: str, status: JobStatus, progress: int, details: dict):
-    """Update dub job status using simple status service"""
-    try:
-        status_service.update_status(job_id, "dub", status, progress, details)
-    except Exception as e:
-        logger.error(f"Failed to update status for {job_id}: {e}")
+def safe_isoformat(value):
+    """Safely convert datetime or string to ISO format string"""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value  # Already a string, assume it's in ISO format
+    if hasattr(value, 'isoformat'):
+        return value.isoformat()  # DateTime object
+    return str(value)  # Fallback to string conversion
+
+
 
 
 def enqueue_dub_job(request: VideoDubRequest, user_id: str) -> bool:
@@ -62,7 +60,26 @@ def enqueue_dub_job(request: VideoDubRequest, user_id: str) -> bool:
     return success
 
 def get_dub_queue_position(job_id: str) -> Optional[int]:
-    return None
+    try:
+        q = get_dub_queue()
+        if not q:
+            return None
+        # Try to find exact position by scanning queued jobs' first arg (request_dict)
+        try:
+            jobs = list(q.jobs)
+        except Exception:
+            # Fallback to queue length if jobs cannot be loaded
+            return len(q)
+        for idx, job in enumerate(jobs):
+            try:
+                req = job.args[0] if getattr(job, "args", None) else None
+                if isinstance(req, dict) and req.get("job_id") == job_id:
+                    return idx
+            except Exception:
+                continue
+        return None
+    except Exception:
+        return None
 
 
 @router.post("/video-dub", response_model=VideoDubResponse)
@@ -72,6 +89,9 @@ async def start_video_dub(
 ):
     try:
         user_id = current_user.id
+        # Enforce frontend-provided job_id format
+        if not isinstance(request.job_id, str) or not request.job_id.startswith("dub_"):
+            raise HTTPException(status_code=400, detail="job_id must start with 'dub_'")
         # Validate duration server-side to prevent credit calculation errors
         if request.duration is None or request.duration <= 0:
             raise HTTPException(status_code=400, detail="Duration is required and must be greater than 0 seconds")
@@ -146,8 +166,8 @@ async def get_video_dub_status(job_id: str):
     try:
 
         
-        # Get status from simple service
-        status_data = status_service.get_status(job_id, "dub")
+        # Get latest status from API service
+        status_data = api_status_service.get_job_status(job_id, "dub")
         
         if not status_data:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -163,7 +183,7 @@ async def get_video_dub_status(job_id: str):
         else:
             files = {}
             result_url = None
-            error = status_data.details.get("error")
+            error = status_data.get("details", {}).get("error")
 
         return VideoDubStatusResponse(
             job_id=job_id,
@@ -174,7 +194,7 @@ async def get_video_dub_status(job_id: str):
             error=error,
             details={
                 "files": files,
-                "updated_at": status_data["updated_at"].isoformat() if status_data.get("updated_at") else None,
+                "updated_at": safe_isoformat(status_data.get("updated_at")),
                 "phase": status_data.get("details", {}).get("phase")
             }
         )
@@ -197,7 +217,7 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
         # Do not pre-mark voice_cloning to avoid occupying the slot prematurely
         mark_dub_job_active(job_id, "review_prep")
         
-        _update_status_non_blocking(job_id, JobStatus.REVIEWING, 80, {
+        status_service.update_status(job_id, "dub", JobStatus.REVIEWING, 80, {
             "message": "Processing approved edits...",
             "review_status": "approved",
             "phase": "voice_cloning"
@@ -223,7 +243,7 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
             manifest_override=manifest,
         )
         if not result.get("success"):
-            _update_status_non_blocking(job_id, JobStatus.FAILED, 0, {
+            status_service.update_status(job_id, "dub", JobStatus.FAILED, 0, {
                 "message": "Resume failed", 
                 "error": result.get("error"),
                 "review_status": "rejected"
@@ -235,7 +255,22 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
         folder_upload = result.get("folder_upload", {})
         logger.info(f"📁 Folder upload contents for job {job_id}: {list(folder_upload.keys())}")
         
-        _update_status_non_blocking(job_id, JobStatus.COMPLETED, 100, {
+        # Use dub_service.complete_job to ensure email notification
+        from app.services.dub_service import dub_service
+        completion_details = {
+            "folder_upload": folder_upload,
+            "result_urls": result.get("result_urls"),
+            "review_status": "completed"
+        }
+        
+        success = dub_service.complete_job(job_id, result_url, completion_details, credit_percentage=0.25)
+        if not success:
+            logger.error(f"Failed to complete dub job {job_id} after review")
+            # Fallback billing if complete_job fails
+            job_utils.complete_job_billing_sync(job_id, "dub", user_id, 0.25)
+        
+        # Update status with review-specific message before cleanup
+        status_service.update_status(job_id, "dub", JobStatus.COMPLETED, 100, {
             "message": "Dubbing completed after review.",
             "result_url": result_url,
             "result_urls": result.get("result_urls"),
@@ -249,15 +284,11 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
         
         logger.info(f"✅ Job {job_id} completed after review")
         
-        # Confirm credit usage
-        # Complete credit billing using centralized utility (sync context) - charge remaining 25%
-        job_utils.complete_job_billing_sync(job_id, "dub", user_id, 0.25)
-        
         cleanup_utils.cleanup_job_comprehensive(job_id, "dub")
         
     except Exception as e:
         logger.error(f"Approval resume failed for job {job_id}: {str(e)}")
-        _update_status_non_blocking(job_id, JobStatus.FAILED, 0, {
+        status_service.update_status(job_id, "dub", JobStatus.FAILED, 0, {
             "message": f"Approval resume failed: {str(e)}",
             "review_status": "rejected",
             "error": str(e)
@@ -297,7 +328,7 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
     manifest = _load_manifest_json(manifest_url)
     
     # Immediately update status to reviewing after approve
-    _update_status_non_blocking(job_id, JobStatus.REVIEWING, 80, {
+    status_service.update_status(job_id, "dub", JobStatus.REVIEWING, 80, {
         "message": "Approved! Starting review processing...",
         "review_status": "approved",
         "phase": "voice_cloning"
@@ -311,7 +342,8 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
         manifest,
         manifest.get("target_language") or job.target_language,
         job.source_video_language,
-        current_user.id
+        current_user.id,
+        job_timeout=pipeline_settings.JOB_TIMEOUT
     )
     return {"success": True, "message": "Resume started", "job_id": job_id}
 
@@ -413,72 +445,6 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     except Exception as e:
         logger.error(f"Failed to create redub request: {e}")
         raise HTTPException(status_code=400, detail=f"Invalid redub request parameters: {str(e)}")
-    
-    # Start redub processing using existing pipeline
-    from app.services.dub.simple_dubbed_api import get_simple_dubbed_api
-    api = get_simple_dubbed_api()
-
-    def _run_redub():  # ← Sync function like existing pattern
-        try:
-            _update_status_non_blocking(redub_job_id, JobStatus.PROCESSING, 45, {"message": f"Redubbing to {request_body.target_language}", "phase": "initialization"})
-
-            result = api.process_dubbed_audio(
-                job_id=redub_job_id,
-                target_language=request_body.target_language,
-                source_video_language=parent_job.source_video_language,
-                output_dir=redub_job_dir,
-                review_mode=bool(getattr(request_body, "humanReview", False)),
-                manifest_override=manifest,
-            )
-            
-            if not result["success"]:
-                _update_status_non_blocking(redub_job_id, JobStatus.FAILED, 0, {
-                    "message": "Redub failed",
-                    "error": result.get("error")
-                })
-                return
-            
-            # Handle review mode or completion
-            if getattr(request_body, "humanReview", False):
-                if result.get("review"):
-                    logger.info(f"✅ Redub job {redub_job_id} reached awaiting_review")
-                    return
-            
-            # Complete redub
-            result_url = result.get("result_url") or (result.get("result_urls", {}) or {}).get("final_video")
-            folder_upload = result.get("folder_upload", {})
-            
-
-            _update_status_non_blocking(redub_job_id, JobStatus.COMPLETED, 100, {
-                "message": "Redub completed successfully",
-                "result_url": result_url,
-                "details": result.get("details"),
-                "folder_upload": folder_upload,
-                "result_urls": result.get("result_urls"),
-                "parent_job_id": parent_job_id
-            })
-            
-            logger.info(f"✅ Redub job {redub_job_id} completed")
-
-            # Immediate cleanup for this specific completed redub job
-
-            video_download_service.cleanup_specific_job(redub_job_id)
-                
-        except Exception as e:
-            logger.error(f"Redub processing failed: {str(e)}")
-            _update_status_non_blocking(redub_job_id, JobStatus.FAILED, 0, {
-                "message": f"Redub failed: {str(e)}",
-                "error": str(e),
-                "parent_job_id": parent_job_id
-            })
-            
-            # Refund credits on failure
-            try:
-                # Note: For redub failures, we use a simple approach - just log and cleanup
-                # Complex refund logic can cause additional event loop issues
-                logger.info(f"Redub job {redub_job_id} failed, cleaning up resources")
-            except Exception:
-                pass
     
     # Enqueue redub job
     from app.queue.dub_tasks import process_redub_task

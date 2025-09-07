@@ -37,15 +37,14 @@ def register_job_functions():
         return False
 
 def initialize_ai_models():
-    """Initialize AI models if LOAD_AI_MODELS is true"""
+    """Initialize AI models based on specific flags"""
     from app.config.settings import settings
     
-    if not settings.LOAD_AI_MODELS:
-        logger.info("AI models initialization skipped (LOAD_AI_MODELS=false)")
-        return
+    # Check specific model flags first
+    load_whisperx = settings.LOAD_WHISPERX_MODEL
+    load_fish_speech = settings.LOAD_FISH_SPEECH_MODEL
     
-    logger.info("🚀 Loading heavy AI models in worker...")
-    
+   
     # Initialize OpenAI for dub worker
     try:
         from app.services.openai_service import initialize_openai_service
@@ -54,21 +53,26 @@ def initialize_ai_models():
     except Exception as e:
         logger.warning(f"OpenAI failed: {str(e)[:50]}")
     
-    # Initialize FishSpeech
-    try:
-        from app.services.dub.fish_speech_service import initialize_fish_speech
-        initialize_fish_speech()
-        logger.info("✅ FishSpeech preloaded")
-    except Exception as e:
-        logger.warning(f"FishSpeech failed: {str(e)[:50]}")
+    # Initialize specific models based on flags
+    if load_fish_speech:
+        try:
+            from app.services.dub.fish_speech_service import initialize_fish_speech
+            initialize_fish_speech()
+            logger.info("✅ FishSpeech preloaded")
+        except Exception as e:
+            logger.warning(f"FishSpeech failed: {str(e)[:50]}")
+    else:
+        logger.info("⏭️ FishSpeech loading skipped")
 
-    # Initialize WhisperX
-    try:
-        from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
-        initialize_whisperx_transcription()
-        logger.info("✅ WhisperX preloaded")
-    except Exception as e:
-        logger.warning(f"WhisperX failed: {str(e)[:50]}")
+    if load_whisperx:
+        try:
+            from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
+            initialize_whisperx_transcription()
+            logger.info("✅ WhisperX preloaded")
+        except Exception as e:
+            logger.warning(f"WhisperX failed: {str(e)[:50]}")
+    else:
+        logger.info("⏭️ WhisperX loading skipped")
     
     logger.info("🎯 AI models initialization completed")
 

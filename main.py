@@ -73,37 +73,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to start status reconciler: {e}")
 
-    # Initialize only lightweight OpenAI service in API workers
-    if not settings.LOAD_AI_MODELS:
-        try:
-            from app.services.openai_service import initialize_openai_service
-            initialize_openai_service()
-            logger.info("OpenAI ready")
-        except Exception as e:
-            logger.warning(f"OpenAI failed: {str(e)[:50]}")
+    # Initialize only lightweight OpenAI service in API server
+    try:
+        from app.services.openai_service import initialize_openai_service
+        initialize_openai_service()
+        logger.info("✅ OpenAI service ready")
+    except Exception as e:
+        logger.warning(f"OpenAI initialization failed: {str(e)[:50]}")
 
-    if settings.LOAD_AI_MODELS:
-        logger.info("Loading heavy AI models...")
-        
-        try:
-            from app.services.dub.fish_speech_service import initialize_fish_speech
-            initialize_fish_speech()
-            logger.info("Fish Speech ready")
-        except Exception as e:
-            logger.warning(f"Fish Speech failed: {str(e)[:50]}")
-
-        try:
-            from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
-            initialize_whisperx_transcription()
-            logger.info("WhisperX ready")
-        except Exception as e:
-            logger.warning(f"WhisperX failed: {str(e)[:50]}")
-            
-        logger.info("Heavy AI models loaded")
-    else:
-        logger.info("Lightweight mode - heavy models will load on-demand")
     
-    logger.info(f"API started successfully on {settings.HOST}:{settings.PORT}")
     
     # R2 service initialization - only one worker should do this
     r2_lock_acquired = await startup_sync.acquire_startup_lock("r2_init", timeout=30)
@@ -126,24 +104,17 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    logger.info("Shutting down...")
+    logger.info("🔄 API server shutting down...")
     
-    if settings.LOAD_AI_MODELS:
-        try:
-            from app.services.dub.fish_speech_service import cleanup_fish_speech
-            from app.services.dub.whisperx_transcription import cleanup_whisperx_transcription
-            cleanup_fish_speech()
-            cleanup_whisperx_transcription()
-            logger.info("AI models cleaned up")
-        except Exception as e:
-            logger.error(f"Cleanup failed: {e}")
     
     try:
         from app.utils.status_reconciler import _reconciler
         _reconciler.stop()
-        logger.info("Status reconciler stopped")
+        logger.info("✅ Status reconciler stopped")
     except Exception as e:
         logger.error(f"Failed to cleanup status reconciler: {e}")
+    
+    logger.info("✅ API server shutdown complete")
     
    
 

@@ -12,7 +12,7 @@ export CUDA_LAUNCH_BLOCKING=0
 export TORCH_BACKENDS_CUDNN_DETERMINISTIC=0
 
 # AI Model optimization - Smart compilation
-export FISH_SPEECH_COMPILE=false  # Disable compilation for stable GPU usage
+export FISH_SPEECH_COMPILE=true  # Enable compilation for optimized performance
 export TORCH_JIT_LOG_LEVEL=ERROR
 export TORCH_COMPILE_MODE=reduce-overhead
 export TORCH_COMPILE_BACKEND=inductor
@@ -171,40 +171,52 @@ rm -f "$COMMON_LOG" 2>/dev/null || true
 
 echo "Starting workers..."
 
-echo "  - Starting separation worker..."
-nohup ./venv/bin/python workers_starter.py separation_queue sep_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+echo "🔍 Setting up separation workers..."
+SEPARATION_WORKERS=${MAX_SEPARATION_WORKERS:-2}
 
-# Auto-detect optimal dub worker count based on VRAM
-echo "🔍 Detecting optimal dub worker count..."
+echo "  - Starting ${SEPARATION_WORKERS} separation worker(s)..."
+for i in $(seq 1 $SEPARATION_WORKERS); do
+    echo "    - Starting sep_worker_${i}..."
+    LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py separation_queue sep_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+    sleep 1
+done
+
+# Dub orchestration workers (VRAM managed by service workers)
+echo "🔍 Setting up dub orchestration workers..."
+DUB_WORKERS=${MAX_DUB_ORCHESTRATION_WORKERS:-4}
+
 if command -v nvidia-smi >/dev/null 2>&1; then
-    # Get VRAM in MB
     VRAM_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1)
     VRAM_GB=$((VRAM_MB / 1024))
-    
-    if [ "$VRAM_GB" -ge 24 ]; then
-        DUB_WORKERS=2
-        echo "  - GPU: ${VRAM_GB}GB VRAM detected → 3 dub workers"
-    elif [ "$VRAM_GB" -ge 16 ]; then
-        DUB_WORKERS=1
-        echo "  - GPU: ${VRAM_GB}GB VRAM detected → 2 dub workers"
-    else
-        DUB_WORKERS=1
-        echo "  - GPU: ${VRAM_GB}GB VRAM detected → 1 dub worker"
-    fi
+    echo "  - GPU: ${VRAM_GB}GB VRAM detected"
 else
-    DUB_WORKERS=1
-    echo "  - No GPU detected → 1 dub worker"
+    echo "  - No GPU detected"
 fi
 
-echo "  - Starting ${DUB_WORKERS} dub worker(s) with AI models..."
+echo "  - Starting ${DUB_WORKERS} dub orchestration workers (VRAM managed by service workers)"
+
+echo "  - Starting ${DUB_WORKERS} dub orchestration worker(s) (no AI models)..."
 for i in $(seq 1 $DUB_WORKERS); do
     echo "    - Starting dub_worker_${i}..."
-    LOAD_AI_MODELS=true nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-    sleep 2  # Stagger startup to prevent VRAM conflicts
+    LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+    sleep 1  # Quick stagger for clean startup
 done
 
 echo "  - Starting billing worker..."
 nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+
+# VRAM Service Workers (Serial Processing)
+echo "🎯 Starting VRAM service workers..."
+
+echo "  - Starting WhisperX service workers (2 parallel VRAM workers)..."
+LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+
+echo "  - Starting Fish Speech service worker (VRAM serial)..."
+LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=true nohup ./venv/bin/python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+
+echo "⏳ Waiting for VRAM workers to load models..."
+sleep 10
 
 echo "⏳ Waiting for workers to initialize..."
 sleep 5

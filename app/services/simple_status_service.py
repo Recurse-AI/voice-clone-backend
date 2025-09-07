@@ -1,8 +1,5 @@
-"""
-Simple Status Service - Clean replacement for UnifiedStatusManager
-Single responsibility: Job status management with clean, simple logic
-"""
 import logging
+import threading
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 from enum import Enum
@@ -26,13 +23,6 @@ class JobStatus(Enum):
 
 
 class SimpleStatusService:
-    """
-    Simple, clean status service with single responsibility
-    - Updates job status in database
-    - Validates progress (monotonic only)
-    - No caching, no complex logic, just simple updates
-    """
-    
     def __init__(self):
         self._progress_floors = {
             JobStatus.PENDING: 0,
@@ -45,72 +35,145 @@ class SimpleStatusService:
             JobStatus.REVIEWING: 80,
             JobStatus.FAILED: 0,
         }
+        
+        self._persist_statuses = {
+            JobStatus.PROCESSING,
+            JobStatus.AWAITING_REVIEW,
+            JobStatus.COMPLETED,
+            JobStatus.FAILED
+        }
+        
+        self._sync_lock = threading.Lock()
+        self._init_redis()
+        self._init_sync_service()
+    
+    def _init_redis(self):
+        try:
+            from app.services.redis_status_service import redis_status_service
+            self.redis_service = redis_status_service
+            self.redis_available = self.redis_service.is_available()
+        except Exception as e:
+            logger.warning(f"Redis not available, falling back to MongoDB only: {e}")
+            self.redis_service = None
+            self.redis_available = False
+    
+    def _init_sync_service(self):
+        try:
+            from app.services.status_sync_service import sync_service
+            self.sync_service = sync_service
+            self.sync_service.start()
+        except Exception as e:
+            logger.warning(f"Sync service not available: {e}")
+            self.sync_service = None
     
     def update_status(self, job_id: str, job_type: str, status: JobStatus, 
                      progress: int = None, details: Dict[str, Any] = None) -> bool:
-        """
-        Simple status update - sync operation for thread safety
-        """
+        current_progress = self._get_current_progress(job_id, job_type)
+        
+        if progress is None:
+            validated_progress = self._progress_floors.get(status, 0)
+        else:
+            validated_progress = max(progress, current_progress, self._progress_floors.get(status, 0))
+        
+        status_data = {
+            "job_id": job_id,
+            "status": status.value,
+            "progress": validated_progress,
+            "details": details or {}
+        }
+        
+        redis_success = self._update_redis(job_id, job_type, status_data)
+        
+        mongo_success = True
+        if status in self._persist_statuses or not redis_success:
+            mongo_success = self._update_mongodb(job_id, job_type, status, validated_progress, details, current_progress)
+        
+        if redis_success or mongo_success:
+            if status in self._persist_statuses and self.sync_service:
+                self.sync_service.schedule_sync(job_id, job_type)
+            
+            logger.info(f"✅ Status updated: {job_id} → {status.value} ({validated_progress}%)")
+            return True
+        
+        logger.error(f"❌ Failed to update status for {job_id}")
+        return False
+    
+    def get_status(self, job_id: str, job_type: str) -> Optional[Dict[str, Any]]:
+        if self.redis_available:
+            redis_data = self.redis_service.get_status(job_id, job_type)
+            if redis_data:
+                return {
+                    "job_id": redis_data.get("job_id", job_id),
+                    "status": redis_data.get("status", "unknown"),
+                    "progress": redis_data.get("progress", 0),
+                    "details": redis_data.get("details", {}),
+                    "updated_at": redis_data.get("updated_at"),
+                    "created_at": redis_data.get("created_at")
+                }
+        
+        return self._get_mongodb_status(job_id, job_type)
+    
+    def _get_current_progress(self, job_id: str, job_type: str) -> int:
+        if self.redis_available:
+            redis_data = self.redis_service.get_status(job_id, job_type)
+            if redis_data and "progress" in redis_data:
+                return int(redis_data["progress"])
+        
+        mongo_data = self._get_mongodb_status(job_id, job_type)
+        return mongo_data.get("progress", 0) if mongo_data else 0
+    
+    def _update_redis(self, job_id: str, job_type: str, status_data: Dict[str, Any]) -> bool:
+        if not self.redis_available:
+            return False
+        
+        try:
+            return self.redis_service.set_status(job_id, job_type, status_data)
+        except Exception as e:
+            logger.warning(f"Redis update failed for {job_id}: {e}")
+            self.redis_available = False
+            return False
+    
+    def _update_mongodb(self, job_id: str, job_type: str, status: JobStatus, 
+                       validated_progress: int, details: Dict[str, Any], current_progress: int) -> bool:
         try:
             client = MongoClient(settings.MONGODB_URI)
             db = client[settings.DB_NAME]
             collection = db[f"{job_type}_jobs"]
             
-            # Get current progress and details for monotonic validation and merging
-            current_job = collection.find_one({"job_id": job_id}, {"progress": 1, "details": 1})
-            current_progress = current_job.get("progress", 0) if current_job else 0
+            current_job = collection.find_one({"job_id": job_id}, {"details": 1})
             
-            # Simple progress validation - never go backwards
-            if progress is None:
-                validated_progress = self._progress_floors.get(status, 0)
-            else:
-                validated_progress = max(progress, current_progress, self._progress_floors.get(status, 0))
-            
-            # Build update data
             update_data = {
                 "status": status.value,
                 "progress": validated_progress,
                 "updated_at": datetime.now(timezone.utc)
             }
             
-            # Add timestamps based on status
             if status == JobStatus.PROCESSING and current_progress == 0:
                 update_data["started_at"] = datetime.now(timezone.utc)
             elif status in [JobStatus.COMPLETED, JobStatus.FAILED]:
                 update_data["completed_at"] = datetime.now(timezone.utc)
             
-            # Merge details if provided (preserve existing details)
             if details:
-                # Get existing details first
                 existing_details = {}
                 if current_job and current_job.get("details"):
                     existing_details = current_job["details"]
                 
-                # Merge new details with existing ones
                 merged_details = {**existing_details, **details}
                 update_data["details"] = merged_details
             
-            # Update database
             result = collection.update_one(
                 {"job_id": job_id},
                 {"$set": update_data}
             )
             
             client.close()
+            return result.modified_count > 0
             
-            if result.modified_count > 0:
-                logger.info(f"✅ Status updated: {job_id} → {status.value} ({validated_progress}%)")
-                return True
-            else:
-                logger.warning(f"❌ No update for job {job_id}")
-                return False
-                
         except Exception as e:
-            logger.error(f"Failed to update status for {job_id}: {e}")
+            logger.error(f"MongoDB update failed for {job_id}: {e}")
             return False
     
-    def get_status(self, job_id: str, job_type: str) -> Optional[Dict[str, Any]]:
-        """Get job status from database"""
+    def _get_mongodb_status(self, job_id: str, job_type: str) -> Optional[Dict[str, Any]]:
         try:
             client = MongoClient(settings.MONGODB_URI)
             db = client[settings.DB_NAME]
@@ -131,7 +194,7 @@ class SimpleStatusService:
             return None
             
         except Exception as e:
-            logger.error(f"Failed to get status for {job_id}: {e}")
+            logger.error(f"MongoDB get failed for {job_id}: {e}")
             return None
 
 
@@ -139,17 +202,3 @@ class SimpleStatusService:
 status_service = SimpleStatusService()
 
 
-def update_job_status_simple(job_id: str, job_type: str, status: str, 
-                           progress: int = None, details: Dict[str, Any] = None) -> bool:
-    """Convenience function for status updates"""
-    try:
-        status_enum = JobStatus(status)
-        return status_service.update_status(job_id, job_type, status_enum, progress, details)
-    except ValueError:
-        logger.error(f"Invalid status: {status}")
-        return False
-
-
-def get_job_status_simple(job_id: str, job_type: str) -> Optional[Dict[str, Any]]:
-    """Convenience function for getting status"""
-    return status_service.get_status(job_id, job_type)

@@ -188,7 +188,7 @@ class DubService:
             }
     
     def complete_job(self, job_id: str, result_url: str = None, 
-                         details: Dict[str, Any] = None) -> bool:
+                         details: Dict[str, Any] = None, credit_percentage: float = 1.0) -> bool:
         """Mark job as completed with results"""
         try:
             # Get job to extract user_id for billing
@@ -213,9 +213,9 @@ class DubService:
                 }
             )
             
-            # Complete credit billing with full remaining percentage to reach 100%
+            # Complete credit billing with specified percentage
             from app.utils.job_utils import job_utils
-            job_utils.complete_job_billing_sync(job_id, "dub", user_id, 1.0)
+            job_utils.complete_job_billing_sync(job_id, "dub", user_id, credit_percentage)
             
             # Send completion email
             self._send_completion_email(job_id, user_id, result_url, details)
@@ -269,9 +269,9 @@ class DubService:
             if details and details.get("result_urls"):
                 result_urls = details["result_urls"]
                 if result_urls.get("audio_url"):
-                    download_urls["audio_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/audio-download/dub_{job_id}"
+                    download_urls["audio_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/audio-download/{job_id}"
                 if result_urls.get("video_url"):
-                    download_urls["video_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/video-download/dub_{job_id}"
+                    download_urls["video_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/video-download/{job_id}"
 
             # Send email directly without BackgroundTasks to avoid async issues
             from app.utils.email_helper import send_email, create_job_completion_template
