@@ -64,8 +64,7 @@ class WhisperXTranscriptionService:
                 self.model_size, 
                 device=self.device, 
                 compute_type=self.compute_type,
-                download_root=None,  # Use default cache - no cleanup needed
-                in_memory=True       # Keep in VRAM for fastest access
+                download_root=None  # Use default cache - no cleanup needed
             )
             
             self._optimize_cuda_performance()

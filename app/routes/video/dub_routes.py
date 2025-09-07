@@ -89,10 +89,6 @@ async def start_video_dub(
 ):
     try:
         user_id = current_user.id
-        # Enforce frontend-provided job_id format
-        if not isinstance(request.job_id, str) or not request.job_id.startswith("dub_"):
-            raise HTTPException(status_code=400, detail="job_id must start with 'dub_'")
-        # Validate duration server-side to prevent credit calculation errors
         if request.duration is None or request.duration <= 0:
             raise HTTPException(status_code=400, detail="Duration is required and must be greater than 0 seconds")
         
