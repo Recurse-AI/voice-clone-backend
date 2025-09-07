@@ -62,6 +62,10 @@ class R2Service:
 
             logger.error(f"❌ Upload failed after retries: {r2_key} → {last_error}")
             return {"success": False, "error": str(last_error) if last_error else "Upload failed"}
+        
+        except Exception as e:
+            logger.error(f"❌ Upload failed: {r2_key} → {e}")
+            return {"success": False, "error": str(e)}
     
     def _standard_upload(self, local_path: str, r2_key: str, content_type: str) -> Dict[str, Any]:
         """Standard upload for smaller files"""
