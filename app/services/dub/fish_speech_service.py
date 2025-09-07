@@ -40,66 +40,50 @@ class FishSpeechService:
     def __init__(self):
         from app.config.settings import settings
         
-        # Check if this will only be used for service worker routing
-        from app.config.pipeline_settings import pipeline_settings
-        self._service_worker_mode = pipeline_settings.USE_FISH_SPEECH_SERVICE_WORKER
+        # Traditional initialization - simple and reliable
+        logger.info("🔧 Fish Speech service initializing (traditional mode)")
         
-        if self._service_worker_mode:
-            logger.info("⚡ Fish Speech service created for routing (fast mode)")
-            # Minimal setup for routing only
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        else:
-            logger.info("🔧 Fish Speech service created for direct processing (full setup)")
-            # Force CUDA setup first
-            os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-            
-            # Device configuration from settings
-            if settings.FISH_SPEECH_DEVICE == "auto":
-                cuda_available = torch.cuda.is_available()
-                logger.info(f"CUDA Available: {cuda_available}")
-                self.device = "cuda" if cuda_available else "cpu"
-                if cuda_available:
-                    logger.info("✅ Fish Speech configured for GPU")
-                else:
-                    logger.warning("⚠️ CUDA not available, Fish Speech falling back to CPU")
+        # Force CUDA setup first
+        os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+        
+        # Device configuration from settings
+        if settings.FISH_SPEECH_DEVICE == "auto":
+            cuda_available = torch.cuda.is_available()
+            logger.info(f"CUDA Available: {cuda_available}")
+            self.device = "cuda" if cuda_available else "cpu"
+            if cuda_available:
+                logger.info("✅ Fish Speech configured for GPU")
             else:
-                self.device = settings.FISH_SPEECH_DEVICE
+                logger.warning("⚠️ CUDA not available, Fish Speech falling back to CPU")
+        else:
+            self.device = settings.FISH_SPEECH_DEVICE
         
-        # Configuration setup - minimal for routing mode, full for direct mode
-        if self._service_worker_mode:
-            # Minimal configuration for routing only
+        # Precision configuration from settings
+        if settings.FISH_SPEECH_PRECISION == "auto":
             self.precision = torch.half if self.device == "cuda" else torch.float32
-            self.checkpoint_path = settings.FISH_SPEECH_CHECKPOINT
-            self.decoder_checkpoint_path = settings.FISH_SPEECH_DECODER
-            self.is_initialized = False
+        elif settings.FISH_SPEECH_PRECISION == "float16":
+            self.precision = torch.half
         else:
-            # Full configuration for direct processing
-            # Precision configuration from settings
-            if settings.FISH_SPEECH_PRECISION == "auto":
-                self.precision = torch.half if self.device == "cuda" else torch.float32
-            elif settings.FISH_SPEECH_PRECISION == "float16":
-                self.precision = torch.half
-            else:
-                self.precision = torch.float32
-            
-            # Model paths from settings
-            self.checkpoint_path = settings.FISH_SPEECH_CHECKPOINT
-            self.decoder_checkpoint_path = settings.FISH_SPEECH_DECODER
-            
-            # Model configuration from settings
-            self.use_memory_efficient_attention = not settings.FISH_SPEECH_LOW_MEMORY
-            self.use_flash_attention = self.device == "cuda" and not settings.FISH_SPEECH_LOW_MEMORY
-            self.max_batch_size = settings.FISH_SPEECH_MAX_BATCH_SIZE
-            self.is_initialized = False
-            self._compile_enabled = settings.FISH_SPEECH_COMPILE
-            
-            # GPU optimization for faster compilation
-            if self.device == "cuda":
-                torch.backends.cudnn.benchmark = True
-                torch.backends.cuda.matmul.allow_tf32 = True
-                torch.backends.cudnn.allow_tf32 = True
+            self.precision = torch.float32
         
-        # TTSInferenceEngine components
+        # Model paths from settings
+        self.checkpoint_path = settings.FISH_SPEECH_CHECKPOINT
+        self.decoder_checkpoint_path = settings.FISH_SPEECH_DECODER
+        
+        # Model configuration from settings
+        self.use_memory_efficient_attention = not settings.FISH_SPEECH_LOW_MEMORY
+        self.use_flash_attention = self.device == "cuda" and not settings.FISH_SPEECH_LOW_MEMORY
+        self.max_batch_size = settings.FISH_SPEECH_MAX_BATCH_SIZE
+        self.is_initialized = False
+        self._compile_enabled = settings.FISH_SPEECH_COMPILE
+        
+        # GPU optimization for faster compilation
+        if self.device == "cuda":
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
+        
+        # TTSInferenceEngine components (always needed)
         self.llama_queue = None
         self.decoder_model = None
         self.inference_engine = None
@@ -269,12 +253,18 @@ class FishSpeechService:
         # Cleanup will be handled by the calling service
         
         if not self.is_initialized:
-            logger.info("🔄 Fish Speech model not loaded, loading now...")
-            load_start = time.time()
-            if not self.load_model():
-                return {"success": False, "error": "Failed to load TTSInferenceEngine"}
-            load_time = time.time() - load_start
-            logger.info(f"⚡ Fish Speech model loaded in {load_time:.2f}s")
+            # Only load model if this is running in a Fish Speech service worker
+            import os
+            worker_name = os.getenv('RQ_WORKER_NAME', '')
+            if 'fish_speech_service_worker' in worker_name:
+                logger.info("🔄 Fish Speech model not loaded, loading now in service worker...")
+                load_start = time.time()
+                if not self.load_model():
+                    return {"success": False, "error": "Failed to load TTSInferenceEngine"}
+                load_time = time.time() - load_start
+                logger.info(f"⚡ Fish Speech model loaded in {load_time:.2f}s")
+            else:
+                return {"success": False, "error": "Model not loaded and not running in Fish Speech service worker. Service worker should handle this."}
         
         try:
             # Create optimized TTS request with timeout handling

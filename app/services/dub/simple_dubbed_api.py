@@ -86,6 +86,8 @@ class SimpleDubbedAPI:
     }
     
     def __init__(self):
+        # Only create service instances, don't load models
+        # Service workers will handle actual model loading
         self.transcription_service = get_whisperx_transcription_service()
         self.fish_speech = get_fish_speech_service()
         self._r2_storage = None
@@ -483,24 +485,15 @@ class SimpleDubbedAPI:
             logger.info("Starting fresh transcription (no segmentation)")
 
             # Get vocal audio path
-            logger.info(f"🔍 Checking for vocal file: {job_id}")
             vocal_file_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
-            logger.info(f"🔍 Vocal file path: {vocal_file_path}")
 
             if not os.path.exists(vocal_file_path):
                 raise Exception(f"Vocal file not found at {vocal_file_path}. Make sure separation completed successfully.")
 
             # Only transcribe, don't segment
-            logger.info(f"🎤 Starting transcription call for {job_id}")
-            import time
-            transcription_start = time.time()
-            
             transcription_result = self.transcription_service.transcribe_audio_file(
                 vocal_file_path, source_video_language, job_id
             )
-            
-            transcription_time = time.time() - transcription_start
-            logger.info(f"🎤 Transcription completed in {transcription_time:.2f}s for {job_id}")
 
             if not transcription_result["success"]:
                 logger.error(f"Transcription failed: {transcription_result.get('error')}")
@@ -1008,10 +1001,5 @@ def get_simple_dubbed_api() -> SimpleDubbedAPI:
     if _simple_dubbed_api_instance is None:
         with _api_lock:
             if _simple_dubbed_api_instance is None:
-                import time
-                logger.info("🚀 Creating SimpleDubbedAPI instance...")
-                start_time = time.time()
                 _simple_dubbed_api_instance = SimpleDubbedAPI()
-                creation_time = time.time() - start_time
-                logger.info(f"✅ SimpleDubbedAPI created in {creation_time:.2f}s")
     return _simple_dubbed_api_instance

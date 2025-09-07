@@ -24,10 +24,7 @@ class WhisperXTranscriptionService:
     """Optimized WhisperX service for fastest transcription with 2 workers"""
     
     def __init__(self):
-        # Check if this will only be used for service worker routing
-        from app.config.pipeline_settings import pipeline_settings
-        self._service_worker_mode = pipeline_settings.USE_WHISPERX_SERVICE_WORKER
-        
+        # Traditional initialization - simple and reliable
         self.model = None
         self.is_initialized = False
         self.preloaded_align_models = {}
@@ -35,16 +32,8 @@ class WhisperXTranscriptionService:
         self.model_size = settings.WHISPER_MODEL_SIZE
         self.alignment_device = settings.WHISPER_ALIGNMENT_DEVICE
         self.cache_dir = settings.WHISPER_CACHE_DIR
-        
-        if self._service_worker_mode:
-            logger.info("⚡ WhisperX service created for routing (fast mode)")
-            # Minimal setup for routing only
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.compute_type = "float16"
-        else:
-            logger.info("🔧 WhisperX service created for direct processing (full setup)")
-            self._setup_device_config()
-            self._setup_cache_directory()
+        self._setup_device_config()
+        self._setup_cache_directory()
         
         logger.info(f"WhisperX service configured - Model: {self.model_size}, Device: {self.device}, Cache: {self.cache_dir}")
     
@@ -165,12 +154,18 @@ class WhisperXTranscriptionService:
                 logger.info("🎯 Routing to WhisperX service worker (fast path)")
                 return self._transcribe_via_service_worker(audio_path, language, job_id)
             
-            # Fallback to direct transcription (load model if needed)
-            logger.info("📝 Using direct transcription (slow path)")
+            # Fallback to direct transcription only if running in service worker
+            logger.info("📝 Using direct transcription (fallback)")
             if not self.is_initialized:
-                logger.info("🔄 Loading WhisperX model for direct transcription...")
-                if not self.load_model():
-                    raise Exception("Failed to load WhisperX model")
+                # Only load model if this is running in a service worker
+                import os
+                worker_name = os.getenv('RQ_WORKER_NAME', '')
+                if 'whisperx_service_worker' in worker_name:
+                    logger.info("🔄 Loading WhisperX model in service worker...")
+                    if not self.load_model():
+                        raise Exception("Failed to load WhisperX model")
+                else:
+                    raise Exception("Model not loaded and not running in WhisperX service worker. Service worker should handle this.")
             
             return self._transcribe_direct(audio_path, language, job_id)
                 
@@ -306,9 +301,7 @@ def get_whisperx_transcription_service() -> WhisperXTranscriptionService:
     if _whisperx_service is None:
         with _service_lock:
             if _whisperx_service is None:
-                logger.info("🚀 Creating WhisperX service instance")
                 _whisperx_service = WhisperXTranscriptionService()
-                logger.info("✅ WhisperX service instance created")
     
     return _whisperx_service
 
