@@ -88,17 +88,14 @@ def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://12
         # Initialize AI models for this worker
         initialize_ai_models()
         
-        # Robust Redis connection with retry
+        # Simple Redis connection with retry
         redis_conn = redis.Redis.from_url(
             redis_url,
             socket_keepalive=True,
             socket_keepalive_options={},
             health_check_interval=30,
             retry_on_timeout=True,
-            connection_pool_kwargs={
-                'max_connections': 20,
-                'retry_on_timeout': True
-            }
+            max_connections=20
         )
         
         # Test connection with retry

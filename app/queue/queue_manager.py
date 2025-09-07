@@ -42,10 +42,7 @@ class QueueManager:
                     health_check_interval=30,
                     retry_on_timeout=True,
                     retry_on_error=[ConnectionError],
-                    connection_pool_kwargs={
-                        'max_connections': 50,
-                        'retry_on_timeout': True
-                    }
+                    max_connections=50
                 )
                 
                 # Test connection with retry
