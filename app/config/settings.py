@@ -80,10 +80,10 @@ class Settings(BaseSettings):
     # HuggingFace Configuration
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
     
-    # WhisperX Configuration
-    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "medium")  # Options: tiny, base, small, medium, large-v2, large-v3
-    WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "auto")  # auto, float16, int8
-    WHISPER_ALIGNMENT_DEVICE: str = os.getenv("WHISPER_ALIGNMENT_DEVICE", "cpu")
+    # WhisperX Configuration (Optimized for 16GB VRAM)
+    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "medium")  # small=~2GB, medium=~5GB, large=~10GB
+    WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "float16")  # Optimized for 16GB VRAM
+    WHISPER_ALIGNMENT_DEVICE: str = os.getenv("WHISPER_ALIGNMENT_DEVICE", "cpu")  # Keep alignment on CPU to save VRAM
     WHISPER_POOL_SIZE: int = int(os.getenv("WHISPER_POOL_SIZE", "2"))
     WHISPER_MODEL_TIMEOUT: int = int(os.getenv("WHISPER_MODEL_TIMEOUT", "300"))
     WHISPER_CACHE_DIR: str = os.getenv("WHISPER_CACHE_DIR", "./cache/whisperx")  # Persistent cache directory
@@ -92,20 +92,21 @@ class Settings(BaseSettings):
     
     # PyTorch configuration (set in runpod_setup.sh)
     
-    # Fish Speech Configuration
-    FISH_SPEECH_LOW_MEMORY: bool = os.getenv("FISH_SPEECH_LOW_MEMORY", "false").lower() == "true"
-    FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "true").lower() == "true"
+    # Fish Speech Configuration (Optimized for 16GB VRAM)
+    FISH_SPEECH_LOW_MEMORY: bool = os.getenv("FISH_SPEECH_LOW_MEMORY", "true").lower() == "true"  # Enable for 16GB VRAM
+    FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "false").lower() == "true"  # Disable compilation to save memory
     FISH_SPEECH_CHECKPOINT: str = os.getenv("FISH_SPEECH_CHECKPOINT", "checkpoints/openaudio-s1-mini")
     FISH_SPEECH_DECODER: str = os.getenv("FISH_SPEECH_DECODER", "checkpoints/openaudio-s1-mini/codec.pth")
     FISH_SPEECH_DEVICE: str = os.getenv("FISH_SPEECH_DEVICE", "auto")  # auto, cuda, cpu
-    FISH_SPEECH_PRECISION: str = os.getenv("FISH_SPEECH_PRECISION", "auto")  # auto, float16, float32
-    FISH_SPEECH_MAX_BATCH_SIZE: int = int(os.getenv("FISH_SPEECH_MAX_BATCH_SIZE", "8"))  # Increased for better GPU utilization
-    FISH_SPEECH_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_CHUNK_SIZE", "200"))  # Larger chunks for efficiency
+    FISH_SPEECH_PRECISION: str = os.getenv("FISH_SPEECH_PRECISION", "float16")  # Use float16 for 16GB VRAM
+    FISH_SPEECH_MAX_BATCH_SIZE: int = int(os.getenv("FISH_SPEECH_MAX_BATCH_SIZE", "4"))  # Reduced for 16GB VRAM
+    FISH_SPEECH_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_CHUNK_SIZE", "100"))  # Smaller chunks for memory efficiency
     
     
-    # Specific model loading controls for service workers
-    LOAD_WHISPERX_MODEL: bool = os.getenv("LOAD_WHISPERX_MODEL", "true").lower() == "true"  # Auto-load for fast processing
-    LOAD_FISH_SPEECH_MODEL: bool = os.getenv("LOAD_FISH_SPEECH_MODEL", "true").lower() == "true"
+    # Specific model loading controls for service workers (16GB VRAM Optimized)
+    # NOTE: Models load separately in dedicated workers - see runpod_setup.sh
+    LOAD_WHISPERX_MODEL: bool = os.getenv("LOAD_WHISPERX_MODEL", "false").lower() == "true"  # Load only in WhisperX workers
+    LOAD_FISH_SPEECH_MODEL: bool = os.getenv("LOAD_FISH_SPEECH_MODEL", "false").lower() == "true"  # Load only in Fish Speech workers
     
     # RunPod Configuration for Audio Separation
     API_ACCESS_TOKEN: str = os.getenv("API_ACCESS_TOKEN", "")
