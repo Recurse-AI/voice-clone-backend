@@ -188,13 +188,22 @@ def _process_dubbing_pipeline(job_id: str, target_language: str,
         
         # Complete the job
         result_url = pipeline_result.get("result_url")
+
         details = {
             "folder_upload": pipeline_result.get("folder_upload", {}),
             "result_urls": pipeline_result.get("result_urls", {}),
             "video_upload": pipeline_result.get("video_upload", {}),
             "details": pipeline_result.get("details", {})
         }
-        
+
+        # Extract manifest URL from pipeline result
+        manifest_url = pipeline_result.get("manifest_url")
+        manifest_key = pipeline_result.get("manifest_key")
+        if manifest_url:
+            details["segments_manifest_url"] = manifest_url
+        if manifest_key:
+            details["segments_manifest_key"] = manifest_key
+
         success = dub_service.complete_job(job_id, result_url, details)
         if not success:
             dub_service.fail_job(job_id, "Failed to complete job", "completion_failed")
@@ -294,12 +303,21 @@ def process_redub_task(redub_job_id: str, target_language: str,
         
         # Complete redub
         result_url = result.get("result_url")
+
         details = {
             "folder_upload": result.get("folder_upload", {}),
             "result_urls": result.get("result_urls", {}),
             "details": result.get("details", {})
         }
-        
+
+        # Extract manifest URL from pipeline result
+        manifest_url = result.get("manifest_url")
+        manifest_key = result.get("manifest_key")
+        if manifest_url:
+            details["segments_manifest_url"] = manifest_url
+        if manifest_key:
+            details["segments_manifest_key"] = manifest_key
+
         success = dub_service.complete_job(redub_job_id, result_url, details)
         if not success:
             dub_service.fail_job(redub_job_id, "Failed to complete redub", "completion_failed")

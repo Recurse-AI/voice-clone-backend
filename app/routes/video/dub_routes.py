@@ -254,10 +254,10 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
             return
 
         result_url = result.get("result_url") or (result.get("result_urls", {}) or {}).get("final_video")
-        
+
         folder_upload = result.get("folder_upload", {})
         logger.info(f"📁 Folder upload contents for job {job_id}: {list(folder_upload.keys())}")
-        
+
         # Use dub_service.complete_job to ensure email notification
         from app.services.dub_service import dub_service
         completion_details = {
@@ -265,6 +265,14 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
             "result_urls": result.get("result_urls"),
             "review_status": "completed"
         }
+
+        # Extract manifest URL from pipeline result
+        manifest_url = result.get("manifest_url")
+        manifest_key = result.get("manifest_key")
+        if manifest_url:
+            completion_details["segments_manifest_url"] = manifest_url
+        if manifest_key:
+            completion_details["segments_manifest_key"] = manifest_key
         
         success = dub_service.complete_job(job_id, result_url, completion_details, credit_percentage=0.25)
         if not success:

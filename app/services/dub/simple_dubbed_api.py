@@ -228,10 +228,12 @@ class SimpleDubbedAPI:
                         vocal_audio_url = separation_urls.get("vocal_audio")
                         instrument_audio_url = separation_urls.get("instrument_audio")
                         logger.info(f"Original dub using separation URLs for {job_id}: vocal={bool(vocal_audio_url)}, instrument={bool(instrument_audio_url)}")
-                    
+
                     # Build manifest from scratch with separation URLs
                     manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
                                             vocal_audio_url, instrument_audio_url)
+
+                # Save manifest to disk (both redub and original dub cases)
                 manifest_path = save_manifest_to_dir(manifest, process_temp_dir, job_id)
 
                 # For review mode, exclude vocal/instrument files since they already have URLs
@@ -797,8 +799,9 @@ class SimpleDubbedAPI:
         try:
             manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments)
             save_manifest_to_dir(manifest, process_temp_dir, job_id)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to save manifest for job {job_id}: {e}")
+            # Don't pass silently - this is critical for manifest availability
 
         # Upload to R2 and get results
         return self._upload_and_finalize(job_id, process_temp_dir, final_audio_path)
@@ -878,7 +881,9 @@ class SimpleDubbedAPI:
         self._update_phase_progress(job_id, "upload", 0.0, "Uploading and finalizing...")
         
         # Upload entire directory to R2
-        folder_upload_result = self.r2_storage.upload_directory(job_id, process_temp_dir)
+        folder_upload_result, manifest_url, manifest_key = upload_process_dir_to_r2(
+            job_id, process_temp_dir, self.r2_storage
+        )
         
         
         
@@ -891,6 +896,8 @@ class SimpleDubbedAPI:
             "result_url": None,  # No video result
             "result_urls": {},
             "folder_upload": folder_upload_result,
+            "manifest_url": manifest_url,
+            "manifest_key": manifest_key,
             "video_upload": None,
             "video_error": None
         }
