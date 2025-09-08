@@ -16,10 +16,10 @@ export CUDA_VISIBLE_DEVICES=0
 export CUDA_DEVICE_ORDER=PCI_BUS_ID  
 export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6"
 
-# CUDA Runtime Environment
-export CUDA_HOME=/usr/local/cuda
-export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
-export PATH=/usr/local/cuda/bin:$PATH
+# CUDA Runtime Environment - Use system-installed libraries
+export CUDA_HOME=/usr
+export LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+export PATH=/usr/bin:/usr/local/cuda/bin:$PATH
 
 # Force GPU detection 
 export FORCE_CUDA=1
@@ -197,6 +197,17 @@ sleep 10
 
 echo "⏳ Waiting for workers to initialize..."
 sleep 5
+
+echo "🔍 Verifying CUDA environment..."
+python3 -c "
+import torch
+print(f'CUDA Available: {torch.cuda.is_available()}')
+if torch.cuda.is_available():
+    print(f'CUDNN Version: {torch.backends.cudnn.version()}')
+    print(f'GPU: {torch.cuda.get_device_name(0)}')
+else:
+    print('⚠️ CUDA not available')
+" || echo "CUDA verification completed"
 
 echo "📊 Checking worker status..."
 ./venv/bin/python check_workers.py || echo "Worker status check completed"

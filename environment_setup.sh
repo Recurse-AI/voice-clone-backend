@@ -52,29 +52,30 @@ apt-get install -y \
     gnupg2 \
     2>/dev/null || echo "Some packages might already be installed"
 
-# Install CUDA and CUDNN libraries for GPU acceleration
-echo "🚀 Installing CUDA/CUDNN libraries..."
+# Check CUDA and CUDNN libraries for GPU acceleration
+echo "🚀 Checking CUDA/CUDNN libraries..."
 if command -v nvidia-smi &> /dev/null; then
-    echo "GPU detected, installing CUDA libraries..."
-    
-    # Add NVIDIA package repository
-    wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb || true
-    dpkg -i cuda-keyring_1.0-1_all.deb 2>/dev/null || true
-    
-    # Install CUDA toolkit and CUDNN
-    apt-get update -y || true
-    apt-get install -y \
-        cuda-toolkit-12-1 \
-        libcudnn8 \
-        libcudnn8-dev \
-        2>/dev/null || echo "CUDA/CUDNN installation completed with warnings"
-    
-    # Set CUDA environment variables
+    echo "GPU detected, checking CUDA libraries..."
+
+    # Check if CUDNN is already installed
+    if ldconfig -p | grep -q cudnn; then
+        echo "✅ CUDNN libraries already installed"
+    else
+        echo "⚠️ CUDNN libraries not found, installing..."
+        # Install CUDNN if missing
+        apt-get update -y || true
+        apt-get install -y \
+            libcudnn8 \
+            libcudnn8-dev \
+            2>/dev/null || echo "CUDNN installation completed with warnings"
+    fi
+
+    # Set CUDA environment variables (libraries already installed)
     export CUDA_HOME=/usr/local/cuda
     export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
     export PATH=/usr/local/cuda/bin:$PATH
-    
-    echo "✅ CUDA/CUDNN installation completed"
+
+    echo "✅ CUDA/CUDNN check completed"
 else
     echo "⚠️ No GPU detected, skipping CUDA installation"
 fi
