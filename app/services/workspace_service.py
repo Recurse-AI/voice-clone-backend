@@ -109,8 +109,7 @@ class WorkspaceService:
                 "progress": 1,
                 "created_at": 1,
                 "completed_at": 1,
-                "vocal_url": 1,
-                "instrument_url": 1,
+                "original_filename": 1,
                 "_id": 0
             }
 
@@ -130,12 +129,9 @@ class WorkspaceService:
                     "completed_at": job_data["completed_at"].isoformat() if job_data.get("completed_at") else None
                 }
 
-                if "vocal_url" in job_data and job_data["vocal_url"]:
-                    job_summary_data["vocal_url"] = job_data["vocal_url"]
-                
-                if "instrument_url" in job_data and job_data["instrument_url"]:
-                    job_summary_data["instrument_url"] = job_data["instrument_url"]
-                
+                if "original_filename" in job_data and job_data["original_filename"]:
+                    job_summary_data["original_filename"] = job_data["original_filename"]
+
                 # Create JobSummary from dictionary
                 job_summary = JobSummary(**job_summary_data)
                 jobs.append(job_summary)
