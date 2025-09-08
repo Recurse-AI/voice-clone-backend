@@ -97,8 +97,8 @@ class StripeService:
             customer=customer_id,
             mode="setup",
             payment_method_types=['card'],
-            success_url=f"{settings.FRONTEND_URL}/subscription/manage",
-            cancel_url=f"{settings.FRONTEND_URL}/subscription/manage"
+            success_url=f"{settings.FRONTEND_URL}/subscription/manage?setup_success=true",
+            cancel_url=f"{settings.FRONTEND_URL}/subscription/manage?setup_error=cancelled"
         )
         
         return {
