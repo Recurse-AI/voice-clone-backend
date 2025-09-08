@@ -16,6 +16,11 @@ export CUDA_VISIBLE_DEVICES=0
 export CUDA_DEVICE_ORDER=PCI_BUS_ID  
 export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6"
 
+# CUDA Runtime Environment
+export CUDA_HOME=/usr/local/cuda
+export LD_LIBRARY_PATH=/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:$LD_LIBRARY_PATH
+export PATH=/usr/local/cuda/bin:$PATH
+
 # Force GPU detection 
 export FORCE_CUDA=1
 
@@ -34,66 +39,25 @@ source venv/bin/activate
 # Create directories
 mkdir -p ./tmp ./logs
 chmod 755 ./tmp ./logs
-# COMPREHENSIVE CLEANUP
-echo "🧹 Performing comprehensive cleanup..."
+# FAST CLEANUP
+echo "🧹 Quick cleanup..."
 
-# Show current processes
-echo "📊 Current processes before cleanup:"
-ps aux | grep -E "(uvicorn|python.*main|rq.*worker|redis-server)" | grep -v grep | head -10 || echo "  - No relevant processes found"
-
-# Kill processes
-echo "⛔ Stopping existing processes..."
+# Kill processes efficiently
 pkill -f "uvicorn" 2>/dev/null || true
 pkill -f "python.*main" 2>/dev/null || true
-pkill -f "fastapi" 2>/dev/null || true
-pkill -f "gunicorn" 2>/dev/null || true
 pkill -f "python.*worker" 2>/dev/null || true
-pkill -f "workers_starter.py" 2>/dev/null || true
 pkill -f "rq.*worker" 2>/dev/null || true
-
-# Kill Redis gracefully
-echo "📊 Stopping Redis..."
 redis-cli shutdown 2>/dev/null || true
-sleep 2
 pkill -f "redis-server" 2>/dev/null || true
 
 # Free ports
-echo "🔌 Freeing ports..."
 fuser -k 8000/tcp 2>/dev/null || true
 fuser -k 6379/tcp 2>/dev/null || true
 
-# Wait for cleanup
-echo "⏳ Waiting for graceful shutdown..."
-sleep 5
+# Quick cleanup
+rm -rf ./tmp/* ./logs/*.pid 2>/dev/null || true
 
-# Force cleanup workers
-echo "🔧 Cleaning workers..."
-if [ -f "cleanup_workers.py" ]; then
-    python cleanup_workers.py 2>/dev/null || echo "  - Worker cleanup completed"
-fi
-
-# Force kill remaining processes
-echo "💥 Force killing remaining processes..."
-pkill -9 -f "uvicorn" 2>/dev/null || true
-pkill -9 -f "python.*main" 2>/dev/null || true
-pkill -9 -f "worker" 2>/dev/null || true
-pkill -9 -f "redis-server" 2>/dev/null || true
-
-# Clean temp files
-echo "🧽 Cleaning temporary files..."
-rm -rf /tmp/tmp* 2>/dev/null || true
-rm -rf ./tmp/* 2>/dev/null || true
-rm -rf ./logs/*.pid 2>/dev/null || true
-
-# Cleanup verification
-echo "✅ Cleanup verification:"
-sleep 2
-REMAINING=$(ps aux | grep -E "(uvicorn|python.*main|rq.*worker|redis-server)" | grep -v grep | wc -l)
-if [ "$REMAINING" -gt 0 ]; then
-    echo "⚠️  Warning: $REMAINING processes may still be running"
-else
-    echo "✅ All target processes cleaned successfully"
-fi
+echo "✅ Fast cleanup completed"
 
 # START REDIS
 echo "🚀 Starting fresh Redis server..."
@@ -111,19 +75,18 @@ redis-server --daemonize yes \
   --maxclients 10000 \
   --tcp-backlog 1024
 
-sleep 3
+sleep 2
 
-# Verify Redis
-REDIS_RETRIES=5
+# Quick Redis verification
+REDIS_RETRIES=3
 for i in $(seq 1 $REDIS_RETRIES); do
     if redis-cli ping > /dev/null 2>&1; then
-        echo "✅ Redis server running successfully"
+        echo "✅ Redis server running"
         break
     else
-        echo "⚠️ Redis attempt $i/$REDIS_RETRIES failed, retrying..."
-        sleep 2
+        sleep 1
         if [ $i -eq $REDIS_RETRIES ]; then
-            echo "❌ Failed to start Redis after $REDIS_RETRIES attempts"
+            echo "❌ Redis startup failed"
             exit 1
         fi
     fi
@@ -162,9 +125,9 @@ nohup ./venv/bin/uvicorn main:app \
 API_PID=$!
 echo "✅ API started with ${WORKERS} workers, PID: $API_PID"
 
-# API verification
-echo "⏳ Initializing API..."
-sleep 8
+# Quick API verification
+echo "⏳ Verifying API startup..."
+sleep 3
 
 if pgrep -f "uvicorn.*main:app" > /dev/null; then
     echo "✅ API server running"

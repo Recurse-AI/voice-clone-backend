@@ -113,11 +113,11 @@ class LanguageService:
     @classmethod
     def get_language_code_for_transcription(cls, language: str) -> str:
         """
-        Get language code for WhisperX transcription.
+        Get language code for transcription.
         Accepts 'auto_detect' to enable automatic language detection.
         """
         if not language:
-            raise ValueError("Language is required for WhisperX transcription (use 'auto_detect' to auto-detect)")
+            raise ValueError("Language is required for transcription (use 'auto_detect' to auto-detect)")
         
         normalized = cls.normalize_language_input(language)
         

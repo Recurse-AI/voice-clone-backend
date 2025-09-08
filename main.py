@@ -83,24 +83,13 @@ async def lifespan(app: FastAPI):
 
     
     
-    # R2 service initialization - only one worker should do this
-    r2_lock_acquired = await startup_sync.acquire_startup_lock("r2_init", timeout=30)
-    
-    if r2_lock_acquired:
-        try:
-            logger.info("Initializing R2 service...")
-            from app.services.r2_service import get_r2_service, reset_r2_service
-            reset_r2_service()
-            get_r2_service()
-            await startup_sync.mark_task_complete("r2_init")
-            logger.info("R2 service initialization completed")
-        except Exception as e:
-            logger.error(f"Failed to initialize R2 service: {e}")
-        finally:
-            await startup_sync.release_startup_lock("r2_init")
-    else:
-        logger.info("R2 service being initialized by another worker...")
-        await startup_sync.wait_for_task_completion("r2_init")
+    # R2 service - lazy initialization (no startup delay)
+    try:
+        from app.services.r2_service import reset_r2_service
+        reset_r2_service()  # Reset singleton for clean state
+        logger.info("✅ R2 service configured (lazy initialization)")
+    except Exception as e:
+        logger.warning(f"R2 service configuration failed: {e}")
     
     yield
     

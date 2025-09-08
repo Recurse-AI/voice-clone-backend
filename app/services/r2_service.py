@@ -12,19 +12,31 @@ class R2Service:
     """Clean and simple R2 Storage service"""
     
     def __init__(self):
-        """Initialize R2 client with settings"""
+        """Initialize R2 client with settings - lazy initialization for faster startup"""
         # Cloudflare R2 uses 'auto' but boto3 needs 'us-east-1' for compatibility
-        region = settings.R2_REGION if settings.R2_REGION != "auto" else "us-east-1"
-        
-        self.client = boto3.client(
-            's3',
-            endpoint_url=settings.R2_ENDPOINT_URL,
-            aws_access_key_id=settings.R2_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
-            region_name=region
-        )
+        self._region = settings.R2_REGION if settings.R2_REGION != "auto" else "us-east-1"
+        self._client = None
         self.bucket_name = settings.R2_BUCKET_NAME
-        logger.info(f"R2Service initialized - bucket: {self.bucket_name}")
+        logger.info(f"R2Service configured - bucket: {self.bucket_name}")
+    
+    @property
+    def client(self):
+        """Lazy initialization of boto3 client to speed up startup"""
+        if self._client is None:
+            self._client = boto3.client(
+                's3',
+                endpoint_url=settings.R2_ENDPOINT_URL,
+                aws_access_key_id=settings.R2_ACCESS_KEY_ID,
+                aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
+                region_name=self._region,
+                config=boto3.session.Config(
+                    retries={'max_attempts': 2},
+                    read_timeout=10,
+                    connect_timeout=5
+                )
+            )
+            logger.info(f"R2 client initialized with optimized timeouts")
+        return self._client
     
     def upload_file(self, local_path: str, r2_key: str, content_type: str = "application/octet-stream") -> Dict[str, Any]:
         """Upload file to R2 storage with automatic optimization for large files"""

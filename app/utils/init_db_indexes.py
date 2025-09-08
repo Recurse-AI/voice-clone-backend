@@ -69,7 +69,8 @@ async def init_database_indexes():
                 await index_config["collection"].create_index(
                     index_config["field"], 
                     unique=True,
-                    background=True  # Non-blocking index creation
+                    background=True,  # Non-blocking index creation
+                    sparse=True  # Skip null values for better performance
                 )
                 logger.info(f"Created unique index on {index_config['name']}")
                 created_count += 1

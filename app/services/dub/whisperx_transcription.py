@@ -108,9 +108,11 @@ class WhisperXTranscriptionService:
         """Setup optimal memory allocation for 16GB VRAM"""
         if self.device == "cuda":
             # Conservative memory fraction for 16GB VRAM
-            torch.cuda.set_per_process_memory_fraction(0.6)  # Increased for single worker
-            # Memory allocation optimized for 16GB
-            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:256'
+            torch.cuda.set_per_process_memory_fraction(0.8)  # Increased for better performance
+            # Memory allocation optimized for 16GB with garbage collection
+            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:512,garbage_collection_threshold:0.8'
+            # Clear any existing cache
+            torch.cuda.empty_cache()
     
     def _optimize_cuda_performance(self):
         """Apply CUDA optimizations for fastest inference"""
@@ -163,9 +165,9 @@ class WhisperXTranscriptionService:
                 if 'whisperx_service_worker' in worker_name:
                     logger.info("🔄 Loading WhisperX model in service worker...")
                     if not self.load_model():
-                        raise Exception("Failed to load WhisperX model")
+                        raise Exception("Failed to load transcription model")
                 else:
-                    raise Exception("Model not loaded and not running in WhisperX service worker. Service worker should handle this.")
+                    raise Exception("Model not loaded and not running in transcription service worker. Service worker should handle this.")
             
             return self._transcribe_direct(audio_path, language, job_id)
                 
@@ -194,13 +196,13 @@ class WhisperXTranscriptionService:
             
             if not success:
                 logger.error(f"Failed to enqueue WhisperX request for {job_id}")
-                raise Exception("Failed to submit to WhisperX service worker")
+                raise Exception("Failed to submit to transcription service worker")
             
             # Wait for result from service worker
             from app.utils.pipeline_utils import wait_for_service_result, cleanup_service_result
-            result = wait_for_service_result("whisperx", request_id, timeout=300)
+            result = wait_for_service_result("whisperx", request_id, timeout=600)  # Increased to 10 minutes
             if "error" in result:
-                raise Exception(f"WhisperX service worker error: {result['error']}")
+                raise Exception(f"Transcription service worker error: {result['error']}")
             
             # Cleanup result after use
             cleanup_service_result("whisperx", request_id)

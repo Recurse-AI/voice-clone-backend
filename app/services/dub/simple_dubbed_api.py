@@ -300,7 +300,7 @@ class SimpleDubbedAPI:
             return {"success": False, "error": str(e)}
     
     def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, original_text: str = "", job_id: str = None, process_temp_dir: str = None) -> Optional[Dict[str, Any]]:
-        """Voice clone dubbed text using FishSpeechService with reference audio and transcript_id in filename"""
+        """Voice clone dubbed text using AI voice cloning service with reference audio and transcript_id in filename"""
         try:
             if not reference_audio_path:
                 logger.warning(f"No reference audio path provided for {segment_id}")
@@ -491,7 +491,7 @@ class SimpleDubbedAPI:
             
         else:
             # Fresh transcription - only transcribe, don't segment yet
-            self._update_phase_progress(job_id, "transcription", 0.0, "Starting transcription with WhisperX")
+            self._update_phase_progress(job_id, "transcription", 0.0, "Starting audio transcription")
             logger.info("Starting fresh transcription (no segmentation)")
 
             # Get vocal audio path
@@ -636,7 +636,7 @@ class SimpleDubbedAPI:
                               edited_map: dict, review_mode: bool, process_temp_dir: str) -> list:
         if not review_mode:
             self._update_status(job_id, JobStatus.PROCESSING, 80, {
-                "message": "Starting AI voice cloning with Fish Speech",
+                "message": "Starting AI voice cloning",
                 "phase": "voice_cloning",
                 "sub_progress": 0.0
             })

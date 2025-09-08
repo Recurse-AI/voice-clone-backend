@@ -147,7 +147,7 @@ async def voice_clone_segment(request: VoiceCloneRequest):
     """
     Voice clone a single text segment using reference audio.
     1. Downloads reference audio from URL.
-    2. Generates cloned voice with FishSpeech.
+    2. Generates cloned voice using AI voice cloning.
     3. Uploads generated audio to R2 bucket.
     4. Returns public URL of cloned audio.
     """

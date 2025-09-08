@@ -264,7 +264,7 @@ class FishSpeechService:
                 load_time = time.time() - load_start
                 logger.info(f"⚡ Fish Speech model loaded in {load_time:.2f}s")
             else:
-                return {"success": False, "error": "Model not loaded and not running in Fish Speech service worker. Service worker should handle this."}
+                return {"success": False, "error": "Model not loaded and not running in voice cloning service worker. Service worker should handle this."}
         
         try:
             # Create optimized TTS request with timeout handling

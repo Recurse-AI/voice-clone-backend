@@ -48,7 +48,36 @@ apt-get install -y \
     portaudio19-dev \
     libsox-dev \
     redis-server \
+    wget \
+    gnupg2 \
     2>/dev/null || echo "Some packages might already be installed"
+
+# Install CUDA and CUDNN libraries for GPU acceleration
+echo "🚀 Installing CUDA/CUDNN libraries..."
+if command -v nvidia-smi &> /dev/null; then
+    echo "GPU detected, installing CUDA libraries..."
+    
+    # Add NVIDIA package repository
+    wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-keyring_1.0-1_all.deb || true
+    dpkg -i cuda-keyring_1.0-1_all.deb 2>/dev/null || true
+    
+    # Install CUDA toolkit and CUDNN
+    apt-get update -y || true
+    apt-get install -y \
+        cuda-toolkit-12-1 \
+        libcudnn8 \
+        libcudnn8-dev \
+        2>/dev/null || echo "CUDA/CUDNN installation completed with warnings"
+    
+    # Set CUDA environment variables
+    export CUDA_HOME=/usr/local/cuda
+    export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    export PATH=/usr/local/cuda/bin:$PATH
+    
+    echo "✅ CUDA/CUDNN installation completed"
+else
+    echo "⚠️ No GPU detected, skipping CUDA installation"
+fi
 
 # Check GPU
 echo "🔍 Checking GPU availability..."
@@ -103,8 +132,13 @@ try:
     print(f'CUDA Available: {torch.cuda.is_available()}')
     if torch.cuda.is_available():
         print(f'CUDA Devices: {torch.cuda.device_count()}')
+        print(f'CUDA Version: {torch.version.cuda}')
+        print(f'CUDNN Version: {torch.backends.cudnn.version()}')
         for i in range(torch.cuda.device_count()):
             print(f'  Device {i}: {torch.cuda.get_device_name(i)}')
+            print(f'  Memory: {torch.cuda.get_device_properties(i).total_memory // 1024**3}GB')
+    else:
+        print('⚠️ CUDA not available - check NVIDIA drivers and CUDA installation')
 except Exception as e:
     print(f'PyTorch check failed: {e}')
 
