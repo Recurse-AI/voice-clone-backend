@@ -39,25 +39,79 @@ source venv/bin/activate
 # Create directories
 mkdir -p ./tmp ./logs
 chmod 755 ./tmp ./logs
-# FAST CLEANUP
-echo "🧹 Quick cleanup..."
+# COMPREHENSIVE CLEANUP - Kill ALL previous processes
+echo "🧹 Comprehensive cleanup of all previous processes..."
 
-# Kill processes efficiently
-pkill -f "uvicorn" 2>/dev/null || true
-pkill -f "python.*main" 2>/dev/null || true
-pkill -f "python.*worker" 2>/dev/null || true
-pkill -f "rq.*worker" 2>/dev/null || true
+# Kill all Python processes related to this application
+pkill -9 -f "python.*main" 2>/dev/null || true
+pkill -9 -f "python.*worker" 2>/dev/null || true
+pkill -9 -f "python.*workers_starter" 2>/dev/null || true
+pkill -9 -f "python.*check_workers" 2>/dev/null || true
+pkill -9 -f "python.*separation_worker" 2>/dev/null || true
+pkill -9 -f "python.*dub_worker" 2>/dev/null || true
+pkill -9 -f "python.*billing_worker" 2>/dev/null || true
+pkill -9 -f "python.*whisperx_service_worker" 2>/dev/null || true
+pkill -9 -f "python.*fish_speech_service_worker" 2>/dev/null || true
+pkill -9 -f "python.*resume_worker" 2>/dev/null || true
+
+# Kill all RQ workers (various patterns)
+pkill -9 -f "rq.*worker" 2>/dev/null || true
+pkill -9 -f "rqworker" 2>/dev/null || true
+pkill -9 -f "rq worker" 2>/dev/null || true
+
+# Kill all uvicorn processes (various patterns)
+pkill -9 -f "uvicorn.*main:app" 2>/dev/null || true
+pkill -9 -f "uvicorn" 2>/dev/null || true
+
+# Kill all Redis processes
 redis-cli shutdown 2>/dev/null || true
-pkill -f "redis-server" 2>/dev/null || true
+pkill -9 -f "redis-server" 2>/dev/null || true
+pkill -9 -f "redis" 2>/dev/null || true
 
-# Free ports
+# Kill any remaining worker processes
+pkill -9 -f "worker" 2>/dev/null || true
+pkill -9 -f "starter" 2>/dev/null || true
+
+# Free all relevant ports
 fuser -k 8000/tcp 2>/dev/null || true
 fuser -k 6379/tcp 2>/dev/null || true
+fuser -k 8080/tcp 2>/dev/null || true
+fuser -k 5000/tcp 2>/dev/null || true
+fuser -k 3000/tcp 2>/dev/null || true
 
-# Quick cleanup
-rm -rf ./tmp/* ./logs/*.pid 2>/dev/null || true
+# Kill any processes using our ports (alternative method)
+lsof -ti:8000 | xargs kill -9 2>/dev/null || true
+lsof -ti:6379 | xargs kill -9 2>/dev/null || true
+lsof -ti:8080 | xargs kill -9 2>/dev/null || true
+lsof -ti:5000 | xargs kill -9 2>/dev/null || true
+lsof -ti:3000 | xargs kill -9 2>/dev/null || true
 
-echo "✅ Fast cleanup completed"
+# Comprehensive file cleanup
+echo "🧹 Cleaning up temporary files and logs..."
+rm -rf ./tmp/* 2>/dev/null || true
+rm -rf ./logs/*.pid 2>/dev/null || true
+rm -rf ./logs/*.log 2>/dev/null || true
+rm -f dump.rdb appendonly.aof 2>/dev/null || true
+rm -f *.rdb *.aof 2>/dev/null || true
+
+# Clear any hanging processes in background
+jobs -p | xargs kill -9 2>/dev/null || true
+
+# GPU memory cleanup if available
+if command -v nvidia-smi >/dev/null 2>&1; then
+    echo "🧹 Clearing GPU memory..."
+    python3 -c "import torch; torch.cuda.empty_cache()" 2>/dev/null || true
+fi
+
+# Final verification - ensure nothing is running
+sleep 1
+if pgrep -f "uvicorn\|python.*main\|redis-server\|rq.*worker" > /dev/null; then
+    echo "⚠️ Some processes still running, forcing kill..."
+    pgrep -f "uvicorn\|python.*main\|redis-server\|rq.*worker" | xargs kill -9 2>/dev/null || true
+    sleep 2
+fi
+
+echo "✅ Comprehensive cleanup completed - all previous processes killed and cleaned"
 
 # START REDIS
 echo "🚀 Starting fresh Redis server..."
