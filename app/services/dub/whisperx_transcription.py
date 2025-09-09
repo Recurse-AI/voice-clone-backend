@@ -30,7 +30,6 @@ class WhisperXTranscriptionService:
         logger.info(f"WhisperX service configured - Model: {self.model_size}, Device: {self.device}, Cache: {self.cache_dir}")
 
     def _setup_device_config(self):
-        os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
         cuda_available = torch.cuda.is_available()
         logger.info(f"CUDA Available: {cuda_available}")
@@ -88,8 +87,7 @@ class WhisperXTranscriptionService:
 
     def _setup_optimal_memory(self):
         if self.device == "cuda":
-            torch.cuda.set_per_process_memory_fraction(0.8)
-            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:512,garbage_collection_threshold:0.8'
+            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:512'
             torch.cuda.empty_cache()
 
     def _optimize_cuda_performance(self):
@@ -168,36 +166,54 @@ class WhisperXTranscriptionService:
             raise
 
     def _transcribe_direct(self, audio_path: str, language_code: str, job_id: Optional[str] = None) -> Dict[str, Any]:
-        try:
-            import whisperx
+        import whisperx
 
-            normalized_language = language_service.get_language_code_for_transcription(language_code)
-            logger.info(f"Transcribing: {audio_path} (language: {language_code} -> {normalized_language})")
+        normalized_language = language_service.get_language_code_for_transcription(language_code)
+        audio = whisperx.load_audio(audio_path)
 
-            audio = whisperx.load_audio(audio_path)
-            result = self.model.transcribe(
-                audio,
-                batch_size=16,
-                language=normalized_language if normalized_language != "auto_detect" else None
-            )
+        batch_sizes = [16, 8]
+        last_exception = None
 
-            detected_language = result.get("language", normalized_language)
-            model_a, metadata = self._get_alignment_model(detected_language)
-            if model_a:
-                result = whisperx.align(result["segments"], model_a, metadata, audio, self.alignment_device, return_char_alignments=False)
+        for batch_size in batch_sizes:
+            try:
+                result = self.model.transcribe(
+                    audio,
+                    batch_size=batch_size,
+                    language=normalized_language if normalized_language != "auto_detect" else None
+                )
 
-            segments = self._process_segments(result.get("segments", []))
+                detected_language = result.get("language", normalized_language)
+                model_a, metadata = self._get_alignment_model(detected_language)
+                if model_a:
+                    result = whisperx.align(result["segments"], model_a, metadata, audio, self.alignment_device, return_char_alignments=False)
 
-            return {
-                "success": True,
-                "segments": segments,
-                "sentences": segments,
-                "language": result.get("language", language_code)
-            }
+                segments = self._process_segments(result.get("segments", []))
 
-        except Exception as e:
-            logger.error(f"Direct transcription failed: {e}")
-            raise Exception(f"Transcription failed: {str(e)}")
+                if batch_size != 16:
+                    logger.info(f"Transcription succeeded with batch_size={batch_size}")
+
+                return {
+                    "success": True,
+                    "segments": segments,
+                    "sentences": segments,
+                    "language": result.get("language", language_code)
+                }
+
+            except Exception as e:
+                error_msg = str(e).lower()
+                is_oom = any(keyword in error_msg for keyword in ['out of memory', 'cuda', 'gpu memory', 'memory allocation'])
+
+                if is_oom and batch_size > 8:
+                    last_exception = e
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    continue
+
+                if last_exception:
+                    raise Exception(f"Transcription failed after OOM retry: {str(last_exception)}")
+                raise Exception(f"Transcription failed: {str(e)}")
+
+        raise Exception(f"Transcription failed after all retries: {str(last_exception)}")
     
     def _process_segments(self, raw_segments):
         segments = []

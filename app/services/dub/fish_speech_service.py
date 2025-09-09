@@ -43,8 +43,6 @@ class FishSpeechService:
         # Traditional initialization - simple and reliable
         logger.info("🔧 Fish Speech service initializing (traditional mode)")
         
-        # Force CUDA setup first
-        os.environ['CUDA_VISIBLE_DEVICES'] = '0'
         
         # Device configuration from settings
         if settings.FISH_SPEECH_DEVICE == "auto":
@@ -111,61 +109,69 @@ class FishSpeechService:
             return False
     
     def load_model(self) -> bool:
-        """Load Fish Speech TTSInferenceEngine for proper reference audio support"""
-        try:
-            # Check model health first
-            if self._check_model_health():
+        max_retries = 2
+        retry_delay = 2
+
+        for attempt in range(max_retries + 1):
+            try:
+                if self._check_model_health():
+                    return True
+
+                if not Path(self.checkpoint_path).exists() or not Path(self.decoder_checkpoint_path).exists():
+                    return False
+
+                compile_model = self._compile_enabled
+                if attempt > 0:
+                    compile_model = False
+
+                self.llama_queue = launch_thread_safe_queue(
+                    checkpoint_path=Path(self.checkpoint_path),
+                    device=self.device,
+                    precision=self.precision,
+                    compile=compile_model
+                )
+
+                self.decoder_model = load_decoder_model(
+                    config_name="modded_dac_vq",
+                    checkpoint_path=Path(self.decoder_checkpoint_path),
+                    device=self.device,
+                )
+
+                self.inference_engine = TTSInferenceEngine(
+                    llama_queue=self.llama_queue,
+                    decoder_model=self.decoder_model,
+                    compile=compile_model,
+                    precision=self.precision,
+                )
+
+                self.is_initialized = True
                 return True
-            
-            # Quick validation
-            if not Path(self.checkpoint_path).exists() or not Path(self.decoder_checkpoint_path).exists():
-                logger.warning("Fish Speech models not found - voice cloning disabled")
+
+            except Exception as e:
+                error_msg = str(e).lower()
+                is_oom = any(keyword in error_msg for keyword in ['out of memory', 'cuda', 'gpu memory', 'memory allocation'])
+
+                if is_oom and attempt < max_retries:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    import time
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    self._cleanup_partial_load()
+                    continue
+
                 return False
-            
-            import warnings
-            warnings.filterwarnings("ignore")
-            
-            # Use compile setting from constructor (based on settings)
-            compile_model = self._compile_enabled
-            checkpoint_path = Path(self.checkpoint_path)
-            decoder_path = Path(self.decoder_checkpoint_path)
-            
-            if compile_model:
-                logger.info("🚀 Loading model with compilation for optimized performance")
-            else:
-                logger.info("🚀 Loading model without compilation for faster startup")
-            
-            self.llama_queue = launch_thread_safe_queue(
-                checkpoint_path=checkpoint_path,
-                device=self.device,
-                precision=self.precision,
-                compile=compile_model
-            )
-            
-            # Load VQ-GAN decoder model
-            self.decoder_model = load_decoder_model(
-                config_name="modded_dac_vq",
-                checkpoint_path=decoder_path,
-                device=self.device,
-            )
-            
-            # Create TTSInferenceEngine without compilation
-            self.inference_engine = TTSInferenceEngine(
-                llama_queue=self.llama_queue,
-                decoder_model=self.decoder_model,
-                compile=compile_model,
-                precision=self.precision,
-            )
-            
-            # No warmup needed - ready to use immediately
-            logger.info("✅ Model loaded without compilation - ready for immediate use")
-            
-            self.is_initialized = True
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to load Fish Speech TTSInferenceEngine: {e}")
-            return False
+
+    def _cleanup_partial_load(self):
+        try:
+            if hasattr(self, 'inference_engine') and self.inference_engine:
+                del self.inference_engine
+            if hasattr(self, 'decoder_model') and self.decoder_model:
+                del self.decoder_model
+            if hasattr(self, 'llama_queue') and self.llama_queue:
+                del self.llama_queue
+        except:
+            pass
     
 
     
