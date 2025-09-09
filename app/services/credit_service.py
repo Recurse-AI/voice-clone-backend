@@ -154,11 +154,12 @@ class CreditService:
 
     
     async def _update_user_usage(self, user_id: str, credits_used: float) -> None:
-        """Simple: Add credits to user's total usage"""
+        """Add credits to user's total usage and check for billing"""
         try:
             from datetime import datetime, timezone
             from bson import ObjectId
             loop_db = get_async_db()
+            
             # Simple increment of total usage
             await loop_db.get_collection("users").update_one(
                 {"_id": ObjectId(user_id)},
@@ -169,6 +170,10 @@ class CreditService:
             )
             
             logger.debug(f"Added {credits_used} credits to user {user_id} total usage")
+            
+            # Add real-time billing check for PAYG users
+            from app.services.stripe_service import stripe_service
+            await stripe_service.add_usage_and_check_billing(user_id, credits_used)
             
         except Exception as e:
             logger.error(f"Failed to update user usage for {user_id}: {e}")
