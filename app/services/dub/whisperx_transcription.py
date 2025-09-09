@@ -122,28 +122,12 @@ class WhisperXTranscriptionService:
 
     def transcribe_audio_file(self, audio_path: str, language: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         try:
-            from app.config.pipeline_settings import pipeline_settings
-            logger.info(f"🔧 Service worker config: {pipeline_settings.USE_WHISPERX_SERVICE_WORKER}")
-
-            if pipeline_settings.USE_WHISPERX_SERVICE_WORKER:
-                logger.info("🎯 Routing to WhisperX service worker (fast path)")
-                return self._transcribe_via_service_worker(audio_path, language, job_id)
-
-            logger.info("📝 Using direct transcription (fallback)")
-            if not self.is_initialized:
-                worker_name = os.getenv('RQ_WORKER_NAME', '')
-                if 'whisperx_service_worker' in worker_name:
-                    logger.info("🔄 Loading WhisperX model in service worker...")
-                    if not self.load_model():
-                        raise Exception("Failed to load transcription model")
-                else:
-                    raise Exception("Model not loaded and not running in transcription service worker. Service worker should handle this.")
-
-            return self._transcribe_direct(audio_path, language, job_id)
+            logger.info("🎯 Using WhisperX service worker for transcription")
+            return self._transcribe_via_service_worker(audio_path, language, job_id)
 
         except Exception as e:
-            logger.error(f"Transcription failed for {audio_path}: {e}")
-            raise Exception(f"Transcription failed: {str(e)}")
+            logger.error(f"WhisperX service worker transcription failed for {audio_path}: {e}")
+            raise Exception(f"WhisperX transcription failed: {str(e)}")
 
     def _transcribe_via_service_worker(self, audio_path: str, language_code: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         try:

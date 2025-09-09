@@ -37,10 +37,7 @@ class PipelineSettings:
     SERVICE_WORKER_TIMEOUT: int = int(os.getenv("SERVICE_WORKER_TIMEOUT", "1800"))  # 30 minutes
     SERVICE_RESULT_TIMEOUT: int = int(os.getenv("SERVICE_RESULT_TIMEOUT", "3600"))  # 1 hour
     
-    # Feature Flags
-    USE_WHISPERX_SERVICE_WORKER: bool = os.getenv("USE_WHISPERX_SERVICE_WORKER", "true").lower() == "true"
-    USE_FISH_SPEECH_SERVICE_WORKER: bool = os.getenv("USE_FISH_SPEECH_SERVICE_WORKER", "true").lower() == "true"
-    
+    # Job Timeout
     JOB_TIMEOUT: int = 10800
 
 pipeline_settings = PipelineSettings()

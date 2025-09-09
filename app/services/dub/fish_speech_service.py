@@ -169,19 +169,12 @@ class FishSpeechService:
     
 
     
-    def generate_with_reference_audio(self, text: str, reference_audio_bytes: bytes, 
+    def generate_with_reference_audio(self, text: str, reference_audio_bytes: bytes,
                                      reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:
         """
-        Generate voice cloning - routes through Redis queue if enabled, otherwise direct processing
+        Generate voice cloning - always uses service worker for optimal performance
         """
-        from app.config.pipeline_settings import pipeline_settings
-        
-        # Route through Redis service worker if enabled
-        if pipeline_settings.USE_FISH_SPEECH_SERVICE_WORKER:
-            return self._generate_via_service_worker(text, reference_audio_bytes, reference_text, job_id, **kwargs)
-        else:
-            # Fallback to direct processing
-            return self._generate_direct(text, reference_audio_bytes, reference_text, job_id, **kwargs)
+        return self._generate_via_service_worker(text, reference_audio_bytes, reference_text, job_id, **kwargs)
     
     def _generate_via_service_worker(self, text: str, reference_audio_bytes: bytes, 
                                    reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:
@@ -215,8 +208,7 @@ class FishSpeechService:
         
         if not success:
             logger.error(f"Failed to enqueue Fish Speech request for {job_id}")
-            # Fallback to direct processing
-            return self._generate_direct(text, reference_audio_bytes, reference_text, job_id, **kwargs)
+            raise Exception("Failed to submit to Fish Speech service worker")
         
         # Wait for result with timeout
         from app.utils.pipeline_utils import wait_for_service_result, cleanup_service_result

@@ -92,12 +92,7 @@ async def init_database_indexes():
                 logger.info(f"Created index on {idx['name']}")
                 created_count += 1
             except Exception as e:
-                if any(keyword in str(e).lower() for keyword in 
-                       ["already exists", "index already exists"]):
-                    logger.info(f"📋 Index on {idx['name']} already exists")
-                    existing_count += 1
-                else:
-                    logger.warning(f"⚠️ Failed to create index on {idx['name']}: {e}")
+                logger.warning(f"⚠️ Failed to create index on {idx['name']}: {e}")
         
         # Create TTL indexes for automatic cleanup
         for ttl_config in ttl_indexes_to_create:
