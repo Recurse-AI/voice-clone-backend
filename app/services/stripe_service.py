@@ -216,21 +216,10 @@ class StripeService:
     
     @log_execution_time
     async def add_usage_and_check_billing(self, user_id: str, credits_used: float) -> Dict[str, Any]:
-        """Add usage and check if billing needed - call this after any credit usage"""
+        """Check if billing needed after usage has been added"""
         try:
-            from app.config.database import users_collection
-            from bson import ObjectId
-            
-            # Add usage
-            await users_collection.update_one(
-                {"_id": ObjectId(user_id)},
-                {
-                    "$inc": {"total_usage": credits_used},
-                    "$set": {"updatedAt": datetime.now(timezone.utc)}
-                }
-            )
-            
-            # Check if billing needed
+            # Don't update usage here - it's already updated by _update_user_usage
+            # Just check if billing needed
             billing_result = await self.check_and_process_billing(user_id)
             
             return {
@@ -239,14 +228,14 @@ class StripeService:
             }
             
         except Exception as e:
-            logger.error(f"Usage tracking failed for user {user_id}: {e}")
+            logger.error(f"Billing check failed for user {user_id}: {e}")
             return {"success": False, "message": str(e)}
     
 
 
     
     async def process_threshold_billing(self, user_id: str, threshold_usd: float = 10.0) -> Dict[str, Any]:
-        """Simple threshold billing - charge when usage exceeds $10"""
+        """Charge the actual usage amount when threshold is reached"""
         try:
             from app.config.database import users_collection
             from app.config.credit_constants import CreditRates
@@ -275,10 +264,10 @@ class StripeService:
             payment_methods = await self.get_payment_methods(user, user_id)
             if not payment_methods:
                 return {"success": False, "message": "No payment method available"}
-            
+            actual_amount = cost_usd
             # Create payment intent
             payment_intent = stripe.PaymentIntent.create(
-                amount=int(threshold_usd * 100),  # Convert to cents
+                amount=int(actual_amount * 100),  # Charge actual amount
                 currency='usd',
                 customer=customer_id,
                 payment_method=payment_methods[0]["id"],
@@ -292,7 +281,10 @@ class StripeService:
             )
             
             if payment_intent.status == 'succeeded':
-                # Reset user's usage counter after successful payment
+                # Reset usage proportionally
+                credits_charged = actual_amount / CreditRates.COST_PER_CREDIT_USD
+                new_usage = max(0, total_credits - credits_charged)
+                
                 await users_collection.update_one(
                     {"_id": ObjectId(user_id)},
                     {
@@ -300,15 +292,12 @@ class StripeService:
                     }
                 )
                 
-                logger.info(f"Threshold billing completed: User {user_id}, ${threshold_usd} for {total_credits} credits")
                 return {
                     "success": True, 
-                    "charged_amount": threshold_usd, 
+                    "charged_amount": actual_amount, 
                     "credits": total_credits,
                     "payment_intent_id": payment_intent.id
                 }
-            else:
-                return {"success": False, "message": f"Payment failed: {payment_intent.status}"}
             
         except Exception as e:
             logger.error(f"Threshold billing failed for user {user_id}: {e}")

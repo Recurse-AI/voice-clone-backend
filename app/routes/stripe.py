@@ -484,6 +484,68 @@ async def get_billing_status(current_user: TokenUser = Security(get_current_user
         return handle_api_error(e, "Get Billing Status")
 
 
+@stripe_route.post("/manual-billing")
+@log_execution_time
+async def trigger_manual_billing(current_user: TokenUser = Security(get_current_user)):
+    """
+    Allow users to manually trigger billing when they want to pay
+    This will charge the user's current usage amount if it's above the threshold
+    """
+    try:
+        user_id = str(current_user.id)
+        
+        # Get user's current billing status
+        billing_status = await stripe_service.get_threshold_status(user_id)
+        
+        # Check if user has any usage
+        current_usage = billing_status.get("current_usage", 0.0)
+        current_cost = billing_status.get("current_cost", 0.0)
+        threshold = billing_status.get("threshold", 10.0)
+        
+        if current_usage == 0:
+            return success_response("No usage to bill", {
+                "current_usage": current_usage,
+                "current_cost": current_cost,
+                "threshold": threshold,
+                "ready_to_bill": False
+            })
+        
+        if current_cost < threshold:
+            return success_response(f"Usage ${current_cost:.2f} below threshold ${threshold}", {
+                "current_usage": current_usage,
+                "current_cost": current_cost,
+                "threshold": threshold,
+                "ready_to_bill": False,
+                "message": f"You need ${threshold - current_cost:.2f} more usage to reach the billing threshold"
+            })
+        
+        # Trigger the billing process
+        billing_result = await stripe_service.process_threshold_billing(user_id)
+        
+        if billing_result.get("success"):
+            return success_response("Payment processed successfully", {
+                "charged_amount": billing_result.get("charged_amount"),
+                "credits_used": billing_result.get("credits"),
+                "payment_intent_id": billing_result.get("payment_intent_id"),
+                "new_usage": 0.0,
+                "message": f"Successfully charged ${billing_result.get('charged_amount', 0):.2f}"
+            })
+        else:
+            return error_response(
+                billing_result.get("message", "Payment failed"), 
+                400,
+                {
+                    "current_usage": current_usage,
+                    "current_cost": current_cost,
+                    "threshold": threshold,
+                    "error": billing_result.get("message")
+                }
+            )
+            
+    except Exception as e:
+        logger.error(f"Manual billing failed for user {current_user.id}: {e}")
+        return error_response("Manual billing failed", 500, {"error": str(e)})
+ 
 
 # 10. Webhook (No auth required)
 @stripe_route.post("/webhook")
@@ -660,3 +722,100 @@ async def update_user_payment_method_status(user_id: str):
             
     except Exception as e:
         logger.error(f"Failed to update user payment method status: {e}")
+
+@stripe_route.get("/payment-details/{payment_intent_id}")
+@log_execution_time
+async def get_payment_details(
+    payment_intent_id: str, 
+    current_user: TokenUser = Security(get_current_user)
+):
+    """Get payment details and invoice information"""
+    try:
+        # Retrieve payment intent from Stripe
+        payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+        
+        # Verify the payment belongs to the current user
+        if payment_intent.metadata.get('userId') != str(current_user.id):
+            return error_response("Payment not found", 404)
+        
+        # Get invoice if exists
+        invoice_info = None
+        if payment_intent.invoice:
+            invoice = stripe.Invoice.retrieve(payment_intent.invoice)
+            invoice_info = {
+                "invoice_id": invoice.id,
+                "invoice_pdf": invoice.invoice_pdf,
+                "hosted_invoice_url": invoice.hosted_invoice_url,
+                "invoice_number": invoice.number,
+                "status": invoice.status
+            }
+        
+        return success_response("Payment details retrieved", {
+            "payment_intent_id": payment_intent.id,
+            "amount": payment_intent.amount / 100,
+            "currency": payment_intent.currency,
+            "status": payment_intent.status,
+            "created": payment_intent.created,
+            "customer_id": payment_intent.customer,
+            "metadata": payment_intent.metadata,
+            "invoice": invoice_info
+        })
+        
+    except stripe.error.StripeError as e:
+        logger.error(f"Stripe error retrieving payment {payment_intent_id}: {e}")
+        return error_response("Failed to retrieve payment details", 400, {"error": str(e)})
+    except Exception as e:
+        logger.error(f"Error retrieving payment details: {e}")
+        return error_response("Failed to retrieve payment details", 500, {"error": str(e)})
+
+@stripe_route.get("/payment-history")
+@log_execution_time
+async def get_payment_history(current_user: TokenUser = Security(get_current_user)):
+    """Get all payment history for the current user"""
+    try:
+        # Get user's Stripe customer ID
+        from app.config.database import users_collection
+        from bson import ObjectId
+        
+        user = await users_collection.find_one({"_id": ObjectId(current_user.id)})
+        if not user:
+            return error_response("User not found", 404)
+        
+        customer_id = user.get("subscription", {}).get("stripeCustomerId")
+        if not customer_id:
+            return success_response("No payment history", {"payments": []})
+        
+        # Get payment intents for this customer
+        payment_intents = stripe.PaymentIntent.list(
+            customer=customer_id,
+            limit=50
+        )
+        
+        payments = []
+        for pi in payment_intents.data:
+            # Simple payment info without invoice complexity
+            payment_data = {
+                "payment_intent_id": pi.id,
+                "amount": pi.amount / 100,
+                "currency": pi.currency,
+                "status": pi.status,
+                "created": pi.created,
+                "metadata": pi.metadata
+            }
+            
+            # Safely check for invoice without retrieving it
+            try:
+                payment_data["has_invoice"] = bool(getattr(pi, 'invoice', None))
+            except:
+                payment_data["has_invoice"] = False
+            
+            payments.append(payment_data)
+        
+        return success_response("Payment history retrieved", {
+            "payments": payments,
+            "total_count": len(payments)
+        })
+        
+    except Exception as e:
+        logger.error(f"Error retrieving payment history: {e}")
+        return error_response("Failed to retrieve payment history", 500, {"error": str(e)})
