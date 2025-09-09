@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
     
     # WhisperX Configuration (Optimized for 16GB VRAM)
-    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "large-v3-turbo")  # small=~2GB, medium=~5GB, large=~10GB
+    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "large-v3-turbo")  
     WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "float16")  # Optimized for 16GB VRAM
     WHISPER_ALIGNMENT_DEVICE: str = os.getenv("WHISPER_ALIGNMENT_DEVICE", "cpu")  # Keep alignment on CPU to save VRAM
     WHISPER_CACHE_DIR: str = os.getenv("WHISPER_CACHE_DIR", "./cache/whisperx")  # Persistent cache directory

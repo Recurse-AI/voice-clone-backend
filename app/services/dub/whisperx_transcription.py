@@ -171,49 +171,34 @@ class WhisperXTranscriptionService:
         normalized_language = language_service.get_language_code_for_transcription(language_code)
         audio = whisperx.load_audio(audio_path)
 
-        batch_sizes = [16, 8]
-        last_exception = None
 
-        for batch_size in batch_sizes:
-            try:
-                result = self.model.transcribe(
-                    audio,
-                    batch_size=batch_size,
-                    language=normalized_language if normalized_language != "auto_detect" else None
-                )
+        try:
+            result = self.model.transcribe(
+                audio,
+                batch_size=8,
+                language=normalized_language if normalized_language != "auto_detect" else None,
+                task="transcribe",
+                beam_size=1,
+                condition_on_previous_text=False,
+            )
 
-                detected_language = result.get("language", normalized_language)
-                model_a, metadata = self._get_alignment_model(detected_language)
-                if model_a:
-                    result = whisperx.align(result["segments"], model_a, metadata, audio, self.alignment_device, return_char_alignments=False)
+            detected_language = result.get("language", normalized_language)
+            model_a, metadata = self._get_alignment_model(detected_language)
+            if model_a:
+                result = whisperx.align(result["segments"], model_a, metadata, audio, self.alignment_device, return_char_alignments=False)
 
-                segments = self._process_segments(result.get("segments", []))
+            segments = self._process_segments(result.get("segments", []))
 
-                if batch_size != 16:
-                    logger.info(f"Transcription succeeded with batch_size={batch_size}")
+            return {
+                "success": True,
+                "segments": segments,
+                "sentences": segments,
+                "language": result.get("language", language_code)
+            }
 
-                return {
-                    "success": True,
-                    "segments": segments,
-                    "sentences": segments,
-                    "language": result.get("language", language_code)
-                }
-
-            except Exception as e:
-                error_msg = str(e).lower()
-                is_oom = any(keyword in error_msg for keyword in ['out of memory', 'cuda', 'gpu memory', 'memory allocation'])
-
-                if is_oom and batch_size > 8:
-                    last_exception = e
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                    continue
-
-                if last_exception:
-                    raise Exception(f"Transcription failed after OOM retry: {str(last_exception)}")
-                raise Exception(f"Transcription failed: {str(e)}")
-
-        raise Exception(f"Transcription failed after all retries: {str(last_exception)}")
+        except Exception as e:
+            logger.error(f"Transcription failed (batch_size={batch_size}): {e}")
+            raise Exception(f"Transcription failed: {str(e)}")
     
     def _process_segments(self, raw_segments):
         segments = []
