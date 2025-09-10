@@ -193,6 +193,13 @@ async def create_checkout_session(
         
         credits = plan_data['credits']
         price = plan_data['price']
+
+        customer = stripe.Customer.retrieve(customer_id)
+        if not customer.email:
+            stripe.Customer.modify(
+                customer_id,
+                email=user.email
+            )
         
         session = stripe.checkout.Session.create(
             customer=customer_id,
