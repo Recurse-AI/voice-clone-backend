@@ -139,7 +139,7 @@ class VideoDownloadService:
             job_dir = Path(settings.TEMP_DIR) / job_id
             job_dir.mkdir(parents=True, exist_ok=True)
             
-            quality_format = self._build_quality_format(quality, resolution, max_filesize)
+            quality_format = self._get_format_selector(quality, resolution, max_filesize)
             logger.info(f"Initial format selector: {quality_format}")
 
             output_template = str(job_dir / "%(title)s.%(ext)s")
