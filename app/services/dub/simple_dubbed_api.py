@@ -225,6 +225,12 @@ class SimpleDubbedAPI:
                 if manifest_override:
                     manifest = manifest_override.copy()
                     manifest["segments"] = dubbed_segments
+                    manifest["target_language"] = target_language  # Update target language for redub
+                    # URLs already preserved from original manifest
+                    vocal_audio_url = manifest.get("vocal_audio_url")
+                    instrument_audio_url = manifest.get("instrument_audio_url")
+                    logger.info(f"Redub using existing URLs for {job_id}: vocal={bool(vocal_audio_url)}, instrument={bool(instrument_audio_url)}")
+
                 else:
                     # Build manifest from scratch with separation URLs
                     manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
