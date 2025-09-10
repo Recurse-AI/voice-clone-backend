@@ -26,7 +26,6 @@ class QueueManager:
         self._dub_queue = None
         self._separation_queue = None
         self._billing_queue = None
-        # New service worker queues
         self._whisperx_service_queue = None
         self._fish_speech_service_queue = None
     
@@ -121,8 +120,9 @@ class QueueManager:
             if redis_client:
                 self._fish_speech_service_queue = Queue("fish_speech_service_queue", connection=redis_client)
                 logger.info("✅ Fish Speech service queue initialized")
-        
+
         return self._fish_speech_service_queue
+
     
     def enqueue_separation_task(self, job_id: str, runpod_request_id: str, 
                               user_id: str, duration_seconds: float) -> bool:
@@ -223,21 +223,84 @@ class QueueManager:
             if not queue:
                 logger.error("❌ Fish Speech service queue not available")
                 return False
-                
+
             from app.config.pipeline_settings import pipeline_settings
-            
+
             job = queue.enqueue(
                 'app.workers.fish_speech_service_worker.process_fish_speech_request',
                 request_data,
                 job_timeout=pipeline_settings.SERVICE_WORKER_TIMEOUT
             )
-            
+
             logger.info(f"✅ Enqueued Fish Speech service task: {request_data.get('request_id')} (RQ job: {job.id})")
             return True
-            
+
         except Exception as e:
             logger.error(f"❌ Failed to enqueue Fish Speech service task: {e}")
             return False
+
+    def enqueue_with_load_balance(self, request_data: dict, service_type: str) -> bool:
+        """Smart load balancing: GPU first, CPU fallback"""
+        try:
+            from app.config.pipeline_settings import pipeline_settings
+
+            if service_type == "whisperx":
+                gpu_queue = self.get_whisperx_service_queue()
+                gpu_function = 'app.workers.whisperx_service_worker.process_whisperx_request'
+                cpu_function = 'app.workers.cpu_whisperx_service_worker.process_cpu_whisperx_request'
+            elif service_type == "fish_speech":
+                gpu_queue = self.get_fish_speech_service_queue()
+                gpu_function = 'app.workers.fish_speech_service_worker.process_fish_speech_request'
+                cpu_function = 'app.workers.cpu_fish_speech_service_worker.process_cpu_fish_speech_request'
+            else:
+                logger.error(f"❌ Unknown service type: {service_type}")
+                return False
+
+            # Check GPU capacity (GPU busy if queue has jobs)
+            gpu_busy = len(gpu_queue) >= 1 if gpu_queue else True
+
+            if not gpu_busy:
+                # GPU has capacity - use GPU worker
+                job = gpu_queue.enqueue(
+                    gpu_function,
+                    request_data,
+                    job_timeout=pipeline_settings.SERVICE_WORKER_TIMEOUT
+                )
+                logger.info(f"🎯 GPU {service_type}: {request_data.get('request_id')} (Fast processing)")
+                return True
+            else:
+                # GPU busy - try CPU queue if available, otherwise fallback to GPU
+                try:
+                    # Try to create CPU queue dynamically
+                    from rq import Queue
+                    redis_client = self._get_redis_client()
+                    if redis_client:
+                        cpu_queue_name = f"cpu_{service_type}_service_queue"
+                        cpu_queue = Queue(cpu_queue_name, connection=redis_client)
+
+                        job = cpu_queue.enqueue(
+                            cpu_function,
+                            request_data,
+                            job_timeout=pipeline_settings.SERVICE_WORKER_TIMEOUT
+                        )
+                        logger.info(f"🐌 CPU {service_type}: {request_data.get('request_id')} (Overflow handling)")
+                        return True
+                except Exception as cpu_error:
+                    logger.warning(f"CPU queue failed, falling back to GPU: {cpu_error}")
+
+                # Fallback to GPU if CPU fails
+                job = gpu_queue.enqueue(
+                    gpu_function,
+                    request_data,
+                    job_timeout=pipeline_settings.SERVICE_WORKER_TIMEOUT
+                )
+                logger.info(f"⚠️ GPU Fallback {service_type}: {request_data.get('request_id')} (GPU was busy)")
+                return True
+
+        except Exception as e:
+            logger.error(f"❌ Load balancing failed for {service_type}: {e}")
+            return False
+
     
     def get_queue_info(self) -> dict:
         """Get queue status information"""
@@ -251,7 +314,7 @@ class QueueManager:
             billing_queue = self.get_billing_queue()
             whisperx_service_queue = self.get_whisperx_service_queue()
             fish_speech_service_queue = self.get_fish_speech_service_queue()
-            
+
             info = {
                 "redis_connected": True,
                 "dub_queue": {
@@ -298,10 +361,10 @@ class QueueManager:
             billing_queue = self.get_billing_queue()
             whisperx_service_queue = self.get_whisperx_service_queue()
             fish_speech_service_queue = self.get_fish_speech_service_queue()
-            
+
             return all([
-                dub_queue is not None, 
-                separation_queue is not None, 
+                dub_queue is not None,
+                separation_queue is not None,
                 billing_queue is not None,
                 whisperx_service_queue is not None,
                 fish_speech_service_queue is not None
@@ -340,3 +403,5 @@ def get_whisperx_service_queue() -> Optional[Queue]:
 def get_fish_speech_service_queue() -> Optional[Queue]:
     """Get Fish Speech service queue"""
     return queue_manager.get_fish_speech_service_queue()
+
+

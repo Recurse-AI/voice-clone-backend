@@ -320,18 +320,22 @@ def mark_service_worker_inactive(service_type: str, worker_id: str) -> bool:
         redis_client = get_redis_client()
         if not redis_client:
             return False
-        
+
         from app.config.pipeline_settings import pipeline_settings
-        
+
         if service_type == "whisperx":
             active_key = pipeline_settings.REDIS_WHISPERX_ACTIVE
         elif service_type == "fish_speech":
             active_key = pipeline_settings.REDIS_FISH_SPEECH_ACTIVE
+        elif service_type == "cpu_whisperx":
+            active_key = pipeline_settings.REDIS_CPU_WHISPERX_ACTIVE
+        elif service_type == "cpu_fish_speech":
+            active_key = pipeline_settings.REDIS_CPU_FISH_SPEECH_ACTIVE
         else:
             return False
-        
+
         redis_client.srem(active_key, worker_id)
-        
+
         return True
         
     except Exception:
@@ -414,18 +418,22 @@ def cleanup_service_result(service_type: str, request_id: str) -> bool:
         redis_client = get_redis_client()
         if not redis_client:
             return False
-        
+
         from app.config.pipeline_settings import pipeline_settings
-        
+
         if service_type == "whisperx":
             results_key = f"{pipeline_settings.REDIS_WHISPERX_RESULTS}:{request_id}"
         elif service_type == "fish_speech":
             results_key = f"{pipeline_settings.REDIS_FISH_SPEECH_RESULTS}:{request_id}"
+        elif service_type == "cpu_whisperx":
+            results_key = f"{pipeline_settings.REDIS_CPU_WHISPERX_RESULTS}:{request_id}"
+        elif service_type == "cpu_fish_speech":
+            results_key = f"{pipeline_settings.REDIS_CPU_FISH_SPEECH_RESULTS}:{request_id}"
         else:
             return False
-        
+
         redis_client.delete(results_key)
         return True
-        
+
     except Exception:
         return False

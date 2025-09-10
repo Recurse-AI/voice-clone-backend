@@ -32,15 +32,19 @@ class PipelineSettings:
     REDIS_FISH_SPEECH_QUEUE: str = "service:fish_speech:queue"
     REDIS_FISH_SPEECH_ACTIVE: str = "service:fish_speech:active"
     REDIS_FISH_SPEECH_RESULTS: str = "service:fish_speech:results"
-    
+
+    # CPU Service Worker Redis Keys
+    REDIS_CPU_WHISPERX_ACTIVE: str = "service:cpu_whisperx:active"
+    REDIS_CPU_WHISPERX_RESULTS: str = "service:cpu_whisperx:results"
+
+    REDIS_CPU_FISH_SPEECH_ACTIVE: str = "service:cpu_fish_speech:active"
+    REDIS_CPU_FISH_SPEECH_RESULTS: str = "service:cpu_fish_speech:results"
+
     # Service Worker Settings
     SERVICE_WORKER_TIMEOUT: int = int(os.getenv("SERVICE_WORKER_TIMEOUT", "1800"))  # 30 minutes
     SERVICE_RESULT_TIMEOUT: int = int(os.getenv("SERVICE_RESULT_TIMEOUT", "3600"))  # 1 hour
     
-    # Feature Flags
-    USE_WHISPERX_SERVICE_WORKER: bool = os.getenv("USE_WHISPERX_SERVICE_WORKER", "true").lower() == "true"
-    USE_FISH_SPEECH_SERVICE_WORKER: bool = os.getenv("USE_FISH_SPEECH_SERVICE_WORKER", "true").lower() == "true"
-    
+    # Job Timeout
     JOB_TIMEOUT: int = 10800
 
 pipeline_settings = PipelineSettings()

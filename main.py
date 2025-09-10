@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 # App routes and configuration
 from app.config.database import verify_connection, create_unique_indexes
 from app.utils.logging_config import setup_logging
+from app.utils.startup_sync import startup_sync
 from app.routes.auth import auth
 from app.routes.stripe import stripe_route
 
@@ -30,11 +31,26 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting up — checking MongoDB connection...")
-    await verify_connection()
+    # Health check: Verify critical dependencies first
+    logger.info("🏥 Performing startup health checks...")
 
-    # Use startup synchronization to prevent duplicate initialization
-    from app.utils.startup_sync import startup_sync
+    # MongoDB connection check - coordinate to run only once per deployment
+    mongodb_lock_acquired = await startup_sync.acquire_startup_lock("mongodb_check", timeout=30)
+
+    if mongodb_lock_acquired:
+        try:
+            logger.info("🔍 Checking MongoDB connection...")
+            await verify_connection()
+            await startup_sync.mark_task_complete("mongodb_check")
+            logger.info("✅ MongoDB health check completed")
+        except Exception as e:
+            logger.error(f"❌ MongoDB health check failed: {e}")
+            raise  # Critical failure - stop startup
+        finally:
+            await startup_sync.release_startup_lock("mongodb_check")
+    else:
+        logger.info("⏳ Waiting for MongoDB health check...")
+        await startup_sync.wait_for_task_completion("mongodb_check")
     
     # Database initialization - only one worker should do this
     db_lock_acquired = await startup_sync.acquire_startup_lock("database_init", timeout=60)
@@ -60,52 +76,56 @@ async def lifespan(app: FastAPI):
     
     os.makedirs(settings.TEMP_DIR, exist_ok=True)
     
-    # Simple cleanup - each worker can do its own cleanup
+    # Per-worker cleanup - lightweight, can run on each worker
     try:
         cleanup_utils.cleanup_all_expired()
+        logger.info("🧹 Per-worker cleanup completed")
     except Exception as cleanup_error:
-        logger.warning(f"Failed to cleanup expired resources: {cleanup_error}")
-    
-    # Start status reconciler
-    try:
-        from app.utils.status_reconciler import _reconciler
-        _reconciler.start()
-    except Exception as e:
-        logger.error(f"Failed to start status reconciler: {e}")
+        logger.warning(f"⚠️ Cleanup warning: {cleanup_error}")
 
-    # Initialize only lightweight OpenAI service in API server
-    try:
-        from app.services.openai_service import initialize_openai_service
-        initialize_openai_service()
-        logger.info("✅ OpenAI service ready")
-    except Exception as e:
-        logger.warning(f"OpenAI initialization failed: {str(e)[:50]}")
+    # Status reconciler - coordinate startup
+    reconciler_lock_acquired = await startup_sync.acquire_startup_lock("status_reconciler_init", timeout=30)
 
-    
-    
-    # R2 service - lazy initialization (no startup delay)
-    try:
-        from app.services.r2_service import reset_r2_service
-        reset_r2_service()  # Reset singleton for clean state
-        logger.info("✅ R2 service configured (lazy initialization)")
-    except Exception as e:
-        logger.warning(f"R2 service configuration failed: {e}")
-    
+    if reconciler_lock_acquired:
+        try:
+            from app.utils.status_reconciler import _reconciler
+            _reconciler.start()
+            await startup_sync.mark_task_complete("status_reconciler_init")
+            logger.info("✅ Status reconciler started")
+        except Exception as e:
+            logger.warning(f"⚠️ Status reconciler warning: {e}")
+        finally:
+            await startup_sync.release_startup_lock("status_reconciler_init")
+    else:
+        logger.info("⏳ Waiting for status reconciler...")
+        await startup_sync.wait_for_task_completion("status_reconciler_init")
+
+    # Per-worker services - R2 instances created on-demand
+    logger.info("✅ R2 service ready (on-demand instances)")
+
+    logger.info("🎯 API server startup completed successfully")
     yield
-    
+
     logger.info("🔄 API server shutting down...")
-    
-    
-    try:
-        from app.utils.status_reconciler import _reconciler
-        _reconciler.stop()
-        logger.info("✅ Status reconciler stopped")
-    except Exception as e:
-        logger.error(f"Failed to cleanup status reconciler: {e}")
-    
+
+    # Cleanup - coordinate status reconciler stop
+    cleanup_lock_acquired = await startup_sync.acquire_startup_lock("cleanup", timeout=30)
+
+    if cleanup_lock_acquired:
+        try:
+            from app.utils.status_reconciler import _reconciler
+            _reconciler.stop()
+            await startup_sync.mark_task_complete("cleanup")
+            logger.info("✅ Cleanup completed")
+        except Exception as e:
+            logger.warning(f"⚠️ Cleanup warning: {e}")
+        finally:
+            await startup_sync.release_startup_lock("cleanup")
+    else:
+        logger.info("⏳ Waiting for cleanup...")
+        await startup_sync.wait_for_task_completion("cleanup")
+
     logger.info("✅ API server shutdown complete")
-    
-   
 
 app = FastAPI(
     title=settings.API_TITLE,

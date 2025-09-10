@@ -80,13 +80,12 @@ class Settings(BaseSettings):
     # HuggingFace Configuration
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
     
-    # WhisperX Configuration (Optimized for 16GB VRAM)
-    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "medium")  # small=~2GB, medium=~5GB, large=~10GB
-    WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "float16")  # Optimized for 16GB VRAM
+    # WhisperX Configuration (Auto-detects hardware for optimal performance)
+    WHISPER_MODEL_SIZE: str = os.getenv("WHISPER_MODEL_SIZE", "large-v3-turbo")
+    WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "auto")  # auto, float16, float32, int8
     WHISPER_ALIGNMENT_DEVICE: str = os.getenv("WHISPER_ALIGNMENT_DEVICE", "cpu")  # Keep alignment on CPU to save VRAM
-    WHISPER_POOL_SIZE: int = int(os.getenv("WHISPER_POOL_SIZE", "2"))
-    WHISPER_MODEL_TIMEOUT: int = int(os.getenv("WHISPER_MODEL_TIMEOUT", "300"))
     WHISPER_CACHE_DIR: str = os.getenv("WHISPER_CACHE_DIR", "./cache/whisperx")  # Persistent cache directory
+    WHISPER_MAX_SEG_SECONDS: int = int(os.getenv("WHISPER_MAX_SEG_SECONDS", "12"))  # Maximum segment length for splitting
     
     PYTORCH_CUDA_ALLOC_CONF: str = os.getenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:512")
     
@@ -94,20 +93,23 @@ class Settings(BaseSettings):
     
     # Fish Speech Configuration (Optimized for 16GB VRAM)
     FISH_SPEECH_LOW_MEMORY: bool = os.getenv("FISH_SPEECH_LOW_MEMORY", "true").lower() == "true"  # Enable for 16GB VRAM
-    FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "false").lower() == "true"  # Disabled for faster startup
+    FISH_SPEECH_COMPILE: bool = os.getenv("FISH_SPEECH_COMPILE", "true").lower() == "true"  # Enabled for better performance
     FISH_SPEECH_CHECKPOINT: str = os.getenv("FISH_SPEECH_CHECKPOINT", "checkpoints/openaudio-s1-mini")
     FISH_SPEECH_DECODER: str = os.getenv("FISH_SPEECH_DECODER", "checkpoints/openaudio-s1-mini/codec.pth")
     FISH_SPEECH_DEVICE: str = os.getenv("FISH_SPEECH_DEVICE", "auto")  # auto, cuda, cpu
     FISH_SPEECH_PRECISION: str = os.getenv("FISH_SPEECH_PRECISION", "float16")  # Use float16 for 16GB VRAM
     FISH_SPEECH_MAX_BATCH_SIZE: int = int(os.getenv("FISH_SPEECH_MAX_BATCH_SIZE", "4"))  # Reduced for 16GB VRAM
     FISH_SPEECH_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_CHUNK_SIZE", "100"))  # Smaller chunks for memory efficiency
+
+    # CPU Worker Configuration
+    ENABLE_CPU_WORKERS: bool = os.getenv("ENABLE_CPU_WORKERS", "false").lower() == "true"
+    FISH_SPEECH_CPU_DEVICE: str = os.getenv("FISH_SPEECH_CPU_DEVICE", "cpu")
+    WHISPER_CPU_COMPUTE_TYPE: str = os.getenv("WHISPER_CPU_COMPUTE_TYPE", "float32")
     
     
-    # Specific model loading controls for service workers (16GB VRAM Optimized)
-    # NOTE: Models auto-load in dedicated workers for faster processing
-    LOAD_WHISPERX_MODEL: bool = os.getenv("LOAD_WHISPERX_MODEL", "true").lower() == "true"  # Auto-load in WhisperX workers
-    LOAD_FISH_SPEECH_MODEL: bool = os.getenv("LOAD_FISH_SPEECH_MODEL", "true").lower() == "true"  # Auto-load in Fish Speech workers
-    
+    # NOTE: Models auto-load in dedicated workers automatically for optimal performance
+
+
     # RunPod Configuration for Audio Separation
     API_ACCESS_TOKEN: str = os.getenv("API_ACCESS_TOKEN", "")
     RUNPOD_ENDPOINT_ID: str = os.getenv("RUNPOD_ENDPOINT_ID", "")
@@ -116,6 +118,8 @@ class Settings(BaseSettings):
     # Processing Configuration
     # Voice cloning configuration
     MAX_REFERENCE_SECONDS: int = int(os.getenv('MAX_REFERENCE_SECONDS', '20'))  # Maximum seconds of reference audio to feed into TTS
+
+
     # FFmpeg Configuration
     FFMPEG_USE_GPU: bool = bool(int(os.getenv('FFMPEG_USE_GPU', '0')))  # 1 to enable GPU (NVENC)
     

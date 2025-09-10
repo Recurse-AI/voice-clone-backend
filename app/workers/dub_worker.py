@@ -222,8 +222,8 @@ def _cleanup_r2_file(r2_key: str):
     """Cleanup R2 file"""
     try:
         if r2_key:
-            from app.services.r2_service import get_r2_service
-            r2_service = get_r2_service()
+            from app.services.r2_service import R2Service
+            r2_service = R2Service()
             r2_service.delete_file(r2_key)
             logger.info(f"Cleaned up R2 file: {r2_key}")
     except Exception as e:

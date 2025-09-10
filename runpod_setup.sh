@@ -12,7 +12,6 @@ export CUDA_LAUNCH_BLOCKING=0
 export TORCH_BACKENDS_CUDNN_DETERMINISTIC=0
 
 # GPU Configuration - Force CUDA usage
-export CUDA_VISIBLE_DEVICES=0
 export CUDA_DEVICE_ORDER=PCI_BUS_ID  
 export TORCH_CUDA_ARCH_LIST="6.0;6.1;7.0;7.5;8.0;8.6"
 
@@ -25,7 +24,7 @@ export PATH=/usr/bin:/usr/local/cuda/bin:$PATH
 export FORCE_CUDA=1
 
 # AI Model optimization - Disabled compilation for faster processing
-export FISH_SPEECH_COMPILE=false  # Disabled for instant voice cloning
+export FISH_SPEECH_COMPILE=true  # Enabled for better performance
 export TORCH_JIT_LOG_LEVEL=ERROR
 export TORCH_COMPILE_MODE=reduce-overhead
 export TORCH_COMPILE_BACKEND=inductor
@@ -204,7 +203,7 @@ SEPARATION_WORKERS=${MAX_SEPARATION_WORKERS:-2}
 echo "  - Starting ${SEPARATION_WORKERS} separation worker(s)..."
 for i in $(seq 1 $SEPARATION_WORKERS); do
     echo "    - Starting sep_worker_${i}..."
-    LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py separation_queue sep_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+    nohup ./venv/bin/python workers_starter.py separation_queue sep_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
     sleep 1
 done
 
@@ -225,14 +224,14 @@ echo "  - Starting ${DUB_WORKERS} dub orchestration workers (VRAM managed by ser
 echo "  - Starting ${DUB_WORKERS} dub orchestration worker(s) (no AI models)..."
 for i in $(seq 1 $DUB_WORKERS); do
     echo "    - Starting dub_worker_${i}..."
-    LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+    nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
     sleep 1  # Quick stagger for clean startup
 done
 
 echo "  - Starting 2 dedicated RESUME workers for instant job resumption..."
-LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py dub_queue resume_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+nohup ./venv/bin/python workers_starter.py dub_queue resume_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 sleep 1
-LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py dub_queue resume_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+nohup ./venv/bin/python workers_starter.py dub_queue resume_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "  - Starting billing worker..."
 nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
@@ -241,14 +240,20 @@ nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis:
 echo "🎯 Starting VRAM service workers..."
 
 echo "  - Starting WhisperX service worker (1 worker for 16GB VRAM)..."
-LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 # echo "  - Starting WhisperX service worker (2nd worker for 16GB VRAM)..."
 # LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "  - Starting Fish Speech service worker (1 worker for 16GB VRAM)..."
-LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=true nohup ./venv/bin/python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+nohup ./venv/bin/python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
+# CPU Workers for Load Balancing (Simple)
+echo "  - Starting CPU WhisperX worker..."
+WHISPER_DEVICE=cpu WHISPER_COMPUTE_TYPE=float32 nohup ./venv/bin/python workers_starter.py cpu_whisperx_service_queue cpu_whisperx_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+
+echo "  - Starting CPU Fish Speech worker..."
+FISH_SPEECH_DEVICE=cpu FISH_SPEECH_PRECISION=float32 nohup ./venv/bin/python workers_starter.py cpu_fish_speech_service_queue cpu_fish_speech_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "⏳ Waiting for VRAM workers to load models..."
 sleep 10

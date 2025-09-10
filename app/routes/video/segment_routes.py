@@ -75,8 +75,8 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
     job_dir = _ensure_job_dir(job_id)
     manifest_path = os.path.join(job_dir, f"manifest_{job_id}.json")
     _write_temp_json(manifest, manifest_path)
-    from app.services.r2_service import get_r2_service
-    r2 = get_r2_service()
+    from app.services.r2_service import R2Service
+    r2 = R2Service()
     manifest_key_out = manifest_key
     if manifest_key:
         up_res = r2.upload_file(manifest_path, manifest_key, content_type="application/json")
@@ -124,8 +124,8 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     
     # If custom prompt is provided, use OpenAI to regenerate text
     if request_body.prompt and dubbed_text:
-        from app.services.openai_service import get_openai_service
-        service = get_openai_service()
+        from app.services.openai_service import OpenAIService
+        service = OpenAIService()
         
         target_lang = request_body.target_language or manifest.get("target_language", "Bengali")
         regenerated_text = service.regenerate_text_with_prompt(dubbed_text, target_lang, request_body.prompt)
@@ -159,8 +159,8 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     job_dir = _ensure_job_dir(job_id)
     manifest_path = os.path.join(job_dir, f"manifest_{job_id}.json")
     _write_temp_json(manifest, manifest_path)
-    from app.services.r2_service import get_r2_service
-    r2 = get_r2_service()
+    from app.services.r2_service import R2Service
+    r2 = R2Service()
     # Try to overwrite existing manifest key if present
     manifest_key = job.segments_manifest_key or (job.details or {}).get("segments_manifest_key")
     if manifest_key:
