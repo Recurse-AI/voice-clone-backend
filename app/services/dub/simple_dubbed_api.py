@@ -9,11 +9,11 @@ from typing import Optional, Dict, Any
 
 from app.config.settings import settings
 from app.services.language_service import language_service
-from app.services.openai_service import get_openai_service
+from app.services.openai_service import OpenAIService
 from .video_processor import VideoProcessor
 from .whisperx_transcription import get_whisperx_transcription_service
 from .fish_speech_service import get_fish_speech_service
-from app.services.r2_service import get_r2_service
+from app.services.r2_service import R2Service   
 from .manifest_service import (
     build_manifest,
     save_manifest_to_dir,
@@ -95,7 +95,7 @@ class SimpleDubbedAPI:
     @property
     def r2_storage(self):
         if self._r2_storage is None:
-            self._r2_storage = get_r2_service()
+            self._r2_storage = R2Service()
         return self._r2_storage
     
     @property  
@@ -111,26 +111,17 @@ class SimpleDubbedAPI:
     def _charge_review_credits(self, job_id: str):
         """Charge 75% credits when job is ready for review"""
         from app.utils.job_utils import job_utils
-        from pymongo import MongoClient
+# MongoDB client accessed via global sync_client from database config
         
-        sync_client = None
         try:
-            # Create new client instance instead of using global one
-            sync_client = MongoClient(settings.MONGODB_URI)
-            sync_db = sync_client.get_database(settings.DB_NAME)
-            sync_collection = sync_db.get_collection("dub_jobs")
-            job_doc = sync_collection.find_one({"job_id": job_id})
+            # Use global sync client for connection pooling
+            from app.config.database import sync_client
+            job_doc = sync_client[settings.DB_NAME].dub_jobs.find_one({"job_id": job_id})
             if job_doc and job_doc.get("user_id"):
                 job_utils.complete_job_billing_sync(job_id, "dub", job_doc["user_id"], 0.75)
                 logger.info(f"✅ Charged 75% credits for job {job_id} ready for review")
         except Exception as e:
             logger.error(f"Failed to charge 75% credits for job {job_id}: {e}")
-        finally:
-            if sync_client:
-                try:
-                    sync_client.close()
-                except Exception:
-                    pass
 
     def _update_phase_progress(self, job_id: str, phase: str, sub_progress: float, message: str):
         if phase not in self.PROGRESS_PHASES:
@@ -160,7 +151,7 @@ class SimpleDubbedAPI:
         return (completed % max(1, total // 10) == 0 or completed == total or completed <= 3)
     
     def dub_text_batch(self, segments: list, target_language: str = "English", batch_size: int = 10, job_id: str = None) -> list:
-        openai_service = get_openai_service()
+        openai_service = OpenAIService()
         return openai_service.translate_dubbing_batch(segments, target_language, batch_size)
 
 
@@ -187,8 +178,11 @@ class SimpleDubbedAPI:
         try:
             # 2. Use provided output directory (already created by caller)
             process_temp_dir = output_dir
-            
-            
+
+            # Initialize vocal and instrument audio URLs
+            vocal_audio_url = None
+            instrument_audio_url = None
+
             # Get transcription data
             raw_sentences, transcript_id = self._get_transcription_data(
                 job_id, manifest_override, process_temp_dir, source_video_language
@@ -208,24 +202,31 @@ class SimpleDubbedAPI:
                 job_id, raw_sentences, target_language, manifest_override, review_mode, process_temp_dir
             )
             
+            # Handle URLs based on whether this is redub or original dub (before review mode check)
+            if manifest_override:
+                # For redub: use existing manifest which already has URLs
+                # URLs already preserved from original manifest
+                vocal_audio_url = manifest_override.get("vocal_audio_url")
+                instrument_audio_url = manifest_override.get("instrument_audio_url")
+            else:
+                # For original dub: get URLs from separation results
+                if separation_urls:
+                    vocal_audio_url = separation_urls.get("vocal_audio")
+                    instrument_audio_url = separation_urls.get("instrument_audio")
+
+            # Validate that we have vocal URL (critical for resume/redub)
+            if not vocal_audio_url:
+                logger.error(f"No vocal audio URL available for {job_id} - resume/redub will fail")
+
             if review_mode:
                 self._update_phase_progress(job_id, "review_prep", 0.5, "Preparing segments for human review")
-                
-                # Handle URLs based on whether this is redub or original dub
+
+                # Build manifest for review mode
                 if manifest_override:
-                    # For redub: use existing manifest which already has URLs
                     manifest = manifest_override.copy()
                     manifest["segments"] = dubbed_segments
                     manifest["target_language"] = target_language  # Update target language for redub
                 else:
-                    # For original dub: get URLs from separation results
-                    vocal_audio_url = None
-                    instrument_audio_url = None
-                    if separation_urls:
-                        vocal_audio_url = separation_urls.get("vocal_audio")
-                        instrument_audio_url = separation_urls.get("instrument_audio")
-                        logger.info(f"Original dub using separation URLs for {job_id}: vocal={bool(vocal_audio_url)}, instrument={bool(instrument_audio_url)}")
-
                     # Build manifest from scratch with separation URLs
                     manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
                                             vocal_audio_url, instrument_audio_url)
@@ -289,7 +290,7 @@ class SimpleDubbedAPI:
             # Generate final audio and files
             return self._generate_final_output(
                 job_id, dubbed_segments, process_temp_dir,
-                target_language, transcript_id
+                target_language, transcript_id, vocal_audio_url, instrument_audio_url
             )
         except Exception as e:
             logger.error(f"Dubbed processing failed: {str(e)}")
@@ -348,31 +349,27 @@ class SimpleDubbedAPI:
                     text=chunk,
                     reference_audio_bytes=reference_audio_bytes,
                     reference_text=original_text or "Reference audio",
-                    max_new_tokens=1024,  # Better quality with 1024 tokens
-                    top_p=0.6,           # Balanced for quality
-                    repetition_penalty=1.05,  # Standard penalty
-                    temperature=0.6,     # Balanced temperature
-                    chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,    # Matched with optimized chunk size
+                    max_new_tokens=1024,
+                    top_p=0.6,
+                    repetition_penalty=1.05,
+                    temperature=0.6,
+                    chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,
                     job_id=job_id
                 )
-                
+
                 chunk_time = time.time() - chunk_start
                 logger.info(f"Chunk generation took {chunk_time:.2f}s for text: {chunk[:30]}...")
+
                 if result.get("success"):
                     import soundfile as sf
                     import io
-                    # Handle both audio_data (direct) and output_path (service worker) responses
-                    if "audio_data" in result:
-                        # Direct generation response
-                        buffer = io.BytesIO(result["audio_data"])
-                        audio, sample_rate = sf.read(buffer)
-                    elif "output_path" in result and os.path.exists(result["output_path"]):
-                        # Service worker response
+
+                    # Use service worker output directly
+                    if "output_path" in result and result["output_path"]:
                         audio, sample_rate = sf.read(result["output_path"])
-                    else:
-                        logger.error(f"No audio data or output path in Fish Speech result: {result}")
-                        return None
-                    
+                        # Clean up temp file immediately
+                        os.remove(result["output_path"])
+
                     if len(audio.shape) > 1:
                         audio = audio[:, 0]
                     audio_chunks.append(audio)
@@ -499,8 +496,9 @@ class SimpleDubbedAPI:
             if not os.path.exists(vocal_file_path):
                 raise Exception(f"Vocal file not found at {vocal_file_path}. Make sure separation completed successfully.")
 
-            # Only transcribe, don't segment
-            transcription_result = self.transcription_service.transcribe_audio_file(
+            # Use service worker transcription instead of direct transcription
+            # This ensures WhisperX models are loaded in the appropriate worker process
+            transcription_result = self.transcription_service._transcribe_via_service_worker(
                 vocal_file_path, source_video_language, job_id
             )
 
@@ -613,12 +611,12 @@ class SimpleDubbedAPI:
     def _download_missing_files(self, job_id: str, manifest_override: Dict[str, Any], process_temp_dir: str):
         if not manifest_override:
             return
-            
+
         files_to_check = [
             ("vocal_audio_url", f"vocal_{job_id}.wav"),
             ("instrument_audio_url", f"instrument_{job_id}.wav")
         ]
-        
+
         for url_key, filename in files_to_check:
             file_path = os.path.join(process_temp_dir, filename)
             if not os.path.exists(file_path) and manifest_override.get(url_key):
@@ -628,8 +626,8 @@ class SimpleDubbedAPI:
                     resp.raise_for_status()
                     with open(file_path, 'wb') as fw:
                         fw.write(resp.content)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to download {filename} for job {job_id}: {e}")
 
     def _process_voice_cloning(self, job_id: str, enhanced_sentences: list, dubbed_texts: list, 
                               edited_map: dict, review_mode: bool, process_temp_dir: str) -> list:
@@ -771,7 +769,8 @@ class SimpleDubbedAPI:
 
 
     def _generate_final_output(self, job_id: str, dubbed_segments: list, process_temp_dir: str,
-                              target_language: str, transcript_id: str) -> dict:
+                              target_language: str, transcript_id: str,
+                              vocal_audio_url: str = None, instrument_audio_url: str = None) -> dict:
         """Generate final audio, SRT file, and upload to R2"""
         
         
@@ -794,7 +793,8 @@ class SimpleDubbedAPI:
         
         # Save final manifest (for normal dub / redub lineage)
         try:
-            manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments)
+            manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
+                                    vocal_audio_url, instrument_audio_url)
             save_manifest_to_dir(manifest, process_temp_dir, job_id)
         except Exception as e:
             logger.error(f"Failed to save manifest for job {job_id}: {e}")
@@ -902,110 +902,89 @@ class SimpleDubbedAPI:
 
 
 
-    def _reconstruct_final_audio(self, segments: list, original_audio_path: str, job_id: str = None, process_temp_dir: str = None) -> str:
-        """Reconstruct final audio with exact original duration.
-        Missing segments will have silent audio automatically.
-        """
-        
-        
+    def _reconstruct_final_audio(self, segments: list, original_audio_path: str,
+                               job_id: str = None, process_temp_dir: str = None) -> str:
+        """Reconstruct final audio with MP3 optimization."""
+        if not segments:
+            return None
+
         try:
             import soundfile as sf
-            if not segments:
-                return None
-                
-            sample_rate = None
-            base_dtype = np.float32
-            original_duration_samples = 0
-            
-            # Get original audio properties for exact duration matching
+
+            # Get sample rate from original audio
             if original_audio_path and os.path.exists(original_audio_path):
-                original_audio, sample_rate = sf.read(original_audio_path)
-                if len(original_audio.shape) > 1:
-                    original_audio = original_audio[:, 0]
-                base_dtype = original_audio.dtype if hasattr(original_audio, 'dtype') else np.float32
-                original_duration_samples = len(original_audio)
+                _, sample_rate = sf.read(original_audio_path, frames=1)
             else:
-                # Fallback: derive sample rate from cloned segments
-                for segment in segments:
-                    cloned_path = segment.get("cloned_audio_path")
-                    if cloned_path and os.path.exists(cloned_path):
-                        cloned_audio, sample_rate = sf.read(cloned_path)
-                        base_dtype = cloned_audio.dtype if hasattr(cloned_audio, 'dtype') else np.float32
-                        break
-                if not sample_rate:
-                    sample_rate = 44100
-                # Calculate duration from segments if no original audio
-                segment_end_times = [s.get("end", 0) for s in segments if s.get("end")]
-                if segment_end_times:
-                    max_end_time_ms = max(segment_end_times)
-                    original_duration_samples = int((max_end_time_ms / 1000.0) * sample_rate)
-                else:
-                    # Fallback to 0 if no valid segments
-                    original_duration_samples = 0
-            
-            # Create final audio array with exact original duration (filled with silence)
-            if original_duration_samples <= 0:
-                logger.warning("No valid duration found, creating minimal audio")
-                original_duration_samples = int(sample_rate)  # 1 second fallback
-            final_audio = np.zeros(original_duration_samples, dtype=base_dtype)
-            # Place cloned audio segments at their exact positions
+                sample_rate = 44100
+
+            # Calculate exact duration from segments
+            max_end_ms = max(s.get("end", 0) for s in segments)
+            duration_samples = int((max_end_ms / 1000.0) * sample_rate)
+            final_audio = np.zeros(duration_samples, dtype=np.float32)
+
+            # Place segments
             for segment in segments:
-                cloned_path = segment.get("cloned_audio_path")
-                if not cloned_path or not os.path.exists(cloned_path):
-                    continue
-                    
                 try:
+                    cloned_path = segment.get("cloned_audio_path")
+                    if not cloned_path or not os.path.exists(cloned_path):
+                        continue
+
                     cloned_audio, _ = sf.read(cloned_path)
                     if len(cloned_audio.shape) > 1:
-                        cloned_audio = np.mean(cloned_audio, axis=1)  # Convert to mono
-                    
+                        cloned_audio = np.mean(cloned_audio, axis=1)
+
                     start_ms = segment.get("start", 0)
                     end_ms = segment.get("end", 0)
-                    
-                    # Validate timing values
                     if start_ms < 0 or end_ms <= start_ms:
-                        logger.warning(f"Invalid timing for segment {segment.get('id', 'unknown')}: {start_ms}ms-{end_ms}ms")
                         continue
-                        
+
                     start_sample = int((start_ms / 1000.0) * sample_rate)
-                    expected_duration_samples = int(((end_ms - start_ms) / 1000.0) * sample_rate)
-                    
-                    # Ensure cloned audio fits the expected segment duration
-                    if len(cloned_audio) > expected_duration_samples:
-                        # Truncate if too long
-                        cloned_audio = cloned_audio[:expected_duration_samples]
-                    elif len(cloned_audio) < expected_duration_samples:
-                        # Pad with silence if too short
-                        padding = expected_duration_samples - len(cloned_audio)
+                    expected_samples = int(((end_ms - start_ms) / 1000.0) * sample_rate)
+
+                    # Fit audio duration
+                    if len(cloned_audio) > expected_samples:
+                        cloned_audio = cloned_audio[:expected_samples]
+                    elif len(cloned_audio) < expected_samples:
+                        padding = expected_samples - len(cloned_audio)
                         cloned_audio = np.pad(cloned_audio, (0, padding), mode="constant")
-                    
-                    # Calculate end position
-                    end_sample = start_sample + len(cloned_audio)
-                    
-                    # Normalize cloned audio to ensure volume 1.0 before placing
+
+                    # Normalize volume
                     max_val = np.max(np.abs(cloned_audio))
-                    if max_val > 0:
-                        cloned_audio = cloned_audio / max_val  # Normalize to peak 1.0
-                    
-                    # Only place audio if it fits within original duration
-                    if start_sample >= 0 and end_sample <= original_duration_samples:
+                    if max_val > 1e-10:
+                        cloned_audio = cloned_audio / max_val
+
+                    # Place in final audio
+                    end_sample = start_sample + len(cloned_audio)
+                    if start_sample >= 0 and end_sample <= len(final_audio):
                         final_audio[start_sample:end_sample] = cloned_audio
-                        logger.info(f"Placed segment {segment.get('id', 'unknown')} at {start_ms}ms-{end_ms}ms")
-                    else:
-                        logger.warning(f"Segment {segment.get('id', 'unknown')} exceeds original audio duration, skipping")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to process segment {segment.get('id', 'unknown')}: {str(e)}")
+
+                except Exception:
                     continue
-            # Save final audio with exact original duration
-            final_path = os.path.join(process_temp_dir, f"final_{job_id}.wav").replace('\\', '/')
+
+            # Save and compress
+            final_path = os.path.join(process_temp_dir, f"final_{job_id}.wav")
             sf.write(final_path, final_audio, sample_rate)
-            
-            duration_seconds = len(final_audio) / sample_rate
-            logger.info(f"Final audio reconstructed: {final_path} (duration: {duration_seconds:.2f}s, {len(final_audio)} samples)")
+
+            # MP3 compression
+            import subprocess
+            from app.utils.ffmpeg_helper import get_ffmpeg_path
+
+            ffmpeg_path = get_ffmpeg_path()
+            if ffmpeg_path:
+                temp_mp3 = final_path.replace('.wav', '_temp.mp3')
+                cmd = [ffmpeg_path, '-y', '-i', final_path, '-acodec', 'libmp3lame', '-ab', '320k', temp_mp3]
+
+                if subprocess.run(cmd, capture_output=True, timeout=30).returncode == 0:
+                    import shutil
+                    shutil.move(temp_mp3, final_path)
+                elif os.path.exists(temp_mp3):
+                    os.remove(temp_mp3)
+
+            logger.info(f"Final audio: {final_path} ({len(final_audio)/sample_rate:.2f}s)")
             return final_path
+
         except Exception as e:
-            logger.error(f"Failed to reconstruct final audio: {str(e)}")
+            logger.error(f"Reconstruction failed: {e}")
             return None
 
 

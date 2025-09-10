@@ -11,7 +11,7 @@ from app.services.credit_service import credit_service
 from app.config.credit_constants import JobType as CreditJobType
 from app.config.settings import settings
 from app.utils.runpod_service import runpod_service
-from app.services.r2_service import get_r2_service
+from app.services.r2_service import R2Service
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,8 @@ class SeparationService:
     """
     
     def __init__(self):
-        self.r2_service = get_r2_service()
+        from app.services.r2_service import R2Service
+        self.r2_service = R2Service()
     
     async def create_separation_job(self, job_id: str, user_id: str, audio_url: str, 
                                   original_filename: str, duration: float, 

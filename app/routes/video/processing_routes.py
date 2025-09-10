@@ -236,8 +236,8 @@ async def process_video_complete(
             
             # === STEP 4: Upload result ===
             logger.info("☁️ Uploading to R2...")
-            from app.services.r2_service import get_r2_service
-            r2_service = get_r2_service()
+            from app.services.r2_service import R2Service
+            r2_service = R2Service()
             
             output_filename = output_path.name
             r2_key = f"processed/{job_id}/{output_filename}"

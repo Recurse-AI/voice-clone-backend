@@ -25,8 +25,8 @@ class DubService:
     """
     
     def __init__(self):
-        from app.services.r2_service import get_r2_service
-        self.r2_service = get_r2_service()
+        from app.services.r2_service import R2Service
+        self.r2_service = R2Service()
     
     async def create_dub_job(self, job_id: str, user_id: str, 
                            target_language: str, source_video_language: str,

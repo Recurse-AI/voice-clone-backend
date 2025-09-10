@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 import torch
 
+# Set PyTorch memory allocation configuration early
 if 'PYTORCH_CUDA_ALLOC_CONF' not in os.environ:
     os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
@@ -24,13 +25,13 @@ class WhisperXTranscriptionService:
         self.model_size = settings.WHISPER_MODEL_SIZE
         self.alignment_device = settings.WHISPER_ALIGNMENT_DEVICE
         self.cache_dir = settings.WHISPER_CACHE_DIR
+        self.max_seg_seconds = settings.WHISPER_MAX_SEG_SECONDS
         self._setup_device_config()
         self._setup_cache_directory()
 
         logger.info(f"WhisperX service configured - Model: {self.model_size}, Device: {self.device}, Cache: {self.cache_dir}")
 
     def _setup_device_config(self):
-        os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
         cuda_available = torch.cuda.is_available()
         logger.info(f"CUDA Available: {cuda_available}")
@@ -88,8 +89,7 @@ class WhisperXTranscriptionService:
 
     def _setup_optimal_memory(self):
         if self.device == "cuda":
-            torch.cuda.set_per_process_memory_fraction(0.8)
-            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:512,garbage_collection_threshold:0.8'
+            os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:512'
             torch.cuda.empty_cache()
 
     def _optimize_cuda_performance(self):
@@ -122,28 +122,11 @@ class WhisperXTranscriptionService:
 
     def transcribe_audio_file(self, audio_path: str, language: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         try:
-            from app.config.pipeline_settings import pipeline_settings
-            logger.info(f"🔧 Service worker config: {pipeline_settings.USE_WHISPERX_SERVICE_WORKER}")
-
-            if pipeline_settings.USE_WHISPERX_SERVICE_WORKER:
-                logger.info("🎯 Routing to WhisperX service worker (fast path)")
-                return self._transcribe_via_service_worker(audio_path, language, job_id)
-
-            logger.info("📝 Using direct transcription (fallback)")
-            if not self.is_initialized:
-                worker_name = os.getenv('RQ_WORKER_NAME', '')
-                if 'whisperx_service_worker' in worker_name:
-                    logger.info("🔄 Loading WhisperX model in service worker...")
-                    if not self.load_model():
-                        raise Exception("Failed to load transcription model")
-                else:
-                    raise Exception("Model not loaded and not running in transcription service worker. Service worker should handle this.")
-
+            logger.info("🎯 Using WhisperX direct transcription")
             return self._transcribe_direct(audio_path, language, job_id)
-
         except Exception as e:
-            logger.error(f"Transcription failed for {audio_path}: {e}")
-            raise Exception(f"Transcription failed: {str(e)}")
+            logger.error(f"WhisperX direct transcription failed for {audio_path}: {e}")
+            raise Exception(f"WhisperX transcription failed: {str(e)}")
 
     def _transcribe_via_service_worker(self, audio_path: str, language_code: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         try:
@@ -159,7 +142,7 @@ class WhisperXTranscriptionService:
             }
 
             from app.queue.queue_manager import queue_manager
-            success = queue_manager.enqueue_whisperx_service_task(request_data)
+            success = queue_manager.enqueue_with_load_balance(request_data, "whisperx")
 
             if not success:
                 logger.error(f"Failed to enqueue WhisperX request for {job_id}")
@@ -184,17 +167,21 @@ class WhisperXTranscriptionService:
             raise
 
     def _transcribe_direct(self, audio_path: str, language_code: str, job_id: Optional[str] = None) -> Dict[str, Any]:
+        import whisperx
+
+        if self.model is None:
+            raise Exception("WhisperX model not loaded")
+
+        normalized_language = language_service.get_language_code_for_transcription(language_code)
+        audio = whisperx.load_audio(audio_path)
+        batch_size = 8
+
         try:
-            import whisperx
-
-            normalized_language = language_service.get_language_code_for_transcription(language_code)
-            logger.info(f"Transcribing: {audio_path} (language: {language_code} -> {normalized_language})")
-
-            audio = whisperx.load_audio(audio_path)
             result = self.model.transcribe(
                 audio,
-                batch_size=16,
-                language=normalized_language if normalized_language != "auto_detect" else None
+                batch_size=batch_size,
+                language=normalized_language if normalized_language != "auto_detect" else None,
+                task="transcribe"
             )
 
             detected_language = result.get("language", normalized_language)
@@ -212,7 +199,7 @@ class WhisperXTranscriptionService:
             }
 
         except Exception as e:
-            logger.error(f"Direct transcription failed: {e}")
+            logger.error(f"Transcription failed (batch_size={batch_size}): {e}")
             raise Exception(f"Transcription failed: {str(e)}")
     
     def _process_segments(self, raw_segments):
@@ -247,7 +234,7 @@ class WhisperXTranscriptionService:
                 {"start": mid_time, "end": end_time, "text": text[text_half:], "confidence": confidence}
             ]
 
-        num_splits = max(2, int(total_duration // 12))
+        num_splits = max(2, int(total_duration // self.max_seg_seconds))
         split_duration = total_duration / num_splits
         result_segments = []
 

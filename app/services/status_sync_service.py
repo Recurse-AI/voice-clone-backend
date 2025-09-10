@@ -3,7 +3,7 @@ import threading
 import time
 from typing import Set, Dict, Any
 from datetime import datetime, timezone
-from pymongo import MongoClient
+# MongoDB client accessed via global sync_client from database config
 from app.config.settings import settings
 from app.services.redis_status_service import redis_status_service
 
@@ -78,38 +78,36 @@ class StatusSyncService:
             if status not in self.critical_statuses:
                 return
             
-            client = MongoClient(settings.MONGODB_URI)
-            db = client[settings.DB_NAME]
-            collection = db[f"{job_type}_jobs"]
-            
+            # Use global sync client for connection pooling
+            from app.config.database import sync_client
+            collection = sync_client[settings.DB_NAME][f"{job_type}_jobs"]
+
             current_job = collection.find_one({"job_id": job_id}, {"details": 1})
-            
+
             update_data = {
                 "status": status,
                 "progress": redis_data.get("progress", 0),
                 "updated_at": datetime.now(timezone.utc)
             }
-            
+
             if status == "processing":
                 update_data["started_at"] = datetime.now(timezone.utc)
             elif status in ["completed", "failed"]:
                 update_data["completed_at"] = datetime.now(timezone.utc)
-            
+
             details = redis_data.get("details", {})
             if details and isinstance(details, dict):
                 existing_details = {}
                 if current_job and current_job.get("details"):
                     existing_details = current_job["details"]
-                
+
                 merged_details = {**existing_details, **details}
                 update_data["details"] = merged_details
-            
+
             result = collection.update_one(
                 {"job_id": job_id},
                 {"$set": update_data}
             )
-            
-            client.close()
             
             if result.modified_count > 0:
                 logger.debug(f"Synced {job_id} to MongoDB: {status}")

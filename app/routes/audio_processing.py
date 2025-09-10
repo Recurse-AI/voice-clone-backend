@@ -19,7 +19,7 @@ from app.services.separation_job_service import separation_job_service
 from app.services.credit_service import credit_service
 from app.services.dub.audio_utils import AudioUtils
 from app.services.dub.fish_speech_service import get_fish_speech_service
-from app.services.r2_service import get_r2_service
+from app.services.r2_service import R2Service
 from app.services.simple_status_service import status_service, JobStatus
 from app.utils.runpod_service import runpod_service
 from app.config.credit_constants import JobType as CreditJobType
@@ -91,7 +91,7 @@ async def start_audio_separation(
             raise HTTPException(status_code=400, detail="Uploaded file is not an audio format")
         
         # Upload to R2 storage
-        r2_service = get_r2_service()
+        r2_service = R2Service()
         original_filename = os.path.basename(local_audio_path)
         r2_audio_key = f"audio/{job_id}/{original_filename}"
         
@@ -156,7 +156,7 @@ async def voice_clone_segment(request: VoiceCloneRequest):
 
 
         
-        r2_service = get_r2_service()
+        r2_service = R2Service()
         job_id = r2_service.generate_job_id()
         # Voice cloning job directory (consistent with other services)
         job_dir = os.path.join(settings.TEMP_DIR, f"voice_clone_job_{job_id}")

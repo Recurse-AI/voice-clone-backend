@@ -18,7 +18,7 @@ class LanguageService:
     LANGUAGE_NAME_TO_CODE: Dict[str, str] = {
         # Core supported languages
         "english": "en",
-        "chinese": "zh", 
+        "chinese": "zh",
         "dutch": "nl",
         "finnish": "fi",  # WhisperX transcription only
         "french": "fr",
@@ -45,7 +45,7 @@ class LanguageService:
     
     # Languages supported for transcription (WhisperX) - matches frontend exactly
     TRANSCRIPTION_SUPPORTED_CODES: Set[str] = {
-        "en", "zh", "nl", "fi", "fr", "de", "hi", "it", "ja", 
+        "en", "zh", "nl", "fi", "fr", "de", "hi", "it", "ja",
         "ko", "pl", "pt", "ru", "es", "tr", "uk", "vi"
     }
     

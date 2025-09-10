@@ -3,11 +3,8 @@ import json
 import logging
 from typing import Dict, Any, Tuple, Optional, List, TYPE_CHECKING
 
-from app.services.r2_service import get_r2_service
+from app.services.r2_service import R2Service
 from app.config.settings import settings
-
-if TYPE_CHECKING:
-    from app.services.r2_service import R2Service
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +65,7 @@ def upload_process_dir_to_r2(job_id: str, process_temp_dir: str, r2_service: Opt
     Upload all files from directory to R2, with option to exclude certain files
     exclude_files: List of filenames to skip uploading (e.g., ['vocal_abc123.wav', 'instrument_abc123.wav'])
     """
-    r2 = r2_service or get_r2_service()
+    r2 = r2_service or R2Service()
     folder_upload_result = r2.upload_directory(job_id, process_temp_dir, exclude_files=exclude_files or [])
     manifest_url = None
     manifest_key = None
