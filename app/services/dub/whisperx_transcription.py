@@ -178,7 +178,6 @@ class WhisperXTranscriptionService:
                 batch_size=batch_size,
                 language=normalized_language if normalized_language != "auto_detect" else None,
                 task="transcribe",
-                beam_size=1,
                 condition_on_previous_text=False,
             )
 

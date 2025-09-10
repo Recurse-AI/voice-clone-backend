@@ -24,7 +24,7 @@ export PATH=/usr/bin:/usr/local/cuda/bin:$PATH
 export FORCE_CUDA=1
 
 # AI Model optimization - Disabled compilation for faster processing
-export FISH_SPEECH_COMPILE=false  # Disabled for instant voice cloning
+export FISH_SPEECH_COMPILE=true  # Enabled for better performance
 export TORCH_JIT_LOG_LEVEL=ERROR
 export TORCH_COMPILE_MODE=reduce-overhead
 export TORCH_COMPILE_BACKEND=inductor
