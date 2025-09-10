@@ -85,49 +85,48 @@ def get_dub_queue_position(job_id: str) -> Optional[int]:
 
 @router.post("/video-dub", response_model=VideoDubResponse)
 async def start_video_dub(
-    job_id: str = Form(..., description="Unique job ID for the dubbing process"),
-    target_language: str = Form(..., description="Target language for dubbing"),
-    project_title: str = Form("Untitled Project", description="Project title for the dubbing job"),
-    duration: float = Form(..., gt=0, le=14400, description="Video duration in seconds"),
-    source_video_language: Optional[str] = Form(None, description="Source video language"),
-    humanReview: bool = Form(False, description="Enable human review"),
-    video_subtitle: bool = Form(False, description="Use provided SRT file instead of WhisperX"),
+    request: VideoDubRequest,
     srt_file: Optional[UploadFile] = File(None, description="SRT subtitle file"),
     current_user = Depends(get_current_user)
 ):
     try:
         user_id = current_user.id
-        if duration is None or duration <= 0:
+        if request.duration is None or request.duration <= 0:
             raise HTTPException(status_code=400, detail="Duration is required and must be greater than 0 seconds")
         
-        # Validate SRT file when video_subtitle is true
-        if video_subtitle and not srt_file:
-            raise HTTPException(status_code=400, detail="SRT file is required when video_subtitle is true")
-        
-        if video_subtitle and srt_file and not srt_file.filename.lower().endswith('.srt'):
-            raise HTTPException(status_code=400, detail="Only SRT files are supported")
-        
-        # Save SRT file to job directory if provided
-        if video_subtitle and srt_file:
+        # Handle SRT file when video_subtitle is true
+        if request.video_subtitle:
             from app.config.settings import settings
-            job_dir = os.path.join(settings.TEMP_DIR, job_id)
-            os.makedirs(job_dir, exist_ok=True)
+            job_dir = os.path.join(settings.TEMP_DIR, request.job_id)
+            srt_path = os.path.join(job_dir, f"{request.job_id}.srt")
             
-            srt_path = os.path.join(job_dir, f"{job_id}.srt")
-            with open(srt_path, "wb") as buffer:
-                content = await srt_file.read()
-                buffer.write(content)
+            if srt_file:
+                # SRT file provided in this request
+                if not srt_file.filename.lower().endswith('.srt'):
+                    raise HTTPException(status_code=400, detail="Only SRT files are supported")
+                
+                os.makedirs(job_dir, exist_ok=True)
+                with open(srt_path, "wb") as buffer:
+                    content = await srt_file.read()
+                    buffer.write(content)
+            else:
+                # Check if SRT file was uploaded previously via /upload-file
+                if not os.path.exists(srt_path):
+                    raise HTTPException(
+                        status_code=400, 
+                        detail="SRT file is required when video_subtitle is true. Upload via /upload-file endpoint first or include in this request."
+                    )
         
         job_data = {
-            "job_id": job_id,
+            "job_id": request.job_id,
             "user_id": user_id,
-            "target_language": target_language,
-            "original_filename": project_title,
-            "source_video_language": source_video_language,
-            "duration": duration,
+            "target_language": request.target_language,
+            "original_filename": request.project_title,
+            "source_video_language": request.source_video_language,
+            "duration": request.duration,
             "status": "pending",
             "progress": 0,
-            "video_subtitle": video_subtitle
+            "video_subtitle": request.video_subtitle
         }
         
 
@@ -135,7 +134,7 @@ async def start_video_dub(
             user_id=user_id,
             job_data=job_data,
             job_type=CreditJobType.DUB,
-            duration_seconds=duration
+            duration_seconds=request.duration
         )
         
         if not result["success"]:
@@ -150,7 +149,7 @@ async def start_video_dub(
         
         # Set initial status
         status_service.update_status(
-            job_id, "dub", JobStatus.PENDING, 0,
+            request.job_id, "dub", JobStatus.PENDING, 0,
             {
                 "user_id": user_id,
                 "created_at": datetime.now().isoformat(),
@@ -158,18 +157,7 @@ async def start_video_dub(
                 "message": "Job queued for processing"
             }
         )
-        logger.info(f"✅ DUB JOB CREATED: {job_id} - Status: PENDING")
-        
-        # Create request object for enqueue function
-        request = VideoDubRequest(
-            job_id=job_id,
-            target_language=target_language,
-            project_title=project_title,
-            duration=duration,
-            source_video_language=source_video_language,
-            humanReview=humanReview,
-            video_subtitle=video_subtitle
-        )
+        logger.info(f"✅ DUB JOB CREATED: {request.job_id} - Status: PENDING")
         
         # Enqueue job for background processing
         success = enqueue_dub_job(request, user_id)
@@ -183,12 +171,12 @@ async def start_video_dub(
                 }
             )
         
-        logger.info(f"Started video dub job {job_id} for user {user_id}")
+        logger.info(f"Started video dub job {request.job_id} for user {user_id}")
         return VideoDubResponse(
             success=True,
             message="Video dub started successfully",
-            job_id=job_id,
-            status_check_url=f"/api/video-dub-status/{job_id}"
+            job_id=request.job_id,
+            status_check_url=f"/api/video-dub-status/{request.job_id}"
         )
         
     except Exception as e:

@@ -107,7 +107,7 @@ class VideoProcessor:
             
             cmd.extend([
                 '-c:a', 'aac',
-                '-b:a', '192k',  # Higher audio quality for platform uploads
+                '-b:a', '128k',  # Optimized audio quality for platform uploads
                 '-ar', '48000',  # Professional audio sample rate
                 '-ac', '2',  # Stereo audio
                 '-map', '0:v:0',

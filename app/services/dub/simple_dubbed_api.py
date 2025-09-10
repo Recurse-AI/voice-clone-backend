@@ -1006,7 +1006,7 @@ class SimpleDubbedAPI:
             ffmpeg_path = get_ffmpeg_path()
             if ffmpeg_path:
                 temp_mp3 = final_path.replace('.wav', '_temp.mp3')
-                cmd = [ffmpeg_path, '-y', '-i', final_path, '-acodec', 'libmp3lame', '-ab', '320k', temp_mp3]
+                cmd = [ffmpeg_path, '-y', '-i', final_path, '-acodec', 'libmp3lame', '-ab', '192k', temp_mp3]
 
                 if subprocess.run(cmd, capture_output=True, timeout=30).returncode == 0:
                     import shutil
