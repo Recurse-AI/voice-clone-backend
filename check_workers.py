@@ -28,7 +28,8 @@ def check_workers_status():
         # Check queues (including service worker queues)
         queues = ['dub_queue', 'separation_queue', 'billing_queue',
                  'whisperx_service_queue', 'fish_speech_service_queue',
-                 'cpu_whisperx_service_queue', 'cpu_fish_speech_service_queue']
+                 'cpu_whisperx_service_queue', 'cpu_fish_speech_service_queue',
+                 'video_processing_queue']
         logger.info("\n📋 Queue Status:")
 
         gpu_jobs = 0

@@ -28,6 +28,7 @@ class QueueManager:
         self._billing_queue = None
         self._whisperx_service_queue = None
         self._fish_speech_service_queue = None
+        self._video_processing_queue = None
     
     def _get_redis_client(self) -> Optional[Redis]:
         """Get Redis client with connection validation and retry"""
@@ -122,6 +123,16 @@ class QueueManager:
                 logger.info("✅ Fish Speech service queue initialized")
 
         return self._fish_speech_service_queue
+    
+    def get_video_processing_queue(self) -> Optional[Queue]:
+        """Get video processing queue with lazy initialization"""
+        if self._video_processing_queue is None:
+            redis_client = self._get_redis_client()
+            if redis_client:
+                self._video_processing_queue = Queue("video_processing_queue", connection=redis_client)
+                logger.info("✅ Video processing queue initialized")
+
+        return self._video_processing_queue
 
     
     def enqueue_separation_task(self, job_id: str, runpod_request_id: str, 
@@ -138,7 +149,8 @@ class QueueManager:
             job = queue.enqueue(
                 enqueue_separation_task,
                 job_id, runpod_request_id, user_id, duration_seconds,
-                job_timeout=3600
+                job_timeout=3600,
+                result_ttl=1800    # Keep result for 30 minutes after completion
             )
             
             logger.info(f"✅ Enqueued separation task: {job_id} (RQ job: {job.id})")
@@ -160,7 +172,8 @@ class QueueManager:
             job = queue.enqueue(
                 enqueue_dub_task,
                 request_dict, user_id,
-                job_timeout=7200
+                job_timeout=7200,
+                result_ttl=3600    # Keep result for 1 hour after completion
             )
             
             logger.info(f"✅ Enqueued dub task: {request_dict.get('job_id')} (RQ job: {job.id})")
@@ -237,6 +250,28 @@ class QueueManager:
 
         except Exception as e:
             logger.error(f"❌ Failed to enqueue Fish Speech service task: {e}")
+            return False
+    
+    def enqueue_video_processing_task(self, task_data: dict) -> bool:
+        """Enqueue video processing task with error handling"""
+        try:
+            queue = self.get_video_processing_queue()
+            if not queue:
+                logger.error("❌ Video processing queue not available")
+                return False
+            
+            job = queue.enqueue(
+                'app.workers.video_processing_worker.process_video_task',
+                task_data,
+                job_timeout=7200,  # 2 hours timeout for video processing
+                result_ttl=3600    # Keep result for 1 hour after completion
+            )
+            
+            logger.info(f"✅ Enqueued video processing task: {task_data.get('job_id')} (RQ job: {job.id})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to enqueue video processing task: {e}")
             return False
 
     def enqueue_with_load_balance(self, request_data: dict, service_type: str) -> bool:
@@ -403,5 +438,10 @@ def get_whisperx_service_queue() -> Optional[Queue]:
 def get_fish_speech_service_queue() -> Optional[Queue]:
     """Get Fish Speech service queue"""
     return queue_manager.get_fish_speech_service_queue()
+
+
+def get_video_processing_queue() -> Optional[Queue]:
+    """Get video processing queue"""
+    return queue_manager.get_video_processing_queue()
 
 

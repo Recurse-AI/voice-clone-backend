@@ -110,6 +110,9 @@ aiofiles
 # Video downloading
 yt-dlp
 
+# YouTube transcript API
+youtube-transcript-api
+
 # Development
 pytest
 pytest-asyncio

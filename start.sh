@@ -53,6 +53,7 @@ elif command -v pkill >/dev/null 2>&1; then
     pkill -f "uvicorn.*main:app" 2>/dev/null || true
     pkill -f "rq.*worker" 2>/dev/null || true
     pkill -f "workers_starter.py" 2>/dev/null || true
+    pkill -f "python.*video_processing_worker" 2>/dev/null || true
 else
     # Fallback: try both approaches
     echo "   - Unknown system, trying both approaches..."
@@ -120,23 +121,32 @@ for i in $(seq 1 $SEPARATION_WORKERS); do
     sleep 1
 done
 
-echo "🔍 Setting up dub orchestration workers..."
-DUB_WORKERS=${MAX_DUB_ORCHESTRATION_WORKERS:-1}
+# echo "🔍 Setting up dub orchestration workers..."
+# DUB_WORKERS=${MAX_DUB_ORCHESTRATION_WORKERS:-1}
 
-echo "Starting ${DUB_WORKERS} dub orchestration worker(s)..."
-for i in $(seq 1 $DUB_WORKERS); do
-    echo "  - Starting dub_worker_${i}..."
-    nohup python workers_starter.py dub_queue dub_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-    sleep 1
-done
+# echo "Starting ${DUB_WORKERS} dub orchestration worker(s)..."
+# for i in $(seq 1 $DUB_WORKERS); do
+#     echo "  - Starting dub_worker_${i}..."
+#     nohup python workers_starter.py dub_queue dub_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+#     sleep 1
+# done
 
 echo "Starting billing worker..."
 nohup python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
+echo "🎬 Starting video processing workers..."
+VIDEO_WORKERS=${MAX_VIDEO_PROCESSING_WORKERS:-1}
+echo "Starting ${VIDEO_WORKERS} video processing worker(s)..."
+for i in $(seq 1 $VIDEO_WORKERS); do
+    echo "  - Starting video_worker_${i}..."
+    nohup python workers_starter.py video_processing_queue video_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+    sleep 1
+done
+
 echo "🎯 Starting VRAM service workers..."
 
 echo "  - Starting WhisperX service workers (2 parallel VRAM workers)..."
-nohup python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+# nohup python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 # LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup python workers_starter.py whisperx_service_queue whisperx_service_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "  - Starting Fish Speech service worker (VRAM serial)..." # manully off for debugging
@@ -172,11 +182,12 @@ fi
 
 echo ""
 echo "📈 Worker Summary:"
-TOTAL_EXPECTED=$((1 + DUB_WORKERS + 1 + 1 + 1))  # sep + dub + billing + whisperx + fish
-echo "  - Expected workers: ${TOTAL_EXPECTED} (1 sep + ${DUB_WORKERS} dub + 1 billing + 1 whisperx + 1 fish)"
+TOTAL_EXPECTED=$((1 + DUB_WORKERS + 1 + VIDEO_WORKERS + 1 + 1))  # sep + dub + billing + video + whisperx + fish
+echo "  - Expected workers: ${TOTAL_EXPECTED} (1 sep + ${DUB_WORKERS} dub + 1 billing + ${VIDEO_WORKERS} video + 1 whisperx + 1 fish)"
 echo "  - Separation: 1 worker"
 echo "  - Dub orchestration: ${DUB_WORKERS} workers (no AI models)"
 echo "  - Billing: 1 worker"
+echo "  - Video processing: ${VIDEO_WORKERS} workers"
 echo "  - WhisperX service: 2 workers (parallel VRAM optimized)"
 echo "  - Fish Speech service: 1 worker (VRAM serial)"
 
@@ -197,6 +208,7 @@ echo "   # Unix/Linux/WSL:"
 echo "   pkill -f 'python.*main.py'      # Stop API server"
 echo "   pkill -f 'rq.*worker'           # Stop all workers"
 echo "   pkill -f 'workers_starter.py'   # Stop worker starters"
+echo "   pkill -f 'video_processing_worker' # Stop video workers"
 echo ""
 echo "🔧 WSL Redis Commands:"
 echo "   sudo service redis-server start    # Start Redis"

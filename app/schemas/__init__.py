@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any, List
+from fastapi import UploadFile
 import re
 
 class StatusResponse(BaseModel):
@@ -21,6 +22,7 @@ class VideoDubRequest(BaseModel):
     duration: Optional[float] = Field(None, gt=0, le=14400, description="Video duration in seconds (max 4 hours)")
     source_video_language: Optional[str] = Field(None, description="Source video language (default: None, auto-detect)")
     humanReview: bool = Field(False, description="If true, pause after transcription+translation for human review")
+    video_subtitle: bool = Field(False, description="If true, use provided SRT file instead of WhisperX transcription")
 
 class VideoDubResponse(BaseModel):
     success: bool

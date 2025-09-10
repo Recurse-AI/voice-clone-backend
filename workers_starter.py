@@ -28,6 +28,7 @@ def register_job_functions():
         # Import job functions 
         from app.queue.dub_tasks import process_video_dub_task, process_redub_task
         from app.queue.separation_tasks import process_audio_separation_task
+        from app.workers.video_processing_worker import process_video_task
         from app.queue.billing_tasks import process_billing_task
         
         logger.info("Job functions registered successfully")
@@ -137,6 +138,7 @@ def main():
         print("  python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1")
         print("  python workers_starter.py cpu_whisperx_service_queue cpu_whisperx_1")
         print("  python workers_starter.py cpu_fish_speech_service_queue cpu_fish_speech_1")
+        print("  python workers_starter.py video_processing_queue video_worker_1")
         sys.exit(1)
     
     queue_name = sys.argv[1]

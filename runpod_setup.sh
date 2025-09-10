@@ -51,6 +51,7 @@ pkill -9 -f "python.*dub_worker" 2>/dev/null || true
 pkill -9 -f "python.*billing_worker" 2>/dev/null || true
 pkill -9 -f "python.*whisperx_service_worker" 2>/dev/null || true
 pkill -9 -f "python.*fish_speech_service_worker" 2>/dev/null || true
+pkill -9 -f "python.*video_processing_worker" 2>/dev/null || true
 pkill -9 -f "python.*resume_worker" 2>/dev/null || true
 
 # Kill all RQ workers (various patterns)
@@ -255,6 +256,15 @@ WHISPER_DEVICE=cpu WHISPER_COMPUTE_TYPE=float32 nohup ./venv/bin/python workers_
 echo "  - Starting CPU Fish Speech worker..."
 FISH_SPEECH_DEVICE=cpu FISH_SPEECH_PRECISION=float32 nohup ./venv/bin/python workers_starter.py cpu_fish_speech_service_queue cpu_fish_speech_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
+echo "🎬 Starting video processing workers..."
+VIDEO_WORKERS=${MAX_VIDEO_PROCESSING_WORKERS:-2}
+echo "  - Starting ${VIDEO_WORKERS} video processing worker(s)..."
+for i in $(seq 1 $VIDEO_WORKERS); do
+    echo "    - Starting video_worker_${i}..."
+    nohup ./venv/bin/python workers_starter.py video_processing_queue video_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+    sleep 1
+done
+
 echo "⏳ Waiting for VRAM workers to load models..."
 sleep 10
 
@@ -293,3 +303,4 @@ echo "   nvidia-smi -l 2    # Monitor GPU every 2 seconds"
 echo ""
 echo "🔴 Stop Commands:"
 echo "   pkill -f 'uvicorn.*main:app' && pkill -f 'rq.*worker'"
+echo "   pkill -f 'video_processing_worker'  # Stop video workers"

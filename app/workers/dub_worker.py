@@ -19,6 +19,7 @@ def process_dub_task(request_dict: dict, user_id: str):
     target_language = request_dict.get("target_language")
     source_video_language = request_dict.get("source_video_language")
     human_review = request_dict.get("humanReview", False)
+    video_subtitle = request_dict.get("video_subtitle", False)
     
     from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, update_dub_job_stage
     
@@ -60,7 +61,7 @@ def process_dub_task(request_dict: dict, user_id: str):
         
         success = _process_dubbing_pipeline(
             job_id, target_language, source_video_language, 
-            job_dir, human_review, separation_result["runpod_urls"]
+            job_dir, human_review, separation_result["runpod_urls"], video_subtitle
         )
         
         if not success:
@@ -152,7 +153,7 @@ def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> dict
 
 def _process_dubbing_pipeline(job_id: str, target_language: str, 
                             source_video_language: str, job_dir: str,
-                            human_review: bool, runpod_urls: dict = None) -> bool:
+                            human_review: bool, runpod_urls: dict = None, video_subtitle: bool = False) -> bool:
     try:
         from app.utils.pipeline_utils import update_dub_job_stage
         
@@ -173,7 +174,8 @@ def _process_dubbing_pipeline(job_id: str, target_language: str,
             source_video_language=source_video_language,
             output_dir=job_dir,
             review_mode=human_review,
-            separation_urls=runpod_urls
+            separation_urls=runpod_urls,
+            video_subtitle=video_subtitle
         )
         
         if not pipeline_result["success"]:
@@ -287,7 +289,8 @@ def process_redub_task(redub_job_id: str, target_language: str,
                 source_video_language=source_video_language,
                 output_dir=redub_job_dir,
                 review_mode=human_review,
-                manifest_override=manifest
+                manifest_override=manifest,
+                video_subtitle=False  # Redubs use existing transcription
             )
         finally:
             mark_dub_job_inactive(redub_job_id)

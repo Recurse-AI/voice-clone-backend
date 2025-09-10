@@ -11,10 +11,10 @@ from .file_routes import router as file_router
 # Create main video processing router
 router = APIRouter()
 
-# Include all sub-routers
+# Include sub-routers - only processing routes get /video prefix
 router.include_router(dub_router)
-router.include_router(segment_router)
-router.include_router(processing_router)
+router.include_router(segment_router) 
+router.include_router(processing_router, prefix="/video")
 router.include_router(file_router)
 
 # Export the main router

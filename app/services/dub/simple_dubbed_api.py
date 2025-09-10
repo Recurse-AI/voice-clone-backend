@@ -160,7 +160,8 @@ class SimpleDubbedAPI:
                            source_video_language: str = None,
                            output_dir: str = None, review_mode: bool = False,
                            manifest_override: Optional[Dict[str, Any]] = None,
-                           separation_urls: Optional[Dict[str, str]] = None) -> dict:
+                           separation_urls: Optional[Dict[str, str]] = None,
+                           video_subtitle: bool = False) -> dict:
         """
         Complete dubbed audio processing with clean, modular approach.
         Always generates SRT file. No audio mixing or conditional processing.
@@ -185,7 +186,7 @@ class SimpleDubbedAPI:
 
             # Get transcription data
             raw_sentences, transcript_id = self._get_transcription_data(
-                job_id, manifest_override, process_temp_dir, source_video_language
+                job_id, manifest_override, process_temp_dir, source_video_language, video_subtitle
             )
             
             
@@ -464,8 +465,8 @@ class SimpleDubbedAPI:
     
     
     def _get_transcription_data(self, job_id: str, manifest_override: Optional[Dict[str, Any]],
-                               process_temp_dir: str, source_video_language: str) -> tuple:
-        """Get transcription data either from manifest override or by transcribing audio"""
+                               process_temp_dir: str, source_video_language: str, video_subtitle: bool = False) -> tuple:
+        """Get transcription data either from manifest override, SRT file, or by transcribing audio"""
         
         transcript_id = None
         raw_sentences = []
@@ -485,40 +486,73 @@ class SimpleDubbedAPI:
             self._download_missing_files(job_id, manifest_override, process_temp_dir)
             
         else:
-            # Fresh transcription - only transcribe, don't segment yet
-            self._update_phase_progress(job_id, "transcription", 0.0, "Starting audio transcription")
-            logger.info("Starting fresh transcription (no segmentation)")
+            # Check if we should use SRT file instead of WhisperX
+            if video_subtitle:
+                # Use SRT file for transcription
+                self._update_phase_progress(job_id, "transcription", 0.0, "Using provided SRT file for transcription")
+                logger.info("Using SRT file instead of WhisperX transcription")
+                
+                srt_file_path = os.path.join(process_temp_dir, f"{job_id}.srt")
+                if not os.path.exists(srt_file_path):
+                    raise Exception(f"SRT file not found at {srt_file_path}. Make sure subtitle file was uploaded.")
+                
+                # Parse SRT file
+                from app.utils.srt_parser import parse_srt_to_whisperx_format
+                transcription_result = parse_srt_to_whisperx_format(srt_file_path)
+                
+                if not transcription_result["success"]:
+                    logger.error(f"SRT parsing failed: {transcription_result.get('error')}")
+                    raise Exception(transcription_result.get("error", "SRT parsing failed"))
+                
+                # Convert to raw_sentences format
+                raw_sentences = []
+                for i, sentence in enumerate(transcription_result["sentences"]):
+                    raw_sentences.append({
+                        "text": sentence["text"],
+                        "start": sentence["start"],
+                        "end": sentence["end"],
+                        "id": sentence["id"]
+                    })
+                
+                transcript_id = f"srt_{int(time.time())}"
+                logger.info(f"Found {len(raw_sentences)} segments from SRT file")
+                self._update_phase_progress(job_id, "transcription", 1.0, "SRT transcription completed")
+                
+            else:
+                # Fresh transcription - only transcribe, don't segment yet
+                self._update_phase_progress(job_id, "transcription", 0.0, "Starting audio transcription")
+                logger.info("Starting fresh transcription (no segmentation)")
 
-            # Get vocal audio path
-            vocal_file_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
+                # Get vocal audio path
+                vocal_file_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
 
-            if not os.path.exists(vocal_file_path):
-                raise Exception(f"Vocal file not found at {vocal_file_path}. Make sure separation completed successfully.")
+                if not os.path.exists(vocal_file_path):
+                    raise Exception(f"Vocal file not found at {vocal_file_path}. Make sure separation completed successfully.")
 
-            # Use service worker transcription instead of direct transcription
-            # This ensures WhisperX models are loaded in the appropriate worker process
-            transcription_result = self.transcription_service._transcribe_via_service_worker(
-                vocal_file_path, source_video_language, job_id
-            )
+                # Use service worker transcription instead of direct transcription
+                # This ensures WhisperX models are loaded in the appropriate worker process
+                transcription_result = self.transcription_service._transcribe_via_service_worker(
+                    vocal_file_path, source_video_language, job_id
+                )
 
-            if not transcription_result["success"]:
-                logger.error(f"Transcription failed: {transcription_result.get('error')}")
-                AudioUtils.remove_temp_dir(folder_path=process_temp_dir)
-                raise Exception(transcription_result.get("error", "Transcription failed"))
+                if not transcription_result["success"]:
+                    logger.error(f"Transcription failed: {transcription_result.get('error')}")
+                    AudioUtils.remove_temp_dir(folder_path=process_temp_dir)
+                    raise Exception(transcription_result.get("error", "Transcription failed"))
 
-            # Convert to raw_sentences format (without output_path since no segmentation yet)
-            raw_sentences = []
-            for i, sentence in enumerate(transcription_result["sentences"]):
-                raw_sentences.append({
-                    "text": sentence["text"],
-                    "start": sentence["start"],
-                    "end": sentence["end"],
-                    "id": sentence["id"]
-                })
+                # Convert to raw_sentences format (without output_path since no segmentation yet)
+                raw_sentences = []
+                for i, sentence in enumerate(transcription_result["sentences"]):
+                    raw_sentences.append({
+                        "text": sentence["text"],
+                        "start": sentence["start"],
+                        "end": sentence["end"],
+                        "id": sentence["id"]
+                    })
 
-            transcript_id = f"whisperx_{int(time.time())}"
-            logger.info(f"Found {len(raw_sentences)} raw sentences (segmentation deferred)")
-            self._update_phase_progress(job_id, "transcription", 1.0, "Transcription completed")
+                transcript_id = f"whisperx_{int(time.time())}"
+                logger.info(f"Found {len(raw_sentences)} raw sentences (segmentation deferred)")
+                self._update_phase_progress(job_id, "transcription", 1.0, "Transcription completed")
         
         return raw_sentences, transcript_id
 
