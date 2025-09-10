@@ -233,17 +233,5 @@ class R2Service:
         }
         return content_types.get(ext, 'application/octet-stream')
 
-# Global R2 service instance
-_r2_service = None
-
-def get_r2_service() -> R2Service:
-    """Get R2Service singleton instance"""
-    global _r2_service
-    if _r2_service is None:
-        _r2_service = R2Service()
-    return _r2_service
-
-def reset_r2_service():
-    """Reset R2Service singleton"""
-    global _r2_service
-    _r2_service = None
+# No global state - each caller creates its own instance
+# This is much simpler and faster than singleton pattern

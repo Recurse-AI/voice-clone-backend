@@ -37,52 +37,23 @@ def register_job_functions():
         return False
 
 def initialize_ai_models(queue_name: str):
-    """Initialize AI models based on worker queue type - smart and clean"""
-    from app.utils.startup_sync import startup_sync
+    """Simple model initialization - each worker handles its own services"""
 
-    # Only load models for workers that actually need them
+    # Load specific models for specific workers
     if queue_name == "whisperx_service_queue":
-        # WhisperX worker loads WhisperX model
-        try:
-            from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
-            initialize_whisperx_transcription()
-            logger.info("✅ WhisperX preloaded")
-        except Exception as e:
-            logger.warning(f"WhisperX failed: {str(e)[:50]}")
+        from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
+        initialize_whisperx_transcription()
+        logger.info("✅ WhisperX loaded")
 
     elif queue_name == "fish_speech_service_queue":
-        # Fish Speech worker loads Fish Speech model
-        try:
-            from app.services.dub.fish_speech_service import initialize_fish_speech
-            initialize_fish_speech()
-            logger.info("✅ FishSpeech preloaded")
-        except Exception as e:
-            logger.warning(f"FishSpeech failed: {str(e)[:50]}")
+        from app.services.dub.fish_speech_service import initialize_fish_speech
+        initialize_fish_speech()
+        logger.info("✅ FishSpeech loaded")
 
     else:
-        # Other workers (separation, dub, billing, resume) only need OpenAI
-        logger.info("⏭️ AI models loading skipped for this worker type")
+        logger.info("⏭️ No specific models needed")
 
-    # Coordinate OpenAI initialization - only once per deployment
-    openai_lock_acquired = startup_sync.acquire_startup_lock("openai_init", timeout=30)
-
-    if openai_lock_acquired:
-        try:
-            from app.services.openai_service import initialize_openai_service
-            if initialize_openai_service():
-                logger.info("✅ OpenAI ready")
-            else:
-                logger.warning("⚠️ OpenAI initialization returned False")
-            startup_sync.mark_task_complete("openai_init")
-        except Exception as e:
-            logger.warning(f"OpenAI failed: {str(e)[:50]}")
-        finally:
-            startup_sync.release_startup_lock("openai_init")
-    else:
-        logger.info("⏳ Waiting for OpenAI initialization...")
-        startup_sync.wait_for_task_completion("openai_init")
-
-    logger.info("🎯 AI models initialization completed")
+    logger.info("🎯 Worker ready")
 
 def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://127.0.0.1:6379"):
     try:

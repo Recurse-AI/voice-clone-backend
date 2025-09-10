@@ -9,11 +9,11 @@ from typing import Optional, Dict, Any
 
 from app.config.settings import settings
 from app.services.language_service import language_service
-from app.services.openai_service import get_openai_service
+from app.services.openai_service import OpenAIService
 from .video_processor import VideoProcessor
 from .whisperx_transcription import get_whisperx_transcription_service
 from .fish_speech_service import get_fish_speech_service
-from app.services.r2_service import get_r2_service
+from app.services.r2_service import R2Service   
 from .manifest_service import (
     build_manifest,
     save_manifest_to_dir,
@@ -95,7 +95,7 @@ class SimpleDubbedAPI:
     @property
     def r2_storage(self):
         if self._r2_storage is None:
-            self._r2_storage = get_r2_service()
+            self._r2_storage = R2Service()
         return self._r2_storage
     
     @property  
@@ -160,7 +160,7 @@ class SimpleDubbedAPI:
         return (completed % max(1, total // 10) == 0 or completed == total or completed <= 3)
     
     def dub_text_batch(self, segments: list, target_language: str = "English", batch_size: int = 10, job_id: str = None) -> list:
-        openai_service = get_openai_service()
+        openai_service = OpenAIService()
         return openai_service.translate_dubbing_batch(segments, target_language, batch_size)
 
 

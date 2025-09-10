@@ -26,7 +26,8 @@ class SeparationService:
     """
     
     def __init__(self):
-        self.r2_service = get_r2_service()
+        from app.services.r2_service import R2Service
+        self.r2_service = R2Service()
     
     async def create_separation_job(self, job_id: str, user_id: str, audio_url: str, 
                                   original_filename: str, duration: float, 

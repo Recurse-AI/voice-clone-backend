@@ -152,8 +152,8 @@ class CleanupUtils:
 
     def delete_r2_file(self, r2_key: str) -> bool:
         try:
-            from app.services.r2_service import get_r2_service
-            r2_service = get_r2_service()
+            from app.services.r2_service import R2Service
+            r2_service = R2Service()
             result = r2_service.delete_file(r2_key)
             return result.get("success", False)
         except Exception as e:

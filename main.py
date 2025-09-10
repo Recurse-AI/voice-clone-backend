@@ -83,37 +83,22 @@ async def lifespan(app: FastAPI):
     except Exception as cleanup_error:
         logger.warning(f"⚠️ Cleanup warning: {cleanup_error}")
 
-    # Global services initialization - coordinate to run only once per deployment
-    services_lock_acquired = await startup_sync.acquire_startup_lock("global_services_init", timeout=30)
+    # Status reconciler - coordinate startup
+    reconciler_lock_acquired = await startup_sync.acquire_startup_lock("status_reconciler_init", timeout=30)
 
-    if services_lock_acquired:
+    if reconciler_lock_acquired:
         try:
-            # OpenAI service - lightweight, initialize once
-            try:
-                from app.services.openai_service import initialize_openai_service
-                initialize_openai_service()
-                logger.info("✅ OpenAI service ready")
-            except Exception as e:
-                logger.warning(f"⚠️ OpenAI initialization warning: {str(e)[:50]}")
-
-            # Status reconciler - start only once
-            try:
-                from app.utils.status_reconciler import _reconciler
-                _reconciler.start()
-                logger.info("✅ Status reconciler started")
-            except Exception as e:
-                logger.warning(f"⚠️ Status reconciler warning: {e}")
-
-            await startup_sync.mark_task_complete("global_services_init")
-            logger.info("✅ Global services initialization completed")
-
+            from app.utils.status_reconciler import _reconciler
+            _reconciler.start()
+            await startup_sync.mark_task_complete("status_reconciler_init")
+            logger.info("✅ Status reconciler started")
         except Exception as e:
-            logger.error(f"❌ Global services initialization failed: {e}")
+            logger.warning(f"⚠️ Status reconciler warning: {e}")
         finally:
-            await startup_sync.release_startup_lock("global_services_init")
+            await startup_sync.release_startup_lock("status_reconciler_init")
     else:
-        logger.info("⏳ Waiting for global services initialization...")
-        await startup_sync.wait_for_task_completion("global_services_init")
+        logger.info("⏳ Waiting for status reconciler...")
+        await startup_sync.wait_for_task_completion("status_reconciler_init")
 
     # Per-worker services - can run on each worker
     try:
@@ -128,29 +113,22 @@ async def lifespan(app: FastAPI):
 
     logger.info("🔄 API server shutting down...")
 
-    # Cleanup - coordinate to run only once per deployment
-    cleanup_lock_acquired = await startup_sync.acquire_startup_lock("global_cleanup", timeout=30)
+    # Cleanup - coordinate status reconciler stop
+    cleanup_lock_acquired = await startup_sync.acquire_startup_lock("cleanup", timeout=30)
 
     if cleanup_lock_acquired:
         try:
-            # Stop status reconciler
-            try:
-                from app.utils.status_reconciler import _reconciler
-                _reconciler.stop()
-                logger.info("✅ Status reconciler stopped")
-            except Exception as e:
-                logger.error(f"⚠️ Status reconciler cleanup warning: {e}")
-
-            await startup_sync.mark_task_complete("global_cleanup")
-            logger.info("✅ Global cleanup completed")
-
+            from app.utils.status_reconciler import _reconciler
+            _reconciler.stop()
+            await startup_sync.mark_task_complete("cleanup")
+            logger.info("✅ Cleanup completed")
         except Exception as e:
-            logger.error(f"❌ Global cleanup failed: {e}")
+            logger.warning(f"⚠️ Cleanup warning: {e}")
         finally:
-            await startup_sync.release_startup_lock("global_cleanup")
+            await startup_sync.release_startup_lock("cleanup")
     else:
-        logger.info("⏳ Waiting for global cleanup...")
-        await startup_sync.wait_for_task_completion("global_cleanup")
+        logger.info("⏳ Waiting for cleanup...")
+        await startup_sync.wait_for_task_completion("cleanup")
 
     logger.info("✅ API server shutdown complete")
 
