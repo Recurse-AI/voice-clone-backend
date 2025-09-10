@@ -202,27 +202,30 @@ class SimpleDubbedAPI:
                 job_id, raw_sentences, target_language, manifest_override, review_mode, process_temp_dir
             )
             
+            # Handle URLs based on whether this is redub or original dub (before review mode check)
+            if manifest_override:
+                # For redub: use existing manifest which already has URLs
+                # URLs already preserved from original manifest
+                vocal_audio_url = manifest_override.get("vocal_audio_url")
+                instrument_audio_url = manifest_override.get("instrument_audio_url")
+            else:
+                # For original dub: get URLs from separation results
+                if separation_urls:
+                    vocal_audio_url = separation_urls.get("vocal_audio")
+                    instrument_audio_url = separation_urls.get("instrument_audio")
+
+            # Validate that we have vocal URL (critical for resume/redub)
+            if not vocal_audio_url:
+                logger.error(f"No vocal audio URL available for {job_id} - resume/redub will fail")
+
             if review_mode:
                 self._update_phase_progress(job_id, "review_prep", 0.5, "Preparing segments for human review")
-                
-                # Handle URLs based on whether this is redub or original dub
+
+                # Build manifest for review mode
                 if manifest_override:
-                    # For redub: use existing manifest which already has URLs
                     manifest = manifest_override.copy()
                     manifest["segments"] = dubbed_segments
-                    # URLs already preserved from original manifest
-                    vocal_audio_url = manifest.get("vocal_audio_url")
-                    instrument_audio_url = manifest.get("instrument_audio_url")
                 else:
-                    # For original dub: get URLs from separation results
-                    if separation_urls:
-                        vocal_audio_url = separation_urls.get("vocal_audio")
-                        instrument_audio_url = separation_urls.get("instrument_audio")
-
-                    # Validate that we have vocal URL (critical for resume/redub)
-                    if not vocal_audio_url:
-                        logger.error(f"No vocal audio URL available for {job_id} - resume/redub will fail")
-
                     # Build manifest from scratch with separation URLs
                     manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
                                             vocal_audio_url, instrument_audio_url)
