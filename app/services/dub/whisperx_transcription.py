@@ -177,8 +177,7 @@ class WhisperXTranscriptionService:
                 audio,
                 batch_size=batch_size,
                 language=normalized_language if normalized_language != "auto_detect" else None,
-                task="transcribe",
-                condition_on_previous_text=False,
+                task="transcribe"
             )
 
             detected_language = result.get("language", normalized_language)
