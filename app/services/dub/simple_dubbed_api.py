@@ -178,8 +178,11 @@ class SimpleDubbedAPI:
         try:
             # 2. Use provided output directory (already created by caller)
             process_temp_dir = output_dir
-            
-            
+
+            # Initialize vocal and instrument audio URLs
+            vocal_audio_url = None
+            instrument_audio_url = None
+
             # Get transcription data
             raw_sentences, transcript_id = self._get_transcription_data(
                 job_id, manifest_override, process_temp_dir, source_video_language
@@ -212,8 +215,6 @@ class SimpleDubbedAPI:
                     instrument_audio_url = manifest.get("instrument_audio_url")
                 else:
                     # For original dub: get URLs from separation results
-                    vocal_audio_url = None
-                    instrument_audio_url = None
                     if separation_urls:
                         vocal_audio_url = separation_urls.get("vocal_audio")
                         instrument_audio_url = separation_urls.get("instrument_audio")
