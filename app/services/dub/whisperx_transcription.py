@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 import torch
 
+# Set PyTorch memory allocation configuration early
 if 'PYTORCH_CUDA_ALLOC_CONF' not in os.environ:
     os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
 
@@ -24,6 +25,7 @@ class WhisperXTranscriptionService:
         self.model_size = settings.WHISPER_MODEL_SIZE
         self.alignment_device = settings.WHISPER_ALIGNMENT_DEVICE
         self.cache_dir = settings.WHISPER_CACHE_DIR
+        self.max_seg_seconds = settings.WHISPER_MAX_SEG_SECONDS
         self._setup_device_config()
         self._setup_cache_directory()
 
@@ -120,11 +122,11 @@ class WhisperXTranscriptionService:
 
     def transcribe_audio_file(self, audio_path: str, language: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         try:
-            logger.info("🎯 Using WhisperX service worker for transcription")
-            return self._transcribe_via_service_worker(audio_path, language, job_id)
+            logger.info("🎯 Using WhisperX direct transcription")
+            return self._transcribe_direct(audio_path, language, job_id)
 
         except Exception as e:
-            logger.error(f"WhisperX service worker transcription failed for {audio_path}: {e}")
+            logger.error(f"WhisperX direct transcription failed for {audio_path}: {e}")
             raise Exception(f"WhisperX transcription failed: {str(e)}")
 
     def _transcribe_via_service_worker(self, audio_path: str, language_code: str, job_id: Optional[str] = None) -> Dict[str, Any]:
@@ -177,7 +179,18 @@ class WhisperXTranscriptionService:
                 audio,
                 batch_size=batch_size,
                 language=normalized_language if normalized_language != "auto_detect" else None,
-                task="transcribe"
+                task="transcribe",
+                asr_options={
+                    "beam_size": 1,                        # greedy: fastest, stable
+                    "condition_on_previous_text": False,   # reduce language inertia
+                    "temperatures": 0.0,                 # deterministic
+                    "patience": 1.0,
+                    "length_penalty": 1.0,
+                    "compression_ratio_threshold": 2.4,
+                    "log_prob_threshold": -1.0,
+                    "no_speech_threshold": 0.6
+                }
+                
             )
 
             detected_language = result.get("language", normalized_language)
@@ -230,7 +243,7 @@ class WhisperXTranscriptionService:
                 {"start": mid_time, "end": end_time, "text": text[text_half:], "confidence": confidence}
             ]
 
-        num_splits = max(2, int(total_duration // 12))
+        num_splits = max(2, int(total_duration // self.max_seg_seconds))
         split_duration = total_duration / num_splits
         result_segments = []
 
