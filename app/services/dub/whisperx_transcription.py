@@ -124,7 +124,6 @@ class WhisperXTranscriptionService:
         try:
             logger.info("🎯 Using WhisperX direct transcription")
             return self._transcribe_direct(audio_path, language, job_id)
-
         except Exception as e:
             logger.error(f"WhisperX direct transcription failed for {audio_path}: {e}")
             raise Exception(f"WhisperX transcription failed: {str(e)}")
@@ -170,6 +169,9 @@ class WhisperXTranscriptionService:
     def _transcribe_direct(self, audio_path: str, language_code: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         import whisperx
 
+        if self.model is None:
+            raise Exception("WhisperX model not loaded")
+
         normalized_language = language_service.get_language_code_for_transcription(language_code)
         audio = whisperx.load_audio(audio_path)
         batch_size = 8
@@ -179,18 +181,7 @@ class WhisperXTranscriptionService:
                 audio,
                 batch_size=batch_size,
                 language=normalized_language if normalized_language != "auto_detect" else None,
-                task="transcribe",
-                asr_options={
-                    "beam_size": 1,                        # greedy: fastest, stable
-                    "condition_on_previous_text": False,   # reduce language inertia
-                    "temperatures": 0.0,                 # deterministic
-                    "patience": 1.0,
-                    "length_penalty": 1.0,
-                    "compression_ratio_threshold": 2.4,
-                    "log_prob_threshold": -1.0,
-                    "no_speech_threshold": 0.6
-                }
-                
+                task="transcribe"
             )
 
             detected_language = result.get("language", normalized_language)
