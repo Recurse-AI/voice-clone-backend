@@ -40,46 +40,98 @@ class VideoDownloadService:
         if quality == "worst":
             return "worst"
 
+        # Always prefer merged formats, with comprehensive fallbacks
+        base_formats = [
+            "bv*+ba/best",  # Best merged video+audio
+            "bv+ba/bestvideo+bestaudio",  # Alternative merged
+            "best[height<=1080]",  # Best up to 1080p
+            "best[height<=720]",  # Best up to 720p
+            "best[ext=mp4]",  # Best MP4
+            "best"  # Any best format
+        ]
+
         size_filter = f"[filesize<{max_filesize}]" if max_filesize else ""
 
         if resolution:
             res_num = resolution.replace("p", "")
             try:
                 res_int = int(res_num)
-                # Smart resolution logic: try requested resolution, then best available
-                return f"bv*[height>={res_int}]+ba[height>={res_int}]{size_filter}/bv*[height<={res_int}]+ba[height<={res_int}]{size_filter}/best{size_filter}"
+                # Smart resolution logic with size filtering
+                resolution_formats = [
+                    f"bv*[height>={res_int}]+ba[height>={res_int}]{size_filter}",
+                    f"best[height>={res_int}]{size_filter}",
+                    f"bv*[height<={res_int}]+ba[height<={res_int}]{size_filter}",
+                    f"best[height<={res_int}]{size_filter}"
+                ]
+                return "/".join(resolution_formats + base_formats)
             except ValueError:
                 logger.warning(f"Invalid resolution: {resolution}")
 
-        # Default: best quality with fallbacks
-        return f"bv*+ba{size_filter}/best{size_filter}"
+        # Apply size filter to all base formats
+        if size_filter:
+            base_formats = [f"{fmt}{size_filter}" for fmt in base_formats]
 
-    async def _download_with_retry(self, ydl_opts: Dict[str, Any], url: str, max_retries: int = 3) -> yt_dlp.YoutubeDL:
+        return "/".join(base_formats)
+
+    async def _download_with_retry(self, ydl_opts: Dict[str, Any], url: str, max_retries: int = 5) -> yt_dlp.YoutubeDL:
         last_error = None
         for attempt in range(max_retries):
             try:
-                ydl = yt_dlp.YoutubeDL(ydl_opts)
+                # For 403 errors, try different extractor args on retry
+                if attempt > 0:
+                    ydl_opts_copy = ydl_opts.copy()
+                    # Try different client configurations for retries
+                    clients = [
+                        {"youtube": {"player_client": ["android", "web"], "player_skip": ["js", "configs"]}},
+                        {"youtube": {"player_client": ["web"], "player_skip": ["js"]}},
+                        {"youtube": {"player_client": ["ios"], "player_skip": ["js", "configs"]}},
+                        {"youtube": {"player_client": ["tvhtml5"], "player_skip": ["js"]}}
+                    ]
+                    ydl_opts_copy["extractor_args"] = clients[attempt % len(clients)]
+                else:
+                    ydl_opts_copy = ydl_opts
+
+                ydl = yt_dlp.YoutubeDL(ydl_opts_copy)
                 ydl.download([url])
                 return ydl
             except Exception as e:
                 last_error = e
                 error_msg = str(e).lower()
+
                 if attempt < max_retries - 1:
-                    delay = 2 ** attempt
-                    if "timeout" in error_msg or "connection" in error_msg:
-                        await asyncio.sleep(delay)
+                    # Longer delays for YouTube-specific errors
+                    if "403" in error_msg or "forbidden" in error_msg:
+                        delay = 5 + (attempt * 3)  # 5s, 8s, 11s, 14s
+                        logger.warning(f"YouTube 403 error, retrying with different client in {delay}s...")
                     elif "unavailable" in error_msg:
-                        await asyncio.sleep(delay * 2)
+                        delay = 3 + (attempt * 2)  # 3s, 5s, 7s, 9s
+                    elif "timeout" in error_msg or "connection" in error_msg:
+                        delay = 2 ** attempt  # 1s, 2s, 4s, 8s
                     else:
-                        await asyncio.sleep(delay)
+                        delay = 2 ** attempt
+
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(f"All {max_retries} download attempts failed")
+
         raise last_error
 
-    def _handle_download_error(self, error: Exception, ydl_opts: Dict[str, Any], url: str) -> yt_dlp.YoutubeDL:
+    def _handle_download_error(self, error: Exception, ydl_opts: Dict[str, Any], url: str, attempt: int = 0) -> yt_dlp.YoutubeDL:
         error_msg = str(error).lower()
 
+        # Try multiple fallback strategies for format issues
         if "requested format is not available" in error_msg:
-            ydl_opts["format"] = "bv*+ba/best"
-            return yt_dlp.YoutubeDL(ydl_opts)
+            fallback_formats = [
+                "bv*+ba/best",  # Best merged
+                "best[height<=1080]",  # Best up to 1080p
+                "best[height<=720]",  # Best up to 720p
+                "best[ext=mp4]",  # Best MP4
+                "best"  # Any best format
+            ]
+            if attempt < len(fallback_formats):
+                ydl_opts["format"] = fallback_formats[attempt]
+                logger.info(f"Trying fallback format: {fallback_formats[attempt]}")
+                return yt_dlp.YoutubeDL(ydl_opts)
 
         elif "video unavailable" in error_msg:
             raise Exception("Video is private or deleted")
@@ -87,13 +139,18 @@ class VideoDownloadService:
         elif "sign in to confirm your age" in error_msg:
             raise Exception("Age-restricted content")
 
-        elif "geo" in error_msg or "blocked" in error_msg:
-            ydl_opts.update({
-                "geo_bypass": True,
-                "geo_bypass_country": "US",
-                "extractor_args": {"youtube": {"player_client": ["android", "web"]}}
-            })
-            return yt_dlp.YoutubeDL(ydl_opts)
+        elif "geo" in error_msg or "blocked" in error_msg or "403" in error_msg:
+            # Enhanced geo-bypass with different strategies
+            geo_strategies = [
+                {"geo_bypass": True, "geo_bypass_country": "US"},
+                {"geo_bypass": True, "geo_bypass_country": "US", "source_address": "0.0.0.0"},
+                {"geo_bypass": True, "geo_bypass_country": "US", "extractor_args": {"youtube": {"player_client": ["android", "web"]}}},
+                {"geo_bypass": True, "geo_bypass_country": "US", "extractor_args": {"youtube": {"player_client": ["ios"], "player_skip": ["js"]}}}
+            ]
+            if attempt < len(geo_strategies):
+                ydl_opts.update(geo_strategies[attempt])
+                logger.info(f"Trying geo-bypass strategy {attempt + 1}")
+                return yt_dlp.YoutubeDL(ydl_opts)
 
         raise error
 
@@ -211,23 +268,52 @@ class VideoDownloadService:
                 "extractor_args": {"youtube": {"player_client": ["android", "web"], "player_skip": ["js", "configs"]}},
             }
             
-            # Download with retry mechanism
-            try:
-                await self._download_with_retry(ydl_opts, url)
-            except Exception as download_error:
+            # Download with enhanced retry and fallback mechanism
+            format_attempt = 0
+            max_format_attempts = 5
+
+            while format_attempt < max_format_attempts:
                 try:
-                    ydl = self._handle_download_error(download_error, ydl_opts, url)
-                    ydl.download([url])
-                except Exception as fallback_error:
-                    error_msg = str(fallback_error).lower()
-                    if "video unavailable" in error_msg:
-                        return {"success": False, "error": "Video is private or deleted"}
-                    elif "age" in error_msg:
-                        return {"success": False, "error": "Age-restricted content"}
-                    elif "timeout" in error_msg:
-                        return {"success": False, "error": "Download timeout"}
+                    await self._download_with_retry(ydl_opts, url)
+                    break  # Success, exit the format retry loop
+                except Exception as download_error:
+                    error_msg = str(download_error).lower()
+
+                    # Check if this is a format availability error that we can retry
+                    if ("requested format is not available" in error_msg or
+                        "403" in error_msg or "forbidden" in error_msg) and format_attempt < max_format_attempts - 1:
+
+                        format_attempt += 1
+                        logger.warning(f"Format attempt {format_attempt} failed: {error_msg[:100]}... Trying fallback...")
+
+                        try:
+                            # Try different format/geobypass strategy
+                            ydl = self._handle_download_error(download_error, ydl_opts, url, format_attempt - 1)
+                            ydl.download([url])
+                            break  # Success with fallback
+                        except Exception as fallback_error:
+                            if format_attempt >= max_format_attempts - 1:
+                                # All format attempts exhausted
+                                error_msg = str(fallback_error).lower()
+                                if "video unavailable" in error_msg:
+                                    return {"success": False, "error": "Video is private or deleted"}
+                                elif "age" in error_msg:
+                                    return {"success": False, "error": "Age-restricted content"}
+                                elif "timeout" in error_msg:
+                                    return {"success": False, "error": "Download timeout"}
+                                else:
+                                    return {"success": False, "error": f"Download failed after {format_attempt} format attempts: {str(fallback_error)}"}
+                            # Continue to next format attempt
                     else:
-                        return {"success": False, "error": f"Download failed after retry: {str(fallback_error)}"}
+                        # Not a format/geobypass error, or we've exhausted attempts
+                        if "video unavailable" in error_msg:
+                            return {"success": False, "error": "Video is private or deleted"}
+                        elif "age" in error_msg:
+                            return {"success": False, "error": "Age-restricted content"}
+                        elif "timeout" in error_msg:
+                            return {"success": False, "error": "Download timeout"}
+                        else:
+                            return {"success": False, "error": f"Download failed: {str(download_error)}"}
             
             # Find downloaded file
             downloaded_files = list(job_dir.glob("*"))

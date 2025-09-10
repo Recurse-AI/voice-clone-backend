@@ -33,13 +33,33 @@ async def download_media(request: VideoDownloadRequest):
 
         if result["success"]:
             logger.info(f"Media download successful: {result['job_id']}")
+            # Build video_info from the new response structure
+            video_info = {
+                "title": result.get("title", "Unknown"),
+                "duration": result.get("duration", 0),
+                "uploader": "Unknown",  # Not in new structure, set default
+                "filename": result.get("filename", ""),
+                "file_size": result.get("file_size", 0),
+                "local_path": "",  # Not in new structure, set empty
+                "downloaded_at": "",  # Not in new structure, set empty
+            }
+
+            # Build download_info from the new response structure
+            download_info = {
+                "requested_quality": result.get("quality_note", ""),
+                "actual_format": result.get("format", "Unknown"),
+                "resolution": result.get("resolution", "Unknown"),
+                "format": result.get("format", "Unknown"),
+                "filesize_approx": result.get("file_size", "Unknown"),
+            }
+
             return VideoDownloadResponse(
                 success=True,
                 message="Download successful",
                 job_id=result["job_id"],
-                video_info=result["video_info"],
-                download_info=result.get("download_info"),
-                available_formats=result.get("available_formats")
+                video_info=video_info,
+                download_info=download_info,
+                available_formats=result.get("available_formats", [])
             )
         else:
             logger.error(f"Media download failed: {result['error']}")

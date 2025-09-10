@@ -100,13 +100,8 @@ async def lifespan(app: FastAPI):
         logger.info("⏳ Waiting for status reconciler...")
         await startup_sync.wait_for_task_completion("status_reconciler_init")
 
-    # Per-worker services - can run on each worker
-    try:
-        from app.services.r2_service import reset_r2_service
-        reset_r2_service()
-        logger.info("✅ R2 service configured (per-worker)")
-    except Exception as e:
-        logger.warning(f"⚠️ R2 service configuration warning: {e}")
+    # Per-worker services - R2 instances created on-demand
+    logger.info("✅ R2 service ready (on-demand instances)")
 
     logger.info("🎯 API server startup completed successfully")
     yield
