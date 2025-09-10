@@ -18,7 +18,7 @@ class LanguageService:
     LANGUAGE_NAME_TO_CODE: Dict[str, str] = {
         # Core supported languages
         "english": "en",
-        "chinese": "zh", 
+        "chinese": "zh",
         "dutch": "nl",
         "finnish": "fi",  # WhisperX transcription only
         "french": "fr",
@@ -35,6 +35,8 @@ class LanguageService:
         "ukrainian": "uk",
         "vietnamese": "vi",
         "arabic": "ar",  # Fish Speech dubbing only
+        "bangla": "bn",   # Bangla language support
+        "bengali": "bn",  # Alternative name for Bangla
     }
     
     # Languages supported for dubbing (Fish Speech) - matches frontend target languages exactly
@@ -45,8 +47,8 @@ class LanguageService:
     
     # Languages supported for transcription (WhisperX) - matches frontend exactly
     TRANSCRIPTION_SUPPORTED_CODES: Set[str] = {
-        "en", "zh", "nl", "fi", "fr", "de", "hi", "it", "ja", 
-        "ko", "pl", "pt", "ru", "es", "tr", "uk", "vi"
+        "en", "zh", "nl", "fi", "fr", "de", "hi", "it", "ja",
+        "ko", "pl", "pt", "ru", "es", "tr", "uk", "vi", "bn"
     }
     
     # Accepted tokens that mean: let the system auto-detect source language
