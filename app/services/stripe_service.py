@@ -244,7 +244,7 @@ class StripeService:
             # Get user's current usage
             user = await users_collection.find_one(
                 {"_id": ObjectId(user_id)}, 
-                {"total_usage": 1, "subscription": 1}
+                {"total_usage": 1, "subscription": 1, "email": 1, "name": 1}
             )
             
             if not user:
@@ -273,6 +273,8 @@ class StripeService:
                 payment_method=payment_methods[0]["id"],
                 confirm=True,
                 return_url=f"{settings.FRONTEND_URL}/dashboard",
+                receipt_email=user.get("email"),
+                description=f"Usage payment for {total_credits:.2f} credits",
                 metadata={
                     'userId': user_id,
                     'credits': str(total_credits),

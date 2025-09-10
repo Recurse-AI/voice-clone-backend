@@ -226,6 +226,7 @@ class SimpleDubbedAPI:
                 if manifest_override:
                     manifest = manifest_override.copy()
                     manifest["segments"] = dubbed_segments
+                    manifest["target_language"] = target_language  # Update target language for redub
                 else:
                     # Build manifest from scratch with separation URLs
                     manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
