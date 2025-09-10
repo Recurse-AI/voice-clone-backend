@@ -3,6 +3,7 @@ import os
 import logging
 import uuid
 import time
+import concurrent.futures
 from typing import Dict, Any, List
 from app.config.settings import settings
 
@@ -167,47 +168,123 @@ class R2Service:
         except Exception as e:
             logger.error(f"❌ Delete failed: {r2_key} → {e}")
             return {"success": False, "error": str(e)}
-    
-    def upload_directory(self, job_id: str, local_dir: str, exclude_files: List[str] = None) -> Dict[str, Any]:
-        """Upload all files from a directory to R2"""
+
+    def _calculate_optimal_workers(self, file_count: int, avg_file_size_mb: float = None) -> int:
+        """Smart worker calculation based on file count and size"""
+        # Base calculation on file count
+        if file_count <= 3:
+            base_workers = 2
+        elif file_count <= 10:
+            base_workers = 3
+        elif file_count <= 25:
+            base_workers = 4
+        elif file_count <= 50:
+            base_workers = 6
+        elif file_count <= 100:
+            base_workers = 8
+        elif file_count <= 200:
+            base_workers = 10
+        else:
+            base_workers = 12
+
+        # Adjust for file size (if provided)
+        if avg_file_size_mb:
+            if avg_file_size_mb > 100:  # Large files (>100MB)
+                base_workers = max(2, base_workers - 2)  # Reduce workers for large files
+            elif avg_file_size_mb < 1:  # Very small files (<1MB)
+                base_workers = min(8, base_workers + 1)  # Can use more workers
+
+        return min(base_workers, 16)  # Cap at 16
+
+    def upload_directory(self, job_id: str, local_dir: str, exclude_files: List[str] = None, max_workers: int = None) -> Dict[str, Any]:
+        """
+        Upload all files from a directory to R2 using parallel processing
+        max_workers: Auto-calculated if None, or manual override
+        Best for: Large folders, good network bandwidth, time-sensitive uploads
+        """
+        if not os.path.exists(local_dir):
+            return {"success": False, "error": f"Directory not found: {local_dir}"}
+
+        exclude_files = exclude_files or []
         results = {}
+        upload_tasks = []
 
-        try:
-            exclude_files = exclude_files or []
-            for filename in os.listdir(local_dir):
-                file_path = os.path.join(local_dir, filename)
+        # Collect valid files and calculate average size
+        total_size = 0
+        valid_files = []
 
-                if not os.path.isfile(file_path):
-                    continue
+        for filename in os.listdir(local_dir):
+            file_path = os.path.join(local_dir, filename)
 
-                # Skip excluded files
-                if filename in exclude_files:
-                    logger.info(f"⏭️ Skipping excluded file: {filename}")
-                    continue
-                
-                # Only upload supported files
-                if not filename.lower().endswith(('.wav', '.mp3', '.mp4', '.json', '.srt', '.flac', '.m4a', '.aac', '.ogg')):
-                    continue
-                
-                # Determine content type
-                content_type = self._get_content_type(filename)
-                
-                # Generate R2 key with base path
-                base_path = settings.R2_BASE_PATH.rstrip('/')
-                r2_key = f"{base_path}/temp/{job_id}/{filename}"
-                
-                # Upload file
-                result = self.upload_file(file_path, r2_key, content_type)
-                results[filename] = result
-            
-            success_count = sum(1 for r in results.values() if r.get("success"))
-            logger.info(f"📁 Uploaded {success_count}/{len(results)} files for job: {job_id}")
-            return results
-            
-        except Exception as e:
-            logger.error(f"❌ Directory upload failed: {job_id} → {e}")
-            return {"error": str(e)}
-    
+            if not os.path.isfile(file_path) or filename in exclude_files:
+                continue
+
+            # Only upload supported audio/video files
+            if not filename.lower().endswith(('.wav', '.mp3', '.mp4', '.json', '.srt', '.flac', '.m4a', '.aac', '.ogg')):
+                continue
+
+            file_size = os.path.getsize(file_path)
+            total_size += file_size
+
+            content_type = self._get_content_type(filename)
+            base_path = settings.R2_BASE_PATH.rstrip('/')
+            r2_key = f"{base_path}/temp/{job_id}/{filename}"
+
+            upload_tasks.append({
+                'filename': filename,
+                'file_path': file_path,
+                'r2_key': r2_key,
+                'content_type': content_type
+            })
+
+        if not upload_tasks:
+            return {"message": "No valid files found for upload"}
+
+        # Calculate optimal workers dynamically
+        total_files = len(upload_tasks)
+        avg_file_size_mb = (total_size / total_files) / (1024 * 1024) if total_files > 0 else 0
+
+        if max_workers is None:
+            max_workers = self._calculate_optimal_workers(total_files, avg_file_size_mb)
+        else:
+            # Respect manual override but cap at reasonable limit
+            max_workers = min(max_workers, 16)
+
+        logger.info(f"📊 Auto-selected {max_workers} workers for {total_files} files ({avg_file_size_mb:.1f}MB avg)")
+
+        # Execute parallel uploads
+        completed = 0
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_file = {
+                executor.submit(self._upload_single_file, task): task['filename']
+                for task in upload_tasks
+            }
+
+            for future in concurrent.futures.as_completed(future_to_file):
+                filename = future_to_file[future]
+                completed += 1
+
+                try:
+                    results[filename] = future.result()
+
+                    # Progress logging every 10% or at completion
+                    if completed % max(1, total_files // 10) == 0 or completed == total_files:
+                        progress = (completed / total_files) * 100
+                        logger.info(f"📊 Upload progress: {completed}/{total_files} ({progress:.1f}%)")
+
+                except Exception as exc:
+                    logger.error(f"❌ Upload failed: {filename} → {exc}")
+                    results[filename] = {"success": False, "error": str(exc)}
+
+        success_count = sum(1 for r in results.values() if r.get("success"))
+        logger.info(f"📁 Parallel upload completed: {success_count}/{total_files} files")
+        return results
+
+    def _upload_single_file(self, task: Dict[str, Any]) -> Dict[str, Any]:
+        """Helper for parallel file upload"""
+        return self.upload_file(task['file_path'], task['r2_key'], task['content_type'])
+
     def generate_file_path(self, job_id: str, file_type: str = "", filename: str = "") -> str:
         """Generate R2 file path with base path"""
         base_path = settings.R2_BASE_PATH.rstrip('/')

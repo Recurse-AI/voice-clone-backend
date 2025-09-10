@@ -1000,16 +1000,44 @@ class SimpleDubbedAPI:
                 except Exception as e:
                     logger.error(f"Failed to process segment {segment.get('id', 'unknown')}: {str(e)}")
                     continue
-            # Save final audio with exact original duration
-            final_path = os.path.join(process_temp_dir, f"final_{job_id}.wav").replace('\\', '/')
-            sf.write(final_path, final_audio, sample_rate)
-            
+            # Save final audio with compression option
+            final_path = self._save_audio_optimized(final_audio, sample_rate, process_temp_dir, job_id)
+
             duration_seconds = len(final_audio) / sample_rate
-            logger.info(f"Final audio reconstructed: {final_path} (duration: {duration_seconds:.2f}s, {len(final_audio)} samples)")
+            file_size_mb = os.path.getsize(final_path) / (1024 * 1024) if os.path.exists(final_path) else 0
+            logger.info(f"Final audio reconstructed: {final_path} ({duration_seconds:.2f}s, {file_size_mb:.1f}MB)")
             return final_path
         except Exception as e:
             logger.error(f"Failed to reconstruct final audio: {str(e)}")
             return None
+
+    def _save_audio_optimized(self, audio: np.ndarray, sample_rate: int, temp_dir: str, job_id: str) -> str:
+        """Minimal MP3 compression - ultra quality, 320kbps"""
+        try:
+            import subprocess
+            import soundfile as sf
+            from app.utils.ffmpeg_helper import get_ffmpeg_path
+
+            ffmpeg_path = get_ffmpeg_path()
+            if not ffmpeg_path:
+                wav_path = os.path.join(temp_dir, f"final_{job_id}.wav")
+                sf.write(wav_path, audio, sample_rate)
+                return wav_path
+
+            mp3_path = os.path.join(temp_dir, f"final_{job_id}.mp3")
+            cmd = [
+                ffmpeg_path, '-y', '-f', 'f32le', '-ar', str(sample_rate), '-ac', '1',
+                '-i', 'pipe:0', '-acodec', 'libmp3lame', '-ab', '320k', mp3_path
+            ]
+
+            result = subprocess.run(cmd, input=audio.tobytes(), capture_output=True, timeout=30)
+            return mp3_path if result.returncode == 0 else os.path.join(temp_dir, f"final_{job_id}.wav")
+
+        except Exception:
+            wav_path = os.path.join(temp_dir, f"final_{job_id}.wav")
+            sf.write(wav_path, audio, sample_rate)
+            return wav_path
+
 
 
 def get_simple_dubbed_api() -> SimpleDubbedAPI:

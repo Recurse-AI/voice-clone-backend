@@ -118,6 +118,10 @@ class Settings(BaseSettings):
     # Processing Configuration
     # Voice cloning configuration
     MAX_REFERENCE_SECONDS: int = int(os.getenv('MAX_REFERENCE_SECONDS', '20'))  # Maximum seconds of reference audio to feed into TTS
+
+    # Audio compression - MP3 ultra quality (320kbps)
+    USE_MP3_COMPRESSION: bool = os.getenv('USE_MP3_COMPRESSION', 'true').lower() == 'true'
+
     # FFmpeg Configuration
     FFMPEG_USE_GPU: bool = bool(int(os.getenv('FFMPEG_USE_GPU', '0')))  # 1 to enable GPU (NVENC)
     
