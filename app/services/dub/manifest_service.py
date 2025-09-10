@@ -3,11 +3,8 @@ import json
 import logging
 from typing import Dict, Any, Tuple, Optional, List, TYPE_CHECKING
 
-from app.services.r2_service import get_r2_service
+from app.services.r2_service import R2Service
 from app.config.settings import settings
-
-if TYPE_CHECKING:
-    from app.services.r2_service import R2Service
 
 logger = logging.getLogger(__name__)
 
