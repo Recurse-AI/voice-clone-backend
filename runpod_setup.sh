@@ -203,7 +203,7 @@ SEPARATION_WORKERS=${MAX_SEPARATION_WORKERS:-2}
 echo "  - Starting ${SEPARATION_WORKERS} separation worker(s)..."
 for i in $(seq 1 $SEPARATION_WORKERS); do
     echo "    - Starting sep_worker_${i}..."
-    LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py separation_queue sep_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+    nohup ./venv/bin/python workers_starter.py separation_queue sep_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
     sleep 1
 done
 
@@ -224,14 +224,14 @@ echo "  - Starting ${DUB_WORKERS} dub orchestration workers (VRAM managed by ser
 echo "  - Starting ${DUB_WORKERS} dub orchestration worker(s) (no AI models)..."
 for i in $(seq 1 $DUB_WORKERS); do
     echo "    - Starting dub_worker_${i}..."
-    LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+    nohup ./venv/bin/python workers_starter.py dub_queue dub_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
     sleep 1  # Quick stagger for clean startup
 done
 
 echo "  - Starting 2 dedicated RESUME workers for instant job resumption..."
-LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py dub_queue resume_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+nohup ./venv/bin/python workers_starter.py dub_queue resume_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 sleep 1
-LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py dub_queue resume_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+nohup ./venv/bin/python workers_starter.py dub_queue resume_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "  - Starting billing worker..."
 nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
@@ -240,13 +240,13 @@ nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis:
 echo "🎯 Starting VRAM service workers..."
 
 echo "  - Starting WhisperX service worker (1 worker for 16GB VRAM)..."
-LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 # echo "  - Starting WhisperX service worker (2nd worker for 16GB VRAM)..."
 # LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "  - Starting Fish Speech service worker (1 worker for 16GB VRAM)..."
-LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=true nohup ./venv/bin/python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+nohup ./venv/bin/python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 
 echo "⏳ Waiting for VRAM workers to load models..."

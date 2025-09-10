@@ -101,11 +101,7 @@ class Settings(BaseSettings):
     FISH_SPEECH_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_CHUNK_SIZE", "100"))  # Smaller chunks for memory efficiency
     
     
-    # Specific model loading controls for service workers (16GB VRAM Optimized)
-    # NOTE: Models auto-load in dedicated workers for faster processing
-    LOAD_WHISPERX_MODEL: bool = os.getenv("LOAD_WHISPERX_MODEL", "true").lower() == "true"  # Auto-load in WhisperX workers
-    LOAD_FISH_SPEECH_MODEL: bool = os.getenv("LOAD_FISH_SPEECH_MODEL", "true").lower() == "true"  # Auto-load in Fish Speech workers
-    
+    # NOTE: Models auto-load in dedicated workers automatically for optimal performance
     # RunPod Configuration for Audio Separation
     API_ACCESS_TOKEN: str = os.getenv("API_ACCESS_TOKEN", "")
     RUNPOD_ENDPOINT_ID: str = os.getenv("RUNPOD_ENDPOINT_ID", "")

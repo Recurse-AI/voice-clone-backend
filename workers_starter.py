@@ -36,44 +36,52 @@ def register_job_functions():
         logger.error(f"Failed to register job functions: {e}")
         return False
 
-def initialize_ai_models():
-    """Initialize AI models based on specific flags"""
-    from app.config.settings import settings
-    
-    # Check specific model flags first
-    load_whisperx = settings.LOAD_WHISPERX_MODEL
-    load_fish_speech = settings.LOAD_FISH_SPEECH_MODEL
-    
-   
-    # Initialize OpenAI for dub worker
-    try:
-        from app.services.openai_service import initialize_openai_service
-        initialize_openai_service()
-        logger.info("✅ OpenAI ready")
-    except Exception as e:
-        logger.warning(f"OpenAI failed: {str(e)[:50]}")
-    
-    # Traditional model loading based on flags
-    if load_fish_speech:
-        try:
-            from app.services.dub.fish_speech_service import initialize_fish_speech
-            initialize_fish_speech()
-            logger.info("✅ FishSpeech preloaded")
-        except Exception as e:
-            logger.warning(f"FishSpeech failed: {str(e)[:50]}")
-    else:
-        logger.info("⏭️ FishSpeech loading skipped")
+def initialize_ai_models(queue_name: str):
+    """Initialize AI models based on worker queue type - smart and clean"""
+    from app.utils.startup_sync import startup_sync
 
-    if load_whisperx:
+    # Only load models for workers that actually need them
+    if queue_name == "whisperx_service_queue":
+        # WhisperX worker loads WhisperX model
         try:
             from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
             initialize_whisperx_transcription()
             logger.info("✅ WhisperX preloaded")
         except Exception as e:
             logger.warning(f"WhisperX failed: {str(e)[:50]}")
+
+    elif queue_name == "fish_speech_service_queue":
+        # Fish Speech worker loads Fish Speech model
+        try:
+            from app.services.dub.fish_speech_service import initialize_fish_speech
+            initialize_fish_speech()
+            logger.info("✅ FishSpeech preloaded")
+        except Exception as e:
+            logger.warning(f"FishSpeech failed: {str(e)[:50]}")
+
     else:
-        logger.info("⏭️ WhisperX loading skipped")
-    
+        # Other workers (separation, dub, billing, resume) only need OpenAI
+        logger.info("⏭️ AI models loading skipped for this worker type")
+
+    # Coordinate OpenAI initialization - only once per deployment
+    openai_lock_acquired = startup_sync.acquire_startup_lock("openai_init", timeout=30)
+
+    if openai_lock_acquired:
+        try:
+            from app.services.openai_service import initialize_openai_service
+            if initialize_openai_service():
+                logger.info("✅ OpenAI ready")
+            else:
+                logger.warning("⚠️ OpenAI initialization returned False")
+            startup_sync.mark_task_complete("openai_init")
+        except Exception as e:
+            logger.warning(f"OpenAI failed: {str(e)[:50]}")
+        finally:
+            startup_sync.release_startup_lock("openai_init")
+    else:
+        logger.info("⏳ Waiting for OpenAI initialization...")
+        startup_sync.wait_for_task_completion("openai_init")
+
     logger.info("🎯 AI models initialization completed")
 
 def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://127.0.0.1:6379"):
@@ -86,7 +94,7 @@ def start_worker(queue_name: str, worker_name: str, redis_url: str = "redis://12
             return False
         
         # Initialize AI models for this worker
-        initialize_ai_models()
+        initialize_ai_models(queue_name)
         
         # Simple Redis connection with retry
         redis_conn = redis.Redis.from_url(
