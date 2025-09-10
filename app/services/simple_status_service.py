@@ -3,7 +3,7 @@ import threading
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 from enum import Enum
-from pymongo import MongoClient
+from app.config.database import sync_client, db, get_async_db
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -133,55 +133,57 @@ class SimpleStatusService:
             self.redis_available = False
             return False
     
-    def _update_mongodb(self, job_id: str, job_type: str, status: JobStatus, 
+    def _update_mongodb(self, job_id: str, job_type: str, status: JobStatus,
                        validated_progress: int, details: Dict[str, Any], current_progress: int) -> bool:
         try:
-            client = MongoClient(settings.MONGODB_URI)
-            db = client[settings.DB_NAME]
-            collection = db[f"{job_type}_jobs"]
-            
+            # Use global sync client for connection pooling
+            collection = sync_client[settings.DB_NAME][f"{job_type}_jobs"]
+
+            # Get current job details for merging
             current_job = collection.find_one({"job_id": job_id}, {"details": 1})
-            
+
             update_data = {
                 "status": status.value,
                 "progress": validated_progress,
                 "updated_at": datetime.now(timezone.utc)
             }
-            
+
+            # Add timestamps based on status
             if status == JobStatus.PROCESSING and current_progress == 0:
                 update_data["started_at"] = datetime.now(timezone.utc)
             elif status in [JobStatus.COMPLETED, JobStatus.FAILED]:
                 update_data["completed_at"] = datetime.now(timezone.utc)
-            
+
+            # Merge details if provided
             if details:
                 existing_details = {}
                 if current_job and current_job.get("details"):
                     existing_details = current_job["details"]
-                
+
                 merged_details = {**existing_details, **details}
                 update_data["details"] = merged_details
-            
+
+            # Perform atomic update
             result = collection.update_one(
                 {"job_id": job_id},
                 {"$set": update_data}
             )
-            
-            client.close()
-            return result.modified_count > 0
-            
+
+            success = result.modified_count > 0
+            if success:
+                logger.debug(f"MongoDB updated: {job_id} → {status.value}")
+            return success
+
         except Exception as e:
             logger.error(f"MongoDB update failed for {job_id}: {e}")
             return False
     
     def _get_mongodb_status(self, job_id: str, job_type: str) -> Optional[Dict[str, Any]]:
         try:
-            client = MongoClient(settings.MONGODB_URI)
-            db = client[settings.DB_NAME]
-            collection = db[f"{job_type}_jobs"]
-            
+            # Use global sync client for connection pooling
+            collection = sync_client[settings.DB_NAME][f"{job_type}_jobs"]
             job = collection.find_one({"job_id": job_id})
-            client.close()
-            
+
             if job:
                 return {
                     "job_id": job["job_id"],
@@ -192,7 +194,7 @@ class SimpleStatusService:
                     "created_at": job.get("created_at")
                 }
             return None
-            
+
         except Exception as e:
             logger.error(f"MongoDB get failed for {job_id}: {e}")
             return None
