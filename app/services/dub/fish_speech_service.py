@@ -208,9 +208,9 @@ class FishSpeechService:
             "output_path": output_path
         }
         
-        # Enqueue request to service worker
+        # Enqueue request to service worker with load balancing
         from app.queue.queue_manager import queue_manager
-        success = queue_manager.enqueue_fish_speech_service_task(request_data)
+        success = queue_manager.enqueue_with_load_balance(request_data, "fish_speech")
         
         if not success:
             logger.error(f"Failed to enqueue Fish Speech request for {job_id}")

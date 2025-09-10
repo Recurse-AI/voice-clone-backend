@@ -47,17 +47,24 @@ class JobUtils:
         """
         if not manifest:
             return {"valid": False, "message": "Manifest is empty"}
-        
+
         if not manifest.get("segments") or len(manifest["segments"]) == 0:
             return {"valid": False, "message": "No segments found in manifest"}
-        
+
         # Check for required fields in segments
         for i, segment in enumerate(manifest["segments"]):
             if not segment.get("id"):
                 return {"valid": False, "message": f"Segment {i} missing id"}
             if not segment.get("original_text") and not segment.get("dubbed_text"):
                 return {"valid": False, "message": f"Segment {i} missing text content"}
-        
+
+        # Check for vocal and instrument URLs (critical for redub/resume)
+        vocal_url = manifest.get("vocal_audio_url")
+        instrument_url = manifest.get("instrument_audio_url")
+
+        if not vocal_url:
+            return {"valid": False, "message": "Missing vocal_audio_url - cannot resume/redub without vocal audio"}
+
         return {"valid": True, "message": "Manifest is valid"}
     
 

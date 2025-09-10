@@ -43,12 +43,30 @@ def initialize_ai_models(queue_name: str):
     if queue_name == "whisperx_service_queue":
         from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
         initialize_whisperx_transcription()
-        logger.info("✅ WhisperX loaded")
+        logger.info("✅ GPU WhisperX loaded")
 
     elif queue_name == "fish_speech_service_queue":
         from app.services.dub.fish_speech_service import initialize_fish_speech
         initialize_fish_speech()
-        logger.info("✅ FishSpeech loaded")
+        logger.info("✅ GPU FishSpeech loaded")
+
+    elif queue_name == "cpu_whisperx_service_queue":
+        # Force CPU device for CPU workers
+        import os
+        os.environ['WHISPER_DEVICE'] = 'cpu'
+        os.environ['WHISPER_COMPUTE_TYPE'] = 'float32'
+        from app.services.dub.whisperx_transcription import initialize_whisperx_transcription
+        initialize_whisperx_transcription()
+        logger.info("✅ CPU WhisperX loaded")
+
+    elif queue_name == "cpu_fish_speech_service_queue":
+        # Force CPU device for CPU workers
+        import os
+        os.environ['FISH_SPEECH_DEVICE'] = 'cpu'
+        os.environ['FISH_SPEECH_PRECISION'] = 'float32'
+        from app.services.dub.fish_speech_service import initialize_fish_speech
+        initialize_fish_speech()
+        logger.info("✅ CPU FishSpeech loaded")
 
     else:
         logger.info("⏭️ No specific models needed")
@@ -115,6 +133,10 @@ def main():
         print("  python workers_starter.py dub_queue dub_worker_1")
         print("  python workers_starter.py separation_queue sep_worker_1")
         print("  python workers_starter.py billing_queue billing_worker_1")
+        print("  python workers_starter.py whisperx_service_queue whisperx_service_worker_1")
+        print("  python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1")
+        print("  python workers_starter.py cpu_whisperx_service_queue cpu_whisperx_1")
+        print("  python workers_starter.py cpu_fish_speech_service_queue cpu_fish_speech_1")
         sys.exit(1)
     
     queue_name = sys.argv[1]

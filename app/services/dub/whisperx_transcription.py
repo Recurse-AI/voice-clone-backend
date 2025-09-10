@@ -141,7 +141,7 @@ class WhisperXTranscriptionService:
             }
 
             from app.queue.queue_manager import queue_manager
-            success = queue_manager.enqueue_whisperx_service_task(request_data)
+            success = queue_manager.enqueue_with_load_balance(request_data, "whisperx")
 
             if not success:
                 logger.error(f"Failed to enqueue WhisperX request for {job_id}")

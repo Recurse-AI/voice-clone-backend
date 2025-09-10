@@ -99,6 +99,11 @@ class Settings(BaseSettings):
     FISH_SPEECH_PRECISION: str = os.getenv("FISH_SPEECH_PRECISION", "float16")  # Use float16 for 16GB VRAM
     FISH_SPEECH_MAX_BATCH_SIZE: int = int(os.getenv("FISH_SPEECH_MAX_BATCH_SIZE", "4"))  # Reduced for 16GB VRAM
     FISH_SPEECH_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_CHUNK_SIZE", "100"))  # Smaller chunks for memory efficiency
+
+    # CPU Worker Configuration
+    ENABLE_CPU_WORKERS: bool = os.getenv("ENABLE_CPU_WORKERS", "false").lower() == "true"
+    FISH_SPEECH_CPU_DEVICE: str = os.getenv("FISH_SPEECH_CPU_DEVICE", "cpu")
+    WHISPER_CPU_COMPUTE_TYPE: str = os.getenv("WHISPER_CPU_COMPUTE_TYPE", "float32")
     
     
     # NOTE: Models auto-load in dedicated workers automatically for optimal performance

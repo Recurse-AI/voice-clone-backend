@@ -210,7 +210,6 @@ class SimpleDubbedAPI:
                     # URLs already preserved from original manifest
                     vocal_audio_url = manifest.get("vocal_audio_url")
                     instrument_audio_url = manifest.get("instrument_audio_url")
-                    logger.info(f"Redub using existing URLs for {job_id}: vocal={bool(vocal_audio_url)}, instrument={bool(instrument_audio_url)}")
                 else:
                     # For original dub: get URLs from separation results
                     vocal_audio_url = None
@@ -218,7 +217,10 @@ class SimpleDubbedAPI:
                     if separation_urls:
                         vocal_audio_url = separation_urls.get("vocal_audio")
                         instrument_audio_url = separation_urls.get("instrument_audio")
-                        logger.info(f"Original dub using separation URLs for {job_id}: vocal={bool(vocal_audio_url)}, instrument={bool(instrument_audio_url)}")
+
+                    # Validate that we have vocal URL (critical for resume/redub)
+                    if not vocal_audio_url:
+                        logger.error(f"No vocal audio URL available for {job_id} - resume/redub will fail")
 
                     # Build manifest from scratch with separation URLs
                     manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
@@ -283,7 +285,7 @@ class SimpleDubbedAPI:
             # Generate final audio and files
             return self._generate_final_output(
                 job_id, dubbed_segments, process_temp_dir,
-                target_language, transcript_id
+                target_language, transcript_id, vocal_audio_url, instrument_audio_url
             )
         except Exception as e:
             logger.error(f"Dubbed processing failed: {str(e)}")
@@ -607,12 +609,12 @@ class SimpleDubbedAPI:
     def _download_missing_files(self, job_id: str, manifest_override: Dict[str, Any], process_temp_dir: str):
         if not manifest_override:
             return
-            
+
         files_to_check = [
             ("vocal_audio_url", f"vocal_{job_id}.wav"),
             ("instrument_audio_url", f"instrument_{job_id}.wav")
         ]
-        
+
         for url_key, filename in files_to_check:
             file_path = os.path.join(process_temp_dir, filename)
             if not os.path.exists(file_path) and manifest_override.get(url_key):
@@ -622,8 +624,8 @@ class SimpleDubbedAPI:
                     resp.raise_for_status()
                     with open(file_path, 'wb') as fw:
                         fw.write(resp.content)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to download {filename} for job {job_id}: {e}")
 
     def _process_voice_cloning(self, job_id: str, enhanced_sentences: list, dubbed_texts: list, 
                               edited_map: dict, review_mode: bool, process_temp_dir: str) -> list:
@@ -765,7 +767,8 @@ class SimpleDubbedAPI:
 
 
     def _generate_final_output(self, job_id: str, dubbed_segments: list, process_temp_dir: str,
-                              target_language: str, transcript_id: str) -> dict:
+                              target_language: str, transcript_id: str,
+                              vocal_audio_url: str = None, instrument_audio_url: str = None) -> dict:
         """Generate final audio, SRT file, and upload to R2"""
         
         
@@ -788,7 +791,8 @@ class SimpleDubbedAPI:
         
         # Save final manifest (for normal dub / redub lineage)
         try:
-            manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments)
+            manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
+                                    vocal_audio_url, instrument_audio_url)
             save_manifest_to_dir(manifest, process_temp_dir, job_id)
         except Exception as e:
             logger.error(f"Failed to save manifest for job {job_id}: {e}")

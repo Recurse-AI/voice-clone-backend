@@ -229,7 +229,18 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
         setup_time = time.time() - setup_start
         logger.info(f"⚡ Fast resume setup completed in {setup_time:.2f}s for {job_id}")
         
-        # Download missing files before processing  
+        # Validate manifest has required URLs before proceeding
+        manifest_validation = job_utils.validate_manifest(manifest)
+        if not manifest_validation["valid"]:
+            logger.error(f"Resume failed - invalid manifest: {manifest_validation['message']}")
+            status_service.update_status(job_id, "dub", JobStatus.FAILED, 0, {
+                "message": "Resume failed - invalid manifest",
+                "error": manifest_validation["message"],
+                "review_status": "rejected"
+            })
+            return
+
+        # Download missing files before processing
         logger.info(f"Checking for missing files in job directory: {job_dir}")
         try:
             api._download_missing_files(job_id, manifest, job_dir)

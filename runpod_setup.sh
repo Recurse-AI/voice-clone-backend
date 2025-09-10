@@ -248,6 +248,12 @@ nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_servi
 echo "  - Starting Fish Speech service worker (1 worker for 16GB VRAM)..."
 nohup ./venv/bin/python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
+# CPU Workers for Load Balancing (Simple)
+echo "  - Starting CPU WhisperX worker..."
+WHISPER_DEVICE=cpu WHISPER_COMPUTE_TYPE=float32 nohup ./venv/bin/python workers_starter.py cpu_whisperx_service_queue cpu_whisperx_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+
+echo "  - Starting CPU Fish Speech worker..."
+FISH_SPEECH_DEVICE=cpu FISH_SPEECH_PRECISION=float32 nohup ./venv/bin/python workers_starter.py cpu_fish_speech_service_queue cpu_fish_speech_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "⏳ Waiting for VRAM workers to load models..."
 sleep 10
