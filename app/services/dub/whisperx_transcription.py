@@ -170,12 +170,12 @@ class WhisperXTranscriptionService:
 
         normalized_language = language_service.get_language_code_for_transcription(language_code)
         audio = whisperx.load_audio(audio_path)
-
+        batch_size = 8
 
         try:
             result = self.model.transcribe(
                 audio,
-                batch_size=8,
+                batch_size=batch_size,
                 language=normalized_language if normalized_language != "auto_detect" else None,
                 task="transcribe",
                 beam_size=1,
