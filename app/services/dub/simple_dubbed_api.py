@@ -351,9 +351,9 @@ class SimpleDubbedAPI:
                     reference_audio_bytes=reference_audio_bytes,
                     reference_text=original_text or "Reference audio",
                     max_new_tokens=1024,
-                    top_p=0.6,
-                    repetition_penalty=1.05,
-                    temperature=0.6,
+                    top_p=0.9,
+                    repetition_penalty=1.07,
+                    temperature=0.75,
                     chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,
                     job_id=job_id
                 )

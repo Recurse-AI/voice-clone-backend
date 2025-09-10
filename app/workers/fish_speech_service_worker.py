@@ -79,6 +79,9 @@ def process_fish_speech_request(request_data: dict) -> dict:
         except ValueError as e:
             return _handle_error(request_id, str(e))
         
+        params = request_data.get("params") or {}
+        reference_text = request_data.get("reference_text", "")
+        
         # Load Fish Speech service (this loads the model into VRAM)
         from app.services.dub.fish_speech_service import get_fish_speech_service
         fish_speech_service = get_fish_speech_service()
@@ -100,7 +103,11 @@ def process_fish_speech_request(request_data: dict) -> dict:
         
         # Perform actual voice cloning using existing logic
         cloning_result = fish_speech_service._generate_direct(
-            text, reference_audio_bytes, "", request_id  # reference_text not needed, job_id for context
+            text,
+            reference_audio_bytes,
+            reference_text,
+            request_id,
+            **{k: v for k, v in params.items() if v is not None}
         )
         
         # Save audio data to file if cloning was successful

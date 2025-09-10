@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     WHISPER_COMPUTE_TYPE: str = os.getenv("WHISPER_COMPUTE_TYPE", "auto")  # auto, float16, float32, int8
     WHISPER_ALIGNMENT_DEVICE: str = os.getenv("WHISPER_ALIGNMENT_DEVICE", "cpu")  # Keep alignment on CPU to save VRAM
     WHISPER_CACHE_DIR: str = os.getenv("WHISPER_CACHE_DIR", "./cache/whisperx")  # Persistent cache directory
-    WHISPER_MAX_SEG_SECONDS: int = int(os.getenv("WHISPER_MAX_SEG_SECONDS", "12"))  # Maximum segment length for splitting
+    WHISPER_MAX_SEG_SECONDS: int = int(os.getenv("WHISPER_MAX_SEG_SECONDS", "15"))  # Maximum segment length for splitting
     
     PYTORCH_CUDA_ALLOC_CONF: str = os.getenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True,max_split_size_mb:512")
     
@@ -97,9 +97,9 @@ class Settings(BaseSettings):
     FISH_SPEECH_CHECKPOINT: str = os.getenv("FISH_SPEECH_CHECKPOINT", "checkpoints/openaudio-s1-mini")
     FISH_SPEECH_DECODER: str = os.getenv("FISH_SPEECH_DECODER", "checkpoints/openaudio-s1-mini/codec.pth")
     FISH_SPEECH_DEVICE: str = os.getenv("FISH_SPEECH_DEVICE", "auto")  # auto, cuda, cpu
-    FISH_SPEECH_PRECISION: str = os.getenv("FISH_SPEECH_PRECISION", "float16")  # Use float16 for 16GB VRAM
+    FISH_SPEECH_PRECISION: str = os.getenv("FISH_SPEECH_PRECISION", "auto")  # auto -> float16 on CUDA, float32 on CPU
     FISH_SPEECH_MAX_BATCH_SIZE: int = int(os.getenv("FISH_SPEECH_MAX_BATCH_SIZE", "4"))  # Reduced for 16GB VRAM
-    FISH_SPEECH_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_CHUNK_SIZE", "100"))  # Smaller chunks for memory efficiency
+    FISH_SPEECH_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_CHUNK_SIZE", "200"))  # Smaller chunks for memory efficiency
 
     # CPU Worker Configuration
     ENABLE_CPU_WORKERS: bool = os.getenv("ENABLE_CPU_WORKERS", "false").lower() == "true"

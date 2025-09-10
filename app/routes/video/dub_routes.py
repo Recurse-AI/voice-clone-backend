@@ -85,20 +85,34 @@ def get_dub_queue_position(job_id: str) -> Optional[int]:
 
 @router.post("/video-dub", response_model=VideoDubResponse)
 async def start_video_dub(
-    request: VideoDubRequest,
+    request: str = Form(..., description="JSON string of VideoDubRequest"),
     srt_file: Optional[UploadFile] = File(None, description="SRT subtitle file"),
     current_user = Depends(get_current_user)
 ):
     try:
+        # Parse and validate the JSON request
+        import json
+        try:
+            request_data = json.loads(request)
+            logger.info(f"📝 Received request data: {request_data}")
+            request_obj = VideoDubRequest(**request_data)
+            logger.info(f"✅ Successfully parsed VideoDubRequest: {request_obj}")
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ JSON decode error: {e}")
+            raise HTTPException(status_code=400, detail="Invalid JSON in request field")
+        except Exception as e:
+            logger.error(f"❌ Validation error: {e} | Request data: {request_data}")
+            raise HTTPException(status_code=422, detail=f"Invalid request data: {str(e)}")
+        
         user_id = current_user.id
-        if request.duration is None or request.duration <= 0:
+        if request_obj.duration is None or request_obj.duration <= 0:
             raise HTTPException(status_code=400, detail="Duration is required and must be greater than 0 seconds")
         
         # Handle SRT file when video_subtitle is true
-        if request.video_subtitle:
+        if request_obj.video_subtitle:
             from app.config.settings import settings
-            job_dir = os.path.join(settings.TEMP_DIR, request.job_id)
-            srt_path = os.path.join(job_dir, f"{request.job_id}.srt")
+            job_dir = os.path.join(settings.TEMP_DIR, request_obj.job_id)
+            srt_path = os.path.join(job_dir, f"{request_obj.job_id}.srt")
             
             if srt_file:
                 # SRT file provided in this request
@@ -118,15 +132,15 @@ async def start_video_dub(
                     )
         
         job_data = {
-            "job_id": request.job_id,
+            "job_id": request_obj.job_id,
             "user_id": user_id,
-            "target_language": request.target_language,
-            "original_filename": request.project_title,
-            "source_video_language": request.source_video_language,
-            "duration": request.duration,
+            "target_language": request_obj.target_language,
+            "original_filename": request_obj.project_title,
+            "source_video_language": request_obj.source_video_language,
+            "duration": request_obj.duration,
             "status": "pending",
             "progress": 0,
-            "video_subtitle": request.video_subtitle
+            "video_subtitle": request_obj.video_subtitle
         }
         
 
@@ -134,7 +148,7 @@ async def start_video_dub(
             user_id=user_id,
             job_data=job_data,
             job_type=CreditJobType.DUB,
-            duration_seconds=request.duration
+            duration_seconds=request_obj.duration
         )
         
         if not result["success"]:
@@ -149,7 +163,7 @@ async def start_video_dub(
         
         # Set initial status
         status_service.update_status(
-            request.job_id, "dub", JobStatus.PENDING, 0,
+            request_obj.job_id, "dub", JobStatus.PENDING, 0,
             {
                 "user_id": user_id,
                 "created_at": datetime.now().isoformat(),
@@ -157,10 +171,10 @@ async def start_video_dub(
                 "message": "Job queued for processing"
             }
         )
-        logger.info(f"✅ DUB JOB CREATED: {request.job_id} - Status: PENDING")
+        logger.info(f"✅ DUB JOB CREATED: {request_obj.job_id} - Status: PENDING")
         
         # Enqueue job for background processing
-        success = enqueue_dub_job(request, user_id)
+        success = enqueue_dub_job(request_obj, user_id)
         if not success:
             return JSONResponse(
                 status_code=500,
@@ -171,12 +185,12 @@ async def start_video_dub(
                 }
             )
         
-        logger.info(f"Started video dub job {request.job_id} for user {user_id}")
+        logger.info(f"Started video dub job {request_obj.job_id} for user {user_id}")
         return VideoDubResponse(
             success=True,
             message="Video dub started successfully",
-            job_id=request.job_id,
-            status_check_url=f"/api/video-dub-status/{request.job_id}"
+            job_id=request_obj.job_id,
+            status_check_url=f"/api/video-dub-status/{request_obj.job_id}"
         )
         
     except Exception as e:

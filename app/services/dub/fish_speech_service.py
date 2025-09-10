@@ -205,7 +205,15 @@ class FishSpeechService:
             "request_id": request_id,
             "text": text,
             "reference_audio_bytes": base64.b64encode(reference_audio_bytes).decode(),
-            "output_path": output_path
+            "output_path": output_path,
+            "reference_text": reference_text,
+            "params": {
+                "max_new_tokens": kwargs.get("max_new_tokens"),
+                "top_p": kwargs.get("top_p"),
+                "repetition_penalty": kwargs.get("repetition_penalty"),
+                "temperature": kwargs.get("temperature"),
+                "chunk_length": kwargs.get("chunk_length"),
+            },
         }
         
         # Enqueue request to service worker with load balancing
@@ -289,7 +297,7 @@ class FishSpeechService:
                 
                 # Generate with timeout protection
                 audio_data = b""
-                sample_rate = 44100
+                sample_rate = 44100 # 44100 is the standard sample rate for audio
                 
                 for result in self.inference_engine.inference(tts_request):
                     if result.code in ("chunk", "final"):

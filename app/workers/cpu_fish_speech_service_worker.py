@@ -79,6 +79,9 @@ def process_cpu_fish_speech_request(request_data: dict) -> dict:
         except ValueError as e:
             return _handle_error(request_id, str(e))
 
+        params = request_data.get("params") or {}
+        reference_text = request_data.get("reference_text", "")
+
         # Force CPU device for this worker
         os.environ['FISH_SPEECH_DEVICE'] = 'cpu'
         os.environ['FISH_SPEECH_PRECISION'] = 'float32'
@@ -104,7 +107,11 @@ def process_cpu_fish_speech_request(request_data: dict) -> dict:
 
         # Perform voice cloning using CPU
         cloning_result = fish_speech_service._generate_direct(
-            text, reference_audio_bytes, "", request_id
+            text,
+            reference_audio_bytes,
+            reference_text,
+            request_id,
+            **{k: v for k, v in params.items() if v is not None}
         )
 
         # Save audio data to file if cloning was successful

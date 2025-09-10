@@ -209,7 +209,7 @@ class WhisperXTranscriptionService:
         for seg in raw_segments:
             duration_sec = seg["end"] - seg["start"]
 
-            if duration_sec <= 15:
+            if duration_sec <= self.max_seg_seconds:
                 segments.append(self._create_segment(seg, segment_index))
                 segment_index += 1
             else:
