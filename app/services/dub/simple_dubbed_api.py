@@ -499,8 +499,9 @@ class SimpleDubbedAPI:
             if not os.path.exists(vocal_file_path):
                 raise Exception(f"Vocal file not found at {vocal_file_path}. Make sure separation completed successfully.")
 
-            # Only transcribe, don't segment
-            transcription_result = self.transcription_service.transcribe_audio_file(
+            # Use service worker transcription instead of direct transcription
+            # This ensures WhisperX models are loaded in the appropriate worker process
+            transcription_result = self.transcription_service._transcribe_via_service_worker(
                 vocal_file_path, source_video_language, job_id
             )
 
