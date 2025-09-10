@@ -905,139 +905,96 @@ class SimpleDubbedAPI:
 
 
 
-    def _reconstruct_final_audio(self, segments: list, original_audio_path: str, job_id: str = None, process_temp_dir: str = None) -> str:
-        """Reconstruct final audio with exact original duration.
-        Missing segments will have silent audio automatically.
-        """
-        
-        
-        try:
-            import soundfile as sf
-            if not segments:
-                return None
-                
-            sample_rate = None
-            base_dtype = np.float32
-            original_duration_samples = 0
-            
-            # Get original audio properties for exact duration matching
-            if original_audio_path and os.path.exists(original_audio_path):
-                original_audio, sample_rate = sf.read(original_audio_path)
-                if len(original_audio.shape) > 1:
-                    original_audio = original_audio[:, 0]
-                base_dtype = original_audio.dtype if hasattr(original_audio, 'dtype') else np.float32
-                original_duration_samples = len(original_audio)
-            else:
-                # Fallback: derive sample rate from cloned segments
-                for segment in segments:
-                    cloned_path = segment.get("cloned_audio_path")
-                    if cloned_path and os.path.exists(cloned_path):
-                        cloned_audio, sample_rate = sf.read(cloned_path)
-                        base_dtype = cloned_audio.dtype if hasattr(cloned_audio, 'dtype') else np.float32
-                        break
-                if not sample_rate:
-                    sample_rate = 44100
-                # Calculate duration from segments if no original audio
-                segment_end_times = [s.get("end", 0) for s in segments if s.get("end")]
-                if segment_end_times:
-                    max_end_time_ms = max(segment_end_times)
-                    original_duration_samples = int((max_end_time_ms / 1000.0) * sample_rate)
-                else:
-                    # Fallback to 0 if no valid segments
-                    original_duration_samples = 0
-            
-            # Create final audio array with exact original duration (filled with silence)
-            if original_duration_samples <= 0:
-                logger.warning("No valid duration found, creating minimal audio")
-                original_duration_samples = int(sample_rate)  # 1 second fallback
-            final_audio = np.zeros(original_duration_samples, dtype=base_dtype)
-            # Place cloned audio segments at their exact positions
-            for segment in segments:
-                cloned_path = segment.get("cloned_audio_path")
-                if not cloned_path or not os.path.exists(cloned_path):
-                    continue
-                    
-                try:
-                    cloned_audio, _ = sf.read(cloned_path)
-                    if len(cloned_audio.shape) > 1:
-                        cloned_audio = np.mean(cloned_audio, axis=1)  # Convert to mono
-                    
-                    start_ms = segment.get("start", 0)
-                    end_ms = segment.get("end", 0)
-                    
-                    # Validate timing values
-                    if start_ms < 0 or end_ms <= start_ms:
-                        logger.warning(f"Invalid timing for segment {segment.get('id', 'unknown')}: {start_ms}ms-{end_ms}ms")
-                        continue
-                        
-                    start_sample = int((start_ms / 1000.0) * sample_rate)
-                    expected_duration_samples = int(((end_ms - start_ms) / 1000.0) * sample_rate)
-                    
-                    # Ensure cloned audio fits the expected segment duration
-                    if len(cloned_audio) > expected_duration_samples:
-                        # Truncate if too long
-                        cloned_audio = cloned_audio[:expected_duration_samples]
-                    elif len(cloned_audio) < expected_duration_samples:
-                        # Pad with silence if too short
-                        padding = expected_duration_samples - len(cloned_audio)
-                        cloned_audio = np.pad(cloned_audio, (0, padding), mode="constant")
-                    
-                    # Calculate end position
-                    end_sample = start_sample + len(cloned_audio)
-                    
-                    # Normalize cloned audio to ensure volume 1.0 before placing
-                    max_val = np.max(np.abs(cloned_audio))
-                    if max_val > 0:
-                        cloned_audio = cloned_audio / max_val  # Normalize to peak 1.0
-                    
-                    # Only place audio if it fits within original duration
-                    if start_sample >= 0 and end_sample <= original_duration_samples:
-                        final_audio[start_sample:end_sample] = cloned_audio
-                        logger.info(f"Placed segment {segment.get('id', 'unknown')} at {start_ms}ms-{end_ms}ms")
-                    else:
-                        logger.warning(f"Segment {segment.get('id', 'unknown')} exceeds original audio duration, skipping")
-                        
-                except Exception as e:
-                    logger.error(f"Failed to process segment {segment.get('id', 'unknown')}: {str(e)}")
-                    continue
-            # Save final audio with compression option
-            final_path = self._save_audio_optimized(final_audio, sample_rate, process_temp_dir, job_id)
-
-            duration_seconds = len(final_audio) / sample_rate
-            file_size_mb = os.path.getsize(final_path) / (1024 * 1024) if os.path.exists(final_path) else 0
-            logger.info(f"Final audio reconstructed: {final_path} ({duration_seconds:.2f}s, {file_size_mb:.1f}MB)")
-            return final_path
-        except Exception as e:
-            logger.error(f"Failed to reconstruct final audio: {str(e)}")
+    def _reconstruct_final_audio(self, segments: list, original_audio_path: str,
+                               job_id: str = None, process_temp_dir: str = None) -> str:
+        """Reconstruct final audio with MP3 optimization."""
+        if not segments:
             return None
 
-    def _save_audio_optimized(self, audio: np.ndarray, sample_rate: int, temp_dir: str, job_id: str) -> str:
-        """Minimal MP3 compression - ultra quality, 320kbps"""
         try:
-            import subprocess
             import soundfile as sf
-            from app.utils.ffmpeg_helper import get_ffmpeg_path
 
-            ffmpeg_path = get_ffmpeg_path()
-            if not ffmpeg_path:
-                wav_path = os.path.join(temp_dir, f"final_{job_id}.wav")
-                sf.write(wav_path, audio, sample_rate)
-                return wav_path
+            # Get sample rate and duration
+            sample_rate = 44100
+            if original_audio_path and os.path.exists(original_audio_path):
+                try:
+                    _, sample_rate = sf.read(original_audio_path, frames=1)
+                except:
+                    pass
 
-            mp3_path = os.path.join(temp_dir, f"final_{job_id}.mp3")
-            cmd = [
-                ffmpeg_path, '-y', '-f', 'f32le', '-ar', str(sample_rate), '-ac', '1',
-                '-i', 'pipe:0', '-acodec', 'libmp3lame', '-ab', '320k', mp3_path
-            ]
+            max_end_ms = max((s.get("end", 0) for s in segments), default=1000)
+            duration_samples = int((max_end_ms / 1000.0) * sample_rate)
+            final_audio = np.zeros(max(44100, duration_samples), dtype=np.float32)  # Min 1 sec
 
-            result = subprocess.run(cmd, input=audio.tobytes(), capture_output=True, timeout=30)
-            return mp3_path if result.returncode == 0 else os.path.join(temp_dir, f"final_{job_id}.wav")
+            # Place segments
+            for segment in segments:
+                try:
+                    cloned_path = segment.get("cloned_audio_path")
+                    if not cloned_path or not os.path.exists(cloned_path):
+                        continue
 
-        except Exception:
-            wav_path = os.path.join(temp_dir, f"final_{job_id}.wav")
-            sf.write(wav_path, audio, sample_rate)
-            return wav_path
+                    cloned_audio, _ = sf.read(cloned_path)
+                    if len(cloned_audio.shape) > 1:
+                        cloned_audio = np.mean(cloned_audio, axis=1)
 
+                    start_ms = segment.get("start", 0)
+                    end_ms = segment.get("end", 0)
+                    if start_ms < 0 or end_ms <= start_ms:
+                        continue
+
+                    start_sample = int((start_ms / 1000.0) * sample_rate)
+                    expected_samples = int(((end_ms - start_ms) / 1000.0) * sample_rate)
+
+                    # Fit audio duration
+                    if len(cloned_audio) > expected_samples:
+                        cloned_audio = cloned_audio[:expected_samples]
+                    elif len(cloned_audio) < expected_samples:
+                        padding = expected_samples - len(cloned_audio)
+                        cloned_audio = np.pad(cloned_audio, (0, padding), mode="constant")
+
+                    # Normalize volume
+                    max_val = np.max(np.abs(cloned_audio))
+                    if max_val > 1e-10:
+                        cloned_audio = cloned_audio / max_val
+
+                    # Place in final audio
+                    end_sample = start_sample + len(cloned_audio)
+                    if start_sample >= 0 and end_sample <= len(final_audio):
+                        final_audio[start_sample:end_sample] = cloned_audio
+
+                except Exception:
+                    continue
+
+            # Save and compress
+            final_path = os.path.join(process_temp_dir, f"final_{job_id}.wav")
+            sf.write(final_path, final_audio, sample_rate)
+
+            # MP3 compression
+            try:
+                import subprocess
+                from app.utils.ffmpeg_helper import get_ffmpeg_path
+
+                ffmpeg_path = get_ffmpeg_path()
+                if ffmpeg_path:
+                    temp_mp3 = final_path.replace('.wav', '_temp.mp3')
+                    cmd = [ffmpeg_path, '-y', '-i', final_path, '-acodec', 'libmp3lame', '-ab', '320k', temp_mp3]
+
+                    if subprocess.run(cmd, capture_output=True, timeout=30).returncode == 0:
+                        if os.path.exists(temp_mp3) and os.path.getsize(temp_mp3) > 1000:
+                            import shutil
+                            shutil.move(temp_mp3, final_path)
+                        elif os.path.exists(temp_mp3):
+                            os.remove(temp_mp3)
+
+            except Exception:
+                pass
+
+            logger.info(f"Final audio: {final_path} ({len(final_audio)/sample_rate:.2f}s)")
+            return final_path
+
+        except Exception as e:
+            logger.error(f"Reconstruction failed: {e}")
+            return None
 
 
 def get_simple_dubbed_api() -> SimpleDubbedAPI:
