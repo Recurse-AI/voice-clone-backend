@@ -348,31 +348,27 @@ class SimpleDubbedAPI:
                     text=chunk,
                     reference_audio_bytes=reference_audio_bytes,
                     reference_text=original_text or "Reference audio",
-                    max_new_tokens=1024,  # Better quality with 1024 tokens
-                    top_p=0.6,           # Balanced for quality
-                    repetition_penalty=1.05,  # Standard penalty
-                    temperature=0.6,     # Balanced temperature
-                    chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,    # Matched with optimized chunk size
+                    max_new_tokens=1024,
+                    top_p=0.6,
+                    repetition_penalty=1.05,
+                    temperature=0.6,
+                    chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,
                     job_id=job_id
                 )
-                
+
                 chunk_time = time.time() - chunk_start
                 logger.info(f"Chunk generation took {chunk_time:.2f}s for text: {chunk[:30]}...")
+
                 if result.get("success"):
                     import soundfile as sf
                     import io
-                    # Handle both audio_data (direct) and output_path (service worker) responses
-                    if "audio_data" in result:
-                        # Direct generation response
-                        buffer = io.BytesIO(result["audio_data"])
-                        audio, sample_rate = sf.read(buffer)
-                    elif "output_path" in result and os.path.exists(result["output_path"]):
-                        # Service worker response
+
+                    # Use service worker output directly
+                    if "output_path" in result and result["output_path"]:
                         audio, sample_rate = sf.read(result["output_path"])
-                    else:
-                        logger.error(f"No audio data or output path in Fish Speech result: {result}")
-                        return None
-                    
+                        # Clean up temp file immediately
+                        os.remove(result["output_path"])
+
                     if len(audio.shape) > 1:
                         audio = audio[:, 0]
                     audio_chunks.append(audio)
@@ -914,17 +910,16 @@ class SimpleDubbedAPI:
         try:
             import soundfile as sf
 
-            # Get sample rate and duration
-            sample_rate = 44100
+            # Get sample rate from original audio
             if original_audio_path and os.path.exists(original_audio_path):
-                try:
-                    _, sample_rate = sf.read(original_audio_path, frames=1)
-                except:
-                    pass
+                _, sample_rate = sf.read(original_audio_path, frames=1)
+            else:
+                sample_rate = 44100
 
-            max_end_ms = max((s.get("end", 0) for s in segments), default=1000)
+            # Calculate exact duration from segments
+            max_end_ms = max(s.get("end", 0) for s in segments)
             duration_samples = int((max_end_ms / 1000.0) * sample_rate)
-            final_audio = np.zeros(max(44100, duration_samples), dtype=np.float32)  # Min 1 sec
+            final_audio = np.zeros(duration_samples, dtype=np.float32)
 
             # Place segments
             for segment in segments:
@@ -970,24 +965,19 @@ class SimpleDubbedAPI:
             sf.write(final_path, final_audio, sample_rate)
 
             # MP3 compression
-            try:
-                import subprocess
-                from app.utils.ffmpeg_helper import get_ffmpeg_path
+            import subprocess
+            from app.utils.ffmpeg_helper import get_ffmpeg_path
 
-                ffmpeg_path = get_ffmpeg_path()
-                if ffmpeg_path:
-                    temp_mp3 = final_path.replace('.wav', '_temp.mp3')
-                    cmd = [ffmpeg_path, '-y', '-i', final_path, '-acodec', 'libmp3lame', '-ab', '320k', temp_mp3]
+            ffmpeg_path = get_ffmpeg_path()
+            if ffmpeg_path:
+                temp_mp3 = final_path.replace('.wav', '_temp.mp3')
+                cmd = [ffmpeg_path, '-y', '-i', final_path, '-acodec', 'libmp3lame', '-ab', '320k', temp_mp3]
 
-                    if subprocess.run(cmd, capture_output=True, timeout=30).returncode == 0:
-                        if os.path.exists(temp_mp3) and os.path.getsize(temp_mp3) > 1000:
-                            import shutil
-                            shutil.move(temp_mp3, final_path)
-                        elif os.path.exists(temp_mp3):
-                            os.remove(temp_mp3)
-
-            except Exception:
-                pass
+                if subprocess.run(cmd, capture_output=True, timeout=30).returncode == 0:
+                    import shutil
+                    shutil.move(temp_mp3, final_path)
+                elif os.path.exists(temp_mp3):
+                    os.remove(temp_mp3)
 
             logger.info(f"Final audio: {final_path} ({len(final_audio)/sample_rate:.2f}s)")
             return final_path
