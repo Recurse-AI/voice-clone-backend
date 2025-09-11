@@ -186,11 +186,12 @@ class StripeService:
     async def check_and_process_billing(self, user_id: str) -> Dict[str, Any]:
         """Check if user reached $10 threshold and auto-bill if needed"""
         try:
-            from app.config.database import users_collection
+            from app.config.database import get_async_db
             from app.config.credit_constants import CreditRates
             from bson import ObjectId
             
-            user = await users_collection.find_one({"_id": ObjectId(user_id)})
+            db = get_async_db()
+            user = await db.users.find_one({"_id": ObjectId(user_id)})
             if not user:
                 return {"success": False, "message": "User not found"}
             
@@ -237,12 +238,13 @@ class StripeService:
     async def process_threshold_billing(self, user_id: str, threshold_usd: float = 10.0) -> Dict[str, Any]:
         """Charge the actual usage amount when threshold is reached"""
         try:
-            from app.config.database import users_collection
+            from app.config.database import get_async_db
             from app.config.credit_constants import CreditRates
             from bson import ObjectId
             
             # Get user's current usage
-            user = await users_collection.find_one(
+            db = get_async_db()
+            user = await db.users.find_one(
                 {"_id": ObjectId(user_id)}, 
                 {"total_usage": 1, "subscription": 1, "email": 1, "name": 1}
             )
@@ -287,7 +289,7 @@ class StripeService:
                 credits_charged = actual_amount / CreditRates.COST_PER_CREDIT_USD
                 new_usage = max(0, total_credits - credits_charged)
                 
-                await users_collection.update_one(
+                await db.users.update_one(
                     {"_id": ObjectId(user_id)},
                     {
                         "$set": {"total_usage": 0.0}

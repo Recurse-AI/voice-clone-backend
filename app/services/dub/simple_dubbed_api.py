@@ -177,8 +177,10 @@ class SimpleDubbedAPI:
         logger.info(f"Processing with target language: {target_language} -> {target_language_code}")
 
         try:
+            logger.info(f"🔧 DEBUG: voice_premium_model parameter = {voice_premium_model}")
             # Store premium model setting for voice cloning
             self.voice_premium_model = voice_premium_model
+            logger.info(f"🔧 DEBUG: Set self.voice_premium_model = {self.voice_premium_model}")
             
             # 2. Use provided output directory (already created by caller)
             process_temp_dir = output_dir
@@ -351,9 +353,13 @@ class SimpleDubbedAPI:
                 result = None
                 
                 # Premium Fish Audio API vs Local Fish Speech
-                if getattr(self, 'voice_premium_model', False):
+                premium_check = getattr(self, 'voice_premium_model', False)
+                logger.info(f"🔧 DEBUG: getattr(self, 'voice_premium_model', False) = {premium_check}")
+                
+                if premium_check:
                     from app.services.dub.fish_audio_api_service import FishAudioAPIService
                     fish_api = FishAudioAPIService()
+                    logger.info(f"🔧 DEBUG: fish_api.api_key = {fish_api.api_key[:10] if fish_api.api_key else 'None'}...")
                     
                     if fish_api.api_key and fish_api.api_key.strip():
                         logger.info("🎯 Using Premium Fish Audio API")
@@ -381,6 +387,7 @@ class SimpleDubbedAPI:
                             )
                     else:
                         # No API key, use local model
+                        logger.info("🔧 DEBUG: No valid API key, falling back to local Fish Speech")
                         result = self.fish_speech.generate_with_reference_audio(
                             text=chunk,
                             reference_audio_bytes=reference_audio_bytes,

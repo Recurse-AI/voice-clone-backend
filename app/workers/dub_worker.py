@@ -267,6 +267,7 @@ def process_redub_task(redub_job_id: str, target_language: str,
                       manifest: dict, human_review: bool, voice_premium_model: bool = False):
     """Process redub task with existing manifest"""
     logger.info(f"REDUB WORKER: Processing job {redub_job_id}")
+    logger.info(f"🔧 DEBUG: Redub worker received voice_premium_model = {voice_premium_model}")
     
     try:
         from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, update_dub_job_stage
@@ -285,6 +286,7 @@ def process_redub_task(redub_job_id: str, target_language: str,
             from app.services.dub.simple_dubbed_api import get_simple_dubbed_api
             api = get_simple_dubbed_api()
             
+            logger.info(f"🔧 DEBUG: Calling api.process_dubbed_audio with voice_premium_model = {voice_premium_model}")
             result = api.process_dubbed_audio(
                 job_id=redub_job_id,
                 target_language=target_language,

@@ -6,7 +6,7 @@ Bill users when they cross $10 threshold
 import logging
 from typing import Dict, Any, List
 from datetime import datetime, timezone
-from app.config.database import users_collection
+from app.config.database import get_async_db
 from app.config.credit_constants import CreditRates
 from app.services.stripe_service import stripe_service
 from bson import ObjectId
@@ -37,7 +37,8 @@ class BackgroundBillingService:
     
     async def _get_active_payg_users(self) -> List[Dict[str, Any]]:
         """Get PAYG users with usage >= $10"""
-        cursor = users_collection.find({
+        db = get_async_db()
+        cursor = db.users.find({
             "subscription.type": "pay as you go",
             "subscription.status": "active", 
             "subscription.stripeCustomerId": {"$exists": True},
@@ -77,7 +78,8 @@ class BackgroundBillingService:
                 # Update usage
                 credits_billed = amount_to_bill / CreditRates.COST_PER_CREDIT_USD
                 new_usage = max(0, total_usage - credits_billed)
-                await users_collection.update_one(
+                db = get_async_db()
+                await db.users.update_one(
                     {"_id": ObjectId(user_id)},
                     {"$set": {"total_usage": new_usage}}
                 )
@@ -108,21 +110,24 @@ class BackgroundBillingService:
     
     async def _increment_failed_attempts(self, user_id: str, count: int):
         """Track consecutive billing failures"""
-        await users_collection.update_one(
+        db = get_async_db()
+        await db.users.update_one(
             {"_id": ObjectId(user_id)},
             {"$set": {"subscription.billingFailedAttempts": count}}
         )
     
     async def _reset_failed_attempts(self, user_id: str):
         """Reset failed attempts counter on success"""
-        await users_collection.update_one(
+        db = get_async_db()
+        await db.users.update_one(
             {"_id": ObjectId(user_id)},
             {"$unset": {"subscription.billingFailedAttempts": ""}}
         )
     
     async def _block_user(self, user_id: str, reason: str):
         """Block user"""
-        await users_collection.update_one(
+        db = get_async_db()
+        await db.users.update_one(
             {"_id": ObjectId(user_id)},
             {"$set": {
                 "subscription.billingBlocked": True,
@@ -133,7 +138,8 @@ class BackgroundBillingService:
     
     async def _unblock_user(self, user_id: str):
         """Auto unblock user on successful payment"""
-        await users_collection.update_one(
+        db = get_async_db()
+        await db.users.update_one(
             {"_id": ObjectId(user_id)},
             {"$unset": {
                 "subscription.billingBlocked": "",
