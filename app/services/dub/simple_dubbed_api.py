@@ -385,7 +385,11 @@ class SimpleDubbedAPI:
                         if result.get("success"):
                             logger.info(f"✅ Fish API success for {segment_id}")
                         else:
-                            logger.warning(f"❌ Fish API failed for {segment_id}: {result.get('error', 'Unknown error')}, falling back to local model")
+                            error_msg = result.get('error', 'Unknown error')
+                            if "empty audio" in error_msg or "silent" in error_msg:
+                                logger.warning(f"🔧 Fish API service issue for {segment_id} - using local model as backup")
+                            else:
+                                logger.warning(f"❌ Fish API failed for {segment_id}: {error_msg}, falling back to local model")
                             result = self.fish_speech.generate_with_reference_audio(
                                 text=chunk,
                                 reference_audio_bytes=reference_audio_bytes,
@@ -428,18 +432,28 @@ class SimpleDubbedAPI:
                 chunk_time = time.time() - chunk_start
                 logger.info(f"Chunk generation took {chunk_time:.2f}s for text: {chunk[:30]}...")
 
-                if result.get("success") and "output_path" in result:
-                    try:
-                        audio, sample_rate = sf.read(result["output_path"])
-                        if len(audio.shape) > 1:
-                            audio = audio[:, 0]
-                        audio_chunks.append(audio)
-                        sample_rate_out = sample_rate
-                        os.remove(result["output_path"])
-                    except Exception as e:
-                        logger.warning(f"Skipping segment {segment_id}: {e}")
-                        if os.path.exists(result["output_path"]):
-                            os.remove(result["output_path"])
+                if result.get("success"):
+                    # Handle both Fish API and local model output paths
+                    output_path = result.get("output_path")
+                    if output_path and os.path.exists(output_path):
+                        try:
+                            audio, sample_rate = sf.read(output_path)
+                            if len(audio.shape) > 1:
+                                audio = audio[:, 0]
+                            audio_chunks.append(audio)
+                            sample_rate_out = sample_rate
+                            # Clean up the temporary file
+                            os.remove(output_path)
+                            logger.info(f"✅ Successfully processed audio from {output_path}")
+                        except Exception as e:
+                            logger.warning(f"Failed to read audio from {output_path}: {e}")
+                            if os.path.exists(output_path):
+                                os.remove(output_path)
+                    else:
+                        logger.warning(f"No valid output path in result for {segment_id}")
+                else:
+                    # Result failed, local model fallback already handled above
+                    pass
             if audio_chunks:
                 final_audio = np.concatenate(audio_chunks)
                 buffer = io.BytesIO()
