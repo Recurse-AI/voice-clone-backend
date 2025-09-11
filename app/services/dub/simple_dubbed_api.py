@@ -348,17 +348,52 @@ class SimpleDubbedAPI:
             for chunk in text_chunks:
                 import time
                 chunk_start = time.time()
+                result = None
                 
+                # Premium Fish Audio API vs Local Fish Speech
                 if getattr(self, 'voice_premium_model', False):
                     from app.services.dub.fish_audio_api_service import FishAudioAPIService
                     fish_api = FishAudioAPIService()
-                    result = fish_api.generate_voice_clone(
-                        text=chunk,
-                        reference_audio_bytes=reference_audio_bytes,
-                        reference_text=original_text or "Reference audio",
-                        job_id=job_id
-                    )
+                    
+                    if fish_api.api_key and fish_api.api_key.strip():
+                        logger.info("🎯 Using Premium Fish Audio API")
+                        result = fish_api.generate_voice_clone(
+                            text=chunk,
+                            reference_audio_bytes=reference_audio_bytes,
+                            reference_text=original_text or "Reference audio",
+                            job_id=job_id
+                        )
+                        # If premium API succeeds, skip local model completely
+                        if result.get("success"):
+                            pass  # Continue with premium result
+                        else:
+                            # Premium failed, use local model
+                            result = self.fish_speech.generate_with_reference_audio(
+                                text=chunk,
+                                reference_audio_bytes=reference_audio_bytes,
+                                reference_text=original_text or "Reference audio",
+                                max_new_tokens=1024,
+                                top_p=0.9,
+                                repetition_penalty=1.07,
+                                temperature=0.75,
+                                chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,
+                                job_id=job_id
+                            )
+                    else:
+                        # No API key, use local model
+                        result = self.fish_speech.generate_with_reference_audio(
+                            text=chunk,
+                            reference_audio_bytes=reference_audio_bytes,
+                            reference_text=original_text or "Reference audio",
+                            max_new_tokens=1024,
+                            top_p=0.9,
+                            repetition_penalty=1.07,
+                            temperature=0.75,
+                            chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,
+                            job_id=job_id
+                        )
                 else:
+                    # Default: Local Fish Speech mini model
                     result = self.fish_speech.generate_with_reference_audio(
                         text=chunk,
                         reference_audio_bytes=reference_audio_bytes,
@@ -948,14 +983,14 @@ class SimpleDubbedAPI:
         try:
             import soundfile as sf
 
-            # Optimize sample rate for voice content (22kHz is sufficient for voice)
-            target_sample_rate = 22050
-            
-            # Get original sample rate for conversion
+            # Get original sample rate and preserve it
             if original_audio_path and os.path.exists(original_audio_path):
                 _, original_sample_rate = sf.read(original_audio_path, frames=1)
             else:
                 original_sample_rate = 44100
+            
+            # Use original sample rate to preserve audio quality
+            target_sample_rate = original_sample_rate
 
             # Calculate exact duration from segments
             max_end_ms = max(s.get("end", 0) for s in segments)
@@ -1019,12 +1054,12 @@ class SimpleDubbedAPI:
             ffmpeg_path = get_ffmpeg_path()
             if ffmpeg_path:
                 temp_mp3 = final_path.replace('.wav', '_temp.mp3')
-                # Voice-optimized settings: lower bitrate, voice-tuned encoding
+                # Voice-optimized settings: preserve original sample rate
                 cmd = [
                     ffmpeg_path, '-y', '-i', final_path,
                     '-acodec', 'libmp3lame',
                     '-ab', '96k',  # Reduced from 192k - sufficient for voice
-                    '-ar', '22050',  # Match our optimized sample rate
+                    '-ar', str(target_sample_rate),  # Preserve original sample rate
                     '-ac', '1',  # Mono for voice content
                     '-q:a', '4',  # VBR quality setting for voice
                     temp_mp3
@@ -1033,7 +1068,7 @@ class SimpleDubbedAPI:
                 if subprocess.run(cmd, capture_output=True, timeout=30).returncode == 0:
                     import shutil
                     shutil.move(temp_mp3, final_path)
-                    logger.info(f"✅ Audio optimized: {final_path} (22kHz, 96kbps mono)")
+                    logger.info(f"✅ Audio optimized: {final_path} ({target_sample_rate}Hz, 96kbps mono)")
                 elif os.path.exists(temp_mp3):
                     os.remove(temp_mp3)
 

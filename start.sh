@@ -145,9 +145,11 @@ done
 
 echo "🎯 Starting VRAM service workers..."
 
-echo "  - Starting WhisperX service workers (2 parallel VRAM workers)..."
-# nohup python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-# LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup python workers_starter.py whisperx_service_queue whisperx_service_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+echo "  - Starting WhisperX service workers (GPU worker)..."
+nohup python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+
+echo "  - Starting CPU WhisperX service worker (CPU fallback)..."
+nohup python workers_starter.py cpu_whisperx_service_queue cpu_whisperx_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "  - Starting Fish Speech service worker (VRAM serial)..." # manully off for debugging
 LOAD_WHISPERX_MODEL=false LOAD_FISH_SPEECH_MODEL=true nohup python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
@@ -182,13 +184,13 @@ fi
 
 echo ""
 echo "📈 Worker Summary:"
-TOTAL_EXPECTED=$((1 + DUB_WORKERS + 1 + VIDEO_WORKERS + 1 + 1))  # sep + dub + billing + video + whisperx + fish
-echo "  - Expected workers: ${TOTAL_EXPECTED} (1 sep + ${DUB_WORKERS} dub + 1 billing + ${VIDEO_WORKERS} video + 1 whisperx + 1 fish)"
+TOTAL_EXPECTED=$((1 + DUB_WORKERS + 1 + VIDEO_WORKERS + 1 + 1 + 1))  # sep + dub + billing + video + whisperx + cpu_whisperx + fish
+echo "  - Expected workers: ${TOTAL_EXPECTED} (1 sep + ${DUB_WORKERS} dub + 1 billing + ${VIDEO_WORKERS} video + 1 whisperx + 1 cpu_whisperx + 1 fish)"
 echo "  - Separation: 1 worker"
 echo "  - Dub orchestration: ${DUB_WORKERS} workers (no AI models)"
 echo "  - Billing: 1 worker"
 echo "  - Video processing: ${VIDEO_WORKERS} workers"
-echo "  - WhisperX service: 2 workers (parallel VRAM optimized)"
+echo "  - WhisperX service: 1 GPU worker + 1 CPU worker (load balanced)"
 echo "  - Fish Speech service: 1 worker (VRAM serial)"
 
 echo ""
