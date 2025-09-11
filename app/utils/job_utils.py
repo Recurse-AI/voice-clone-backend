@@ -94,7 +94,7 @@ class JobUtils:
             raise Exception(f"Failed to setup job directory: {str(e)}")
     
     @staticmethod
-    def prepare_manifest_for_redub(manifest: Dict[str, Any], redub_job_id: str, target_language: str, parent_job_id: str) -> Dict[str, Any]:
+    def prepare_manifest_for_redub(manifest: Dict[str, Any], redub_job_id: str, target_language: str, parent_job_id: str, voice_premium_model: bool = False) -> Dict[str, Any]:
         """
         Prepare manifest for redub with updated metadata
         Returns: updated manifest
@@ -109,7 +109,8 @@ class JobUtils:
             "redub_target_language": target_language,  # Store new target language separately
             "parent_job_id": parent_job_id,
             "version": 1,  # Reset version for new job
-            "redub_timestamp": datetime.now().isoformat()
+            "redub_timestamp": datetime.now().isoformat(),
+            "voice_premium_model": voice_premium_model  # Use new redub setting, not original
         })
         return updated_manifest
     

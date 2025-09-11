@@ -33,6 +33,7 @@ class DubJob(BaseModel):
     duration: Optional[float] = Field(None, description="Video duration in seconds")
     details: Optional[Dict[str, Any]] = Field(None, description="Additional processing details")
     review_required: bool = Field(False, description="Whether human review is required before final processing")
+    voice_premium_model: bool = Field(False, description="Whether to use premium Fish Audio API for voice cloning")
     review_status: Optional[Literal['awaiting', 'in_progress', 'approved', 'rejected', 'completed', 'failed']] = None
     segments_manifest_url: Optional[str] = Field(None, description="R2 URL to the segments manifest JSON for human review")
     segments_manifest_key: Optional[str] = Field(None, description="R2 object key for the segments manifest JSON")

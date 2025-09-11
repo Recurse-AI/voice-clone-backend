@@ -264,10 +264,10 @@ def enqueue_dub_task(request_dict: dict, user_id: str):
 # Redub task processing
 def process_redub_task(redub_job_id: str, target_language: str, 
                       source_video_language: str, redub_job_dir: str, 
-                      manifest: dict, human_review: bool, voice_premium_model: bool = False):
+                      manifest: dict, human_review: bool):
     """Process redub task with existing manifest"""
     logger.info(f"REDUB WORKER: Processing job {redub_job_id}")
-    logger.info(f"🔧 DEBUG: Redub worker received voice_premium_model = {voice_premium_model}")
+    logger.info(f"🔧 DEBUG: Redub worker using manifest voice_premium_model = {manifest.get('voice_premium_model', False)}")
     
     try:
         from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, update_dub_job_stage
@@ -286,7 +286,7 @@ def process_redub_task(redub_job_id: str, target_language: str,
             from app.services.dub.simple_dubbed_api import get_simple_dubbed_api
             api = get_simple_dubbed_api()
             
-            logger.info(f"🔧 DEBUG: Calling api.process_dubbed_audio with voice_premium_model = {voice_premium_model}")
+            logger.info(f"🔧 DEBUG: Redub using manifest voice_premium_model = {manifest.get('voice_premium_model', False)}")
             result = api.process_dubbed_audio(
                 job_id=redub_job_id,
                 target_language=target_language,
@@ -295,7 +295,6 @@ def process_redub_task(redub_job_id: str, target_language: str,
                 review_mode=human_review,
                 manifest_override=manifest,
                 video_subtitle=False,  # Redubs use existing transcription
-                voice_premium_model=voice_premium_model
             )
         finally:
             mark_dub_job_inactive(redub_job_id)

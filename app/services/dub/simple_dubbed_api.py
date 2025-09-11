@@ -177,9 +177,19 @@ class SimpleDubbedAPI:
         logger.info(f"Processing with target language: {target_language} -> {target_language_code}")
 
         try:
+            # Read voice_premium_model from manifest first (most reliable), fallback to parameter
+            manifest_voice_premium = None
+            if manifest_override:
+                manifest_voice_premium = manifest_override.get("voice_premium_model")
+                logger.info(f"🔧 DEBUG: Found voice_premium_model in manifest = {manifest_voice_premium}")
+            
+            # Use manifest value if available, otherwise use parameter
+            final_voice_premium_model = manifest_voice_premium if manifest_voice_premium is not None else voice_premium_model
             logger.info(f"🔧 DEBUG: voice_premium_model parameter = {voice_premium_model}")
+            logger.info(f"🔧 DEBUG: Final voice_premium_model = {final_voice_premium_model} (from {'manifest' if manifest_voice_premium is not None else 'parameter'})")
+            
             # Store premium model setting for voice cloning
-            self.voice_premium_model = voice_premium_model
+            self.voice_premium_model = final_voice_premium_model
             logger.info(f"🔧 DEBUG: Set self.voice_premium_model = {self.voice_premium_model}")
             
             # 2. Use provided output directory (already created by caller)
@@ -232,10 +242,12 @@ class SimpleDubbedAPI:
                     manifest = manifest_override.copy()
                     manifest["segments"] = dubbed_segments
                     manifest["target_language"] = target_language  # Update target language for redub
+                    # Preserve voice_premium_model from override (already set above)
+                    manifest["voice_premium_model"] = final_voice_premium_model
                 else:
                     # Build manifest from scratch with separation URLs
                     manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
-                                            vocal_audio_url, instrument_audio_url)
+                                            vocal_audio_url, instrument_audio_url, final_voice_premium_model)
 
                 # Save manifest to disk (both redub and original dub cases)
                 manifest_path = save_manifest_to_dir(manifest, process_temp_dir, job_id)

@@ -485,7 +485,8 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
 
     # Prepare manifest for redub using utility function
     manifest = job_utils.prepare_manifest_for_redub(
-        manifest, redub_job_id, request_body.target_language, parent_job_id
+        manifest, redub_job_id, request_body.target_language, parent_job_id, 
+        getattr(request_body, "voice_premium_model", False)
     )
     
     # Create redub request similar to original dub request
@@ -509,8 +510,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     dub_queue = get_dub_queue()
     dub_queue.enqueue(process_redub_task, redub_job_id, request_body.target_language, 
                      parent_job.source_video_language, redub_job_dir, manifest, 
-                     bool(getattr(request_body, "humanReview", False)),
-                     bool(getattr(request_body, "voice_premium_model", False)))
+                     bool(getattr(request_body, "humanReview", False)))
 
     logger.info(f"Started redub job {redub_job_id} from parent {parent_job_id} for user {user_id}")
     

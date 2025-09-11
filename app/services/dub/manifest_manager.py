@@ -47,7 +47,7 @@ class ManifestManager:
         
     def create_manifest(self, job_id: str, transcript_id: Optional[str], target_language: str, 
                        segments: list, vocal_audio_url: Optional[str] = None, 
-                       instrument_audio_url: Optional[str] = None) -> Dict[str, Any]:
+                       instrument_audio_url: Optional[str] = None, voice_premium_model: bool = False) -> Dict[str, Any]:
         normalized_segments = [self._normalize_segment(seg) for seg in segments]
         return {
             "job_id": job_id,
@@ -56,6 +56,7 @@ class ManifestManager:
             "version": 1,
             "vocal_audio_url": vocal_audio_url,
             "instrument_audio_url": instrument_audio_url,
+            "voice_premium_model": voice_premium_model,
             "segments": normalized_segments
         }
     
