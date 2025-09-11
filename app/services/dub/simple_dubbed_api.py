@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 _simple_dubbed_api_instance = None
 _api_lock = threading.Lock()
-def smart_chunk(text: str, chunk_size: int = 200, min_size: int = 180) -> list[str]:
+def smart_chunk(text: str, chunk_size: int = 250, min_size: int = 220) -> list[str]:
     if not text:
         return []
 
@@ -356,7 +356,7 @@ class SimpleDubbedAPI:
             cloned_filename = f"cloned_{job_id}_{segment_index:03d}.wav"
             cloned_path = os.path.join(process_temp_dir, cloned_filename).replace('\\', '/')
             # Split dubbed text into optimized chunks for better GPU utilization  
-            text_chunks = smart_chunk(dubbed_text, chunk_size=settings.FISH_SPEECH_CHUNK_SIZE, min_size=150)
+            text_chunks = smart_chunk(dubbed_text, chunk_size=settings.FISH_SPEECH_CHUNK_SIZE, min_size=settings.FISH_SPEECH_MIN_CHUNK_SIZE - 30)
             audio_chunks = []
             sample_rate_out = None
             for chunk in text_chunks:

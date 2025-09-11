@@ -292,7 +292,7 @@ class FishSpeechService:
                     repetition_penalty=kwargs.get("repetition_penalty", 1.05),  # Minimal penalty
                     temperature=kwargs.get("temperature", 0.6),         # Lower for speed
                     format="wav",
-                    chunk_length=kwargs.get("chunk_length", 200)        # User preference
+                    chunk_length=kwargs.get("chunk_length", settings.FISH_SPEECH_CHUNK_SIZE)
                 )
                 
                 # Generate with timeout protection

@@ -52,7 +52,7 @@ class FishAudioAPIService:
                 "format": "wav",
                 "normalize": True,
                 "latency": "normal",
-                "chunk_length": 200
+                "chunk_length": settings.FISH_SPEECH_CHUNK_SIZE
             }
             
             # Use direct HTTP request with proper model header
