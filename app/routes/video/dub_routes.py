@@ -140,7 +140,8 @@ async def start_video_dub(
             "duration": request_obj.duration,
             "status": "pending",
             "progress": 0,
-            "video_subtitle": request_obj.video_subtitle
+            "video_subtitle": request_obj.video_subtitle,
+            "voice_premium_model": request_obj.voice_premium_model
         }
         
 
@@ -454,7 +455,8 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
         "status": "pending",
         "progress": 0,
         "parent_job_id": parent_job_id,
-        "redub_from": parent_job.target_language
+        "redub_from": parent_job.target_language,
+        "voice_premium_model": getattr(request_body, "voice_premium_model", False)
     }
     
     # Atomic credit reservation + job creation
@@ -494,7 +496,8 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             project_title=f"Redub - {parent_job.original_filename}",
             duration=duration,
             source_video_language=parent_job.source_video_language,
-            humanReview=getattr(request_body, "humanReview", False)
+            humanReview=getattr(request_body, "humanReview", False),
+            voice_premium_model=getattr(request_body, "voice_premium_model", False)
         )
         logger.info(f"Created redub request: {redub_request.dict()}")
     except Exception as e:
@@ -506,7 +509,8 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     dub_queue = get_dub_queue()
     dub_queue.enqueue(process_redub_task, redub_job_id, request_body.target_language, 
                      parent_job.source_video_language, redub_job_dir, manifest, 
-                     bool(getattr(request_body, "humanReview", False)))
+                     bool(getattr(request_body, "humanReview", False)),
+                     bool(getattr(request_body, "voice_premium_model", False)))
 
     logger.info(f"Started redub job {redub_job_id} from parent {parent_job_id} for user {user_id}")
     

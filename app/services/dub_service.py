@@ -31,7 +31,7 @@ class DubService:
     async def create_dub_job(self, job_id: str, user_id: str, 
                            target_language: str, source_video_language: str,
                            project_title: str, duration: float,
-                           human_review: bool = False) -> Dict[str, Any]:
+                           human_review: bool = False, voice_premium_model: bool = False) -> Dict[str, Any]:
         """Create and start a dub job"""
         try:
             # Validate duration
@@ -49,7 +49,8 @@ class DubService:
                 "original_filename": project_title,
                 "source_video_language": source_video_language,
                 "duration": duration,
-                "human_review": human_review
+                "human_review": human_review,
+                "voice_premium_model": voice_premium_model
             }
             
             # Reserve credits and create job atomically

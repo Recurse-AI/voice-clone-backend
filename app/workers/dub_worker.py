@@ -20,6 +20,7 @@ def process_dub_task(request_dict: dict, user_id: str):
     source_video_language = request_dict.get("source_video_language")
     human_review = request_dict.get("humanReview", False)
     video_subtitle = request_dict.get("video_subtitle", False)
+    voice_premium_model = request_dict.get("voice_premium_model", False)
     
     from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, update_dub_job_stage
     
@@ -61,7 +62,7 @@ def process_dub_task(request_dict: dict, user_id: str):
         
         success = _process_dubbing_pipeline(
             job_id, target_language, source_video_language, 
-            job_dir, human_review, separation_result["runpod_urls"], video_subtitle
+            job_dir, human_review, separation_result["runpod_urls"], video_subtitle, voice_premium_model
         )
         
         if not success:
@@ -153,7 +154,7 @@ def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> dict
 
 def _process_dubbing_pipeline(job_id: str, target_language: str, 
                             source_video_language: str, job_dir: str,
-                            human_review: bool, runpod_urls: dict = None, video_subtitle: bool = False) -> bool:
+                            human_review: bool, runpod_urls: dict = None, video_subtitle: bool = False, voice_premium_model: bool = False) -> bool:
     try:
         from app.utils.pipeline_utils import update_dub_job_stage
         
@@ -175,7 +176,8 @@ def _process_dubbing_pipeline(job_id: str, target_language: str,
             output_dir=job_dir,
             review_mode=human_review,
             separation_urls=runpod_urls,
-            video_subtitle=video_subtitle
+            video_subtitle=video_subtitle,
+            voice_premium_model=voice_premium_model
         )
         
         if not pipeline_result["success"]:
@@ -262,7 +264,7 @@ def enqueue_dub_task(request_dict: dict, user_id: str):
 # Redub task processing
 def process_redub_task(redub_job_id: str, target_language: str, 
                       source_video_language: str, redub_job_dir: str, 
-                      manifest: dict, human_review: bool):
+                      manifest: dict, human_review: bool, voice_premium_model: bool = False):
     """Process redub task with existing manifest"""
     logger.info(f"REDUB WORKER: Processing job {redub_job_id}")
     
@@ -290,7 +292,8 @@ def process_redub_task(redub_job_id: str, target_language: str,
                 output_dir=redub_job_dir,
                 review_mode=human_review,
                 manifest_override=manifest,
-                video_subtitle=False  # Redubs use existing transcription
+                video_subtitle=False,  # Redubs use existing transcription
+                voice_premium_model=voice_premium_model
             )
         finally:
             mark_dub_job_inactive(redub_job_id)

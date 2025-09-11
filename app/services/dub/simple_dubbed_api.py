@@ -161,7 +161,7 @@ class SimpleDubbedAPI:
                            output_dir: str = None, review_mode: bool = False,
                            manifest_override: Optional[Dict[str, Any]] = None,
                            separation_urls: Optional[Dict[str, str]] = None,
-                           video_subtitle: bool = False) -> dict:
+                           video_subtitle: bool = False, voice_premium_model: bool = False) -> dict:
         """
         Complete dubbed audio processing with clean, modular approach.
         Always generates SRT file. No audio mixing or conditional processing.
@@ -177,6 +177,9 @@ class SimpleDubbedAPI:
         logger.info(f"Processing with target language: {target_language} -> {target_language_code}")
 
         try:
+            # Store premium model setting for voice cloning
+            self.voice_premium_model = voice_premium_model
+            
             # 2. Use provided output directory (already created by caller)
             process_temp_dir = output_dir
 
@@ -346,17 +349,27 @@ class SimpleDubbedAPI:
                 import time
                 chunk_start = time.time()
                 
-                result = self.fish_speech.generate_with_reference_audio(
-                    text=chunk,
-                    reference_audio_bytes=reference_audio_bytes,
-                    reference_text=original_text or "Reference audio",
-                    max_new_tokens=1024,
-                    top_p=0.9,
-                    repetition_penalty=1.07,
-                    temperature=0.75,
-                    chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,
-                    job_id=job_id
-                )
+                if getattr(self, 'voice_premium_model', False):
+                    from app.services.dub.fish_audio_api_service import FishAudioAPIService
+                    fish_api = FishAudioAPIService()
+                    result = fish_api.generate_voice_clone(
+                        text=chunk,
+                        reference_audio_bytes=reference_audio_bytes,
+                        reference_text=original_text or "Reference audio",
+                        job_id=job_id
+                    )
+                else:
+                    result = self.fish_speech.generate_with_reference_audio(
+                        text=chunk,
+                        reference_audio_bytes=reference_audio_bytes,
+                        reference_text=original_text or "Reference audio",
+                        max_new_tokens=1024,
+                        top_p=0.9,
+                        repetition_penalty=1.07,
+                        temperature=0.75,
+                        chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,
+                        job_id=job_id
+                    )
 
                 chunk_time = time.time() - chunk_start
                 logger.info(f"Chunk generation took {chunk_time:.2f}s for text: {chunk[:30]}...")

@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     FISH_SPEECH_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_CHUNK_SIZE", "200"))  # Smaller chunks for memory efficiency
     
     # Batch Processing Configuration
-    VOICE_CLONING_BATCH_SIZE: int = int(os.getenv("VOICE_CLONING_BATCH_SIZE", "50"))  # Segments per batch
+    VOICE_CLONING_BATCH_SIZE: int = int(os.getenv("VOICE_CLONING_BATCH_SIZE", "10"))  # Segments per batch
     WHISPERX_BATCH_SIZE: int = int(os.getenv("WHISPERX_BATCH_SIZE", "16"))  # WhisperX transcription batch size
 
     # CPU Worker Configuration
@@ -132,6 +132,9 @@ class Settings(BaseSettings):
     REDIS_PORT: int = int(os.getenv("REDIS_PORT", "6379"))
     REDIS_DB: int = int(os.getenv("REDIS_DB", "0"))
     REDIS_PASSWORD: str = os.getenv("REDIS_PASSWORD", "")
+    
+    # Fish Audio API Configuration
+    FISH_AUDIO_API_KEY: str = os.getenv("FISH_AUDIO_API_KEY", "")
     
     model_config = {"env_file": ".env", "case_sensitive": True, "extra": "ignore"}
 

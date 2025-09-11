@@ -23,6 +23,7 @@ class VideoDubRequest(BaseModel):
     source_video_language: Optional[str] = Field(None, description="Source video language (default: None, auto-detect)")
     humanReview: bool = Field(False, description="If true, pause after transcription+translation for human review")
     video_subtitle: bool = Field(False, description="If true, use provided SRT file instead of WhisperX transcription")
+    voice_premium_model: bool = Field(False, description="If true, use premium Fish Audio API for voice cloning (costs double)")
 
 class VideoDubResponse(BaseModel):
     success: bool
@@ -72,6 +73,7 @@ class ApproveReviewRequest(BaseModel):
 class RedubRequest(BaseModel):
     target_language: str = Field(..., description="New target language for re-dub")
     humanReview: Optional[bool] = False
+    voice_premium_model: bool = Field(False, description="If true, use premium Fish Audio API for voice cloning (costs double)")
     
     @field_validator('target_language')
     @classmethod

@@ -51,6 +51,11 @@ class CreditService:
         """
         # Calculate required credits
         required_credits = self.calculator.calculate_job_credits(job_type, duration_seconds)
+        
+        # Double credits for premium voice model
+        if job_data.get("voice_premium_model", False):
+            required_credits *= 2
+            
         estimated_cost = self.calculator.calculate_cost_estimate(required_credits)
         
         # Get user and determine billing strategy
