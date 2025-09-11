@@ -2,127 +2,122 @@ import logging
 import os
 import uuid
 import time
-import io
-import numpy as np
-from typing import Dict, Any, Literal
-import httpx
-import ormsgpack
 import soundfile as sf
-from pydantic import BaseModel, conint
+from typing import Dict, Any
+
+try:
+    from fish_audio_sdk import Session, TTSRequest, ReferenceAudio
+    import httpx
+    import ormsgpack
+    FISH_SDK_AVAILABLE = True
+except ImportError:
+    FISH_SDK_AVAILABLE = False
+
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-class ServeReferenceAudio(BaseModel):
-    audio: bytes
-    text: str
-
-class ServeTTSRequest(BaseModel):
-    text: str
-    chunk_length: conint(ge=100, le=300, strict=True) = 200
-    format: Literal["wav", "pcm", "mp3"] = "wav"
-    mp3_bitrate: Literal[64, 128, 192] = 128
-    references: list[ServeReferenceAudio] = []
-    reference_id: str | None = None
-    normalize: bool = True
-    latency: Literal["normal", "balanced"] = "normal"
-
 class FishAudioAPIService:
     def __init__(self):
         self.api_key = settings.FISH_AUDIO_API_KEY
-        self.base_url = "https://api.fish.audio/v1/tts"
+        if FISH_SDK_AVAILABLE and self.api_key:
+            self.session = Session(self.api_key)
+        else:
+            self.session = None
     
     def generate_voice_clone(self, text: str, reference_audio_bytes: bytes, reference_text: str, job_id: str = None) -> Dict[str, Any]:
+        if not FISH_SDK_AVAILABLE:
+            return {"success": False, "error": "Fish Audio SDK not installed. Run: pip install fish-audio-sdk"}
+        
+        if not self.session:
+            return {"success": False, "error": "Fish Audio API key not configured"}
+        
         try:
-            # Use original audio bytes directly (like Fish Audio docs example)
-            processed_audio_bytes = reference_audio_bytes
+            logger.info(f"Fish API request - text: {len(text)} chars, audio: {len(reference_audio_bytes)} bytes")
             
-            # Use official Fish Audio API format
-            request = ServeTTSRequest(
-                text=text,
-                references=[ServeReferenceAudio(audio=processed_audio_bytes, text=reference_text)],
-                format="wav",
-                normalize=True,
-                latency="normal",
-                chunk_length=200
-            )
-            
-            logger.info(f"Fish API request - text: {len(text)} chars, audio: {len(processed_audio_bytes)} bytes")
-            
+            # Create output directory
             output_dir = os.path.join(settings.TEMP_DIR, job_id or "temp")
             os.makedirs(output_dir, exist_ok=True)
             
             request_id = f"fish_api_{job_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             output_path = os.path.join(output_dir, f"output_{request_id}.wav")
             
-            # Use streaming approach as per official documentation
-            with httpx.Client(timeout=300.0) as client:
-                with client.stream(
-                    "POST",
-                    self.base_url,
-                    content=ormsgpack.packb(request, option=ormsgpack.OPT_SERIALIZE_PYDANTIC),
-                    headers={
-                        "authorization": f"Bearer {self.api_key}",
-                        "content-type": "application/msgpack",
-                        "model": "s1"  # Use s1 model as requested
-                    }
-                ) as response:
-                    if response.status_code != 200:
-                        logger.error(f"Fish API error: {response.status_code} - {response.text}")
-                        return {"success": False, "error": f"API error: {response.status_code}"}
-                    
-                    # Stream chunks to file (official approach)
-                    with open(output_path, "wb") as f:
-                        total_bytes = 0
-                        for chunk in response.iter_bytes():
-                            f.write(chunk)
-                            total_bytes += len(chunk)
-                    
-                    logger.info(f"Fish API streamed {total_bytes} bytes to {output_path}")
+            # Try using raw HTTP request with model header (as per Fish Audio docs)
+            request_data = {
+                "text": text,
+                "references": [{
+                    "audio": reference_audio_bytes,
+                    "text": reference_text
+                }],
+                "format": "wav",
+                "normalize": True,
+                "latency": "normal",
+                "chunk_length": 200
+            }
             
-            # Validate the generated audio
+            # Use direct HTTP request with proper model header
+            with httpx.Client(timeout=300.0) as client:
+                response = client.post(
+                    "https://api.fish.audio/v1/tts",
+                    content=ormsgpack.packb(request_data),
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/msgpack",
+                        "model": "s1"
+                    }
+                )
+                
+                if response.status_code == 402:
+                    logger.error("Fish Audio API: 402 Payment Required")
+                    return {"success": False, "error": "Payment Required: Check Fish Audio account credits"}
+                elif response.status_code != 200:
+                    logger.error(f"Fish API error: {response.status_code}")
+                    return {"success": False, "error": f"API error: {response.status_code}"}
+                
+                # Write response content to file
+                with open(output_path, "wb") as f:
+                    f.write(response.content)
+                
+                logger.info(f"Fish API response: {len(response.content)} bytes")
+            
+            # Validate and repair audio if needed
             try:
                 data, sample_rate = sf.read(output_path)
-                if len(data) == 0:
-                    logger.warning(f"Empty audio file preserved at: {output_path}")
-                    return {"success": False, "error": "Fish API returned empty audio", "debug_path": output_path}
                 
-                if np.all(data == 0):
-                    logger.warning(f"Silent audio file preserved at: {output_path}")
-                    return {"success": False, "error": "Audio file is silent", "debug_path": output_path}
+                if len(data) == 0:
+                    # Repair corrupted WAV header from Fish Audio API
+                    with open(output_path, "rb") as f:
+                        raw_bytes = f.read()
+                    
+                    data_pos = raw_bytes.find(b'data')
+                    if data_pos > 0:
+                        actual_data_size = len(raw_bytes) - data_pos - 8
+                        
+                        # Fix WAV header with correct sizes
+                        fixed_bytes = bytearray(raw_bytes)
+                        fixed_bytes[4:8] = (len(raw_bytes) - 8).to_bytes(4, 'little')
+                        fixed_bytes[data_pos+4:data_pos+8] = actual_data_size.to_bytes(4, 'little')
+                        
+                        # Save fixed file
+                        fixed_path = output_path.replace('.wav', '_fixed.wav')
+                        with open(fixed_path, 'wb') as f:
+                            f.write(fixed_bytes)
+                        
+                        # Validate fixed file
+                        fixed_data, fixed_sr = sf.read(fixed_path)
+                        if len(fixed_data) > 0:
+                            logger.info(f"✅ Fish API success: {len(fixed_data)} samples at {fixed_sr}Hz")
+                            return {"success": True, "output_path": fixed_path}
+                    
+                    return {"success": False, "error": "Fish API returned empty audio"}
                 
                 logger.info(f"✅ Fish API success: {len(data)} samples at {sample_rate}Hz")
                 return {"success": True, "output_path": output_path}
                 
             except Exception as e:
-                logger.error(f"Invalid audio file: {e}")
-                return {"success": False, "error": f"Invalid audio: {e}", "debug_path": output_path}
+                logger.error(f"Audio validation failed: {e}")
+                return {"success": False, "error": f"Invalid audio: {e}"}
                 
         except Exception as e:
             logger.error(f"Fish Audio API failed: {e}")
             return {"success": False, "error": str(e)}
-    
-    def _preprocess_reference_audio(self, reference_audio_bytes: bytes) -> bytes:
-        """Simple preprocessing to ensure compatibility"""
-        try:
-            # Keep it simple - just ensure mono and reasonable length
-            buffer = io.BytesIO(reference_audio_bytes)
-            data, sample_rate = sf.read(buffer)
-            
-            # Convert to mono if stereo
-            if len(data.shape) > 1:
-                data = data[:, 0]
-            
-            # Limit to 10 seconds max
-            max_samples = sample_rate * 10
-            if len(data) > max_samples:
-                data = data[:max_samples]
-            
-            # Return as-is (let Fish API handle the rest)
-            output_buffer = io.BytesIO()
-            sf.write(output_buffer, data, sample_rate, format='WAV')
-            return output_buffer.getvalue()
-            
-        except Exception as e:
-            logger.warning(f"Audio preprocessing failed, using original: {e}")
-            return reference_audio_bytes
