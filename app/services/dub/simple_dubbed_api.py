@@ -383,9 +383,9 @@ class SimpleDubbedAPI:
                         )
                         # If premium API succeeds, skip local model completely
                         if result.get("success"):
-                            pass  # Continue with premium result
+                            logger.info(f"✅ Fish API success for {segment_id}")
                         else:
-                            # Premium failed, use local model
+                            logger.warning(f"❌ Fish API failed for {segment_id}: {result.get('error', 'Unknown error')}, falling back to local model")
                             result = self.fish_speech.generate_with_reference_audio(
                                 text=chunk,
                                 reference_audio_bytes=reference_audio_bytes,
