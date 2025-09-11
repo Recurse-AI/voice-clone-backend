@@ -15,8 +15,8 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-from app.services.dub.manifest_service import load_manifest as _load_manifest_json, ensure_job_dir as _ensure_job_dir
-from app.services.dub.manifest_service import write_json as _write_temp_json
+from app.services.dub.manifest_manager import manifest_manager
+from app.services.dub.manifest_service import ensure_job_dir as _ensure_job_dir, write_json as _write_temp_json
 
 @router.get("/video-dub/{job_id}/segments", response_model=SegmentsResponse)
 async def get_segments(job_id: str, current_user = Depends(get_video_dub_user)):
@@ -36,13 +36,15 @@ async def get_segments(job_id: str, current_user = Depends(get_video_dub_user)):
         )
     
     try:
-        manifest = _load_manifest_json(manifest_url)
+        manifest = manifest_manager.load_manifest(manifest_url)
+        normalized_manifest = manifest_manager._normalize_manifest(manifest)
+        
         return SegmentsResponse(
             job_id=job_id, 
-            segments=manifest.get("segments", []), 
+            segments=normalized_manifest.get("segments", []), 
             manifestUrl=manifest_url, 
-            version=manifest.get("version"),
-            target_language=manifest.get("target_language")
+            version=normalized_manifest.get("version"),
+            target_language=normalized_manifest.get("target_language")
         )
     except Exception as e:
         logger.error(f"Failed to load manifest from {manifest_url}: {str(e)}")
@@ -57,7 +59,7 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
     manifest_key = job.segments_manifest_key or (job.details or {}).get("segments_manifest_key")
     if not manifest_url:
         raise HTTPException(status_code=400, detail="No manifest available for this job")
-    manifest = _load_manifest_json(manifest_url)
+    manifest = manifest_manager.load_manifest(manifest_url)
     id_to_edit = {e.id: e for e in request_body.segments}
     for seg in manifest.get("segments", []):
         if seg["id"] in id_to_edit:
@@ -98,12 +100,15 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
         "edited_segments_version": (job.edited_segments_version or 0) + 1,
     })
     await dub_job_service.update_details(job_id, current_details)
+    
+    normalized_manifest = manifest_manager._normalize_manifest(manifest)
+    
     return SegmentsResponse(
         job_id=job_id, 
-        segments=manifest.get("segments", []), 
+        segments=normalized_manifest.get("segments", []), 
         manifestUrl=manifest_url_out, 
-        version=manifest.get("version"),
-        target_language=manifest.get("target_language")
+        version=normalized_manifest.get("version"),
+        target_language=normalized_manifest.get("target_language")
     )
 
 @router.post("/video-dub/{job_id}/segments/{segment_id}/regenerate", response_model=RegenerateSegmentResponse)
@@ -114,7 +119,7 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     manifest_url = job.segments_manifest_url or (job.details or {}).get("segments_manifest_url")
     if not manifest_url:
         raise HTTPException(status_code=400, detail="No manifest available for this job")
-    manifest = _load_manifest_json(manifest_url)
+    manifest = manifest_manager.load_manifest(manifest_url)
     seg = next((s for s in manifest.get("segments", []) if s.get("id") == segment_id), None)
     if not seg:
         raise HTTPException(status_code=404, detail="Segment not found")

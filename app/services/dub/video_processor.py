@@ -24,29 +24,11 @@ class VideoProcessor:
         self.words_per_subtitle = 3
 
 
-    def _load_subtitles(self, segments_dir: str) -> List[Dict[str, Any]]:
-        """Load subtitle information from segment_*_info.json files.
-
-        Returns a list of dicts with keys: start, end, text (seconds).
-        If no JSON files found, returns an empty list so caller can fallback.
-        """
+    def _load_subtitles_from_manifest(self, manifest_path: str) -> List[Dict[str, Any]]:
         try:
-            dir_path = Path(segments_dir)
-            if not dir_path.exists():
-                return []
-            subtitle_entries: List[Dict[str, Any]] = []
-            for info_file in sorted(dir_path.glob("segment_*_info.json")):
-                try:
-                    with open(info_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    start_sec = data.get("start", 0) / 1000.0
-                    end_sec = data.get("end", 0) / 1000.0
-                    text = data.get("dubbed_text") or data.get("original_text")
-                    if text:
-                        subtitle_entries.append({"start": start_sec, "end": end_sec, "text": text})
-                except Exception:
-                    continue
-            return subtitle_entries
+            from app.services.dub.manifest_manager import manifest_manager
+            manifest = manifest_manager.load_manifest(manifest_path)
+            return manifest_manager.get_segments_for_subtitles(manifest)
         except Exception:
             return []
 
@@ -160,9 +142,8 @@ class VideoProcessor:
 
     # Removed cleanup_temp_files - cleanup only happens after successful upload
 
-    def create_video_with_subtitles(self, video_path: str, audio_path: str, segments_dir: str, audio_id: str, instruments_path: Optional[str] = None) -> Dict[str, Any]:
+    def create_video_with_subtitles(self, video_path: str, audio_path: str, manifest_path: str, audio_id: str, instruments_path: Optional[str] = None) -> Dict[str, Any]:
         try:
-            # Validate input files early
             if not video_path or not os.path.exists(video_path):
                 return {"success": False, "error": f"Invalid video file: {video_path}"}
             if not audio_path or not os.path.exists(audio_path):
@@ -171,18 +152,13 @@ class VideoProcessor:
                 final_audio_path = self._create_final_audio(audio_path, instruments_path, audio_id)
             else:
                 final_audio_path = Path(audio_path)
-            # If an SRT file already exists in segments_dir (generated upstream), use it directly
-            pre_existing_srt = Path(segments_dir) / f"subtitles_{audio_id}.srt"
-            if pre_existing_srt.exists():
-                subtitle_path = pre_existing_srt
-                subtitle_data = None  # Unknown, we won't count lines
-            else:
-                subtitle_data = self._load_subtitles(segments_dir)
-                if not subtitle_data:
-                    # No subtitle info → fallback to simple audio replace
-                    return self.create_video_with_audio(video_path, str(final_audio_path), audio_id, instruments_path, segments_dir)
-                subtitle_path = self.temp_dir / f"subtitles_{audio_id}.srt"
-                self.create_srt_file(subtitle_data, subtitle_path)
+            
+            subtitle_data = self._load_subtitles_from_manifest(manifest_path)
+            if not subtitle_data:
+                return self.create_video_with_audio(video_path, str(final_audio_path), audio_id, instruments_path)
+            
+            subtitle_path = self.temp_dir / f"subtitles_{audio_id}.srt"
+            self.create_srt_file(subtitle_data, subtitle_path)
             output_path = self.temp_dir / f"video_with_subtitles_{audio_id}.mp4"
             result = self._create_video_ffmpeg(video_path, str(final_audio_path), subtitle_path, output_path)
             if result["success"]:

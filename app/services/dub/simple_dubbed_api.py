@@ -505,13 +505,19 @@ class SimpleDubbedAPI:
                     logger.error(f"SRT parsing failed: {transcription_result.get('error')}")
                     raise Exception(transcription_result.get("error", "SRT parsing failed"))
                 
-                # Convert to raw_sentences format
+                # Convert to raw_sentences format with proper data types
                 raw_sentences = []
                 for i, sentence in enumerate(transcription_result["sentences"]):
+                    # Convert seconds (float) to milliseconds (int) for consistency with WhisperX
+                    start_ms = int(sentence["start"] * 1000)
+                    end_ms = int(sentence["end"] * 1000)
+                    duration_ms = end_ms - start_ms
+                    
                     raw_sentences.append({
                         "text": sentence["text"],
-                        "start": sentence["start"],
-                        "end": sentence["end"],
+                        "start": start_ms,
+                        "end": end_ms,
+                        "duration_ms": duration_ms,
                         "id": sentence["id"]
                     })
                 
@@ -524,7 +530,7 @@ class SimpleDubbedAPI:
                 self._update_phase_progress(job_id, "transcription", 0.0, "Starting audio transcription")
                 logger.info("Starting fresh transcription (no segmentation)")
 
-                # Get vocal audio path
+                # Get vocal audio path (downloaded files use current job_id)
                 vocal_file_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
 
                 if not os.path.exists(vocal_file_path):
@@ -557,13 +563,14 @@ class SimpleDubbedAPI:
         
         return raw_sentences, transcript_id
 
-    def _segment_vocal_audio_before_cloning(self, job_id: str, raw_sentences: list, process_temp_dir: str) -> list:
+    def _segment_vocal_audio_before_cloning(self, job_id: str, raw_sentences: list, process_temp_dir: str, 
+                                           manifest_override: Optional[Dict[str, Any]] = None) -> list:
         """Segment vocal audio just before voice cloning and return enhanced segments with output_path"""
         try:
             from .audio_utils import AudioUtils
             audio_utils = AudioUtils()
 
-            # Get vocal audio path
+            # Get vocal audio path (downloaded files use current job_id)
             vocal_file_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
 
             if not os.path.exists(vocal_file_path):
@@ -646,6 +653,7 @@ class SimpleDubbedAPI:
         if not manifest_override:
             return
 
+        # For redub, download parent's files but save with current redub job ID
         files_to_check = [
             ("vocal_audio_url", f"vocal_{job_id}.wav"),
             ("instrument_audio_url", f"instrument_{job_id}.wav")
@@ -660,6 +668,7 @@ class SimpleDubbedAPI:
                     resp.raise_for_status()
                     with open(file_path, 'wb') as fw:
                         fw.write(resp.content)
+                    logger.info(f"✅ Downloaded {filename} from parent job for redub {job_id}")
                 except Exception as e:
                     logger.warning(f"Failed to download {filename} for job {job_id}: {e}")
 
@@ -709,10 +718,10 @@ class SimpleDubbedAPI:
                 cloned_audio_path = result.get("path") if result else None
                 cloned_duration_ms = result.get("duration_ms", data["end_ms"] - data["start_ms"]) if result else data["end_ms"] - data["start_ms"]
                 
-                segment_json = self._create_segment_info(
+                segment_json = self._create_segment_data(
                     data["seg_id"], data["global_idx"], data["start_ms"], cloned_duration_ms,
                     data["original_text"], data["dubbed_text"], data["original_audio_path"],
-                    cloned_audio_path, job_id, process_temp_dir
+                    cloned_audio_path, job_id
                 )
                 dubbed_segments.append(segment_json)
                 
@@ -729,10 +738,10 @@ class SimpleDubbedAPI:
         else:
             # Review mode - no cloning
             for data in segments_data:
-                segment_json = self._create_segment_info(
+                segment_json = self._create_segment_data(
                     data["seg_id"], data["global_idx"], data["start_ms"], data["end_ms"] - data["start_ms"],
                     data["original_text"], data["dubbed_text"], data["original_audio_path"],
-                    None, job_id, process_temp_dir
+                    None, job_id
                 )
                 dubbed_segments.append(segment_json)
         
@@ -765,23 +774,24 @@ class SimpleDubbedAPI:
         enhanced_sentences = raw_sentences
         if not review_mode:
             self._update_phase_progress(job_id, "voice_cloning", 0.0, "Segmenting vocal audio for voice cloning")
-            enhanced_sentences = self._segment_vocal_audio_before_cloning(job_id, raw_sentences, process_temp_dir)
+            enhanced_sentences = self._segment_vocal_audio_before_cloning(job_id, raw_sentences, process_temp_dir, manifest_override)
             self._update_phase_progress(job_id, "voice_cloning", 0.1, "Vocal audio segmentation completed")
 
         return self._process_voice_cloning(job_id, enhanced_sentences, dubbed_texts, edited_map, review_mode, process_temp_dir)
     
-    def _create_segment_info(self, seg_id: str, segment_index: int, start_ms: int, cloned_duration_ms: int,
+    def _create_segment_data(self, seg_id: str, segment_index: int, start_ms: int, cloned_duration_ms: int,
                            original_text: str, dubbed_text: str, original_audio_path: str, 
-                           cloned_audio_path: str, job_id: str, process_temp_dir: str) -> dict:
-        info_filename = f"segment_{job_id}_{segment_index:03d}_info.json"
-        info_path = os.path.join(process_temp_dir, info_filename).replace('\\', '/')
+                           cloned_audio_path: str, job_id: str) -> dict:
+        start_ms = int(start_ms) if isinstance(start_ms, (float, int)) else start_ms
+        end_ms = int(start_ms + cloned_duration_ms)
+        duration_ms = int(cloned_duration_ms) if isinstance(cloned_duration_ms, (float, int)) else cloned_duration_ms
         
-        segment_json = {
+        return {
             "id": seg_id,
             "segment_index": segment_index + 1,
             "start": start_ms,
-            "end": start_ms + cloned_duration_ms,
-            "duration_ms": cloned_duration_ms,
+            "end": end_ms,
+            "duration_ms": duration_ms,
             "original_text": original_text,
             "dubbed_text": dubbed_text,
             "original_audio_file": f"segment_{segment_index:03d}.wav" if original_audio_path else None,
@@ -790,15 +800,6 @@ class SimpleDubbedAPI:
             "original_audio_path": original_audio_path,
             "cloned_audio_path": cloned_audio_path,
         }
-        
-        try:
-            with open(info_path, 'w', encoding='utf-8') as f:
-                json.dump(segment_json, f, ensure_ascii=False, indent=2)
-            logger.info(f"Saved segment info: {info_filename}")
-        except Exception as e:
-            logger.error(f"Failed to save JSON for {seg_id}: {str(e)}")
-        
-        return segment_json
 
 
 
@@ -938,42 +939,51 @@ class SimpleDubbedAPI:
 
     def _reconstruct_final_audio(self, segments: list, original_audio_path: str,
                                job_id: str = None, process_temp_dir: str = None) -> str:
-        """Reconstruct final audio with MP3 optimization."""
+        """Reconstruct final audio with optimized compression for voice content."""
         if not segments:
             return None
 
         try:
             import soundfile as sf
 
-            # Get sample rate from original audio
+            # Optimize sample rate for voice content (22kHz is sufficient for voice)
+            target_sample_rate = 22050
+            
+            # Get original sample rate for conversion
             if original_audio_path and os.path.exists(original_audio_path):
-                _, sample_rate = sf.read(original_audio_path, frames=1)
+                _, original_sample_rate = sf.read(original_audio_path, frames=1)
             else:
-                sample_rate = 44100
+                original_sample_rate = 44100
 
             # Calculate exact duration from segments
             max_end_ms = max(s.get("end", 0) for s in segments)
-            duration_samples = int((max_end_ms / 1000.0) * sample_rate)
+            duration_samples = int((max_end_ms / 1000.0) * target_sample_rate)
             final_audio = np.zeros(duration_samples, dtype=np.float32)
 
-            # Place segments
+            # Place segments with optimized processing
             for segment in segments:
                 try:
                     cloned_path = segment.get("cloned_audio_path")
                     if not cloned_path or not os.path.exists(cloned_path):
                         continue
 
-                    cloned_audio, _ = sf.read(cloned_path)
+                    cloned_audio, segment_sample_rate = sf.read(cloned_path)
                     if len(cloned_audio.shape) > 1:
                         cloned_audio = np.mean(cloned_audio, axis=1)
+
+                    # Resample if needed for optimization
+                    if segment_sample_rate != target_sample_rate:
+                        from scipy import signal
+                        cloned_audio = signal.resample(cloned_audio, 
+                                                     int(len(cloned_audio) * target_sample_rate / segment_sample_rate))
 
                     start_ms = segment.get("start", 0)
                     end_ms = segment.get("end", 0)
                     if start_ms < 0 or end_ms <= start_ms:
                         continue
 
-                    start_sample = int((start_ms / 1000.0) * sample_rate)
-                    expected_samples = int(((end_ms - start_ms) / 1000.0) * sample_rate)
+                    start_sample = int((start_ms / 1000.0) * target_sample_rate)
+                    expected_samples = int(((end_ms - start_ms) / 1000.0) * target_sample_rate)
 
                     # Fit audio duration
                     if len(cloned_audio) > expected_samples:
@@ -982,10 +992,8 @@ class SimpleDubbedAPI:
                         padding = expected_samples - len(cloned_audio)
                         cloned_audio = np.pad(cloned_audio, (0, padding), mode="constant")
 
-                    # Normalize volume
-                    max_val = np.max(np.abs(cloned_audio))
-                    if max_val > 1e-10:
-                        cloned_audio = cloned_audio / max_val
+                    # Apply voice optimization (dynamic range compression)
+                    cloned_audio = self._optimize_voice_audio(cloned_audio)
 
                     # Place in final audio
                     end_sample = start_sample + len(cloned_audio)
@@ -995,31 +1003,86 @@ class SimpleDubbedAPI:
                 except Exception:
                     continue
 
-            # Save and compress
+            # Apply final normalization and compression
+            final_audio = self._apply_final_audio_processing(final_audio)
+            
+            # Save optimized audio
             final_path = os.path.join(process_temp_dir, f"final_{job_id}.wav")
-            sf.write(final_path, final_audio, sample_rate)
+            sf.write(final_path, final_audio, target_sample_rate)
 
-            # MP3 compression
+            # Optimized MP3 compression for voice content
             import subprocess
             from app.utils.ffmpeg_helper import get_ffmpeg_path
 
             ffmpeg_path = get_ffmpeg_path()
             if ffmpeg_path:
                 temp_mp3 = final_path.replace('.wav', '_temp.mp3')
-                cmd = [ffmpeg_path, '-y', '-i', final_path, '-acodec', 'libmp3lame', '-ab', '192k', temp_mp3]
+                # Voice-optimized settings: lower bitrate, voice-tuned encoding
+                cmd = [
+                    ffmpeg_path, '-y', '-i', final_path,
+                    '-acodec', 'libmp3lame',
+                    '-ab', '96k',  # Reduced from 192k - sufficient for voice
+                    '-ar', '22050',  # Match our optimized sample rate
+                    '-ac', '1',  # Mono for voice content
+                    '-q:a', '4',  # VBR quality setting for voice
+                    temp_mp3
+                ]
 
                 if subprocess.run(cmd, capture_output=True, timeout=30).returncode == 0:
                     import shutil
                     shutil.move(temp_mp3, final_path)
+                    logger.info(f"✅ Audio optimized: {final_path} (22kHz, 96kbps mono)")
                 elif os.path.exists(temp_mp3):
                     os.remove(temp_mp3)
 
-            logger.info(f"Final audio: {final_path} ({len(final_audio)/sample_rate:.2f}s)")
+            logger.info(f"Final audio: {final_path} ({len(final_audio)/target_sample_rate:.2f}s)")
             return final_path
 
         except Exception as e:
             logger.error(f"Reconstruction failed: {e}")
             return None
+
+    def _optimize_voice_audio(self, audio: np.ndarray) -> np.ndarray:
+        """Apply voice-specific optimizations to reduce file size while maintaining quality."""
+        try:
+            # Simple dynamic range compression for voice
+            max_val = np.max(np.abs(audio))
+            if max_val > 1e-10:
+                # Normalize
+                audio = audio / max_val
+                
+                # Apply mild compression to reduce dynamic range
+                threshold = 0.6
+                ratio = 0.3
+                compressed = np.where(
+                    np.abs(audio) > threshold,
+                    np.sign(audio) * (threshold + (np.abs(audio) - threshold) * ratio),
+                    audio
+                )
+                
+                # Apply final gain to reach good levels
+                compressed = compressed * 0.8
+                return compressed.astype(np.float32)
+            
+            return audio.astype(np.float32)
+        except Exception:
+            return audio.astype(np.float32)
+    
+    def _apply_final_audio_processing(self, audio: np.ndarray) -> np.ndarray:
+        """Apply final processing to the complete audio for optimal compression."""
+        try:
+            # Remove DC offset
+            audio = audio - np.mean(audio)
+            
+            # Final normalization to -3dB to prevent clipping
+            max_val = np.max(np.abs(audio))
+            if max_val > 1e-10:
+                target_level = 0.7  # -3dB headroom
+                audio = audio * (target_level / max_val)
+            
+            return audio.astype(np.float32)
+        except Exception:
+            return audio.astype(np.float32)
 
 
 def get_simple_dubbed_api() -> SimpleDubbedAPI:

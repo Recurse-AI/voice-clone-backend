@@ -21,42 +21,16 @@ def write_json(content: Dict[str, Any], path: str) -> None:
         json.dump(content, f, ensure_ascii=False, indent=2)
 
 
-def load_manifest(manifest_url: str) -> Dict[str, Any]:
-    import requests
-    resp = requests.get(manifest_url, timeout=60)
-    resp.raise_for_status()
-    return resp.json()
-
-
 def build_manifest(job_id: str, transcript_id: Optional[str], target_language: str, dubbed_segments: list,
                   vocal_audio_url: Optional[str] = None, instrument_audio_url: Optional[str] = None) -> Dict[str, Any]:
-    return {
-        "job_id": job_id,
-        "transcript_id": transcript_id,
-        "target_language": target_language,
-        "version": 1,
-        "vocal_audio_url": vocal_audio_url,
-        "instrument_audio_url": instrument_audio_url,
-        "segments": [
-            {
-                "id": seg["id"],
-                "segment_index": seg["segment_index"],
-                "start": seg["start"],
-                "end": seg["end"],
-                "duration_ms": seg["duration_ms"],
-                "original_text": seg["original_text"],
-                "dubbed_text": seg["dubbed_text"],
-                "original_audio_file": seg.get("original_audio_file"),
-            } for seg in dubbed_segments
-        ]
-    }
+    from app.services.dub.manifest_manager import manifest_manager
+    return manifest_manager.create_manifest(job_id, transcript_id, target_language, dubbed_segments, 
+                                           vocal_audio_url, instrument_audio_url)
 
 
 def save_manifest_to_dir(manifest: Dict[str, Any], process_temp_dir: str, job_id: str) -> str:
-    manifest_filename = f"manifest_{job_id}.json"
-    manifest_path = os.path.join(process_temp_dir, manifest_filename).replace('\\', '/')
-    write_json(manifest, manifest_path)
-    return manifest_path
+    from app.services.dub.manifest_manager import manifest_manager
+    return manifest_manager.save_manifest(manifest, job_id, process_temp_dir)
 
 
 def upload_process_dir_to_r2(job_id: str, process_temp_dir: str, r2_service: Optional["R2Service"] = None,

@@ -243,7 +243,8 @@ async def get_video_dub_status(job_id: str):
 ## Removed per requirement: clients should use details.files only
 
 
-from app.services.dub.manifest_service import load_manifest as _load_manifest_json, ensure_job_dir as _ensure_job_dir
+from app.services.dub.manifest_manager import manifest_manager
+from app.services.dub.manifest_service import ensure_job_dir as _ensure_job_dir
 
 def _resume_approved_job(job_id: str, manifest: dict, target_language: str, source_video_language: str, user_id: str):
     try:
@@ -372,7 +373,9 @@ async def approve_and_resume(job_id: str, _: dict = {}, current_user = Depends(g
     manifest_url = job.segments_manifest_url or (job.details or {}).get("segments_manifest_url")
     if not manifest_url:
         raise HTTPException(status_code=400, detail="No manifest available for this job")
-    manifest = _load_manifest_json(manifest_url)
+
+    manifest = manifest_manager.load_manifest(manifest_url)
+    manifest = manifest_manager._normalize_manifest(manifest)
     
     # Immediately update status to reviewing after approve
     status_service.update_status(job_id, "dub", JobStatus.REVIEWING, 80, {
@@ -416,10 +419,11 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
         raise HTTPException(status_code=400, detail=validation_result["message"])
     
     manifest_url = validation_result["manifest_url"]
-    
+
     # Load and validate manifest
     try:
-        manifest = _load_manifest_json(manifest_url)
+        manifest = manifest_manager.load_manifest(manifest_url)
+        manifest = manifest_manager._normalize_manifest(manifest)
         manifest_validation = job_utils.validate_manifest(manifest)
         if not manifest_validation["valid"]:
             raise HTTPException(status_code=400, detail=manifest_validation["message"])
