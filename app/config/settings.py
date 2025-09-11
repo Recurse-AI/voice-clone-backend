@@ -125,7 +125,7 @@ class Settings(BaseSettings):
 
 
     # FFmpeg Configuration
-    FFMPEG_USE_GPU: bool = bool(int(os.getenv('FFMPEG_USE_GPU', '0')))  # 1 to enable GPU (NVENC)
+    FFMPEG_USE_GPU: bool = bool(int(os.getenv('FFMPEG_USE_GPU', '1')))  # 1 to enable GPU (NVENC)
     
     # Redis Configuration
     REDIS_HOST: str = os.getenv("REDIS_HOST", "127.0.0.1")

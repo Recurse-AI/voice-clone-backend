@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any
 from app.services.simple_status_service import status_service, JobStatus
 from app.schemas import TimelineAudioSegment, VideoProcessingOptions
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ def process_video_task(task_data: dict):
     job_id = task_data.get("job_id")
     
     try:
-        logger.info(f"🎬 Starting video processing job {job_id}")
+        logger.info(f"🎬 Starting video processing job {job_id} - GPU: {settings.FFMPEG_USE_GPU}")
         
         # Update status to processing
         status_service.update_status(
@@ -210,6 +211,8 @@ def _reconstruct_timeline_audio(segments: List[TimelineAudioSegment], temp_path:
         output_path = temp_path / f"timeline_audio_{job_id}.mp3"
         
         cmd = ["ffmpeg", "-y"]
+        if settings.FFMPEG_USE_GPU:
+            cmd.extend(["-hwaccel", "cuda"])
         cmd.extend(["-f", "lavfi", "-i", f"anullsrc=duration={total_duration/1000}:sample_rate=44100"])
         
         input_count = 1
@@ -249,18 +252,26 @@ def _mix_audio_files(dubbed_path: Optional[Path], instrument_path: Optional[Path
         output_path = temp_path / f"mixed_audio_{job_id}.mp3"
         
         if dubbed_path and instrument_path:
-            cmd = [
-                "ffmpeg", "-y",
+            cmd = ["ffmpeg", "-y"]
+            if settings.FFMPEG_USE_GPU:
+                cmd.extend(["-hwaccel", "cuda"])
+            cmd.extend([
                 "-i", str(dubbed_path),
                 "-i", str(instrument_path),
                 "-filter_complex", f"[0:a]volume=1.0[dub];[1:a]volume={instrument_volume}[inst];[dub][inst]amix=inputs=2:duration=longest[out]",
                 "-map", "[out]",
                 str(output_path)
-            ]
+            ])
         elif dubbed_path:
-            cmd = ["ffmpeg", "-y", "-i", str(dubbed_path), "-filter:a", "volume=1.0", "-c:a", "mp3", str(output_path)]
+            cmd = ["ffmpeg", "-y"]
+            if settings.FFMPEG_USE_GPU:
+                cmd.extend(["-hwaccel", "cuda"])
+            cmd.extend(["-i", str(dubbed_path), "-filter:a", "volume=1.0", "-c:a", "mp3", str(output_path)])
         elif instrument_path:
-            cmd = ["ffmpeg", "-y", "-i", str(instrument_path), "-filter:a", f"volume={instrument_volume}", "-c:a", "mp3", str(output_path)]
+            cmd = ["ffmpeg", "-y"]
+            if settings.FFMPEG_USE_GPU:
+                cmd.extend(["-hwaccel", "cuda"])
+            cmd.extend(["-i", str(instrument_path), "-filter:a", f"volume={instrument_volume}", "-c:a", "mp3", str(output_path)])
         else:
             return None
         
@@ -278,7 +289,14 @@ def _process_video_with_audio(video_path: Path, audio_path: Optional[Path], subt
         video_ext = video_path.suffix
         output_path = temp_path / f"final_video_{job_id}{video_ext}"
         
-        cmd = ["ffmpeg", "-y", "-i", str(video_path)]
+        # GPU acceleration for video encoding
+        video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
+        preset = 'fast' if settings.FFMPEG_USE_GPU else 'medium'
+        
+        cmd = ["ffmpeg", "-y"]
+        if settings.FFMPEG_USE_GPU:
+            cmd.extend(["-hwaccel", "cuda"])
+        cmd.extend(["-i", str(video_path)])
         
         if audio_path:
             cmd.extend(["-i", str(audio_path)])
@@ -303,12 +321,14 @@ def _process_video_with_audio(video_path: Path, audio_path: Optional[Path], subt
             cmd.extend(["-c:a", "copy"])
         
         if options.quality == "high":
-            cmd.extend(["-c:v", "libx264", "-crf", "20", "-preset", "medium"])
+            cmd.extend(["-c:v", video_codec, "-crf", "20", "-preset", preset])
         else:
-            cmd.extend(["-c:v", "libx264", "-crf", "23", "-preset", "fast"])
+            cmd.extend(["-c:v", video_codec, "-crf", "23", "-preset", preset])
         
         if options.format == "webm":
-            cmd.extend(["-f", "webm", "-c:v", "libvpx-vp9"])
+            # For WebM, use VP9 codec
+            webm_codec = "libvpx-vp9" if not settings.FFMPEG_USE_GPU else "libvpx-vp9"
+            cmd.extend(["-f", "webm", "-c:v", webm_codec])
         elif options.format == "mov":
             cmd.extend(["-f", "mov"])
         
@@ -327,7 +347,10 @@ def _convert_audio_format(input_path: Path, output_path: Path, audio_format: str
     codec_map = {"mp3": "mp3", "wav": "pcm_s16le", "aac": "aac"}
     codec = codec_map.get(audio_format.lower(), "mp3")
     
-    cmd = ["ffmpeg", "-y", "-i", str(input_path), "-c:a", codec, str(output_path)]
+    cmd = ["ffmpeg", "-y"]
+    if settings.FFMPEG_USE_GPU:
+        cmd.extend(["-hwaccel", "cuda"])
+    cmd.extend(["-i", str(input_path), "-c:a", codec, str(output_path)])
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
         import shutil
@@ -336,7 +359,10 @@ def _convert_audio_format(input_path: Path, output_path: Path, audio_format: str
 
 def _get_media_duration(file_path: Path) -> Optional[float]:
     try:
-        cmd = ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", str(file_path)]
+        cmd = ["ffprobe", "-v", "quiet"]
+        if settings.FFMPEG_USE_GPU:
+            cmd.extend(["-hwaccel", "cuda"])
+        cmd.extend(["-show_entries", "format=duration", "-of", "csv=p=0", str(file_path)])
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         if result.returncode == 0 and result.stdout.strip():
             return float(result.stdout.strip())

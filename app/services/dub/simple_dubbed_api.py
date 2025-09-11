@@ -428,23 +428,20 @@ class SimpleDubbedAPI:
                 chunk_time = time.time() - chunk_start
                 logger.info(f"Chunk generation took {chunk_time:.2f}s for text: {chunk[:30]}...")
 
-                if result.get("success"):
-                    import soundfile as sf
-                    import io
-
-                    # Use service worker output directly
-                    if "output_path" in result and result["output_path"]:
+                if result.get("success") and "output_path" in result:
+                    try:
                         audio, sample_rate = sf.read(result["output_path"])
-                        # Clean up temp file immediately
+                        if len(audio.shape) > 1:
+                            audio = audio[:, 0]
+                        audio_chunks.append(audio)
+                        sample_rate_out = sample_rate
                         os.remove(result["output_path"])
-
-                    if len(audio.shape) > 1:
-                        audio = audio[:, 0]
-                    audio_chunks.append(audio)
-                    sample_rate_out = sample_rate
+                    except Exception as e:
+                        logger.warning(f"Skipping segment {segment_id}: {e}")
+                        if os.path.exists(result["output_path"]):
+                            os.remove(result["output_path"])
             if audio_chunks:
                 final_audio = np.concatenate(audio_chunks)
-                import soundfile as sf
                 buffer = io.BytesIO()
                 sf.write(buffer, final_audio, sample_rate_out, format='WAV')
                 with open(cloned_path, "wb") as f:

@@ -7,7 +7,7 @@ echo "🚀 Setting up Voice Cloning API Environment..."
 
 # Environment variables
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-export FFMPEG_USE_GPU=0
+export FFMPEG_USE_GPU=1
 export CUDA_LAUNCH_BLOCKING=0
 export TORCH_BACKENDS_CUDNN_DETERMINISTIC=0
 export DEBIAN_FRONTEND=noninteractive

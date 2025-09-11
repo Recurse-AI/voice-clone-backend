@@ -1,7 +1,11 @@
 import logging
+import os
+import uuid
+import time
 from typing import Dict, Any
 import httpx
 import ormsgpack
+import soundfile as sf
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -36,10 +40,8 @@ class FishAudioAPIService:
                 )
                 
                 if response.status_code == 200:
-                    import os
-                    import uuid
-                    import time
-                    from app.config.settings import settings
+                    if len(response.content) < 1000:  # Basic check for minimal audio content
+                        return {"success": False, "error": f"Invalid audio response: {len(response.content)} bytes"}
                     
                     output_dir = os.path.join(settings.TEMP_DIR, job_id or "temp")
                     os.makedirs(output_dir, exist_ok=True)
@@ -50,18 +52,19 @@ class FishAudioAPIService:
                     with open(output_path, "wb") as f:
                         f.write(response.content)
                     
-                    return {"success": True, "output_path": output_path}
-                else:
-                    error_msg = f"API returned status {response.status_code}"
                     try:
-                        error_details = response.text
-                        if error_details:
-                            error_msg += f": {error_details}"
-                    except:
-                        pass
-                    logger.error(f"Fish Audio API error: {error_msg}")
-                    return {"success": False, "error": error_msg}
+                        data, sample_rate = sf.read(output_path)
+                        if len(data) == 0:
+                            os.remove(output_path)
+                            return {"success": False, "error": "Empty audio data"}
+                        return {"success": True, "output_path": output_path}
+                    except Exception as e:
+                        if os.path.exists(output_path):
+                            os.remove(output_path)
+                        return {"success": False, "error": f"Invalid audio: {e}"}
+                else:
+                    return {"success": False, "error": f"API error: {response.status_code}"}
                     
         except Exception as e:
-            logger.error(f"Fish Audio API request failed: {e}")
+            logger.error(f"Fish Audio API failed: {e}")
             return {"success": False, "error": str(e)}

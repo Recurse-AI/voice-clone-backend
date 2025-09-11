@@ -44,11 +44,13 @@ class VideoProcessor:
             
             ffmpeg_cmd = self._get_ffmpeg_path()
 
-            cmd = [
-                ffmpeg_cmd, '-y',
+            cmd = [ffmpeg_cmd, '-y']
+            if settings.FFMPEG_USE_GPU:
+                cmd.extend(['-hwaccel', 'cuda'])
+            cmd.extend([
                 '-i', video_path,
                 '-i', str(audio_path),
-            ]
+            ])
             
             if subtitle_path and Path(subtitle_path).exists():
                 # Proper Windows path handling for FFmpeg
