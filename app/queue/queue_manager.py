@@ -275,9 +275,10 @@ class QueueManager:
             return False
 
     def enqueue_with_load_balance(self, request_data: dict, service_type: str) -> bool:
-        """Smart load balancing: GPU first, CPU fallback"""
+        """Smart load balancing: Check active workers, parallel CPU/GPU processing"""
         try:
             from app.config.pipeline_settings import pipeline_settings
+            from rq import Queue, Worker
 
             if service_type == "whisperx":
                 gpu_queue = self.get_whisperx_service_queue()
@@ -291,46 +292,46 @@ class QueueManager:
                 logger.error(f"❌ Unknown service type: {service_type}")
                 return False
 
-            # Check GPU capacity - simple load balancing
-            gpu_busy = len(gpu_queue) >= 1 if gpu_queue else True
+            redis_client = self._get_redis_client()
+            if not redis_client:
+                logger.error("❌ Redis client unavailable")
+                return False
 
-            if not gpu_busy:
-                # GPU has capacity - use GPU worker
-                job = gpu_queue.enqueue(
-                    gpu_function,
-                    request_data,
-                    job_timeout=pipeline_settings.SERVICE_WORKER_TIMEOUT
-                )
-                logger.info(f"🎯 GPU {service_type}: {request_data.get('request_id')} (Fast processing)")
-                return True
-            else:
-                # GPU busy - try CPU queue if available, otherwise fallback to GPU
+            # Get CPU queue
+            cpu_queue_name = f"cpu_{service_type}_service_queue"
+            cpu_queue = Queue(cpu_queue_name, connection=redis_client)
+
+            # Check if GPU worker is actively processing (not just queue length)
+            gpu_workers = Worker.all(queue=gpu_queue, connection=redis_client)
+            gpu_active = any(worker.get_current_job() is not None for worker in gpu_workers)
+            
+            # Check CPU worker availability
+            cpu_workers = Worker.all(queue=cpu_queue, connection=redis_client)
+            cpu_available = any(worker.get_current_job() is None for worker in cpu_workers)
+
+            # Smart routing: Use CPU if GPU is busy AND CPU is available
+            if gpu_active and cpu_available and len(cpu_workers) > 0:
                 try:
-                    # Try to create CPU queue dynamically
-                    from rq import Queue
-                    redis_client = self._get_redis_client()
-                    if redis_client:
-                        cpu_queue_name = f"cpu_{service_type}_service_queue"
-                        cpu_queue = Queue(cpu_queue_name, connection=redis_client)
-
-                        job = cpu_queue.enqueue(
-                            cpu_function,
-                            request_data,
-                            job_timeout=pipeline_settings.SERVICE_WORKER_TIMEOUT
-                        )
-                        logger.info(f"🐌 CPU {service_type}: {request_data.get('request_id')} (Overflow handling)")
-                        return True
+                    job = cpu_queue.enqueue(
+                        cpu_function,
+                        request_data,
+                        job_timeout=pipeline_settings.SERVICE_WORKER_TIMEOUT
+                    )
+                    logger.info(f"🐌 CPU {service_type}: {request_data.get('request_id')} (Parallel processing)")
+                    return True
                 except Exception as cpu_error:
-                    logger.warning(f"CPU queue failed, falling back to GPU: {cpu_error}")
+                    logger.warning(f"CPU queue failed: {cpu_error}")
 
-                # Fallback to GPU if CPU fails
-                job = gpu_queue.enqueue(
-                    gpu_function,
-                    request_data,
-                    job_timeout=pipeline_settings.SERVICE_WORKER_TIMEOUT
-                )
-                logger.info(f"⚠️ GPU Fallback {service_type}: {request_data.get('request_id')} (GPU was busy)")
-                return True
+            # Default to GPU (always available as fallback)
+            job = gpu_queue.enqueue(
+                gpu_function,
+                request_data,
+                job_timeout=pipeline_settings.SERVICE_WORKER_TIMEOUT
+            )
+            
+            processing_type = "Active processing" if gpu_active else "Fast processing"
+            logger.info(f"🎯 GPU {service_type}: {request_data.get('request_id')} ({processing_type})")
+            return True
 
         except Exception as e:
             logger.error(f"❌ Load balancing failed for {service_type}: {e}")

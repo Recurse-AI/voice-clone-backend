@@ -174,7 +174,8 @@ class WhisperXTranscriptionService:
 
         normalized_language = language_service.get_language_code_for_transcription(language_code)
         audio = whisperx.load_audio(audio_path)
-        batch_size = 8
+        from app.config.settings import settings
+        batch_size = settings.WHISPERX_BATCH_SIZE
 
         try:
             result = self.model.transcribe(

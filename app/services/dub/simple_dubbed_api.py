@@ -393,11 +393,12 @@ class SimpleDubbedAPI:
             return None
     
     def _process_voice_cloning_sequential(self, segments_data: list, job_id: str, process_temp_dir: str) -> list:
-        """Process voice cloning in batches of 10 for better GPU/CPU load balancing"""
+        """Process voice cloning in configurable batches for better GPU/CPU load balancing"""
         import time
+        from app.config.settings import settings
         
         total_segments = len(segments_data)
-        batch_size = 10
+        batch_size = settings.VOICE_CLONING_BATCH_SIZE
         results = []
         
         logger.info(f"🎯 Processing {total_segments} segments in batches of {batch_size} for load balancing")
