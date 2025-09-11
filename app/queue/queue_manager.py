@@ -291,7 +291,7 @@ class QueueManager:
                 logger.error(f"❌ Unknown service type: {service_type}")
                 return False
 
-            # Check GPU capacity (GPU busy if queue has jobs)
+            # Check GPU capacity - simple load balancing
             gpu_busy = len(gpu_queue) >= 1 if gpu_queue else True
 
             if not gpu_busy:

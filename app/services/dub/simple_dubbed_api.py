@@ -393,74 +393,62 @@ class SimpleDubbedAPI:
             return None
     
     def _process_voice_cloning_sequential(self, segments_data: list, job_id: str, process_temp_dir: str) -> list:
-        """Process voice cloning one segment at a time for better GPU stability"""
+        """Process voice cloning in batches of 10 for better GPU/CPU load balancing"""
         import time
         
-        results = []
         total_segments = len(segments_data)
+        batch_size = 10
+        results = []
         
-        logger.info(f"🎯 Processing {total_segments} segments sequentially for stable GPU usage")
+        logger.info(f"🎯 Processing {total_segments} segments in batches of {batch_size} for load balancing")
         
-        for i, data in enumerate(segments_data):
-            try:
-                segment_start = time.time()
-                
-                # Add small delay between segments to control GPU utilization
-                if i > 0:  # Skip delay for first segment
-                    time.sleep(0.2)  # 200ms breathing room for GPU
-                
-                result = self._voice_clone_segment(
-                    data["dubbed_text"], 
-                    data["original_audio_path"], 
-                    data["seg_id"], 
-                    data["original_text"], 
-                    job_id=job_id, 
-                    process_temp_dir=process_temp_dir
-                )
-                
-                segment_time = time.time() - segment_start
-                if result:
-                    logger.info(f"✅ Segment {data['seg_id']} ({i+1}/{total_segments}) cloned in {segment_time:.2f}s")
-                else:
-                    logger.error(f"❌ Segment {data['seg_id']} ({i+1}/{total_segments}) failed after {segment_time:.2f}s")
-                
-                results.append(result)
-                
-                # Update progress after each segment completion
-                completed_segments = i + 1
-                progress_percent = (completed_segments / total_segments) * 0.9  # 90% of voice_cloning phase
-                progress_percent += 0.1  # Add initial 10% for segmentation
-                
-                message = f"Voice cloning: {completed_segments}/{total_segments} segments completed"
+        # Process segments in batches
+        for batch_start in range(0, total_segments, batch_size):
+            batch_end = min(batch_start + batch_size, total_segments)
+            batch_data = segments_data[batch_start:batch_end]
+            
+            logger.info(f"📦 Processing batch {batch_start//batch_size + 1}: segments {batch_start+1}-{batch_end}")
+            
+            # Process batch segments
+            for i, data in enumerate(batch_data):
                 try:
-                    self._update_phase_progress(job_id, "voice_cloning", progress_percent, message)
-                except Exception as progress_error:
-                    logger.warning(f"Failed to update progress: {progress_error}")
-                
-            except Exception as e:
-                logger.error(f"💥 Segment {data.get('seg_id', 'unknown')} failed: {e}")
-                results.append(None)
-                
-                # Update progress even for failed segments
-                completed_segments = i + 1
-                progress_percent = (completed_segments / total_segments) * 0.9  # 90% of voice_cloning phase
-                progress_percent += 0.1  # Add initial 10% for segmentation
-                
-                message = f"Voice cloning: {completed_segments}/{total_segments} segments processed (some failed)"
-                try:
-                    self._update_phase_progress(job_id, "voice_cloning", progress_percent, message)
-                except Exception as progress_error:
-                    logger.warning(f"Failed to update progress: {progress_error}")
+                    segment_start = time.time()
+                    actual_index = batch_start + i
+                    
+                    result = self._voice_clone_segment(
+                        data["dubbed_text"], 
+                        data["original_audio_path"], 
+                        data["seg_id"], 
+                        data["original_text"], 
+                        job_id=job_id, 
+                        process_temp_dir=process_temp_dir
+                    )
+                    
+                    segment_time = time.time() - segment_start
+                    results.append(result)
+                    logger.info(f"✅ Segment {data['seg_id']} ({actual_index+1}/{total_segments}) completed in {segment_time:.2f}s")
+                    
+                    # Update progress
+                    completed_segments = actual_index + 1
+                    progress_percent = (completed_segments / total_segments) * 0.9 + 0.1
+                    message = f"Voice cloning: {completed_segments}/{total_segments} segments completed"
+                    
+                    try:
+                        self._update_phase_progress(job_id, "voice_cloning", progress_percent, message)
+                    except Exception as progress_error:
+                        logger.warning(f"Failed to update progress: {progress_error}")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Segment {data.get('seg_id', 'unknown')} failed: {e}")
+                    results.append(None)
         
         successful = sum(1 for r in results if r is not None)
-        logger.info(f"🎯 Sequential processing completed: {successful}/{total_segments} segments successful")
+        logger.info(f"🎯 Completed: {successful}/{total_segments} segments successful")
         
-        # Final progress update
-        final_message = f"Voice cloning completed: {successful}/{total_segments} segments successful"
         try:
-            self._update_phase_progress(job_id, "voice_cloning", 1.0, final_message)
-        except Exception as progress_error:
-            logger.warning(f"Failed to update final progress: {progress_error}")
+            self._update_phase_progress(job_id, "voice_cloning", 1.0, f"Voice cloning completed: {successful}/{total_segments} segments successful")
+        except Exception:
+            pass
         
         return results
     
