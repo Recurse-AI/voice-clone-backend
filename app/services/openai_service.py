@@ -26,7 +26,7 @@ class OpenAIService:
             logger.warning(f"OpenAI init failed: {e}")
 
     def translate_dubbing_batch(self, segments: List[Dict], target_language: str, batch_size: int = 10) -> List[str]:
-        """Clean translation with strict prompt to prevent issues"""
+        """Simple clean translation with better prompt"""
         if not self.is_available:
             return [f"[Translation Error]" for _ in segments]
 
@@ -38,13 +38,13 @@ class OpenAIService:
             joined_texts = "\n".join(prompt_lines)
 
             system_prompt = (
-                f"Translate each numbered segment to {target_language}. Follow these rules EXACTLY:\n"
-                f"1. Translate meaning accurately - no creative additions\n"
-                f"2. Use proper {target_language} script/alphabet only\n"
-                f"3. Keep translations natural and concise\n"
-                f"4. NEVER repeat words/sounds/characters excessively\n"
-                f"5. NEVER include segment numbers [1], [2], etc. in output\n"
-                f"6. Return EXACTLY {len(batch)} translations separated by |||"
+                f"Translate each numbered segment to {target_language}.\n"
+                f"Rules:\n"
+                f"1. Translate meaning accurately\n"
+                f"2. Use proper {target_language} script only\n"
+                f"3. Keep natural and concise - don't repeat words/sounds too much\n"
+                f"4. Don't include segment numbers in output\n"
+                f"5. Return exactly {len(batch)} translations separated by |||"
             )
 
             user_prompt = f"Translate these {len(batch)} segments:\n{joined_texts}"
@@ -63,7 +63,7 @@ class OpenAIService:
                 output = response.choices[0].message.content.strip()
                 translated_segments = [seg.strip() for seg in output.split("|||")]
                 
-                # Ensure we have the right count
+                # Ensure count matches
                 while len(translated_segments) < len(batch):
                     translated_segments.append("[Translation Error]")
                 
