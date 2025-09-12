@@ -38,20 +38,22 @@ class OpenAIService:
             joined_texts = "\n".join(prompt_lines)
 
             system_prompt = (
+                f"You are producing dubbing text for Fish Audio OpenAudio-S1 (Fish-Speech).\n"
                 f"Translate each numbered segment to {target_language}.\n"
                 f"Rules:\n"
-                f"1. Translate meaning accurately\n"
-                f"2. Use proper {target_language} script only\n"
-                f"3. Keep natural and concise - don't repeat words/sounds too much\n"
-                f"4. Don't include segment numbers in output\n"
-                f"5. Return exactly {len(batch)} translations separated by |||"
+                f"1) Translate meaning accurately (no creative additions).\n"
+                f"2) Use proper {target_language} script only; keep proper nouns in original when appropriate.\n"
+                f"3) Keep outputs natural and concise. DO NOT repeat words/syllables; collapse long onomatopoeia or loops into a brief phrase such as 'repeated clicking sound' or 'again and again'.\n"
+                f"4) You MAY optionally use OpenAudio tone markers like (excited), (sad), (whispering), (angry), (soft tone) at the very beginning IF it clearly matches intent.\n"
+                f"5) NEVER omit any segment. Do NOT include segment numbers or explanations.\n"
+                f"6) Return EXACTLY {len(batch)} translations separated by |||, with no empty items."
             )
 
             user_prompt = f"Translate these {len(batch)} segments:\n{joined_texts}"
 
             try:
                 response = self.client.chat.completions.create(
-                    model="gpt-4o",
+                    model="gpt-5",
                     messages=[
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
