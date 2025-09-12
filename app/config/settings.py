@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     FISH_SPEECH_PRECISION: str = os.getenv("FISH_SPEECH_PRECISION", "auto")  # auto -> float16 on CUDA, float32 on CPU
     FISH_SPEECH_MAX_BATCH_SIZE: int = int(os.getenv("FISH_SPEECH_MAX_BATCH_SIZE", "4"))  # Reduced for 16GB VRAM
     FISH_SPEECH_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_CHUNK_SIZE", "250"))  # Optimized chunk size for performance
+    FISH_SPEECH_MIN_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_MIN_CHUNK_SIZE", "220"))  # Minimum chunk size for text processing
     
     # Batch Processing Configuration
     VOICE_CLONING_BATCH_SIZE: int = int(os.getenv("VOICE_CLONING_BATCH_SIZE", "10"))  # Segments per batch

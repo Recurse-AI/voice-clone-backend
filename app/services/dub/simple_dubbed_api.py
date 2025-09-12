@@ -356,7 +356,7 @@ class SimpleDubbedAPI:
             cloned_filename = f"cloned_{job_id}_{segment_index:03d}.wav"
             cloned_path = os.path.join(process_temp_dir, cloned_filename).replace('\\', '/')
             # Split dubbed text into optimized chunks for better GPU utilization  
-            text_chunks = smart_chunk(dubbed_text, chunk_size=settings.FISH_SPEECH_CHUNK_SIZE, min_size=settings.FISH_SPEECH_MIN_CHUNK_SIZE - 30)
+            text_chunks = smart_chunk(dubbed_text, chunk_size=settings.FISH_SPEECH_CHUNK_SIZE, min_size=settings.FISH_SPEECH_MIN_CHUNK_SIZE)
             audio_chunks = []
             sample_rate_out = None
             for chunk in text_chunks:
