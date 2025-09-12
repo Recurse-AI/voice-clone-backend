@@ -83,16 +83,32 @@ class FishAudioAPIService:
             # Validate and repair audio if needed
             try:
                 data, sample_rate = sf.read(output_path)
-                # Trim head/tail silence to avoid boundary gaps
-                try:
-                    from app.services.dub.audio_utils import AudioUtils
-                    data = AudioUtils.trim_silence(data, top_db=40.0).astype('float32')
-                    # Gentle edge fade
-                    data = AudioUtils.fade_in_out(data, fade_duration=0.005, sample_rate=sample_rate)
-                    sf.write(output_path, data, sample_rate)
-                except Exception:
-                    pass
                 
+                if len(data) == 0:
+                    # Repair corrupted WAV header in-place
+                    with open(output_path, "rb") as f:
+                        raw_bytes = f.read()
+                    
+                    data_pos = raw_bytes.find(b'data')
+                    if data_pos > 0:
+                        actual_data_size = len(raw_bytes) - data_pos - 8
+                        fixed_bytes = bytearray(raw_bytes)
+                        fixed_bytes[4:8] = (len(raw_bytes) - 8).to_bytes(4, 'little')
+                        fixed_bytes[data_pos+4:data_pos+8] = actual_data_size.to_bytes(4, 'little')
+                        
+                        with open(output_path, 'wb') as f:
+                            f.write(fixed_bytes)
+                        
+                        data, sample_rate = sf.read(output_path)
+                
+                if len(data) == 0:
+                    return {"success": False, "error": "Fish API returned empty audio"}
+
+                # Apply audio processing once
+                from app.services.dub.audio_utils import AudioUtils
+                data = AudioUtils.trim_silence(data, top_db=40.0).astype('float32')
+                data = AudioUtils.fade_in_out(data, fade_duration=0.005, sample_rate=sample_rate)
+                sf.write(output_path, data, sample_rate)
                 
                 logger.info(f"✅ Fish API success: {len(data)} samples at {sample_rate}Hz")
                 return {"success": True, "output_path": output_path}
