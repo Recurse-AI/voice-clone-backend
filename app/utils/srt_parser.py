@@ -13,6 +13,7 @@ def parse_srt_to_whisperx_format(srt_file_path: str) -> Dict[str, Any]:
         
         content = _normalize_content(content)
         segments = _parse_srt_content(content)
+        segments = _merge_short_adjacent_segments(segments)
         
         if not segments:
             return {"success": False, "error": "No valid subtitle segments found"}
@@ -101,6 +102,38 @@ def _parse_srt_content(content: str) -> List[Dict[str, Any]]:
             continue
     
     return segments
+
+def _merge_short_adjacent_segments(segments: List[Dict[str, Any]], max_chars: int = 250, max_duration_s: float = 20.0, max_gap_ms: int = 300) -> List[Dict[str, Any]]:
+    """Merge adjacent SRT cues to reduce TTS restarts. Constraints: <= max_chars, <= max_duration_s, gap<=max_gap_ms."""
+    if not segments:
+        return []
+    merged: List[Dict[str, Any]] = []
+    current = None
+    for seg in segments:
+        text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        start_s = float(seg.get("start", 0.0))
+        end_s = float(seg.get("end", 0.0))
+        if start_s >= end_s:
+            continue
+        start_ms = int(round(start_s * 1000))
+        end_ms = int(round(end_s * 1000))
+        if current is None:
+            current = {"id": seg.get("id"), "text": text, "start": start_s, "end": end_s}
+            continue
+        gap_ms = start_ms - int(round(current["end"] * 1000))
+        combined_text = (current["text"] + " " + text).strip()
+        combined_dur_ms = end_ms - int(round(current["start"] * 1000))
+        if gap_ms <= max_gap_ms and len(combined_text) <= max_chars and combined_dur_ms <= int(max_duration_s * 1000):
+            current["text"] = combined_text
+            current["end"] = end_s
+        else:
+            merged.append(current)
+            current = {"id": seg.get("id"), "text": text, "start": start_s, "end": end_s}
+    if current:
+        merged.append(current)
+    return merged
 
 def _clean_subtitle_text(text: str) -> str:
     """Clean subtitle text removing formatting and normalizing whitespace"""

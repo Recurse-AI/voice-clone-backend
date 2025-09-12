@@ -139,6 +139,18 @@ class AudioUtils:
         return normalized_audio
     
     @staticmethod
+    def trim_silence(audio: np.ndarray, top_db: float = 40.0) -> np.ndarray:
+        """Trim leading/trailing silence using energy threshold."""
+        try:
+            if audio.size == 0:
+                return audio
+            import librosa
+            trimmed, _ = librosa.effects.trim(audio, top_db=top_db)
+            return trimmed if trimmed.size > 0 else audio
+        except Exception:
+            return audio
+    
+    @staticmethod
     def extract_audio_features(audio: np.ndarray, sr: int) -> dict:
         """Extract basic audio features for quality assessment"""
         if len(audio) == 0:
@@ -177,6 +189,23 @@ class AudioUtils:
         audio_faded[-fade_samples:] *= fade_out
         
         return audio_faded
+    
+    @staticmethod
+    def crossfade_arrays(a: np.ndarray, b: np.ndarray, fade_ms: float, sample_rate: int) -> np.ndarray:
+        """Concatenate two arrays with a short crossfade to avoid clicks."""
+        if a.size == 0:
+            return b
+        if b.size == 0:
+            return a
+        fade_samples = max(1, int((fade_ms / 1000.0) * sample_rate))
+        if fade_samples * 2 > min(a.size, b.size):
+            fade_samples = max(1, min(a.size, b.size) // 4)
+        overlap_a = a[-fade_samples:]
+        overlap_b = b[:fade_samples]
+        fade_out = np.linspace(1.0, 0.0, fade_samples)
+        fade_in = 1.0 - fade_out
+        cross = overlap_a * fade_out + overlap_b * fade_in
+        return np.concatenate([a[:-fade_samples], cross, b[fade_samples:]])
     
     def split_audio_by_timestamps(self, input_audio_path: str, output_dir: str, 
                                  segments: List[Dict[str, Any]]) -> Dict[str, Any]:
