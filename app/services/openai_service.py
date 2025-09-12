@@ -58,7 +58,6 @@ class OpenAIService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    temperature=0.2,
                     max_completion_tokens=4096
                 )
                 
@@ -93,7 +92,6 @@ class OpenAIService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.7,
                 max_completion_tokens=500
             )
 
