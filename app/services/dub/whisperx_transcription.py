@@ -25,7 +25,6 @@ class WhisperXTranscriptionService:
         self.model_size = settings.WHISPER_MODEL_SIZE
         self.alignment_device = settings.WHISPER_ALIGNMENT_DEVICE
         self.cache_dir = settings.WHISPER_CACHE_DIR
-        self.max_seg_seconds = settings.WHISPER_MAX_SEG_SECONDS
         self._setup_device_config()
         self._setup_cache_directory()
 
@@ -205,74 +204,10 @@ class WhisperXTranscriptionService:
     
     def _process_segments(self, raw_segments):
         segments = []
-        segment_index = 0
-
-        for seg in raw_segments:
-            duration_sec = seg["end"] - seg["start"]
-
-            if duration_sec <= self.max_seg_seconds:
-                segments.append(self._create_segment(seg, segment_index))
-                segment_index += 1
-            else:
-                split_segments = self._split_long_segment(seg, duration_sec)
-                for split_seg in split_segments:
-                    segments.append(self._create_segment(split_seg, segment_index))
-                    segment_index += 1
-
+        for index, seg in enumerate(raw_segments):
+            segments.append(self._create_segment(seg, index))
         return segments
 
-    def _split_long_segment(self, segment, total_duration):
-        text = segment["text"].strip()
-        start_time = segment["start"]
-        end_time = segment["end"]
-        confidence = segment.get("confidence", 0.9)
-
-        if total_duration <= 20:
-            mid_time = start_time + (total_duration / 2)
-            text_half = len(text) // 2
-            return [
-                {"start": start_time, "end": mid_time, "text": text[:text_half], "confidence": confidence},
-                {"start": mid_time, "end": end_time, "text": text[text_half:], "confidence": confidence}
-            ]
-
-        num_splits = max(2, int(total_duration // self.max_seg_seconds))
-        split_duration = total_duration / num_splits
-        result_segments = []
-
-        for i in range(num_splits):
-            split_start = start_time + (i * split_duration)
-            split_end = start_time + ((i + 1) * split_duration)
-
-            if i == num_splits - 1:
-                split_end = end_time
-
-            text_chunk = self._split_text_by_ratio(text, i, num_splits)
-            if text_chunk:
-                result_segments.append({
-                    "start": split_start,
-                    "end": split_end,
-                    "text": text_chunk,
-                    "confidence": confidence
-                })
-
-        return result_segments
-
-    def _split_text_by_ratio(self, text, part_index, total_parts):
-        words = text.split()
-        if not words:
-            return ""
-
-        if len(words) <= total_parts:
-            return words[part_index] if part_index < len(words) else ""
-
-        words_per_part = len(words) // total_parts
-        start_idx = part_index * words_per_part
-        end_idx = start_idx + words_per_part
-
-        if part_index == total_parts - 1:
-            end_idx = len(words)
-
-        return " ".join(words[start_idx:end_idx])
 
     def _create_segment(self, seg, index):
         return {
