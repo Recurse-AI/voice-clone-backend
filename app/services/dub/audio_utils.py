@@ -192,20 +192,30 @@ class AudioUtils:
     
     @staticmethod
     def crossfade_arrays(a: np.ndarray, b: np.ndarray, fade_ms: float, sample_rate: int) -> np.ndarray:
-        """Concatenate two arrays with a short crossfade to avoid clicks."""
         if a.size == 0:
-            return b
+            return b.astype(np.float32)
         if b.size == 0:
-            return a
+            return a.astype(np.float32)
+        
         fade_samples = max(1, int((fade_ms / 1000.0) * sample_rate))
-        if fade_samples * 2 > min(a.size, b.size):
-            fade_samples = max(1, min(a.size, b.size) // 4)
-        overlap_a = a[-fade_samples:]
-        overlap_b = b[:fade_samples]
-        fade_out = np.linspace(1.0, 0.0, fade_samples)
+        min_chunk_size = min(a.size, b.size)
+        
+        if fade_samples >= min_chunk_size:
+            if min_chunk_size < 100:
+                return np.concatenate([a.astype(np.float32), b.astype(np.float32)])
+            fade_samples = min_chunk_size // 3
+        
+        overlap_a = a[-fade_samples:].astype(np.float32)
+        overlap_b = b[:fade_samples].astype(np.float32)
+        fade_out = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
         fade_in = 1.0 - fade_out
         cross = overlap_a * fade_out + overlap_b * fade_in
-        return np.concatenate([a[:-fade_samples], cross, b[fade_samples:]])
+        
+        return np.concatenate([
+            a[:-fade_samples].astype(np.float32), 
+            cross, 
+            b[fade_samples:].astype(np.float32)
+        ])
     
     def split_audio_by_timestamps(self, input_audio_path: str, output_dir: str, 
                                  segments: List[Dict[str, Any]]) -> Dict[str, Any]:

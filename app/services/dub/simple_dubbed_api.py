@@ -455,20 +455,22 @@ class SimpleDubbedAPI:
                     # Result failed, local model fallback already handled above
                     pass
             if audio_chunks:
-                # Crossfade and trim between chunks to avoid micro-gaps/clicks
-                fade_ms = 10.0
-                final_audio = audio_chunks[0]
-                try:
-                    from .audio_utils import AudioUtils as _AU
-                    # Trim head/tail of first chunk
-                    final_audio = _AU.trim_silence(final_audio, top_db=40.0)
-                    for part in audio_chunks[1:]:
-                        part = _AU.trim_silence(part, top_db=40.0)
-                        final_audio = _AU.crossfade_arrays(final_audio, part, fade_ms=fade_ms, sample_rate=sample_rate_out)
-                    # Gentle fade at edges
-                    final_audio = _AU.fade_in_out(final_audio, fade_duration=0.005, sample_rate=sample_rate_out)
-                except Exception:
-                    final_audio = np.concatenate(audio_chunks)
+                if len(audio_chunks) == 1:
+                    final_audio = audio_chunks[0].astype(np.float32)
+                else:
+                    fade_ms = 8.0
+                    final_audio = audio_chunks[0].astype(np.float32)
+                    try:
+                        from .audio_utils import AudioUtils as _AU
+                        for part in audio_chunks[1:]:
+                            part = part.astype(np.float32)
+                            if len(part) > 0 and len(final_audio) > 0:
+                                final_audio = _AU.crossfade_arrays(final_audio, part, fade_ms=fade_ms, sample_rate=sample_rate_out)
+                            else:
+                                final_audio = np.concatenate([final_audio, part])
+                    except Exception as e:
+                        logger.warning(f"Crossfade failed for {segment_id}: {e}, using direct concatenation")
+                        final_audio = np.concatenate([chunk.astype(np.float32) for chunk in audio_chunks])
                 buffer = io.BytesIO()
                 sf.write(buffer, final_audio, sample_rate_out, format='WAV')
                 with open(cloned_path, "wb") as f:
@@ -1066,11 +1068,17 @@ class SimpleDubbedAPI:
                 if len(cloned_audio) > expected_samples:
                     cloned_audio = cloned_audio[:expected_samples]
                 elif len(cloned_audio) < expected_samples:
-                    padding = expected_samples - len(cloned_audio)
-                    cloned_audio = np.pad(cloned_audio, (0, padding), mode="constant")
+                    shortfall = expected_samples - len(cloned_audio)
+                    if shortfall < len(cloned_audio) * 0.1:
+                        cloned_audio = np.pad(cloned_audio, (0, shortfall), mode="constant")
+                    else:
+                        end_samples = min(len(cloned_audio) // 4, shortfall)
+                        tail_repeat = cloned_audio[-end_samples:] if end_samples > 0 else np.zeros(shortfall)
+                        extension = np.tile(tail_repeat, (shortfall // len(tail_repeat)) + 1)[:shortfall] * 0.3
+                        cloned_audio = np.concatenate([cloned_audio, extension])
 
                 cloned_audio = AudioUtils.fade_in_out(cloned_audio.astype(np.float32), 
-                                                    fade_duration=0.005, sample_rate=target_sample_rate)
+                                                    fade_duration=0.003, sample_rate=target_sample_rate)
 
                 actual_end = min(len(final_audio), start_sample + len(cloned_audio))
                 if start_sample < len(final_audio) and actual_end > start_sample:

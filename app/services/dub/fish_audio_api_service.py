@@ -104,11 +104,7 @@ class FishAudioAPIService:
                 if len(data) == 0:
                     return {"success": False, "error": "Fish API returned empty audio"}
 
-                # Apply audio processing once
-                from app.services.dub.audio_utils import AudioUtils
-                data = AudioUtils.trim_silence(data, top_db=40.0).astype('float32')
-                data = AudioUtils.fade_in_out(data, fade_duration=0.005, sample_rate=sample_rate)
-                sf.write(output_path, data, sample_rate)
+                sf.write(output_path, data.astype('float32'), sample_rate)
                 
                 logger.info(f"✅ Fish API success: {len(data)} samples at {sample_rate}Hz")
                 return {"success": True, "output_path": output_path}
