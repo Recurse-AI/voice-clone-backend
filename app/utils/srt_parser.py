@@ -103,12 +103,14 @@ def _parse_srt_content(content: str) -> List[Dict[str, Any]]:
     
     return segments
 
-def _merge_short_adjacent_segments(segments: List[Dict[str, Any]], max_chars: int = 250, max_duration_s: float = 20.0, max_gap_ms: int = 300) -> List[Dict[str, Any]]:
-    """Merge adjacent SRT cues to reduce TTS restarts. Constraints: <= max_chars, <= max_duration_s, gap<=max_gap_ms."""
+def _merge_short_adjacent_segments(segments: List[Dict[str, Any]], max_chars: int = 250, max_duration_s: float = 12.0, max_gap_ms: int = 300, max_segments: int = 3) -> List[Dict[str, Any]]:
+    """Merge adjacent SRT cues to reduce TTS restarts. Constraints: <= max_chars, <= max_duration_s, gap<=max_gap_ms, <= max_segments."""
     if not segments:
         return []
     merged: List[Dict[str, Any]] = []
     current = None
+    merged_count = 0
+    
     for seg in segments:
         text = (seg.get("text") or "").strip()
         if not text:
@@ -119,18 +121,30 @@ def _merge_short_adjacent_segments(segments: List[Dict[str, Any]], max_chars: in
             continue
         start_ms = int(round(start_s * 1000))
         end_ms = int(round(end_s * 1000))
+        
         if current is None:
             current = {"id": seg.get("id"), "text": text, "start": start_s, "end": end_s}
+            merged_count = 1
             continue
+            
         gap_ms = start_ms - int(round(current["end"] * 1000))
         combined_text = (current["text"] + " " + text).strip()
         combined_dur_ms = end_ms - int(round(current["start"] * 1000))
-        if gap_ms <= max_gap_ms and len(combined_text) <= max_chars and combined_dur_ms <= int(max_duration_s * 1000):
+        
+        can_merge = (gap_ms <= max_gap_ms and 
+                    len(combined_text) <= max_chars and 
+                    combined_dur_ms <= int(max_duration_s * 1000) and
+                    merged_count < max_segments)
+        
+        if can_merge:
             current["text"] = combined_text
             current["end"] = end_s
+            merged_count += 1
         else:
             merged.append(current)
             current = {"id": seg.get("id"), "text": text, "start": start_s, "end": end_s}
+            merged_count = 1
+            
     if current:
         merged.append(current)
     return merged
