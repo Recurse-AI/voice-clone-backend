@@ -26,7 +26,7 @@ class OpenAIService:
             logger.warning(f"OpenAI init failed: {e}")
 
     def translate_dubbing_batch(self, segments: List[Dict], target_language: str, batch_size: int = 10) -> List[str]:
-        """Simple synchronous translation"""
+        """Clean translation with strict prompt to prevent issues"""
         if not self.is_available:
             return [f"[Translation Error]" for _ in segments]
 
@@ -34,22 +34,20 @@ class OpenAIService:
 
         for i in range(0, len(segments), batch_size):
             batch = segments[i:i+batch_size]
-
-            prompt_lines = [f"[{idx+1}] (Target duration: {seg['duration_ms']} ms) {seg['text']}" for idx, seg in enumerate(batch)]
+            prompt_lines = [f"[{idx+1}] {seg['text']}" for idx, seg in enumerate(batch)]
             joined_texts = "\n".join(prompt_lines)
 
             system_prompt = (
-                f"You are assisting in creating dubbing scripts for the Fish Audio OpenAudio-S1 TTS model.\n"
-                f"Translate each input segment into {target_language} (keeping meaning accurate).\n"
-                f"CRITICAL CONSTRAINTS (MUST FOLLOW EXACTLY):\n"
-                f"1. Try to match the target duration (given in ms) — if you need to lengthen, prefer inserting extra *spaces* between words rather than adding new words.\n"
-                f"2. Use the correct alphabet/script for {target_language}; never mix English letters unless the original word is a proper noun or acronym.\n"
-                f"3. You MAY optionally use the Fish-Audio emotion/tone markers like (excited), (sad), (whispering) etc. **only** when that better reflects the original intent. Place the marker at the very beginning of the sentence.\n"
-                f"4. ABSOLUTELY FORBIDDEN: Do NOT include ANY segment markers, numbers in brackets like [1], [2], numbers, explanatory text, or comments.\n"
-                f"5. Return ONLY the translated text segments in the same order, separated by ||| on a single line. NOTHING ELSE."
+                f"Translate each numbered segment to {target_language}. Follow these rules EXACTLY:\n"
+                f"1. Translate meaning accurately - no creative additions\n"
+                f"2. Use proper {target_language} script/alphabet only\n"
+                f"3. Keep translations natural and concise\n"
+                f"4. NEVER repeat words/sounds/characters excessively\n"
+                f"5. NEVER include segment numbers [1], [2], etc. in output\n"
+                f"6. Return EXACTLY {len(batch)} translations separated by |||"
             )
 
-            user_prompt = f"Translate each segment below. Return only the translated segments, in order, separated by |||.\nSegments (with target duration):\n{joined_texts}"
+            user_prompt = f"Translate these {len(batch)} segments:\n{joined_texts}"
 
             try:
                 response = self.client.chat.completions.create(
@@ -58,16 +56,22 @@ class OpenAIService:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}
                     ],
-                    temperature=0.3,
-                    max_tokens=2048
+                    temperature=0.2,
+                    max_tokens=1024
                 )
+                
                 output = response.choices[0].message.content.strip()
                 translated_segments = [seg.strip() for seg in output.split("|||")]
-                all_dubbed.extend(translated_segments)
+                
+                # Ensure we have the right count
+                while len(translated_segments) < len(batch):
+                    translated_segments.append("[Translation Error]")
+                
+                all_dubbed.extend(translated_segments[:len(batch)])
 
             except Exception as e:
                 logger.warning(f"OpenAI translation failed: {e}")
-                all_dubbed.extend([f"[Translation Error]" for _ in range(len(batch))])
+                all_dubbed.extend([f"[Translation Error]" for _ in batch])
 
         return all_dubbed
 
