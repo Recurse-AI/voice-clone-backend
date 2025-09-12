@@ -1023,14 +1023,12 @@ class SimpleDubbedAPI:
 
     def _reconstruct_final_audio(self, segments: list, original_audio_path: str,
                                job_id: str = None, process_temp_dir: str = None) -> str:
-        """Reconstruct final audio with optimized compression for voice content."""
         if not segments:
             return None
 
         try:
             import soundfile as sf
 
-            # Use original file samplerate and total duration when available
             if original_audio_path and os.path.exists(original_audio_path):
                 info = sf.info(original_audio_path)
                 target_sample_rate = info.samplerate
@@ -1039,89 +1037,51 @@ class SimpleDubbedAPI:
                 target_sample_rate = 44100
                 max_end_ms = max(s.get("end", 0) for s in segments)
                 duration_samples = int((max_end_ms / 1000.0) * target_sample_rate)
+            
             final_audio = np.zeros(duration_samples, dtype=np.float32)
 
-            # Place segments with optimized processing
-            last_end_ms = None
             for segment in segments:
-                try:
-                    cloned_path = segment.get("cloned_audio_path")
-                    if not cloned_path or not os.path.exists(cloned_path):
-                        continue
-
-                    cloned_audio, segment_sample_rate = sf.read(cloned_path)
-                    if len(cloned_audio.shape) > 1:
-                        cloned_audio = np.mean(cloned_audio, axis=1)
-
-                    # Resample if needed for optimization
-                    if segment_sample_rate != target_sample_rate:
-                        from scipy import signal
-                        cloned_audio = signal.resample(cloned_audio, 
-                                                     int(len(cloned_audio) * target_sample_rate / segment_sample_rate))
-
-                    start_ms = segment.get("start", 0)
-                    end_ms = segment.get("end", 0)
-                    if start_ms < 0 or end_ms <= start_ms:
-                        continue
-
-                    start_sample = int((start_ms / 1000.0) * target_sample_rate)
-                    expected_samples = int(((end_ms - start_ms) / 1000.0) * target_sample_rate)
-
-                    # Fit audio duration
-                    if len(cloned_audio) > expected_samples:
-                        cloned_audio = cloned_audio[:expected_samples]
-                    elif len(cloned_audio) < expected_samples:
-                        padding = expected_samples - len(cloned_audio)
-                        cloned_audio = np.pad(cloned_audio, (0, padding), mode="constant")
-
-                    # Gentle fade at segment edges (avoid clicks), no per-segment normalization
-                    try:
-                        cloned_audio = AudioUtils.fade_in_out(cloned_audio.astype(np.float32), fade_duration=0.005, sample_rate=target_sample_rate)
-                    except Exception:
-                        cloned_audio = cloned_audio.astype(np.float32)
-
-                    # If adjacent to previous segment with minimal gap, crossfade the overlap region
-                    prev_end_ms = last_end_ms
-                    if prev_end_ms is not None:
-                        gap_ms = start_ms - prev_end_ms
-                        if -20 <= gap_ms <= 20:  # abutting within ±20ms
-                            # 10ms crossfade window blended additively
-                            fade_samples = int(0.010 * target_sample_rate)
-                            a_start = max(0, start_sample - fade_samples)
-                            a_end = start_sample
-                            b_len = min(fade_samples, len(cloned_audio))
-                            if a_end > a_start and b_len > 0 and a_end <= len(final_audio):
-                                # apply crossfade on overlap region
-                                alpha = np.linspace(0.0, 1.0, min(a_end - a_start, b_len), dtype=np.float32)
-                                L = alpha.size
-                                final_audio[a_start:a_start+L] = (
-                                    final_audio[a_start:a_start+L] * (1.0 - alpha)
-                                    + cloned_audio[:L].astype(np.float32) * alpha
-                                )
-                                # trim the part we already mixed
-                                cloned_audio = cloned_audio[L:]
-                                start_sample = a_start + L
-
-                    # Mix into final audio (additive) to handle overlaps; clamp later in mastering
-                    end_sample = min(len(final_audio), start_sample + len(cloned_audio))
-                    if start_sample < len(final_audio) and end_sample > start_sample:
-                        seg_slice = cloned_audio[:end_sample - start_sample]
-                        final_audio[start_sample:end_sample] += seg_slice
-
-                    # Track last end for next boundary decision
-                    last_end_ms = end_ms
-
-                except Exception:
+                cloned_path = segment.get("cloned_audio_path")
+                if not cloned_path or not os.path.exists(cloned_path):
                     continue
 
-            # Apply final normalization and compression
+                cloned_audio, segment_sample_rate = sf.read(cloned_path)
+                if len(cloned_audio.shape) > 1:
+                    cloned_audio = np.mean(cloned_audio, axis=1)
+
+                if segment_sample_rate != target_sample_rate:
+                    from scipy import signal
+                    cloned_audio = signal.resample(cloned_audio, 
+                                                 int(len(cloned_audio) * target_sample_rate / segment_sample_rate))
+
+                start_ms = segment.get("start", 0)
+                end_ms = segment.get("end", 0)
+                if start_ms < 0 or end_ms <= start_ms:
+                    continue
+
+                start_sample = int((start_ms / 1000.0) * target_sample_rate)
+                end_sample = int((end_ms / 1000.0) * target_sample_rate)
+                expected_samples = end_sample - start_sample
+
+                if len(cloned_audio) > expected_samples:
+                    cloned_audio = cloned_audio[:expected_samples]
+                elif len(cloned_audio) < expected_samples:
+                    padding = expected_samples - len(cloned_audio)
+                    cloned_audio = np.pad(cloned_audio, (0, padding), mode="constant")
+
+                cloned_audio = AudioUtils.fade_in_out(cloned_audio.astype(np.float32), 
+                                                    fade_duration=0.005, sample_rate=target_sample_rate)
+
+                actual_end = min(len(final_audio), start_sample + len(cloned_audio))
+                if start_sample < len(final_audio) and actual_end > start_sample:
+                    segment_slice = cloned_audio[:actual_end - start_sample]
+                    final_audio[start_sample:actual_end] = segment_slice
+
             final_audio = self._apply_final_audio_processing(final_audio)
             
-            # Save optimized audio
             final_path = os.path.join(process_temp_dir, f"final_{job_id}.wav")
             sf.write(final_path, final_audio, target_sample_rate)
 
-            # Optimized MP3 compression for voice content
             import subprocess
             from app.utils.ffmpeg_helper import get_ffmpeg_path
 
@@ -1137,7 +1097,6 @@ class SimpleDubbedAPI:
                     '-q:a', '4',
                     mp3_path
                 ]
-
                 subprocess.run(cmd, capture_output=True, timeout=30)
                 logger.info(f"✅ MP3 created: {mp3_path}")
 

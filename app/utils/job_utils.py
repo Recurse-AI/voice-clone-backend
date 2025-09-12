@@ -71,19 +71,14 @@ class JobUtils:
     @staticmethod
     async def setup_job_directory(source_job_id: str, target_job_id: str) -> str:
         """
-        Setup job directory by copying from source or creating new
+        Setup job directory for a new job without copying parent files
         Returns: path to the new job directory
         """
-        source_dir = os.path.join(settings.TEMP_DIR, source_job_id)
         target_dir = os.path.join(settings.TEMP_DIR, target_job_id)
         
         try:
-            if os.path.exists(source_dir):
-                shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
-                logger.info(f"Copied job files from {source_dir} to {target_dir}")
-            else:
-                os.makedirs(target_dir, exist_ok=True)
-                logger.warning(f"Source directory not found: {source_dir}. Created new directory: {target_dir}")
+            os.makedirs(target_dir, exist_ok=True)
+            logger.info(f"Created job directory: {target_dir}")
             
             return target_dir
             

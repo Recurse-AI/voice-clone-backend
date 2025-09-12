@@ -302,6 +302,10 @@ def mark_service_worker_active(service_type: str, worker_id: str) -> bool:
             active_key = pipeline_settings.REDIS_WHISPERX_ACTIVE
         elif service_type == "fish_speech":
             active_key = pipeline_settings.REDIS_FISH_SPEECH_ACTIVE
+        elif service_type == "cpu_whisperx":
+            active_key = pipeline_settings.REDIS_CPU_WHISPERX_ACTIVE
+        elif service_type == "cpu_fish_speech":
+            active_key = pipeline_settings.REDIS_CPU_FISH_SPEECH_ACTIVE
         else:
             return False
         

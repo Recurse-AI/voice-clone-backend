@@ -103,11 +103,27 @@ def _parse_srt_content(content: str) -> List[Dict[str, Any]]:
     
     return segments
 
-def _merge_short_adjacent_segments(segments: List[Dict[str, Any]], max_chars: int = 250, max_duration_s: float = 12.0, max_gap_ms: int = 300, max_segments: int = 3) -> List[Dict[str, Any]]:
-    """Merge adjacent SRT cues to reduce TTS restarts. Constraints: <= max_chars, <= max_duration_s, gap<=max_gap_ms, <= max_segments."""
+def _merge_short_adjacent_segments(segments: List[Dict[str, Any]], max_chars: int = 220, max_duration_s: float = 8.0, max_gap_ms: int = 250, max_segments: int = 4) -> List[Dict[str, Any]]:
     if not segments:
         return []
-    merged: List[Dict[str, Any]] = []
+    
+    def _has_sentence_end(text: str) -> bool:
+        return bool(re.search(r'[।.!?؟؛।৷\n]$', text.strip()))
+    
+    def _has_speaker_change(text1: str, text2: str) -> bool:
+        patterns = [r'^-\s+', r'^\w+:', r'^\[\w+\]', r'♪.*♪', r'\(.*\)']
+        return any(re.search(p, text2.strip()) for p in patterns)
+    
+    def _should_break_segment(current_text: str, next_text: str, gap_ms: int) -> bool:
+        if gap_ms > 800:
+            return True
+        if _has_sentence_end(current_text) and gap_ms > 150:
+            return True
+        if _has_speaker_change(current_text, next_text):
+            return True
+        return False
+    
+    merged = []
     current = None
     merged_count = 0
     
@@ -131,7 +147,10 @@ def _merge_short_adjacent_segments(segments: List[Dict[str, Any]], max_chars: in
         combined_text = (current["text"] + " " + text).strip()
         combined_dur_ms = end_ms - int(round(current["start"] * 1000))
         
-        can_merge = (gap_ms <= max_gap_ms and 
+        should_break = _should_break_segment(current["text"], text, gap_ms)
+        
+        can_merge = (not should_break and
+                    gap_ms <= max_gap_ms and 
                     len(combined_text) <= max_chars and 
                     combined_dur_ms <= int(max_duration_s * 1000) and
                     merged_count < max_segments)
