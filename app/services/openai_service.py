@@ -59,7 +59,7 @@ class OpenAIService:
                         {"role": "user", "content": user_prompt}
                     ],
                     temperature=0.2,
-                     max_tokens=4096
+                    max_completion_tokens=4096
                 )
                 
                 output = response.choices[0].message.content.strip()
@@ -88,13 +88,13 @@ class OpenAIService:
             user_prompt = f"Instructions: {custom_prompt}\nOriginal text: {original_text}\nLanguage: {target_language}\nRewrite this text following the instructions:"
 
             response = self.client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-5",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.7,
-                max_tokens=500
+                max_completion_tokens=500
             )
 
             return response.choices[0].message.content.strip()
