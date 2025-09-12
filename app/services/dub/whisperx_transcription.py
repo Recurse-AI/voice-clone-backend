@@ -25,10 +25,11 @@ class WhisperXTranscriptionService:
         self.model_size = settings.WHISPER_MODEL_SIZE
         self.alignment_device = settings.WHISPER_ALIGNMENT_DEVICE
         self.cache_dir = settings.WHISPER_CACHE_DIR
+        self.max_seg_seconds = settings.WHISPER_MAX_SEG_SECONDS
         self._setup_device_config()
         self._setup_cache_directory()
 
-        logger.info(f"WhisperX service configured - Model: {self.model_size}, Device: {self.device}, Cache: {self.cache_dir}")
+        logger.info(f"WhisperX service configured - Model: {self.model_size}, Device: {self.device}, Cache: {self.cache_dir}, Max segment: {self.max_seg_seconds}s")
 
     def _setup_device_config(self):
 
@@ -204,9 +205,65 @@ class WhisperXTranscriptionService:
     
     def _process_segments(self, raw_segments):
         segments = []
-        for index, seg in enumerate(raw_segments):
-            segments.append(self._create_segment(seg, index))
+        segment_index = 0
+        split_count = 0
+        
+        for seg in raw_segments:
+            duration_sec = seg["end"] - seg["start"]
+            if duration_sec <= self.max_seg_seconds:
+                segments.append(self._create_segment(seg, segment_index))
+                segment_index += 1
+            else:
+                split_segments = self._split_long_segment(seg, duration_sec)
+                split_count += len(split_segments) - 1
+                logger.info(f"Split {duration_sec:.1f}s segment into {len(split_segments)} parts (max: {self.max_seg_seconds}s)")
+                for split_seg in split_segments:
+                    segments.append(self._create_segment(split_seg, segment_index))
+                    segment_index += 1
+        
+        if split_count > 0:
+            logger.info(f"Created {split_count} additional segments from splitting for optimal dubbing quality")
+        
         return segments
+
+    def _split_long_segment(self, segment, total_duration):
+        text = segment["text"].strip()
+        start_time = segment["start"]
+        end_time = segment["end"]
+        confidence = segment.get("confidence", 0.9)
+        
+        num_splits = max(2, int(total_duration // self.max_seg_seconds))
+        split_duration = total_duration / num_splits
+        words = text.split()
+        
+        if len(words) <= num_splits:
+            words_per_split = 1
+        else:
+            words_per_split = len(words) // num_splits
+        
+        result_segments = []
+        word_start = 0
+        
+        for i in range(num_splits):
+            split_start = start_time + (i * split_duration)
+            split_end = start_time + ((i + 1) * split_duration)
+            if i == num_splits - 1:
+                split_end = end_time
+                text_chunk = " ".join(words[word_start:])
+            else:
+                word_end = min(word_start + words_per_split, len(words))
+                text_chunk = " ".join(words[word_start:word_end])
+                word_start = word_end
+            
+            if text_chunk.strip():
+                result_segments.append({
+                    "start": split_start,
+                    "end": split_end,
+                    "text": text_chunk.strip(),
+                    "confidence": confidence
+                })
+        
+        return result_segments
 
 
     def _create_segment(self, seg, index):
