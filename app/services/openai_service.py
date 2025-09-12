@@ -4,6 +4,8 @@ import logging
 from typing import List, Dict
 from openai import OpenAI
 from app.config.settings import settings
+import concurrent.futures
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -25,85 +27,55 @@ class OpenAIService:
         except Exception as e:
             logger.warning(f"OpenAI init failed: {e}")
 
-    def translate_dubbing_batch(self, segments: List[Dict], target_language: str, batch_size: int = 8) -> List[str]:
-        """Fast translation with retry system - no fallbacks"""
+    def translate_dubbing_batch(self, segments: List[Dict], target_language: str, max_workers: int = 8) -> List[str]:
+        """Fast parallel translation with threading - no batch calls"""
         if not self.is_available:
             return ["" for _ in segments]
 
-        all_dubbed = []
-        
-        for i in range(0, len(segments), batch_size):
-            batch = segments[i:i+batch_size]
+        # Use threading for parallel individual calls
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all segments for parallel processing
+            future_to_index = {
+                executor.submit(self._translate_single_segment, seg['text'], target_language): i 
+                for i, seg in enumerate(segments)
+            }
             
-            # Try batch first, then retry individually if needed
-            result = self._translate_with_retry(batch, target_language)
-            all_dubbed.extend(result)
+            # Collect results in order
+            results = [""] * len(segments)
+            for future in concurrent.futures.as_completed(future_to_index):
+                index = future_to_index[future]
+                try:
+                    results[index] = future.result()
+                except Exception as e:
+                    logger.warning(f"Segment {index} failed: {e}")
+                    results[index] = ""
+            
+            return results
 
-        return all_dubbed
-
-    def _translate_with_retry(self, batch: List[Dict], target_language: str) -> List[str]:
-        """Retry-based translation: batch first, individual retry if needed"""
+    def _translate_single_segment(self, text: str, target_language: str) -> str:
+        """Thread-safe individual translation with comprehensive prompt"""
+        if not text or not text.strip():
+            return ""
         
-        # Attempt 1: Batch translation
-        try:
-            return self._try_batch_translation(batch, target_language)
-        except Exception as e:
-            logger.warning(f"Batch failed, retrying individually: {e}")
-        
-        # Attempt 2: Individual translations with retry
-        results = []
-        for segment in batch:
-            result = self._try_individual_translation(segment['text'], target_language)
-            results.append(result)
-        
-        return results
-
-    def _try_batch_translation(self, batch: List[Dict], target_language: str) -> List[str]:
-        """Clean batch translation with validation"""
-        prompt_lines = [f"[{idx+1}] {seg['text']}" for idx, seg in enumerate(batch)]
-        joined_texts = "\n".join(prompt_lines)
-
+        # Comprehensive system prompt for high-quality results
         system_prompt = (
-            f"Translate each numbered segment to {target_language}.\n"
+            f"You are producing dubbing text for Fish Audio OpenAudio-S1 (Fish-Speech).\n"
+            f"Translate this segment to {target_language}.\n"
             f"Rules:\n"
             f"1) Translate meaning accurately (no creative additions).\n"
             f"2) Use proper {target_language} script only; keep proper nouns in original when appropriate.\n"
             f"3) Keep outputs natural and concise. DO NOT repeat words/syllables; collapse long onomatopoeia or loops into a brief phrase such as 'repeated clicking sound' or 'again and again'.\n"
             f"4) You MAY optionally use OpenAudio tone markers like (excited), (sad), (whispering), (angry), (soft tone) at the very beginning IF it clearly matches intent.\n"
-            f"5) NEVER omit any segment. Do NOT include segment numbers or explanations.\n"
-            f"6) Return EXACTLY {len(batch)} translations separated by |||, with no empty items."
-        )
-
-        response = self.client.chat.completions.create(
-            model="gpt-5",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Translate these {len(batch)} segments:\n{joined_texts}"}
-            ],
-            max_completion_tokens=4096
+            f"5) Return only the translation, no explanations or notes."
         )
         
-        output = response.choices[0].message.content.strip()
-        result = [seg.strip() for seg in output.split("|||")]
-        
-        # Validate count
-        if len(result) != len(batch):
-            raise ValueError(f"Count mismatch: expected {len(batch)}, got {len(result)}")
-        
-        return result
-
-    def _try_individual_translation(self, text: str, target_language: str) -> str:
-        """Clean individual translation with retry"""
-        if not text or not text.strip():
-            return ""
-        
-        # Try with GPT-5
+        # Try with GPT-5 (2 attempts)
         for attempt in range(2):
             try:
                 response = self.client.chat.completions.create(
                     model="gpt-5",
                     messages=[
-                        {"role": "system", "content": f"Translate to {target_language}. Be concise."},
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": text}
                     ],
                     max_completion_tokens=500
@@ -112,16 +84,16 @@ class OpenAIService:
                 if result:
                     return result
             except Exception as e:
-                logger.warning(f"Translation attempt {attempt+1} failed: {e}")
+                logger.warning(f"GPT-5 attempt {attempt+1} failed for '{text[:30]}...': {e}")
                 if attempt == 0:
                     continue  # Retry once
         
-        # Try with GPT-4o as backup
+        # Try with GPT-4o as backup with same comprehensive prompt
         try:
             response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
-                    {"role": "system", "content": f"Translate to {target_language}."},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": text}
                 ],
                 max_tokens=500
@@ -130,10 +102,10 @@ class OpenAIService:
             if result:
                 return result
         except Exception as e:
-            logger.warning(f"GPT-4o backup failed: {e}")
+            logger.warning(f"GPT-4o backup failed for '{text[:30]}...': {e}")
         
-        # Final attempt: return meaningful response for empty case
-        return "" if not text.strip() else text[:100]
+        # Return original text if all else fails (better than empty)
+        return text[:100] if text.strip() else ""
 
     def regenerate_text_with_prompt(self, original_text: str, target_language: str, custom_prompt: str) -> str:
         """Simple text regeneration"""
