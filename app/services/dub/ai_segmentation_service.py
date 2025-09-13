@@ -193,6 +193,7 @@ CRITICAL RULES - BREAK THESE AND YOU FAIL:
 11. Sequential IDs starting from seg_001, seg_002, etc.
 12. Cover ALL input content exactly ONCE - no repetition, no gaps
 13. dubbed_text should be in target language, sometimes target language could be the same as original language, in that case, use the original language text.
+14. TARGET LANGUAGE SHOULD BE IN WRITE IN TARGET LANGUAGE APLHABET, LIKE ENGLISH SHOULD BE IN ENGLISH APLHABET, BENGALI SHOULD BE IN BENGALI APLHABET, ETC.
 
 VALIDATION CHECKLIST - Your output must pass:
 ✓ All segments have unique start/end times

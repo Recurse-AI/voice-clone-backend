@@ -610,21 +610,24 @@ class SimpleDubbedAPI:
         current_target_lang = language_service.normalize_language_input(target_language)
         
         if is_redub:
-            redub_target_lang = language_service.normalize_language_input(manifest_override.get("redub_target_language"))
-            if redub_target_lang != current_target_lang:
-                logger.warning(f"Redub target language mismatch: manifest={redub_target_lang}, current={current_target_lang}")
-                return {}
+            # For redub: ALWAYS return empty map to force AI translation to new language
+            logger.info(f"REDUB DETECTED: Forcing AI translation from old language to {current_target_lang}")
+            return {}
         else:
+            # For resume: only use existing dubbed_text if same target language
             manifest_target_lang = manifest_override.get("target_language")
             if manifest_target_lang:
                 manifest_target_lang = language_service.normalize_language_input(manifest_target_lang)
                 if manifest_target_lang != current_target_lang:
+                    logger.info(f"Language changed: {manifest_target_lang} → {current_target_lang}, forcing AI translation")
                     return {}
         
+        # Resume with same language - use existing dubbed_text
         edited_map = {}
         for seg in manifest_override.get("segments", []):
             if seg.get("id") and seg.get("dubbed_text"):
                 edited_map[seg["id"]] = seg["dubbed_text"]
+        logger.info(f"RESUME: Using {len(edited_map)} existing translations")
         return edited_map
 
     def _process_voice_cloning_with_ai_segments(self, job_id: str, ai_segments: List[Dict[str, Any]],
