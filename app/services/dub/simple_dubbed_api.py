@@ -153,7 +153,7 @@ class SimpleDubbedAPI:
                 {"message": "Transcription complete - starting dubbing", "phase": "dubbing"}
             )
             # Get transcription and process with AI for optimal segmentation and dubbing
-            ai_segments, transcript_id = self._get_transcription_and_process_with_ai(
+            ai_segments, transcript_id, transcription_result = self._get_transcription_and_process_with_ai(
                 job_id, manifest_override, process_temp_dir, source_video_language, 
                 target_language, target_language_code, video_subtitle
             )
@@ -171,8 +171,12 @@ class SimpleDubbedAPI:
                     65,
                     {"message": "AI processing complete - starting voice cloning", "phase": "voice_cloning"}
                 )
+                # Get source language from transcription
+                transcription_source_lang = transcription_result.get("language", "auto_detect") if transcription_result else "auto_detect"
+                source_language_code = language_service.normalize_language_input(transcription_source_lang)
+                
                 dubbed_segments = self._process_voice_cloning_with_ai_segments(
-                    job_id, ai_segments, manifest_override, review_mode, process_temp_dir, target_language_code
+                    job_id, ai_segments, manifest_override, review_mode, process_temp_dir, target_language_code, source_language_code
                 )
             
             # Handle URLs based on whether this is redub or original dub (before review mode check)
@@ -272,7 +276,7 @@ class SimpleDubbedAPI:
                 AudioUtils.remove_temp_dir(folder_path=locals().get("process_temp_dir"))
             return {"success": False, "error": str(e)}
     
-    def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, original_text: str = "", job_id: str = None, process_temp_dir: str = None, target_language_code: str = "en") -> Optional[Dict[str, Any]]:
+    def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, original_text: str = "", job_id: str = None, process_temp_dir: str = None, target_language_code: str = "en", source_language_code: str = "en") -> Optional[Dict[str, Any]]:
         """Voice clone dubbed text using AI voice cloning service with reference audio and transcript_id in filename"""
         try:
             if not reference_audio_path:
@@ -305,6 +309,7 @@ class SimpleDubbedAPI:
             
             # Process entire segment as one unit (no chunking)
             tagged_text = _add_language_tag(dubbed_text, target_language_code)
+            tagged_reference_text = _add_language_tag(original_text or "Reference audio", source_language_code)
             
             premium_check = getattr(self, 'voice_premium_model', False)
             
@@ -317,7 +322,7 @@ class SimpleDubbedAPI:
                     result = fish_api.generate_voice_clone(
                         text=tagged_text,
                         reference_audio_bytes=reference_audio_bytes,
-                        reference_text=original_text or "Reference audio",
+                        reference_text=tagged_reference_text,
                         job_id=job_id,
                         target_language_code=target_language_code
                     )
@@ -333,7 +338,7 @@ class SimpleDubbedAPI:
                         result = self.fish_speech.generate_with_reference_audio(
                             text=tagged_text,
                             reference_audio_bytes=reference_audio_bytes,
-                            reference_text=original_text or "Reference audio",
+                            reference_text=tagged_reference_text,
                             max_new_tokens=1024,
                             top_p=0.9,
                             repetition_penalty=1.07,
@@ -345,7 +350,7 @@ class SimpleDubbedAPI:
                     result = self.fish_speech.generate_with_reference_audio(
                         text=tagged_text,
                         reference_audio_bytes=reference_audio_bytes,
-                        reference_text=original_text or "Reference audio",
+                        reference_text=tagged_reference_text,
                         max_new_tokens=1024,
                         top_p=0.9,
                         repetition_penalty=1.07,
@@ -433,7 +438,8 @@ class SimpleDubbedAPI:
                         data["original_text"], 
                         job_id=job_id, 
                         process_temp_dir=process_temp_dir,
-                        target_language_code=getattr(self, '_target_language_code', 'en')
+                        target_language_code=getattr(self, '_target_language_code', 'en'),
+                        source_language_code=getattr(self, '_source_language_code', 'en')
                     )
                     
                     segment_time = time.time() - segment_start
@@ -555,7 +561,7 @@ class SimpleDubbedAPI:
                 logger.info(f"AI created {len(ai_segments)} optimal segments with S1 dubbing")
                 self._update_phase_progress(job_id, "dubbing", 1.0, f"AI completed {len(ai_segments)} segments with S1 dubbing")
         
-        return ai_segments, transcript_id
+        return ai_segments, transcript_id, transcription_result
 
 
 
@@ -645,13 +651,14 @@ class SimpleDubbedAPI:
 
     def _process_voice_cloning_with_ai_segments(self, job_id: str, ai_segments: List[Dict[str, Any]],
                                                 manifest_override: Optional[Dict[str, Any]], 
-                                                review_mode: bool, process_temp_dir: str, target_language_code: str = "en") -> List[Dict[str, Any]]:
+                                                review_mode: bool, process_temp_dir: str, target_language_code: str = "en", source_language_code: str = "en") -> List[Dict[str, Any]]:
         """Process voice cloning using AI-generated segments"""
         
         if review_mode:
             return ai_segments
         
         self._target_language_code = target_language_code
+        self._source_language_code = source_language_code
         self._update_phase_progress(job_id, "voice_cloning", 0.0, "Segmenting audio for voice cloning")
         
         vocal_file_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
