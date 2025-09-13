@@ -502,11 +502,23 @@ class SimpleDubbedAPI:
         
         if manifest_override:
             logger.info("Using manifest override data")
+            manifest_segments = manifest_override.get("segments", [])
+            if not manifest_segments:
+                logger.error(f"No segments found in manifest override. Manifest keys: {list(manifest_override.keys())}")
+                logger.error(f"Manifest structure: {json.dumps(manifest_override, indent=2)[:500]}...")
+                raise Exception("No segments found in manifest override - cannot proceed with redub")
+            
+            logger.info(f"Manifest contains {len(manifest_segments)} segments")
+            
+            # Manifest segments are already normalized to milliseconds by manifest manager
+            logger.info(f"Using {len(manifest_segments)} manifest segments (already in milliseconds format)")
+            
             transcription_result = {
                 "success": True,
-                "segments": manifest_override.get("segments", []),
+                "segments": manifest_segments,
                 "language": manifest_override.get("language", "auto")
             }
+            
             transcript_id = manifest_override.get("transcript_id")
             self._download_missing_files(job_id, manifest_override, process_temp_dir)
         else:
@@ -595,13 +607,19 @@ class SimpleDubbedAPI:
             return {}
         
         is_redub = bool(manifest_override.get("redub_target_language"))
-        manifest_target_lang = manifest_override.get("target_language")
         current_target_lang = language_service.normalize_language_input(target_language)
         
-        if is_redub and manifest_target_lang:
-            manifest_target_lang = language_service.normalize_language_input(manifest_target_lang)
-            if manifest_target_lang != current_target_lang:
+        if is_redub:
+            redub_target_lang = language_service.normalize_language_input(manifest_override.get("redub_target_language"))
+            if redub_target_lang != current_target_lang:
+                logger.warning(f"Redub target language mismatch: manifest={redub_target_lang}, current={current_target_lang}")
                 return {}
+        else:
+            manifest_target_lang = manifest_override.get("target_language")
+            if manifest_target_lang:
+                manifest_target_lang = language_service.normalize_language_input(manifest_target_lang)
+                if manifest_target_lang != current_target_lang:
+                    return {}
         
         edited_map = {}
         for seg in manifest_override.get("segments", []):

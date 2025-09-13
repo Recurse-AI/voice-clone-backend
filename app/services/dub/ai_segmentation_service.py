@@ -24,39 +24,61 @@ class AISegmentationService:
             elif transcription_data.get("sentences"):
                 segments = transcription_data["sentences"]
             else:
+                logger.error(f"No segments or sentences found in transcription data. Keys available: {list(transcription_data.keys())}")
                 raise ValueError("No segments or sentences found in transcription data")
             
-            # If we have edited_map (redub/resume scenario), use existing manifest segments
+            if not segments:
+                logger.error(f"Empty segments list received. Transcription data success: {transcription_data.get('success')}, language: {transcription_data.get('language')}")
+                raise ValueError("Segments list is empty - transcription may have failed")
+            
+            logger.info(f"Processing {len(segments)} segments from transcription data")
+            
+            # Extract source language from transcription data
+            source_language = transcription_data.get("language", "auto_detect")
+            source_language_code = language_service.normalize_language_input(source_language)
+            target_language_code = language_service.normalize_language_input(target_language)
+            
+            # Check if source and target languages are the same
+            is_same_language = source_language_code == target_language_code
+            if is_same_language:
+                logger.info(f"🎯 SAME LANGUAGE DETECTED: source={source_language_code}, target={target_language_code} - will preserve original text")
+            else:
+                logger.info(f"🌍 TRANSLATION NEEDED: source={source_language_code} → target={target_language_code}")
+            
+            # Simple logic:
+            # - If edited_map has data = RESUME (same language, use existing dubbed_text)
+            # - If edited_map is empty = FRESH DUBBING or REDUB (regenerate dubbed_text via AI)
+            
             if edited_map:
-                logger.info(f"REDUB/RESUME MODE: Using existing segments from manifest ({len(segments)} segments)")
+                logger.info(f"RESUME: Using existing translations ({len(edited_map)} edited texts)")
                 return self._use_manifest_segments_and_translations(segments, edited_map)
             
-            # Fresh dubbing - create new segments and translate
-            # ALL inputs now in MILLISECONDS - no more confusion!
+            # Process through AI to generate new dubbed_text
+            logger.info(f"AI TRANSLATION: Processing {len(segments)} segments for new target language")
             combined_text = []
             for seg in segments:
-                text = seg.get("text", "").strip()
+                # Handle both transcription segments ("text") and manifest segments ("original_text")
+                text = seg.get("text", "").strip() or seg.get("original_text", "").strip()
                 if text:
-                    # All input sources now provide milliseconds
                     start_ms = int(seg.get("start", 0))
                     end_ms = int(seg.get("end", 0))
                     
                     # Validate timing (milliseconds)
-                    if start_ms >= end_ms or end_ms - start_ms < 100:  # Minimum 100ms
+                    if start_ms >= end_ms or end_ms - start_ms < 100:
                         logger.warning(f"Invalid segment timing: start={start_ms}ms, end={end_ms}ms, skipping")
                         continue
                     
-                    # Convert to seconds only for AI prompt (AI understands seconds better)
+                    # Convert to seconds for AI prompt
                     start_s = start_ms / 1000.0
                     end_s = end_ms / 1000.0
                     
                     combined_text.append({
                         "text": text,
-                        "start": round(start_s, 3),      # Seconds for AI
-                        "end": round(end_s, 3),        # Seconds for AI
+                        "start": round(start_s, 3),
+                        "end": round(end_s, 3),
                         "duration": round(end_s - start_s, 3),
-                        "start_ms": start_ms,          # Keep original ms for reference
-                        "end_ms": end_ms               # Keep original ms for reference
+                        "start_ms": start_ms,
+                        "end_ms": end_ms
                     })
             
             if not combined_text:
@@ -65,15 +87,33 @@ class AISegmentationService:
             # Process all segments in chunks
             logger.info(f"Processing {len(combined_text)} segments in chunks")
             logger.info(f"✅ TIMING STANDARD: All inputs converted to milliseconds, AI gets seconds for better understanding")
-            return self._process_in_chunks(combined_text, target_language)
+            return self._process_in_chunks(combined_text, target_language, is_same_language)
         except Exception as e:
-            logger.error(f"Error in create_optimal_segments_and_dub: {str(e)}")
-            return []
+            logger.error(f"CRITICAL ERROR in create_optimal_segments_and_dub: {str(e)}")
+            logger.error(f"Transcription data structure: {transcription_data}")
+            raise e
 
     
-    def _build_segmentation_and_dubbing_prompt(self, segments: List[Dict], target_language: str) -> str:
+    def _build_segmentation_and_dubbing_prompt(self, segments: List[Dict], target_language: str, is_same_language: bool = False) -> str:
         
-        return f"""You are a professional dubbing AI. Your job: Create SMART, UNIQUE audio segments and provide REAL translations.
+        if is_same_language:
+            translation_instructions = f"""SAME LANGUAGE PROCESSING:
+- Source and target language are IDENTICAL ({target_language})
+- PRESERVE the original text EXACTLY as is - NO translation needed
+- Copy the original_text to dubbed_text WITHOUT any modifications
+- Do NOT attempt to translate, paraphrase, or change the text in any way
+- Keep the EXACT wording, punctuation, and formatting"""
+        else:
+            translation_instructions = f"""STRICT TRANSLATION REQUIREMENTS - LITERAL TRANSLATION ONLY:
+- Translate EVERY SINGLE WORD into proper {target_language} - NO PARAPHRASING
+- NEVER change sentence structure, word order, or meaning
+- NEVER add, remove, or substitute words unless grammatically required for {target_language}
+- NEVER use synonyms, alternatives, or "improved" versions - translate LITERALLY
+- Keep EXACT same meaning, tone, and sentence structure as original
+- Maintain original word count and phrasing as closely as possible
+- Only make minimal changes when target language grammar absolutely requires it"""
+        
+        return f"""You are a professional dubbing AI. Your job: Create SMART, UNIQUE audio segments and provide REAL content.
 
 INPUT TRANSCRIPTION:
 {json.dumps(segments, ensure_ascii=False, indent=2)}
@@ -96,14 +136,7 @@ SMART SEGMENTATION RULES:
 8. MINIMUM segment duration: 1.0 seconds (1000ms) - NO segments shorter than this
 9. Use realistic timestamps - segments cannot be only milliseconds long
 
-STRICT TRANSLATION REQUIREMENTS - LITERAL TRANSLATION ONLY:
-- Translate EVERY SINGLE WORD into proper {target_language} - NO PARAPHRASING
-- NEVER change sentence structure, word order, or meaning
-- NEVER add, remove, or substitute words unless grammatically required for {target_language}
-- NEVER use synonyms, alternatives, or "improved" versions - translate LITERALLY
-- Keep EXACT same meaning, tone, and sentence structure as original
-- Maintain original word count and phrasing as closely as possible
-- Only make minimal changes when target language grammar absolutely requires it
+{translation_instructions}
 - NEVER use generic phrases like "Translated content for segment X"
 - NEVER use placeholder text or lazy translations
 
@@ -170,7 +203,7 @@ VALIDATION CHECKLIST - Your output must pass:
 ✓ Real translations (no placeholder text)
 ✓ Optimal segment durations (3-8 seconds target)
 
-YOUR JOB: Take the input segments, intelligently combine/split them for optimal voice cloning, then provide REAL translations that sound natural and convey the actual meaning of what was said. ENSURE NO DUPLICATES.
+YOUR JOB: Take the input segments, intelligently combine/split them for optimal voice cloning, then provide REAL translations that sound natural and convey the actual meaning of what was said in target language. ENSURE NO DUPLICATES.
 
 IF YOU USE PLACEHOLDER TEXT, LAZY TRANSLATIONS, OR CREATE DUPLICATES, YOU HAVE COMPLETELY FAILED."""
     
@@ -215,29 +248,44 @@ IF YOU USE PLACEHOLDER TEXT, LAZY TRANSLATIONS, OR CREATE DUPLICATES, YOU HAVE C
         return formatted_segments
     
     def _use_manifest_segments_and_translations(self, manifest_segments: List[Dict], edited_map: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Use existing segments from manifest for redub/resume scenarios"""
+        """Use existing segments from manifest for redub/resume scenarios
+        
+        Manifest segments come pre-normalized with timing in milliseconds format.
+        Example: {"start": 503, "end": 5000, "duration_ms": 4497}
+        """
         formatted_segments = []
         
+        logger.info(f"Processing {len(manifest_segments)} manifest segments with {len(edited_map)} edited texts")
+        
         for idx, seg in enumerate(manifest_segments):
-            # All manifest segments should now be in milliseconds (standardized)
             seg_id = seg.get("id", f"seg_{idx+1:03d}")
-            start_ms = int(seg.get("start", 0))
-            end_ms = int(seg.get("end", 0))
+            start_ms = seg.get("start", 0)
+            end_ms = seg.get("end", 0)
+            duration_ms = seg.get("duration_ms", end_ms - start_ms)
             
-            formatted_seg = {
+            original_text = seg.get("original_text", seg.get("text", "")).strip()
+            dubbed_text = seg.get("dubbed_text", "").strip()
+            
+            # Use edited text if available, otherwise fallback to original
+            if not dubbed_text and seg_id in edited_map:
+                dubbed_text = edited_map[seg_id]
+            if not dubbed_text:
+                dubbed_text = original_text
+                
+            formatted_segments.append({
                 "id": seg_id,
                 "segment_index": idx,
                 "start": start_ms,
                 "end": end_ms,
-                "duration_ms": end_ms - start_ms,
-                "original_text": seg.get("original_text", seg.get("text", "")),
-                "dubbed_text": seg.get("dubbed_text", edited_map.get(seg_id, seg.get("original_text", seg.get("text", "")))),
+                "duration_ms": duration_ms,
+                "original_text": original_text,
+                "dubbed_text": dubbed_text,
                 "voice_cloned": seg.get("voice_cloned", False),
                 "original_audio_file": seg.get("original_audio_file"),
                 "cloned_audio_file": seg.get("cloned_audio_file")
-            }
-            formatted_segments.append(formatted_seg)
+            })
         
+        logger.info(f"Formatted {len(formatted_segments)} segments for redub/resume processing")
         return formatted_segments
     
     def _get_openai_client(self):
@@ -248,7 +296,7 @@ IF YOU USE PLACEHOLDER TEXT, LAZY TRANSLATIONS, OR CREATE DUPLICATES, YOU HAVE C
             self._openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
         return self._openai_client
     
-    def _process_in_chunks(self, segments: List[Dict], target_language: str) -> List[Dict[str, Any]]:
+    def _process_in_chunks(self, segments: List[Dict], target_language: str, is_same_language: bool = False) -> List[Dict[str, Any]]:
         """Process large segment lists in chunks to avoid API limits"""
         chunk_size = 100  # Process 100 segments at a time
         all_results = []
@@ -275,7 +323,7 @@ CHUNK PROCESSING INFO:
 - Ensure your output timings are within the input range: {chunk[0].get('start', 0):.3f}s to {chunk[-1].get('end', 0):.3f}s
 """
             
-            prompt = chunk_context + self._build_segmentation_and_dubbing_prompt(chunk, target_lang_code)
+            prompt = chunk_context + self._build_segmentation_and_dubbing_prompt(chunk, target_lang_code, is_same_language)
             
             model = "gpt-4o"
             
