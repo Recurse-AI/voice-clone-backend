@@ -571,19 +571,27 @@ class SimpleDubbedAPI:
         # Check if we have manifest with already dubbed texts (resume after review)
         edited_map = self._get_edited_text_map(manifest_override, target_language) if manifest_override else {}
         
-        ai_service = get_ai_segmentation_service()
-        ai_segments = ai_service.create_optimal_segments_and_dub(
-            transcription_result,
-            target_language_code,
-            edited_map=edited_map
-        )
-        
         if edited_map:
+            # RESUME: Use manifest segments directly, no AI needed
             logger.info(f"RESUME MODE: Using existing segments and translations ({len(edited_map)} segments)")
+            ai_segments = self._use_manifest_segments_for_resume(transcription_result, edited_map)
             self._update_phase_progress(job_id, "dubbing", 1.0, "Using reviewed segments and dubbing")
         else:
-            logger.info(f"AI created {len(ai_segments)} optimal segments with S1 dubbing")
-            self._update_phase_progress(job_id, "dubbing", 1.0, f"AI completed {len(ai_segments)} segments with S1 dubbing")
+            # Fresh job or redub - use AI service
+            ai_service = get_ai_segmentation_service()
+            preserve_segments = bool(manifest_override)  # True for redub, False for fresh
+            ai_segments = ai_service.create_optimal_segments_and_dub(
+                transcription_result,
+                target_language_code,
+                preserve_segments=preserve_segments
+            )
+            
+            if preserve_segments:
+                logger.info(f"REDUB MODE: Preserved {len(ai_segments)} segments with translation")
+                self._update_phase_progress(job_id, "dubbing", 1.0, f"Redub completed {len(ai_segments)} segments")
+            else:
+                logger.info(f"AI created {len(ai_segments)} optimal segments with S1 dubbing")
+                self._update_phase_progress(job_id, "dubbing", 1.0, f"AI completed {len(ai_segments)} segments with S1 dubbing")
         
         return ai_segments, transcript_id
 
@@ -634,6 +642,44 @@ class SimpleDubbedAPI:
                 edited_map[seg["id"]] = seg["dubbed_text"]
         logger.info(f"RESUME: Using {len(edited_map)} existing translations")
         return edited_map
+    
+    def _use_manifest_segments_for_resume(self, transcription_result: Dict[str, Any], edited_map: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Use manifest segments directly for resume - no AI processing needed"""
+        segments = transcription_result.get("segments", [])
+        formatted_segments = []
+        
+        logger.info(f"RESUME: Processing {len(segments)} manifest segments directly")
+        
+        for idx, seg in enumerate(segments):
+            seg_id = seg.get("id", f"seg_{idx+1:03d}")
+            start_ms = int(seg.get("start", 0))
+            end_ms = int(seg.get("end", 0))
+            duration_ms = seg.get("duration_ms", end_ms - start_ms)
+            
+            original_text = seg.get("original_text", seg.get("text", "")).strip()
+            dubbed_text = seg.get("dubbed_text", "").strip()
+            
+            # Use edited text from review
+            if seg_id in edited_map:
+                dubbed_text = edited_map[seg_id]
+            elif not dubbed_text:
+                dubbed_text = original_text
+                
+            formatted_segments.append({
+                "id": seg_id,
+                "segment_index": idx,
+                "start": start_ms,
+                "end": end_ms,
+                "duration_ms": duration_ms,
+                "original_text": original_text,
+                "dubbed_text": dubbed_text,
+                "voice_cloned": seg.get("voice_cloned", False),
+                "original_audio_file": seg.get("original_audio_file"),
+                "cloned_audio_file": seg.get("cloned_audio_file")
+            })
+        
+        logger.info(f"RESUME: Prepared {len(formatted_segments)} segments for voice cloning")
+        return formatted_segments
 
     def _process_voice_cloning_with_ai_segments(self, job_id: str, ai_segments: List[Dict[str, Any]],
                                                 manifest_override: Optional[Dict[str, Any]], 

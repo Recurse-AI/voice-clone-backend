@@ -15,7 +15,7 @@ class AISegmentationService:
         self,
         transcription_data: Dict[str, Any],
         target_language: str,
-        edited_map: Dict[str, str] = None
+        preserve_segments: bool = False
     ) -> List[Dict[str, Any]]:
         """Create optimal segments AND translate using AI in one call"""
         try:
@@ -46,15 +46,15 @@ class AISegmentationService:
                 logger.info(f"🌍 TRANSLATION NEEDED: source={source_language_code} → target={target_language_code}")
             
             # Simple logic:
-            # - If edited_map has data = RESUME (same language, use existing dubbed_text)
-            # - If edited_map is empty = FRESH DUBBING or REDUB (regenerate dubbed_text via AI)
+            # - If preserve_segments = True = REDUB (keep segments, only translate text)
+            # - Otherwise = FRESH DUBBING (full AI segmentation and translation)
             
-            if edited_map:
-                logger.info(f"RESUME: Using existing translations ({len(edited_map)} edited texts)")
-                return self._use_manifest_segments_and_translations(segments, edited_map)
+            if preserve_segments:
+                logger.info(f"REDUB: Preserving {len(segments)} segments, translating text only")
+                return self._translate_existing_segments(segments, target_language_code, is_same_language)
             
-            # Process through AI to generate new dubbed_text
-            logger.info(f"AI TRANSLATION: Processing {len(segments)} segments for new target language")
+            # Process through AI to generate new dubbed_text with segmentation
+            logger.info(f"FRESH DUBBING: Full AI segmentation + translation for {len(segments)} segments")
             combined_text = []
             for seg in segments:
                 # Handle both transcription segments ("text") and manifest segments ("original_text")
@@ -129,7 +129,7 @@ SMART SEGMENTATION RULES:
 1. MERGE short segments (under 2 seconds) with adjacent ones for better voice cloning
 2. SPLIT long segments (over 12 seconds) at natural sentence breaks
 3. Target 3-8 seconds per segment for optimal voice quality
-4. NEVER exceed 15 seconds per segment (voice quality degrades)
+4. NEVER exceed 12 seconds per segment (voice quality degrades)
 5. Keep complete thoughts together - don't break mid-sentence
 6. Ensure smooth timing transitions - no gaps between segments
 7. COVER ALL input content exactly once - no repetition, no omissions
@@ -248,46 +248,152 @@ IF YOU USE PLACEHOLDER TEXT, LAZY TRANSLATIONS, OR CREATE DUPLICATES, YOU HAVE C
         logger.info(f"Formatted {len(formatted_segments)} valid segments (global index start: {global_segment_index_start})")
         return formatted_segments
     
-    def _use_manifest_segments_and_translations(self, manifest_segments: List[Dict], edited_map: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Use existing segments from manifest for redub/resume scenarios
+    
+    def _translate_existing_segments(self, segments: List[Dict], target_language_code: str, is_same_language: bool = False) -> List[Dict[str, Any]]:
+        """Translate existing segments without changing timing or structure - for redubs"""
+        logger.info(f"REDUB MODE: Translating {len(segments)} segments to {target_language_code}")
         
-        Manifest segments come pre-normalized with timing in milliseconds format.
-        Example: {"start": 503, "end": 5000, "duration_ms": 4497}
-        """
-        formatted_segments = []
+        if is_same_language:
+            logger.info(f"Same language redub - preserving original text")
+            formatted_segments = []
+            for idx, seg in enumerate(segments):
+                original_text = seg.get("original_text", seg.get("text", "")).strip()
+                formatted_segments.append({
+                    "id": seg.get("id", f"seg_{idx+1:03d}"),
+                    "segment_index": idx,
+                    "start": int(seg.get("start", 0)),
+                    "end": int(seg.get("end", 0)),
+                    "duration_ms": int(seg.get("end", 0)) - int(seg.get("start", 0)),
+                    "original_text": original_text,
+                    "dubbed_text": original_text,
+                    "voice_cloned": False,
+                    "original_audio_file": None,
+                    "cloned_audio_file": None
+                })
+            return formatted_segments
         
-        logger.info(f"Processing {len(manifest_segments)} manifest segments with {len(edited_map)} edited texts")
+        # Translate segments in chunks while preserving timing
+        return self._translate_segments_preserve_timing(segments, target_language_code)
+    
+    def _translate_segments_preserve_timing(self, segments: List[Dict], target_language_code: str) -> List[Dict[str, Any]]:
+        """Translate segments while preserving exact timing and structure"""
+        chunk_size = 50
+        all_results = []
         
-        for idx, seg in enumerate(manifest_segments):
-            seg_id = seg.get("id", f"seg_{idx+1:03d}")
-            start_ms = seg.get("start", 0)
-            end_ms = seg.get("end", 0)
-            duration_ms = seg.get("duration_ms", end_ms - start_ms)
+        for i in range(0, len(segments), chunk_size):
+            chunk = segments[i:i + chunk_size]
+            chunk_number = i//chunk_size + 1
+            total_chunks = (len(segments) + chunk_size - 1)//chunk_size
             
-            original_text = seg.get("original_text", seg.get("text", "")).strip()
-            dubbed_text = seg.get("dubbed_text", "").strip()
+            logger.info(f"Translating chunk {chunk_number}/{total_chunks} ({len(chunk)} segments)")
             
-            # Use edited text if available, otherwise fallback to original
-            if not dubbed_text and seg_id in edited_map:
-                dubbed_text = edited_map[seg_id]
-            if not dubbed_text:
-                dubbed_text = original_text
+            # Build translation-only prompt
+            segments_for_translation = []
+            for idx, seg in enumerate(chunk):
+                original_text = seg.get("original_text", seg.get("text", "")).strip()
+                start_ms = int(seg.get("start", 0))
+                end_ms = int(seg.get("end", 0))
                 
-            formatted_segments.append({
-                "id": seg_id,
-                "segment_index": idx,
-                "start": start_ms,
-                "end": end_ms,
-                "duration_ms": duration_ms,
-                "original_text": original_text,
-                "dubbed_text": dubbed_text,
-                "voice_cloned": seg.get("voice_cloned", False),
-                "original_audio_file": seg.get("original_audio_file"),
-                "cloned_audio_file": seg.get("cloned_audio_file")
-            })
+                segments_for_translation.append({
+                    "id": seg.get("id", f"seg_{i+idx+1:03d}"),
+                    "start": start_ms,
+                    "end": end_ms,
+                    "original_text": original_text
+                })
+            
+            prompt = self._build_translation_only_prompt(segments_for_translation, target_language_code)
+            
+            try:
+                response = self._get_openai_client().chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {"role": "system", "content": "You are a professional translator. Your only job is to translate text while preserving exact segment timing."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=8192,
+                    temperature=0.1,
+                    response_format={"type": "json_object"}
+                )
+                
+                ai_response = response.choices[0].message.content.strip()
+                result = json.loads(ai_response)
+                
+                # Format results preserving original timing
+                for seg_result in result.get("segments", []):
+                    original_seg = next((s for s in chunk if s.get("id") == seg_result.get("id")), None)
+                    if original_seg:
+                        dubbed_text = seg_result.get("dubbed_text", "").strip()
+                        
+                        all_results.append({
+                            "id": seg_result.get("id"),
+                            "segment_index": len(all_results),
+                            "start": int(original_seg.get("start", 0)),
+                            "end": int(original_seg.get("end", 0)),
+                            "duration_ms": int(original_seg.get("end", 0)) - int(original_seg.get("start", 0)),
+                            "original_text": seg_result.get("original_text", ""),
+                            "dubbed_text": dubbed_text,
+                            "voice_cloned": False,
+                            "original_audio_file": None,
+                            "cloned_audio_file": None
+                        })
+                
+                logger.info(f"Translated chunk {chunk_number}: {len(result.get('segments', []))} segments")
+                
+            except Exception as e:
+                logger.error(f"Translation chunk failed: {str(e)}")
+                # Fallback: preserve original text
+                for idx, seg in enumerate(chunk):
+                    original_text = seg.get("original_text", seg.get("text", "")).strip()
+                    all_results.append({
+                        "id": seg.get("id", f"seg_{i+idx+1:03d}"),
+                        "segment_index": len(all_results),
+                        "start": int(seg.get("start", 0)),
+                        "end": int(seg.get("end", 0)),
+                        "duration_ms": int(seg.get("end", 0)) - int(seg.get("start", 0)),
+                        "original_text": original_text,
+                        "dubbed_text": original_text,
+                        "voice_cloned": False,
+                        "original_audio_file": None,
+                        "cloned_audio_file": None
+                    })
         
-        logger.info(f"Formatted {len(formatted_segments)} segments for redub/resume processing")
-        return formatted_segments
+        logger.info(f"REDUB translation complete: {len(all_results)} segments translated")
+        return all_results
+    
+    def _build_translation_only_prompt(self, segments: List[Dict], target_language_code: str) -> str:
+        """Build prompt for translation-only (no segmentation changes)"""
+        return f"""You are a professional translator. Translate the text content while preserving EXACT timing and structure.
+
+INPUT SEGMENTS:
+{json.dumps(segments, ensure_ascii=False, indent=2)}
+
+STRICT TRANSLATION RULES:
+- Translate ONLY the original_text to {target_language_code}
+- PRESERVE exact start/end timing from input - DO NOT change timestamps
+- PRESERVE exact segment IDs from input  
+- DO NOT merge, split, or modify segments
+- DO NOT change segment structure or timing
+- Provide literal, accurate translation of each text
+- Output MUST have same number of segments as input
+- Each output segment must match input segment by ID and timing
+
+TARGET LANGUAGE: {target_language_code}
+- Write dubbed_text in proper {target_language_code} alphabet/script
+- Use natural, fluent {target_language_code} while staying faithful to meaning
+- Maintain original tone and style
+
+OUTPUT FORMAT (JSON):
+{{
+  "segments": [
+    {{
+      "id": "[same as input]",
+      "original_text": "[same as input]", 
+      "dubbed_text": "[translation in {target_language_code}]"
+    }}
+  ]
+}}
+
+CRITICAL: Output exactly {len(segments)} segments. Do NOT change timing, merge, or split segments."""
     
     def _get_openai_client(self):
         """Get or create OpenAI client (reusable)"""
