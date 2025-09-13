@@ -200,10 +200,8 @@ class FishSpeechService:
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(output_dir, f"output_{request_id}.wav")
         
-        # Add language tag to text for better accuracy
+        # Text already contains language tag from orchestration layer
         tagged_text = text
-        if target_language_code:
-            tagged_text = f"{text} [{target_language_code}]"
         
         # Prepare request data
         request_data = {
@@ -324,10 +322,10 @@ class FishSpeechService:
                 try:
                     result = future.result(timeout=120)
                     elapsed = time.time() - start_time
-                    logger.info(f"Voice generation completed in {elapsed:.2f}s for text: {text[:30]}...")
+                    logger.info(f"Voice generation completed in {elapsed:.2f}s for text: {text}")
                     return result
                 except concurrent.futures.TimeoutError:
-                    logger.error(f"Voice generation timeout (120s) for text: {text[:30]}...")
+                    logger.error(f"Voice generation timeout (120s) for text: {text}")
                     return {"success": False, "error": "Generation timeout after 120 seconds"}
                 
         except Exception as e:

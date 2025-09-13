@@ -21,7 +21,6 @@ from .manifest_service import (
 )
 from app.utils.audio import AudioUtils
 from app.services.simple_status_service import status_service, JobStatus
-from app.utils.text_chunking import TextChunking
 
 logger = logging.getLogger(__name__)
 
@@ -292,148 +291,111 @@ class SimpleDubbedAPI:
             if len(audio_data.shape) > 1:
                 audio_data = audio_data[:, 0]
 
-            # Limit reference audio length based on configuration
-
-            max_ref_seconds = settings.MAX_REFERENCE_SECONDS
-            total_seconds = len(audio_data) / sample_rate
-            if total_seconds > max_ref_seconds:
-                # take the beginning slice of length max_ref_seconds for better alignment
-                end_sample = int(max_ref_seconds * sample_rate)
-                audio_data = audio_data[:end_sample]
-
             buffer = io.BytesIO()
             sf.write(buffer, audio_data, sample_rate, format='WAV')
             reference_audio_bytes = buffer.getvalue()
             if not reference_audio_bytes:
                 logger.error(f"Failed to load reference audio: {reference_audio_path}")
                 return None
+
             # Extract segment index from segment_id (seg_001 -> 0)
             segment_index = int(segment_id.split('_')[1]) - 1
             cloned_filename = f"cloned_{job_id}_{segment_index:03d}.wav"
             cloned_path = os.path.join(process_temp_dir, cloned_filename).replace('\\', '/')
-            text_chunks = TextChunking.create_voice_chunks(dubbed_text, chunk_size=settings.FISH_SPEECH_CHUNK_SIZE, min_size=settings.FISH_SPEECH_MIN_CHUNK_SIZE)
-            audio_chunks = []
-            sample_rate_out = None
-            for chunk in text_chunks:
-                tagged_chunk = _add_language_tag(chunk, target_language_code)
-                import time
-                chunk_start = time.time()
-                result = None
+            
+            # Process entire segment as one unit (no chunking)
+            tagged_text = _add_language_tag(dubbed_text, target_language_code)
+            
+            premium_check = getattr(self, 'voice_premium_model', False)
+            
+            if premium_check:
+                from app.services.dub.fish_audio_api_service import FishAudioAPIService
+                fish_api = FishAudioAPIService()
                 
-                premium_check = getattr(self, 'voice_premium_model', False)
-                
-                if premium_check:
-                    from app.services.dub.fish_audio_api_service import FishAudioAPIService
-                    fish_api = FishAudioAPIService()
-                    
-                    if fish_api.api_key and fish_api.api_key.strip():
-                        logger.info("🎯 Using Premium Fish Audio API")
-                        result = fish_api.generate_voice_clone(
-                            text=tagged_chunk,
-                            reference_audio_bytes=reference_audio_bytes,
-                            reference_text=original_text or "Reference audio",
-                            job_id=job_id,
-                            target_language_code=target_language_code
-                        )
-                        # If premium API succeeds, skip local model completely
-                        if result.get("success"):
-                            logger.info(f"✅ Fish API success for {segment_id}")
-                        else:
-                            error_msg = result.get('error', 'Unknown error')
-                            if "empty audio" in error_msg or "silent" in error_msg:
-                                logger.warning(f"🔧 Fish API service issue for {segment_id} - using local model as backup")
-                            else:
-                                logger.warning(f"❌ Fish API failed for {segment_id}: {error_msg}, falling back to local model")
-                            result = self.fish_speech.generate_with_reference_audio(
-                                text=tagged_chunk,
-                                reference_audio_bytes=reference_audio_bytes,
-                                reference_text=original_text or "Reference audio",
-                                max_new_tokens=1024,
-                                top_p=0.9,
-                                repetition_penalty=1.07,
-                                temperature=0.75,
-                                chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,
-                                job_id=job_id,
-                                target_language_code=target_language_code
-                            )
+                if fish_api.api_key and fish_api.api_key.strip():
+                    logger.info("🎯 Using Premium Fish Audio API")
+                    result = fish_api.generate_voice_clone(
+                        text=tagged_text,
+                        reference_audio_bytes=reference_audio_bytes,
+                        reference_text=original_text or "Reference audio",
+                        job_id=job_id,
+                        target_language_code=target_language_code
+                    )
+                    # If premium API succeeds, skip local model completely
+                    if result.get("success"):
+                        logger.info(f"✅ Fish API success for {segment_id}")
                     else:
+                        error_msg = result.get('error', 'Unknown error')
+                        if "empty audio" in error_msg or "silent" in error_msg:
+                            logger.warning(f"🔧 Fish API service issue for {segment_id} - using local model as backup")
+                        else:
+                            logger.warning(f"❌ Fish API failed for {segment_id}: {error_msg}, falling back to local model")
                         result = self.fish_speech.generate_with_reference_audio(
-                            text=tagged_chunk,
+                            text=tagged_text,
                             reference_audio_bytes=reference_audio_bytes,
                             reference_text=original_text or "Reference audio",
                             max_new_tokens=1024,
                             top_p=0.9,
                             repetition_penalty=1.07,
                             temperature=0.75,
-                            chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,
                             job_id=job_id,
                             target_language_code=target_language_code
                         )
                 else:
-                    # Default: Local Fish Speech mini model
                     result = self.fish_speech.generate_with_reference_audio(
-                        text=tagged_chunk,
+                        text=tagged_text,
                         reference_audio_bytes=reference_audio_bytes,
                         reference_text=original_text or "Reference audio",
                         max_new_tokens=1024,
                         top_p=0.9,
                         repetition_penalty=1.07,
                         temperature=0.75,
-                        chunk_length=settings.FISH_SPEECH_CHUNK_SIZE,
                         job_id=job_id,
                         target_language_code=target_language_code
                     )
+            else:
+                # Default: Local Fish Speech mini model
+                result = self.fish_speech.generate_with_reference_audio(
+                    text=tagged_text,
+                    reference_audio_bytes=reference_audio_bytes,
+                    reference_text=original_text or "Reference audio",
+                    max_new_tokens=1024,
+                    top_p=0.9,
+                    repetition_penalty=1.07,
+                    temperature=0.75,
+                    job_id=job_id,
+                    target_language_code=target_language_code
+                )
 
-                chunk_time = time.time() - chunk_start
-                logger.info(f"Chunk generation took {chunk_time:.2f}s for text: {tagged_chunk[:30]}...")
+            total_time = time.time() - segment_start_time
+            logger.info(f"Segment generation took {total_time:.2f}s for text: {tagged_text}")
 
-                if result.get("success"):
-                    # Handle both Fish API and local model output paths
-                    output_path = result.get("output_path")
-                    if output_path and os.path.exists(output_path):
-                        try:
-                            audio, sample_rate = sf.read(output_path)
-                            if len(audio.shape) > 1:
-                                audio = audio[:, 0]
-                            audio_chunks.append(audio)
-                            sample_rate_out = sample_rate
-                            # Clean up the temporary file
-                            os.remove(output_path)
-                            logger.info(f"✅ Successfully processed audio from {output_path}")
-                        except Exception as e:
-                            logger.warning(f"Failed to read audio from {output_path}: {e}")
-                            if os.path.exists(output_path):
-                                os.remove(output_path)
-                    else:
-                        logger.warning(f"No valid output path in result for {segment_id}")
-                else:
-                    # Result failed, local model fallback already handled above
-                    pass
-            if audio_chunks:
-                if len(audio_chunks) == 1:
-                    final_audio = audio_chunks[0].astype(np.float32)
-                else:
-                    fade_ms = 8.0
-                    final_audio = audio_chunks[0].astype(np.float32)
+            if result.get("success"):
+                # Handle both Fish API and local model output paths
+                output_path = result.get("output_path")
+                if output_path and os.path.exists(output_path):
                     try:
-                        from app.utils.audio import AudioUtils as _AU
-                        for part in audio_chunks[1:]:
-                            part = part.astype(np.float32)
-                            if len(part) > 0 and len(final_audio) > 0:
-                                final_audio = _AU.crossfade_arrays(final_audio, part, fade_ms=fade_ms, sample_rate=sample_rate_out)
-                            else:
-                                final_audio = np.concatenate([final_audio, part])
+                        audio_data, sample_rate = sf.read(output_path)
+                        if len(audio_data.shape) > 1:
+                            audio_data = audio_data[:, 0]
+                        
+                        # Save directly to final path
+                        sf.write(cloned_path, audio_data.astype(np.float32), sample_rate)
+                        
+                        # Clean up the temporary file
+                        os.remove(output_path)
+                        
+                        duration_ms = int(len(audio_data) / sample_rate * 1000)
+                        logger.info(f"✅ Voice cloning {segment_id} completed in {total_time:.2f}s at {time.strftime('%H:%M:%S')}")
+                        return {"path": cloned_path, "duration_ms": duration_ms}
                     except Exception as e:
-                        logger.warning(f"Crossfade failed for {segment_id}: {e}, using direct concatenation")
-                        final_audio = np.concatenate([chunk.astype(np.float32) for chunk in audio_chunks])
-                buffer = io.BytesIO()
-                sf.write(buffer, final_audio, sample_rate_out, format='WAV')
-                with open(cloned_path, "wb") as f:
-                    f.write(buffer.getvalue())
-                duration_ms = int(len(final_audio) / sample_rate_out * 1000)
-                total_time = time.time() - segment_start_time
-                logger.info(f"✅ Voice cloning {segment_id} completed in {total_time:.2f}s at {time.strftime('%H:%M:%S')}")
-                return {"path": cloned_path, "duration_ms": duration_ms}
+                        logger.error(f"Failed to process audio from {output_path}: {e}")
+                        if os.path.exists(output_path):
+                            os.remove(output_path)
+                else:
+                    logger.warning(f"No valid output path in result for {segment_id}")
+            
+            logger.error(f"Voice cloning failed for {segment_id}")
             return None
                 
         except Exception as e:
@@ -516,7 +478,7 @@ class SimpleDubbedAPI:
             manifest_segments = manifest_override.get("segments", [])
             if not manifest_segments:
                 logger.error(f"No segments found in manifest override. Manifest keys: {list(manifest_override.keys())}")
-                logger.error(f"Manifest structure: {json.dumps(manifest_override, indent=2)[:500]}...")
+                logger.error(f"Manifest structure: {json.dumps(manifest_override, indent=2)}")
                 raise Exception("No segments found in manifest override - cannot proceed with redub")
             
             logger.info(f"Manifest contains {len(manifest_segments)} segments")
@@ -819,17 +781,8 @@ class SimpleDubbedAPI:
             start = seg["start"] / 1000.0
             end = seg["end"] / 1000.0
 
-            # Create subtitle lines
-            chunks = TextChunking.create_subtitle_chunks(text, chunk_size=60, min_size=40)
-            total_chars = sum(len(c) for c in chunks) or 1
-
-            char_count_before = 0
-            for chunk in chunks:
-                chunk_len = len(chunk)
-                chunk_start = start + (end - start) * (char_count_before / total_chars)
-                char_count_before += chunk_len
-                chunk_end = start + (end - start) * (char_count_before / total_chars)
-                subtitle_data.append({"start": chunk_start, "end": min(chunk_end, end), "text": chunk})
+            # Use text as single subtitle line (segments are already optimally sized)
+            subtitle_data.append({"start": start, "end": end, "text": text})
         
         subtitle_path = os.path.join(process_temp_dir, f"subtitles_{job_id}.srt")
         processor.create_srt_file(subtitle_data, subtitle_path)
