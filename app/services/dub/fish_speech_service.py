@@ -176,14 +176,14 @@ class FishSpeechService:
 
     
     def generate_with_reference_audio(self, text: str, reference_audio_bytes: bytes,
-                                     reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:
+                                     reference_text: str, job_id: str = None, target_language_code: str = None, **kwargs) -> Dict[str, Any]:
         """
         Generate voice cloning - always uses service worker for optimal performance
         """
-        return self._generate_via_service_worker(text, reference_audio_bytes, reference_text, job_id, **kwargs)
+        return self._generate_via_service_worker(text, reference_audio_bytes, reference_text, job_id, target_language_code, **kwargs)
     
     def _generate_via_service_worker(self, text: str, reference_audio_bytes: bytes, 
-                                   reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:
+                                   reference_text: str, job_id: str = None, target_language_code: str = None, **kwargs) -> Dict[str, Any]:
         """Route voice cloning through Redis service worker for serial processing"""
         import uuid
         import time
@@ -200,10 +200,15 @@ class FishSpeechService:
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(output_dir, f"output_{request_id}.wav")
         
+        # Add language tag to text for better accuracy
+        tagged_text = text
+        if target_language_code:
+            tagged_text = f"{text} [{target_language_code}]"
+        
         # Prepare request data
         request_data = {
             "request_id": request_id,
-            "text": text,
+            "text": tagged_text,
             "reference_audio_bytes": base64.b64encode(reference_audio_bytes).decode(),
             "output_path": output_path,
             "reference_text": reference_text,

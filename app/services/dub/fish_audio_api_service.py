@@ -17,6 +17,11 @@ from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+def _add_language_tag(text: str, language_code: str) -> str:
+    if not text or not language_code:
+        return text
+    return f"{text} [{language_code}]"
+
 class FishAudioAPIService:
     def __init__(self):
         self.api_key = settings.FISH_AUDIO_API_KEY
@@ -25,7 +30,7 @@ class FishAudioAPIService:
         else:
             self.session = None
     
-    def generate_voice_clone(self, text: str, reference_audio_bytes: bytes, reference_text: str, job_id: str = None) -> Dict[str, Any]:
+    def generate_voice_clone(self, text: str, reference_audio_bytes: bytes, reference_text: str, job_id: str = None, target_language_code: str = None) -> Dict[str, Any]:
         if not FISH_SDK_AVAILABLE:
             return {"success": False, "error": "Fish Audio SDK not installed. Run: pip install fish-audio-sdk"}
         
@@ -42,9 +47,14 @@ class FishAudioAPIService:
             request_id = f"fish_api_{job_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             output_path = os.path.join(output_dir, f"output_{request_id}.wav")
             
+            # Add language tag to text for better accuracy
+            tagged_text = text
+            if target_language_code:
+                tagged_text = _add_language_tag(text, target_language_code)
+            
             # Try using raw HTTP request with model header (as per Fish Audio docs)
             request_data = {
-                "text": text,
+                "text": tagged_text,
                 "references": [{
                     "audio": reference_audio_bytes,
                     "text": reference_text
