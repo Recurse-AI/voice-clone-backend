@@ -148,12 +148,13 @@ CRITICAL: Must output exactly {len(segments)} segments as valid JSON with proper
             return f"""FRESH DUBBING - INTELLIGENT SEGMENTATION:
 
 SEGMENTATION RULES:
-1. SMART MERGING: Combine short segments (under 2 seconds) for better voice quality
-2. MANDATORY SPLITTING: Split segments over 12 seconds at natural sentence breaks  
-3. OPTIMAL DURATION: Target 3-8 seconds per segment for best voice cloning
-4. COMPLETE COVERAGE: Use all input content exactly once - no gaps, no repeats
-5. NATURAL BREAKS: Split at sentence boundaries, not mid-sentence
-6. MAX DURATION: NO segment can exceed 12.0 seconds - STRICT LIMIT
+1. SMART MERGING: Combine short segments (under 2 seconds) ONLY IF the combined duration remains under 12 seconds and at a natural pause.
+2. MANDATORY SPLITTING: Strictly split any segment that is 12 seconds or longer. Prioritize splitting at natural sentence breaks like periods (.), question marks (?), or exclamation marks (!). If no such punctuation is available, split at the nearest natural pause to respect the 12-second maximum.
+3. OPTIMAL DURATION: Target 3-8 seconds per segment for best voice cloning results.
+4. COMPLETE COVERAGE: Use all input content exactly once - no gaps, no repeats.
+5. NATURAL BREAKS: Split at sentence boundaries, not mid-sentence, unless absolutely necessary to meet the 12-second limit.
+6. ABSOLUTE MAX DURATION: NO segment can exceed 12.0 seconds - this is a STRICT and UNBREAKABLE LIMIT.
+7. IF TARGET LANGUAGE IS SAME AS SOURCE LANGUAGE, THEN FOCUS ON SEGMENTING THE TEXT FOR BETTER VOICE CLONING AND KEEP orginal_text and dubbed_text the same
 
 {translation_instructions}
 - Provide REAL meaningful translations in {target_language}
@@ -176,7 +177,7 @@ OUTPUT JSON FORMAT:
 }}
 
 CRITICAL REQUIREMENTS:
-✓ All segments ≤ 12.0 seconds duration (MANDATORY)
+✓ All segments MUST be ≤ 12.0 seconds duration (ABSOLUTELY MANDATORY - failure to comply will result in process failure)
 ✓ Real translations in {target_language} with proper alphabet
 ✓ Natural sentence boundaries preserved
 ✓ Optimal voice cloning segment lengths (3-8s ideal)
