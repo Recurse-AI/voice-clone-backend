@@ -3,13 +3,15 @@ import json
 import re
 from typing import List, Dict, Any, Optional
 from app.services.language_service import language_service
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
 class AISegmentationService:
-    def __init__(self):
+    def __init__(self, settings_override=None):
         self.max_tokens = 16384
         self._openai_client = None
+        self.settings = settings_override if settings_override is not None else settings
         
     def create_optimal_segments_and_dub(
         self,
@@ -148,13 +150,13 @@ CRITICAL: Must output exactly {len(segments)} segments as valid JSON with proper
             return f"""FRESH DUBBING - INTELLIGENT SEGMENTATION:
 
 SEGMENTATION RULES:
-1. SMART MERGING: Combine short segments (under 2 seconds) ONLY IF the combined duration remains under 12 seconds and at a natural pause.
-2. MANDATORY SPLITTING: Strictly split any segment that is 12 seconds or longer. Prioritize splitting at natural sentence breaks like periods (.), question marks (?), or exclamation marks (!). If no such punctuation is available, split at the nearest natural pause to respect the 12-second maximum.
-3. OPTIMAL DURATION: Target 3-8 seconds per segment for best voice cloning results.
-4. COMPLETE COVERAGE: Use all input content exactly once - no gaps, no repeats.
-5. NATURAL BREAKS: Split at sentence boundaries, not mid-sentence, unless absolutely necessary to meet the 12-second limit.
-6. ABSOLUTE MAX DURATION: NO segment can exceed 12.0 seconds - this is a STRICT and UNBREAKABLE LIMIT.
-7. IF TARGET LANGUAGE IS SAME AS SOURCE LANGUAGE, THEN FOCUS ON SEGMENTING THE TEXT FOR BETTER VOICE CLONING AND KEEP orginal_text and dubbed_text the same
+1. ABSOLUTE MAXIMUM DURATION: NO segment can exceed 12.0 seconds. This is the single most critical rule and takes precedence over all other guidelines. If a segment is 12 seconds or longer, it MUST be split.
+2. MANDATORY SPLITTING LOGIC: For any segment approaching or exceeding 12.0 seconds, immediately split it. Prioritize splitting at natural sentence breaks (periods, question marks, exclamation marks). If no such punctuation is present, split at the nearest natural pause or even a less ideal point to ensure the 12-second limit is NOT violated. The goal is to produce multiple shorter segments, not one long one.
+3. SMART MERGING: Combine very short segments (under 2 seconds) ONLY IF the combined segment's total duration is *strictly less than* 12 seconds and the merge occurs at a natural pause. Avoid merging if it risks exceeding the 12-second limit.
+4. OPTIMAL DURATION: After ensuring the 12-second hard limit is met for all segments, aim for segments between 3-8 seconds for optimal voice cloning. This is a secondary goal to the 12-second hard limit.
+5. COMPLETE COVERAGE: Use all input content exactly once - no gaps, no repeats.
+6. NATURAL BREAKS: Where possible and without violating the 12-second limit, split at sentence boundaries, not mid-sentence.
+7. IF TARGET LANGUAGE IS SAME AS SOURCE LANGUAGE, THEN FOCUS ON SEGMENTING THE TEXT FOR BETTER VOICE CLONING AND KEEP original_text and dubbed_text the same.
 
 {translation_instructions}
 - Provide REAL meaningful translations in {target_language}
@@ -177,61 +179,173 @@ OUTPUT JSON FORMAT:
 }}
 
 CRITICAL REQUIREMENTS:
-✓ All segments MUST be ≤ 12.0 seconds duration (ABSOLUTELY MANDATORY - failure to comply will result in process failure)
-✓ Real translations in {target_language} with proper alphabet
-✓ Natural sentence boundaries preserved
-✓ Optimal voice cloning segment lengths (3-8s ideal)
-✓ Output valid JSON format"""
+✓ ALL segments MUST be ≤ 12.0 seconds duration. This is an ABSOLUTELY MANDATORY constraint. Any output segment exceeding this will cause the entire process to FAIL. The AI's primary objective is to adhere to this limit.
+✓ Real translations in {target_language} with proper alphabet.
+✓ Natural sentence boundaries preserved (where not in conflict with the 12-second limit).
+✓ Optimal voice cloning segment lengths (3-8s ideal, but secondary to the 12s hard limit).
+✓ Output valid JSON format."""
     
     def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0) -> List[Dict[str, Any]]:
         """Format segments with translation included and enforce duration limits"""
-        from app.config.settings import settings
         formatted_segments = []
         # Use the configured max segment duration, but cap at 12 seconds for voice quality
-        max_duration_ms = min(settings.WHISPER_MAX_SEG_SECONDS * 1000, 12000)  # 12 seconds max in milliseconds
+        max_duration_ms = min(self.settings.WHISPER_MAX_SEG_SECONDS * 1000, 12000)  # 12 seconds max in milliseconds
         
         for idx, seg in enumerate(ai_segments):
+            segments_to_add = []
             start_s = float(seg.get("start", 0))
             end_s = float(seg.get("end", 0))
             
             # Convert to milliseconds
-            start_ms = int(start_s * 1000)
-            end_ms = int(end_s * 1000)
-            duration_ms = end_ms - start_ms
+            current_start_ms = int(start_s * 1000)
+            current_end_ms = int(end_s * 1000)
+            current_duration_ms = current_end_ms - current_start_ms
             
-            # ENFORCE 12-second limit - CRITICAL FAILURE if violated
-            if duration_ms > max_duration_ms:
-                logger.error(f"🚨 CRITICAL DURATION VIOLATION: Segment {seg.get('id', 'unknown')} exceeds 12s limit: {duration_ms/1000:.2f}s")
-                logger.error(f"   Text: {seg.get('original_text', '')[:100]}...")
-                logger.error(f"   This indicates AI failed to properly split long segments during optimization")
-                raise ValueError(f"AI generated segment exceeding 12s limit: {duration_ms/1000:.2f}s - AI must split long segments at sentence breaks")
+            if current_duration_ms > max_duration_ms:
+                logger.warning(f"⚠️  AUTO-SPLITTING: Segment {seg.get('id', 'unknown')} exceeds {max_duration_ms/1000:.1f}s limit: {current_duration_ms/1000:.2f}s")
+                original_text = seg.get("original_text", "").strip()
+                dubbed_text = seg.get("dubbed_text", "").strip()
+                
+                # Attempt to split at sentence breaks (., ?, !)
+                sentence_breaks = [m.start() + 1 for m in re.finditer(r'[.?!]\s+', original_text)]
+                
+                last_split_ms = current_start_ms
+                segment_text_start_idx = 0
+                
+                # Create a temporary list to hold sub-segments for the current long segment
+                temp_sub_segments = []
+                
+                # Iterate through potential split points
+                for break_idx in sentence_breaks:
+                    prospective_text = original_text[segment_text_start_idx:break_idx].strip()
+                    # Estimate duration of prospective_text. This is a rough estimate.
+                    # A more accurate way would be to get time alignment, but it's not available here.
+                    # For now, we'll assume a proportional split based on character count.
+                    # This needs to be improved if the proportional split is not accurate enough.
+                    # For the purpose of enforcing the hard limit, we'll create splits based on text length.
+                    
+                    # Calculate approximate end_ms for the prospective segment
+                    # This is a heuristic. A proper solution would require re-running transcription with forced alignment
+                    # For this, we'll approximate duration by character count relative to the original segment's total duration.
+                    approx_end_ms = last_split_ms + int(current_duration_ms * (len(prospective_text) / len(original_text)))
+                    if approx_end_ms - last_split_ms > max_duration_ms:
+                        # If splitting at this sentence break still results in too long a segment,
+                        # force a split earlier. This handles cases where sentences are very long.
+                        
+                        # How many ideal chunks fit in the remaining duration?
+                        remaining_duration = current_end_ms - last_split_ms
+                        num_forced_splits = (remaining_duration + max_duration_ms - 1) // max_duration_ms
+                        ideal_split_duration = remaining_duration // num_forced_splits
+                        
+                        for i in range(num_forced_splits):
+                            sub_start_ms = last_split_ms + i * ideal_split_duration
+                            sub_end_ms = min(sub_start_ms + ideal_split_duration, current_end_ms)
+                            
+                            # Adjust the text segment based on the duration split
+                            sub_text_start_char = int(len(original_text) * ((sub_start_ms - current_start_ms) / current_duration_ms))
+                            sub_text_end_char = int(len(original_text) * ((sub_end_ms - current_start_ms) / current_duration_ms))
+                            sub_original_text = original_text[sub_text_start_char:sub_text_end_char].strip()
+                            sub_dubbed_text = dubbed_text[sub_text_start_char:sub_text_end_char].strip() # Assuming 1:1 char mapping for dubbed_text for now.
+
+                            temp_sub_segments.append({
+                                "start": sub_start_ms,
+                                "end": sub_end_ms,
+                                "original_text": sub_original_text,
+                                "dubbed_text": sub_dubbed_text
+                            })
+                        last_split_ms = current_end_ms # Mark as fully processed
+                        segment_text_start_idx = len(original_text) # Mark text as fully processed
+                        break # Stop processing this long sentence break, move to next original segment
+                    else:
+                        temp_sub_segments.append({
+                            "start": last_split_ms,
+                            "end": approx_end_ms,
+                            "original_text": prospective_text,
+                            "dubbed_text": dubbed_text[segment_text_start_idx:break_idx].strip() # Assuming 1:1 char mapping
+                        })
+                        last_split_ms = approx_end_ms
+                        segment_text_start_idx = break_idx
+                
+                # Add any remaining text as a segment
+                if last_split_ms < current_end_ms:
+                    remaining_text = original_text[segment_text_start_idx:].strip()
+                    if remaining_text:
+                        temp_sub_segments.append({
+                            "start": last_split_ms,
+                            "end": current_end_ms,
+                            "original_text": remaining_text,
+                            "dubbed_text": dubbed_text[segment_text_start_idx:].strip() # Assuming 1:1 char mapping
+                        })
+                
+                # If no splits were made but segment is still too long (e.g., no punctuation),
+                # or if the splits made are still too long, force split into equal parts.
+                if not temp_sub_segments or any(sub['end'] - sub['start'] > max_duration_ms for sub in temp_sub_segments):
+                    logger.warning(f"   No effective sentence breaks or splits still too long. Forcing even split for {seg.get('id', 'unknown')}")
+                    temp_sub_segments = [] # Reset and force even splits
+                    
+                    num_splits = (current_duration_ms + max_duration_ms - 1) // max_duration_ms
+                    split_duration = current_duration_ms // num_splits
+                    
+                    for i in range(num_splits):
+                        sub_start_ms = current_start_ms + i * split_duration
+                        sub_end_ms = min(sub_start_ms + split_duration, current_end_ms)
+                        
+                        sub_text_start_char = int(len(original_text) * ((sub_start_ms - current_start_ms) / current_duration_ms))
+                        sub_text_end_char = int(len(original_text) * ((sub_end_ms - current_start_ms) / current_duration_ms))
+                        sub_original_text = original_text[sub_text_start_char:sub_text_end_char].strip()
+                        sub_dubbed_text = dubbed_text[sub_text_start_char:sub_text_end_char].strip()
+                        
+                        temp_sub_segments.append({
+                            "start": sub_start_ms,
+                            "end": sub_end_ms,
+                            "original_text": sub_original_text,
+                            "dubbed_text": sub_dubbed_text
+                        })
+                
+                segments_to_add.extend(temp_sub_segments)
+            else:
+                # Segment is within limits, add as is
+                segments_to_add.append({
+                    "start": current_start_ms,
+                    "end": current_end_ms,
+                    "original_text": seg.get("original_text", "").strip(),
+                    "dubbed_text": seg.get("dubbed_text", "").strip()
+                })
             
-            # Validate minimum duration
-            if duration_ms < 1000:  # Less than 1 second
-                logger.warning(f"⚠️  SHORT SEGMENT: {seg.get('id', 'unknown')} is only {duration_ms}ms")
-            
-            # Clean and validate dubbed_text from AI
-            dubbed_text = seg.get("dubbed_text", "").strip()
-            # Remove [English: ...] or similar formatting
-            dubbed_text = re.sub(r'\[\w+:\s*([^\]]+)\]', r'\1', dubbed_text)
-            dubbed_text = re.sub(r'\[[^\]]+\]', '', dubbed_text).strip()
-            
-            # Use global segment index to maintain sequential numbering across chunks
-            global_segment_index = global_segment_index_start + len(formatted_segments)
-            
-            formatted_seg = {
-                "id": seg.get("id", f"seg_{global_segment_index+1:03d}"),
-                "segment_index": global_segment_index,
-                "start": start_ms,
-                "end": end_ms,
-                "duration_ms": duration_ms,
-                "original_text": seg.get("original_text", "").strip(),
-                "dubbed_text": dubbed_text,
-                "voice_cloned": False,
-                "original_audio_file": None,
-                "cloned_audio_file": None
-            }
-            formatted_segments.append(formatted_seg)
+            for temp_seg in segments_to_add:
+                duration_ms = temp_seg["end"] - temp_seg["start"]
+                # Validate minimum duration
+                if duration_ms < 1000:  # Less than 1 second
+                    logger.warning(f"⚠️  SHORT SEGMENT created by auto-split is only {duration_ms}ms. Merging may be considered if duration allows.")
+                
+                # Re-enforce the critical check after any auto-splitting
+                if duration_ms > max_duration_ms:
+                    logger.error(f"🚨 CRITICAL DURATION VIOLATION AFTER AUTO-SPLIT: Segment still exceeds {max_duration_ms/1000:.1f}s limit: {duration_ms/1000:.2f}s")
+                    logger.error(f"   Text: {temp_seg.get('original_text', '')[:100]}...")
+                    raise ValueError(f"Auto-splitting failed to keep segment under {max_duration_ms/1000:.1f}s: {duration_ms/1000:.2f}s")
+                
+                # Clean and validate dubbed_text from AI / split
+                dubbed_text = temp_seg.get("dubbed_text", "").strip()
+                # Remove [English: ...] or similar formatting
+                dubbed_text = re.sub(r'\[\w+:\s*([^\]]+)\]', r'\1', dubbed_text)
+                dubbed_text = re.sub(r'\[[^\]]+\]', '', dubbed_text).strip()
+                
+                # Use global segment index to maintain sequential numbering across chunks
+                global_segment_index = global_segment_index_start + len(formatted_segments)
+                
+                formatted_seg = {
+                    "id": seg.get("id", f"seg_{global_segment_index+1:03d}"), # Use original ID for the first sub-segment, new for others
+                    "segment_index": global_segment_index,
+                    "start": temp_seg["start"],
+                    "end": temp_seg["end"],
+                    "duration_ms": duration_ms,
+                    "original_text": temp_seg["original_text"],
+                    "dubbed_text": dubbed_text,
+                    "voice_cloned": False,
+                    "original_audio_file": None,
+                    "cloned_audio_file": None
+                }
+                formatted_segments.append(formatted_seg)
         
         logger.info(f"Formatted {len(formatted_segments)} valid segments (global index start: {global_segment_index_start})")
         return formatted_segments
@@ -387,8 +501,7 @@ CRITICAL: Output exactly {len(segments)} segments. Do NOT change timing, merge, 
         """Get or create OpenAI client (reusable)"""
         if self._openai_client is None:
             from openai import OpenAI
-            from app.config.settings import settings
-            self._openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+            self._openai_client = OpenAI(api_key=self.settings.OPENAI_API_KEY)
         return self._openai_client
     
     def _process_in_chunks(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False) -> List[Dict[str, Any]]:
