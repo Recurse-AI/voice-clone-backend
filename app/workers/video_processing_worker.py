@@ -87,12 +87,41 @@ def process_video_task(task_data: dict):
             # Schedule auto-cleanup after 5 minutes
             _schedule_cleanup(job_id, output_dir)
             
-            # Complete the job
+            # 🆕 ADD R2 UPLOAD HERE - Before completion status
+            try:
+                from app.services.r2_service import R2Service
+                r2_service = R2Service()
+                
+                # Generate R2 key for processed video/audio
+                r2_key = r2_service.generate_file_path(job_id, "processed", result["output_filename"])
+                
+                # Upload final processed file to R2
+                upload_result = r2_service.upload_file(
+                    str(output_dir / result["output_filename"]),  
+                    r2_key,
+                    r2_service._get_content_type(result["output_filename"])
+                )
+                
+                if upload_result["success"]:
+                    # Use R2 URL instead of local download URL
+                    r2_download_url = upload_result["url"]
+                    logger.info(f"✅ File uploaded to R2: {r2_key}")
+                else:
+                    # Fallback to local URL if R2 upload fails
+                    r2_download_url = result["download_url"]
+                    logger.error(f"❌ R2 upload failed: {upload_result.get('error')}")
+                    
+            except Exception as e:
+                # Fallback to local URL if anything goes wrong
+                r2_download_url = result["download_url"]
+                logger.error(f"❌ R2 integration failed: {e}")
+            
+            # Complete the job with R2 URL
             status_service.update_status(
                 job_id, "video_processing", JobStatus.COMPLETED, 100,
                 {
                     "message": "Video processing completed successfully",
-                    "download_url": result["download_url"],
+                    "download_url": r2_download_url,  # ← Now points to R2
                     "output_filename": result["output_filename"],
                     "output_type": result["output_type"],
                     "file_size_mb": result["file_size_mb"],
