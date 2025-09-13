@@ -129,7 +129,7 @@ MANDATORY RULES:
 INPUT SEGMENTS:
 {json.dumps(segments, ensure_ascii=False, indent=2)}
 
-OUTPUT FORMAT:
+OUTPUT JSON FORMAT:
 {{
   "segments": [
     {{
@@ -142,7 +142,7 @@ OUTPUT FORMAT:
   ]
 }}
 
-CRITICAL: Must output exactly {len(segments)} segments with proper translations."""
+CRITICAL: Must output exactly {len(segments)} segments as valid JSON with proper translations."""
         else:
             # FRESH DUBBING MODE: Intelligent segmentation allowed
             return f"""FRESH DUBBING - INTELLIGENT SEGMENTATION:
@@ -162,7 +162,7 @@ SEGMENTATION RULES:
 INPUT SEGMENTS:
 {json.dumps(segments, ensure_ascii=False, indent=2)}
 
-OUTPUT FORMAT:
+OUTPUT JSON FORMAT:
 {{
   "segments": [
     {{
@@ -179,7 +179,8 @@ CRITICAL REQUIREMENTS:
 ✓ All segments ≤ 12.0 seconds duration (MANDATORY)
 ✓ Real translations in {target_language} with proper alphabet
 ✓ Natural sentence boundaries preserved
-✓ Optimal voice cloning segment lengths (3-8s ideal)"""
+✓ Optimal voice cloning segment lengths (3-8s ideal)
+✓ Output valid JSON format"""
     
     def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0) -> List[Dict[str, Any]]:
         """Format segments with translation included and enforce duration limits"""
