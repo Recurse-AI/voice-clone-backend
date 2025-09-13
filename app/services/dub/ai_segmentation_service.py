@@ -125,16 +125,17 @@ CRITICAL DUPLICATE PREVENTION:
 - Each segment must cover DIFFERENT portions of the input
 - Assign UNIQUE IDs to each segment (seg_001, seg_002, etc.)
 
-SMART SEGMENTATION RULES:
-1. MERGE short segments (under 2 seconds) with adjacent ones for better voice cloning
-2. SPLIT long segments (over 12 seconds) at natural sentence breaks
-3. Target 3-8 seconds per segment for optimal voice quality
-4. NEVER exceed 12 seconds per segment (voice quality degrades)
-5. Keep complete thoughts together - don't break mid-sentence
-6. Ensure smooth timing transitions - no gaps between segments
-7. COVER ALL input content exactly once - no repetition, no omissions
-8. MINIMUM segment duration: 1.0 seconds (1000ms) - NO segments shorter than this
-9. Use realistic timestamps - segments cannot be only milliseconds long
+CRITICAL PRESERVATION RULES - MINIMAL CHANGES ONLY:
+1. PRESERVE ORIGINAL TIMING: Keep start/end times exactly as provided in input
+2. PRESERVE ORIGINAL TEXT: Keep original_text exactly as provided - no modifications
+3. ONLY TRANSLATE: Create proper dubbed_text in target language with correct alphabet
+4. SPLIT ONLY IF MANDATORY: Only split segments that exceed 12.0 seconds duration
+5. NO MERGING: Do not merge segments unless absolutely critical for quality
+6. ONE-TO-ONE MAPPING: Each input segment should typically become one output segment
+7. MINIMAL OPTIMIZATION: Preserve the natural segmentation from transcription
+8. SENTENCE INTEGRITY: If splitting is required (>12s), split at natural sentence breaks
+9. COVER ALL input content exactly once - no repetition, no omissions
+10. DURATION ENFORCEMENT: Only modify timing if segment exceeds 12 seconds
 
 {translation_instructions}
 - NEVER use generic phrases like "Translated content for segment X"
@@ -168,49 +169,54 @@ OUTPUT FORMAT (JSON):
   ]
 }}
 
-TIMING FORMAT RULES - STANDARDIZED:
+TIMING FORMAT RULES - PRESERVE ORIGINAL:
 - INPUT times are in SECONDS for easier understanding (e.g., 145.320 = 145.32 seconds from video start)
-- OUTPUT times must be in SECONDS (e.g., 4.560 = 4.56 seconds)
-- Minimum segment duration: 1.0 seconds (difference between end and start)
-- Maximum segment duration: 15.0 seconds  
-- Target segment duration: 3-8 seconds
+- OUTPUT times must MATCH INPUT times exactly (preserve original timing)
+- ONLY modify timing if input segment exceeds 12.0 seconds (split required)
 - Use 3 decimal places for precision (e.g., 145.320, not 145.32)
 - System Note: Input data is converted from milliseconds to seconds for AI processing
-- REALISTIC example: start: 145.320, end: 149.870 (duration: 4.55 seconds)
-- INVALID example: start: 145.320, end: 145.328 (duration: 0.008 seconds - TOO SHORT)
+- PRESERVE example: input start: 145.320, end: 149.870 → output start: 145.320, end: 149.870
+- SPLIT example: input 15s segment → split into 2 segments of ~7.5s each
+- FORBIDDEN: Changing timing of segments that are ≤12.0 seconds
 
 CRITICAL RULES - BREAK THESE AND YOU FAIL:
-1. NO lazy translations like "Translated content for segment X"
-2. MERGE short segments intelligently (don't just copy each line from SRT)
-3. Provide REAL meaningful translations in proper {target_language}
-4. Every dubbed_text must be ACTUAL TRANSLATION of the original_text
-5. Use SMART segmentation - optimize segment lengths for voice cloning
-6. NEVER skip any input content
-7. TRANSLATE the actual meaning, not just word-for-word
-8. Make it sound natural in {target_language}
-9. orginal_text and dubbed_text should be plain text, no [], no formatting, no language markers, no explanations, no notes, no nothing.
-10. NO DUPLICATE SEGMENTS - each segment must be unique in timing and content
-11. Sequential IDs starting from seg_001, seg_002, etc.
-12. Cover ALL input content exactly ONCE - no repetition, no gaps
-13. dubbed_text should be in target language, sometimes target language could be the same as original language, in that case, use the original language text.
-14. TARGET LANGUAGE SHOULD BE IN WRITE IN TARGET LANGUAGE APLHABET, LIKE ENGLISH SHOULD BE IN ENGLISH APLHABET, BENGALI SHOULD BE IN BENGALI APLHABET, ETC.
+1. PRESERVE EXACTLY: Keep original start, end, and original_text from input unchanged
+2. ONLY TRANSLATE dubbed_text: Translate to target language with proper alphabet
+3. NO lazy translations like "Translated content for segment X"
+4. MINIMAL CHANGES: Only modify segments if they exceed 12.0 seconds duration
+5. Every dubbed_text must be ACTUAL TRANSLATION of the original_text
+6. PRESERVE STRUCTURE: Maintain the natural segmentation from transcription
+7. NEVER skip any input content - process every input segment
+8. TRANSLATE the actual meaning, not just word-for-word
+9. Make it sound natural in {target_language}
+10. orginal_text and dubbed_text should be plain text, no [], no formatting, no language markers, no explanations, no notes, no nothing.
+11. NO DUPLICATE SEGMENTS - each segment must be unique in timing and content
+12. Sequential IDs starting from seg_001, seg_002, etc.
+13. Cover ALL input content exactly ONCE - no repetition, no gaps
+14. dubbed_text should be in target language, sometimes target language could be the same as original language, in that case, use the original language text.
+15. TARGET LANGUAGE SHOULD BE IN WRITE IN TARGET LANGUAGE APLHABET, LIKE ENGLISH SHOULD BE IN ENGLISH APLHABET, BENGALI SHOULD BE IN BENGALI APLHABET, ETC.
+16. DURATION CHECK: Only split if segment exceeds 12.0 seconds
 
 VALIDATION CHECKLIST - Your output must pass:
-✓ All segments have unique start/end times
-✓ No overlapping segments 
-✓ No duplicate text content
-✓ All input content is covered exactly once
+✓ Original start/end times preserved from input (unless splitting >12s segments)
+✓ Original text preserved exactly from input
+✓ Real translations in proper target language alphabet (no placeholder text)
+✓ All input segments processed (close to 1:1 input/output ratio)
 ✓ Sequential unique IDs (seg_001, seg_002...)
-✓ Real translations (no placeholder text)
-✓ Optimal segment durations (3-8 seconds target)
+✓ No overlapping segments if splits were needed
+✓ MANDATORY: ALL segments ≤ 12.0 seconds duration
+✓ All input content covered exactly once
 
-YOUR JOB: Take the input segments, intelligently combine/split them for optimal voice cloning, then provide REAL translations that sound natural and convey the actual meaning of what was said in target language. ENSURE NO DUPLICATES.
+YOUR JOB: PRESERVE the input segments' timing and original text exactly as provided. ONLY translate the dubbed_text to proper target language with correct alphabet. Only split segments if they exceed 12 seconds. Provide REAL translations that sound natural and convey the actual meaning. ENSURE NO DUPLICATES.
 
-IF YOU USE PLACEHOLDER TEXT, LAZY TRANSLATIONS, OR CREATE DUPLICATES, YOU HAVE COMPLETELY FAILED."""
+IF YOU USE PLACEHOLDER TEXT, LAZY TRANSLATIONS, MODIFY ORIGINAL TIMING/TEXT, OR CREATE DUPLICATES, YOU HAVE COMPLETELY FAILED."""
     
     def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0) -> List[Dict[str, Any]]:
-        """Format segments with translation included"""
+        """Format segments with translation included and enforce duration limits"""
+        from app.config.settings import settings
         formatted_segments = []
+        # Use the configured max segment duration, but cap at 12 seconds for voice quality
+        max_duration_ms = min(settings.WHISPER_MAX_SEG_SECONDS * 1000, 12000)  # 12 seconds max in milliseconds
         
         for idx, seg in enumerate(ai_segments):
             start_s = float(seg.get("start", 0))
@@ -221,13 +227,25 @@ IF YOU USE PLACEHOLDER TEXT, LAZY TRANSLATIONS, OR CREATE DUPLICATES, YOU HAVE C
             end_ms = int(end_s * 1000)
             duration_ms = end_ms - start_ms
             
+            # ENFORCE 12-second limit - this is critical
+            if duration_ms > max_duration_ms:
+                logger.warning(f"⚠️  DURATION VIOLATION: Segment {seg.get('id', 'unknown')} exceeds 12s limit: {duration_ms/1000:.2f}s")
+                logger.warning(f"   Text: {seg.get('original_text', '')[:100]}...")
+                # Truncate to 12 seconds - this is a safety measure
+                end_ms = start_ms + max_duration_ms
+                duration_ms = max_duration_ms
+                logger.warning(f"   🔧 Auto-corrected to 12.0s duration")
+            
+            # Validate minimum duration
+            if duration_ms < 1000:  # Less than 1 second
+                logger.warning(f"⚠️  SHORT SEGMENT: {seg.get('id', 'unknown')} is only {duration_ms}ms")
+            
             # Clean and validate dubbed_text from AI
             dubbed_text = seg.get("dubbed_text", "").strip()
             # Remove [English: ...] or similar formatting
             dubbed_text = re.sub(r'\[\w+:\s*([^\]]+)\]', r'\1', dubbed_text)
             dubbed_text = re.sub(r'\[[^\]]+\]', '', dubbed_text).strip()
             
-        
             # Use global segment index to maintain sequential numbering across chunks
             global_segment_index = global_segment_index_start + len(formatted_segments)
             
@@ -244,6 +262,11 @@ IF YOU USE PLACEHOLDER TEXT, LAZY TRANSLATIONS, OR CREATE DUPLICATES, YOU HAVE C
                 "cloned_audio_file": None
             }
             formatted_segments.append(formatted_seg)
+        
+        # Log summary of duration validation
+        over_limit = sum(1 for seg in formatted_segments if seg["duration_ms"] > max_duration_ms)
+        if over_limit > 0:
+            logger.error(f"🚨 CRITICAL: {over_limit} segments exceeded 12s limit and were corrected")
         
         logger.info(f"Formatted {len(formatted_segments)} valid segments (global index start: {global_segment_index_start})")
         return formatted_segments
@@ -277,7 +300,7 @@ IF YOU USE PLACEHOLDER TEXT, LAZY TRANSLATIONS, OR CREATE DUPLICATES, YOU HAVE C
     
     def _translate_segments_preserve_timing(self, segments: List[Dict], target_language_code: str) -> List[Dict[str, Any]]:
         """Translate segments while preserving exact timing and structure"""
-        chunk_size = 50
+        chunk_size = 25
         all_results = []
         
         for i in range(0, len(segments), chunk_size):
@@ -405,7 +428,7 @@ CRITICAL: Output exactly {len(segments)} segments. Do NOT change timing, merge, 
     
     def _process_in_chunks(self, segments: List[Dict], target_language: str, is_same_language: bool = False) -> List[Dict[str, Any]]:
         """Process large segment lists in chunks to avoid API limits"""
-        chunk_size = 100  # Process 100 segments at a time
+        chunk_size = 25  # Process 25 segments at a time
         all_results = []
         
         for i in range(0, len(segments), chunk_size):
@@ -424,10 +447,12 @@ CHUNK PROCESSING INFO:
 - Start your segment IDs from seg_{len(all_results)+1:03d}
 - You are processing segments from time {chunk[0].get('start', 0):.3f}s to {chunk[-1].get('end', 0):.3f}s
 - Time range: {chunk[-1].get('end', 0) - chunk[0].get('start', 0):.1f} seconds of content
-- Expected output: 5-15 merged segments with realistic durations (1-15 seconds each)
+- PRESERVATION APPROACH: Keep original timing and text intact for all segments
+- Expected output: Close to {len(chunk)} segments (1:1 mapping unless splitting >12s segments)
+- ONLY modify segments if they exceed 12.0 seconds duration
 - DO NOT repeat any content from previous chunks
 - Process ONLY the content in this chunk
-- Ensure your output timings are within the input range: {chunk[0].get('start', 0):.3f}s to {chunk[-1].get('end', 0):.3f}s
+- Preserve exact timings from input: {chunk[0].get('start', 0):.3f}s to {chunk[-1].get('end', 0):.3f}s
 """
             
             prompt = chunk_context + self._build_segmentation_and_dubbing_prompt(chunk, target_lang_code, is_same_language)
@@ -438,7 +463,7 @@ CHUNK PROCESSING INFO:
                 response = self._get_openai_client().chat.completions.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": "You are an expert in audio segmentation and S1 voice cloning dubbing translation. You process content in chunks and must avoid any duplicates."},
+                        {"role": "system", "content": "You are an expert in audio dubbing translation. CRITICAL: PRESERVE original timing and text exactly as provided. ONLY translate dubbed_text to target language with proper alphabet. NO segment can exceed 12.0 seconds duration. Only split segments if they exceed 12s. Maintain 1:1 input/output mapping. Process content in chunks and avoid duplicates."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=self.max_tokens,

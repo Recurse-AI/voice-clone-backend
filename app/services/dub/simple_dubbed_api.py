@@ -288,6 +288,10 @@ class SimpleDubbedAPI:
             import time
             segment_start_time = time.time()
             logger.info(f"🎯 Voice cloning {segment_id} starting at {time.strftime('%H:%M:%S')} using reference: {reference_audio_path}")
+            logger.info(f"🔍 DEBUG - Target text: '{dubbed_text}' (target_lang: {target_language_code})")
+            logger.info(f"🔍 DEBUG - Reference text: '{original_text}' (source_lang: {source_language_code})")
+            logger.info(f"🔍 DEBUG - Tagged generation text: '{tagged_text}'")
+            logger.info(f"🔍 DEBUG - Tagged reference text: '{tagged_reference_text}'")
             import soundfile as sf
             import io
             audio_data, sample_rate = sf.read(reference_audio_path)
