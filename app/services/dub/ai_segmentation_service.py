@@ -84,7 +84,6 @@ class AISegmentationService:
             if not combined_text:
                 return []
             
-            # Process all segments in chunks
             logger.info(f"Processing {len(combined_text)} segments in chunks")
             logger.info(f"✅ TIMING STANDARD: All inputs converted to milliseconds, AI gets seconds for better understanding")
             return self._process_in_chunks(combined_text, target_language, is_same_language, preserve_segments=False)
@@ -94,6 +93,7 @@ class AISegmentationService:
             raise e
 
     
+
     def _build_segmentation_and_dubbing_prompt(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False) -> str:
         
         if is_same_language:
@@ -115,83 +115,71 @@ class AISegmentationService:
         
         if preserve_segments:
             # REDUB MODE: Strict 1:1 mapping, preserve exact timing and structure
-            return f"""You are a professional dubbing translator for REDUB. Your ONLY job: Translate text while preserving EXACT timing and structure.
+            return f"""REDUB MODE - EXACT PRESERVATION:
 
-INPUT TRANSCRIPTION ({len(segments)} segments):
-{json.dumps(segments, ensure_ascii=False, indent=2)}
-
-REDUB MODE - STRICT PRESERVATION:
-1. MANDATORY 1:1 MAPPING: Expected output: EXACTLY {len(segments)} segments
-2. PRESERVE EXACT TIMING: Copy start/end from input unchanged  
-3. PRESERVE EXACT TEXT: Copy original_text from input unchanged
-4. TRANSLATE ONLY dubbed_text to {target_language} with proper alphabet
-5. NO MERGING - Process each segment individually 
-6. NO SPLITTING - Keep original segment boundaries
-7. NO OPTIMIZATION - Keep original transcription structure
+MANDATORY RULES:
+1. Output EXACTLY {len(segments)} segments (1:1 mapping)
+2. Keep start/end timing exactly as input
+3. Keep original_text exactly as input  
+4. Only translate dubbed_text to {target_language}
+5. No merging, no splitting, no changes to structure
 
 {translation_instructions}
 
-OUTPUT FORMAT (JSON):
+INPUT SEGMENTS:
+{json.dumps(segments, ensure_ascii=False, indent=2)}
+
+OUTPUT FORMAT:
 {{
   "segments": [
     {{
       "id": "seg_001",
       "start": 0.080,
       "end": 4.560,
-      "original_text": "[exact text from input]",
-      "dubbed_text": "[translation in {target_language}]"
+      "original_text": "exact text from input",
+      "dubbed_text": "proper translation in {target_language}"
     }}
   ]
 }}
 
-SUCCESS CRITERIA:
-✓ Output EXACTLY {len(segments)} segments 
-✓ All timings preserved exactly
-✓ All original text preserved exactly  
-✓ Real translations (no placeholder text)
-
-FAILURE = Wrong segment count, modified timing/original_text."""
+CRITICAL: Must output exactly {len(segments)} segments with proper translations."""
         else:
             # FRESH DUBBING MODE: Intelligent segmentation allowed
-            return f"""You are a professional dubbing AI. Your job: Create OPTIMAL audio segments for voice cloning and provide REAL translations.
+            return f"""FRESH DUBBING - INTELLIGENT SEGMENTATION:
 
-INPUT TRANSCRIPTION ({len(segments)} segments):
-{json.dumps(segments, ensure_ascii=False, indent=2)}
-
-INTELLIGENT SEGMENTATION - OPTIMIZE FOR VOICE CLONING:
-1. SMART SEGMENTATION: Merge short segments (under 2 seconds) with adjacent ones
-2. SPLIT long segments (over 12 seconds) at natural sentence breaks  
-3. TARGET 3-8 seconds per segment for optimal voice quality
-4. NEVER exceed 12 seconds per segment (voice quality degrades)
-5. Keep complete thoughts together - don't break mid-sentence
-6. Ensure smooth timing transitions - no gaps between segments
-7. COVER ALL input content exactly once - no repetition, no omissions
+SEGMENTATION RULES:
+1. SMART MERGING: Combine short segments (under 2 seconds) for better voice quality
+2. MANDATORY SPLITTING: Split segments over 12 seconds at natural sentence breaks  
+3. OPTIMAL DURATION: Target 3-8 seconds per segment for best voice cloning
+4. COMPLETE COVERAGE: Use all input content exactly once - no gaps, no repeats
+5. NATURAL BREAKS: Split at sentence boundaries, not mid-sentence
+6. MAX DURATION: NO segment can exceed 12.0 seconds - STRICT LIMIT
 
 {translation_instructions}
 - Provide REAL meaningful translations in {target_language}
-- NO placeholder text like "Translated content for segment X"
+- NO placeholder text or lazy translations
 
-OUTPUT FORMAT (JSON):
+INPUT SEGMENTS:
+{json.dumps(segments, ensure_ascii=False, indent=2)}
+
+OUTPUT FORMAT:
 {{
   "segments": [
     {{
-      "id": "seg_001", 
-      "start": 0.080,
+      "id": "seg_001",
+      "start": 0.080, 
       "end": 4.560,
-      "original_text": "[combined/optimized text from input]",
-      "dubbed_text": "[translation in {target_language}]"
+      "original_text": "combined/optimized text from input",
+      "dubbed_text": "proper translation in {target_language}"
     }}
   ]
 }}
 
-OPTIMIZATION GOALS:
-✓ Segments optimized for voice cloning quality (3-8s ideal)
-✓ All segments ≤ 12.0 seconds (MANDATORY)
+CRITICAL REQUIREMENTS:
+✓ All segments ≤ 12.0 seconds duration (MANDATORY)
+✓ Real translations in {target_language} with proper alphabet
 ✓ Natural sentence boundaries preserved
-✓ All input content covered exactly once
-✓ Real translations (no placeholder text)
-
-EXPECTED OUTPUT: Optimized segments (count may differ from input for better voice quality)."""
+✓ Optimal voice cloning segment lengths (3-8s ideal)"""
     
     def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0) -> List[Dict[str, Any]]:
         """Format segments with translation included and enforce duration limits"""
@@ -403,7 +391,7 @@ CRITICAL: Output exactly {len(segments)} segments. Do NOT change timing, merge, 
     
     def _process_in_chunks(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False) -> List[Dict[str, Any]]:
         """Process large segment lists in chunks to avoid API limits"""
-        chunk_size = 15  # Process 15 segments at a time to avoid JSON parsing issues
+        chunk_size = 10  # Process 10 segments at a time to avoid JSON parsing issues
         all_results = []
         
         for i in range(0, len(segments), chunk_size):
@@ -446,7 +434,7 @@ FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
                 response = self._get_openai_client().chat.completions.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": f"You are an expert in audio dubbing translation. {'REDUB MODE: PRESERVE original timing and text exactly as provided. ONLY translate dubbed_text. Maintain strict 1:1 input/output mapping.' if preserve_segments else 'FRESH DUBBING MODE: Intelligently optimize segments for voice cloning (3-8s ideal). Merge short segments, split long ones at sentence breaks.'} NO segment can exceed 12.0 seconds duration. Process content in chunks and avoid duplicates."},
+                        {"role": "system", "content": f"You are an expert audio dubbing AI. {'REDUB MODE: Preserve exact timing and structure, 1:1 mapping, only translate dubbed_text.' if preserve_segments else 'FRESH MODE: Intelligent segmentation - merge short segments, split long segments at sentence breaks, target 3-8 seconds for optimal voice cloning.'} CRITICAL: All segments must be ≤12 seconds duration. Provide real translations in target language with proper alphabet. No placeholder text."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=self.max_tokens,
