@@ -190,7 +190,7 @@ class WhisperXTranscriptionService:
             if model_a:
                 result = whisperx.align(result["segments"], model_a, metadata, audio, self.alignment_device, return_char_alignments=False)
 
-            segments = self._process_segments(result.get("segments", []))
+            segments = self._convert_to_simple_format(result.get("segments", []))
 
             return {
                 "success": True,
@@ -203,79 +203,22 @@ class WhisperXTranscriptionService:
             logger.error(f"Transcription failed (batch_size={batch_size}): {e}")
             raise Exception(f"Transcription failed: {str(e)}")
     
-    def _process_segments(self, raw_segments):
+    def _convert_to_simple_format(self, raw_segments):
         segments = []
-        segment_index = 0
-        split_count = 0
         
-        for seg in raw_segments:
-            duration_sec = seg["end"] - seg["start"]
-            if duration_sec <= self.max_seg_seconds:
-                segments.append(self._create_segment(seg, segment_index))
-                segment_index += 1
-            else:
-                split_segments = self._split_long_segment(seg, duration_sec)
-                split_count += len(split_segments) - 1
-                logger.info(f"Split {duration_sec:.1f}s segment into {len(split_segments)} parts (max: {self.max_seg_seconds}s)")
-                for split_seg in split_segments:
-                    segments.append(self._create_segment(split_seg, segment_index))
-                    segment_index += 1
-        
-        if split_count > 0:
-            logger.info(f"Created {split_count} additional segments from splitting for optimal dubbing quality")
+        for idx, seg in enumerate(raw_segments):
+            segments.append({
+                "id": f"whisper_{idx:03d}",
+                "segment_index": idx,
+                "start": int(seg["start"] * 1000),
+                "end": int(seg["end"] * 1000),
+                "duration_ms": int((seg["end"] - seg["start"]) * 1000),
+                "text": seg["text"].strip(),
+                "confidence": seg.get("confidence", 0.9)
+            })
         
         return segments
 
-    def _split_long_segment(self, segment, total_duration):
-        text = segment["text"].strip()
-        start_time = segment["start"]
-        end_time = segment["end"]
-        confidence = segment.get("confidence", 0.9)
-        
-        num_splits = max(2, int(total_duration // self.max_seg_seconds))
-        split_duration = total_duration / num_splits
-        words = text.split()
-        
-        if len(words) <= num_splits:
-            words_per_split = 1
-        else:
-            words_per_split = len(words) // num_splits
-        
-        result_segments = []
-        word_start = 0
-        
-        for i in range(num_splits):
-            split_start = start_time + (i * split_duration)
-            split_end = start_time + ((i + 1) * split_duration)
-            if i == num_splits - 1:
-                split_end = end_time
-                text_chunk = " ".join(words[word_start:])
-            else:
-                word_end = min(word_start + words_per_split, len(words))
-                text_chunk = " ".join(words[word_start:word_end])
-                word_start = word_end
-            
-            if text_chunk.strip():
-                result_segments.append({
-                    "start": split_start,
-                    "end": split_end,
-                    "text": text_chunk.strip(),
-                    "confidence": confidence
-                })
-        
-        return result_segments
-
-
-    def _create_segment(self, seg, index):
-        return {
-            "id": f"seg_{index:03d}",
-            "segment_index": index,
-            "start": int(seg["start"] * 1000),
-            "end": int(seg["end"] * 1000),
-            "duration_ms": int((seg["end"] - seg["start"]) * 1000),
-            "text": seg["text"].strip(),
-            "confidence": seg.get("confidence", 0.9)
-        }
 
     def _get_alignment_model(self, language_code: str):
         try:

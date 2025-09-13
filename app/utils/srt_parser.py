@@ -13,12 +13,11 @@ def parse_srt_to_whisperx_format(srt_file_path: str) -> Dict[str, Any]:
         
         content = _normalize_content(content)
         segments = _parse_srt_content(content)
-        segments = _merge_short_adjacent_segments(segments)
         
         if not segments:
             return {"success": False, "error": "No valid subtitle segments found"}
         
-        logger.info(f"Parsed {len(segments)} segments from SRT file")
+        logger.info(f"Parsed {len(segments)} raw segments from SRT file")
         
         return {
             "success": True,
@@ -92,8 +91,8 @@ def _parse_srt_content(content: str) -> List[Dict[str, Any]]:
             segment = {
                 "id": f"srt_{subtitle_id}",
                 "text": clean_text,
-                "start": start_seconds,
-                "end": end_seconds
+                "start": int(start_seconds * 1000),  # Convert to milliseconds
+                "end": int(end_seconds * 1000)       # Convert to milliseconds
             }
             
             segments.append(segment)
@@ -103,70 +102,6 @@ def _parse_srt_content(content: str) -> List[Dict[str, Any]]:
     
     return segments
 
-def _merge_short_adjacent_segments(segments: List[Dict[str, Any]], max_chars: int = 220, max_duration_s: float = 8.0, max_gap_ms: int = 250, max_segments: int = 4) -> List[Dict[str, Any]]:
-    if not segments:
-        return []
-    
-    def _has_sentence_end(text: str) -> bool:
-        return bool(re.search(r'[।.!?؟؛।৷\n]$', text.strip()))
-    
-    def _has_speaker_change(text1: str, text2: str) -> bool:
-        patterns = [r'^-\s+', r'^\w+:', r'^\[\w+\]', r'♪.*♪', r'\(.*\)']
-        return any(re.search(p, text2.strip()) for p in patterns)
-    
-    def _should_break_segment(current_text: str, next_text: str, gap_ms: int) -> bool:
-        if gap_ms > 800:
-            return True
-        if _has_sentence_end(current_text) and gap_ms > 150:
-            return True
-        if _has_speaker_change(current_text, next_text):
-            return True
-        return False
-    
-    merged = []
-    current = None
-    merged_count = 0
-    
-    for seg in segments:
-        text = (seg.get("text") or "").strip()
-        if not text:
-            continue
-        start_s = float(seg.get("start", 0.0))
-        end_s = float(seg.get("end", 0.0))
-        if start_s >= end_s:
-            continue
-        start_ms = int(round(start_s * 1000))
-        end_ms = int(round(end_s * 1000))
-        
-        if current is None:
-            current = {"id": seg.get("id"), "text": text, "start": start_s, "end": end_s}
-            merged_count = 1
-            continue
-            
-        gap_ms = start_ms - int(round(current["end"] * 1000))
-        combined_text = (current["text"] + " " + text).strip()
-        combined_dur_ms = end_ms - int(round(current["start"] * 1000))
-        
-        should_break = _should_break_segment(current["text"], text, gap_ms)
-        
-        can_merge = (not should_break and
-                    gap_ms <= max_gap_ms and 
-                    len(combined_text) <= max_chars and 
-                    combined_dur_ms <= int(max_duration_s * 1000) and
-                    merged_count < max_segments)
-        
-        if can_merge:
-            current["text"] = combined_text
-            current["end"] = end_s
-            merged_count += 1
-        else:
-            merged.append(current)
-            current = {"id": seg.get("id"), "text": text, "start": start_s, "end": end_s}
-            merged_count = 1
-            
-    if current:
-        merged.append(current)
-    return merged
 
 def _clean_subtitle_text(text: str) -> str:
     """Clean subtitle text removing formatting and normalizing whitespace"""

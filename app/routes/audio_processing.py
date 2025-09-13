@@ -17,7 +17,7 @@ from app.schemas import AudioSeparationRequest, AudioSeparationResponse, Separat
 from app.dependencies.auth import get_current_user
 from app.services.separation_job_service import separation_job_service
 from app.services.credit_service import credit_service
-from app.services.dub.audio_utils import AudioUtils
+from app.utils.audio import AudioUtils
 from app.services.dub.fish_speech_service import get_fish_speech_service
 from app.services.r2_service import R2Service
 from app.services.simple_status_service import status_service, JobStatus
@@ -32,32 +32,6 @@ from app.queue.queue_manager import queue_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-def _update_separation_status_non_blocking(job_id: str, status: str, progress: int = None, **kwargs):
-    """Update separation job status using simple status service"""
-    try:
-        # Convert string to JobStatus
-        status_map = {
-            "pending": JobStatus.PENDING,
-            "processing": JobStatus.PROCESSING,
-            # Note: separation jobs don't use "separating" status (only dub jobs do)
-            "completed": JobStatus.COMPLETED,
-            "failed": JobStatus.FAILED
-        }
-        
-        status_enum = status_map.get(status, JobStatus.PROCESSING)
-        status_service.update_status(job_id, "separation", status_enum, progress, kwargs)
-        
-    except Exception as e:
-        logger.error(f"Failed to update separation status for {job_id}: {e}")
-
-def _cleanup_separation_files_non_blocking(job_id: str):
-    """Cleanup separation temp files using common utility"""
-    try:
-        cleanup_utils.cleanup_job_comprehensive(job_id, "separation")
-        logger.info(f"Cleaned up separation temp files for job {job_id}")
-    except Exception as e:
-        logger.warning(f"Failed to cleanup separation files for {job_id}: {e}")
 
 
 # Audio Separation Endpoints

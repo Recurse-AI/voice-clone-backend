@@ -15,6 +15,52 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
+async def regenerate_text_with_openai(original_text: str, target_language: str, custom_prompt: str) -> str:
+    """Regenerate text using OpenAI with custom prompt"""
+    try:
+        from openai import OpenAI
+        from app.config.settings import settings
+        from app.services.language_service import language_service
+        
+        # Normalize target language to proper code
+        target_lang_code = language_service.normalize_language_input(target_language)
+        
+        # Initialize OpenAI client
+        if not settings.OPENAI_API_KEY:
+            return f"[Error] OpenAI API key not configured"
+        
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        
+        system_prompt = f"""You are a professional dubbing script writer. 
+Rewrite the given text in {target_lang_code} according to the specific instructions provided. 
+Keep the meaning accurate but adapt the style based on the prompt. 
+Return only the rewritten text, nothing else."""
+
+        user_prompt = f"""Instructions: {custom_prompt}
+Original text: {original_text}
+Target language: {target_lang_code}
+Rewrite this text following the instructions:"""
+
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=500,
+            temperature=0.3
+        )
+        
+        result = response.choices[0].message.content.strip()
+        if result:
+            return result
+        else:
+            return f"[Error] Empty response from OpenAI"
+            
+    except Exception as e:
+        logger.error(f"OpenAI regeneration failed: {e}")
+        return f"[Error] {str(e)}"
+
 from app.services.dub.manifest_manager import manifest_manager
 from app.services.dub.manifest_service import ensure_job_dir as _ensure_job_dir, write_json as _write_temp_json
 
@@ -129,17 +175,12 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     
     # If custom prompt is provided, use OpenAI to regenerate text
     if request_body.prompt and dubbed_text:
-        from app.services.openai_service import OpenAIService
-        service = OpenAIService()
+        target_lang = request_body.target_language or manifest.get("target_language", "English")
+        regenerated_text = await regenerate_text_with_openai(dubbed_text, target_lang, request_body.prompt)
         
-        target_lang = request_body.target_language or manifest.get("target_language", "Bengali")
-        regenerated_text = service.regenerate_text_with_prompt(dubbed_text, target_lang, request_body.prompt)
-        
-        # Use regenerated text if successful, otherwise fallback
-        if not regenerated_text.startswith("[Error]"):
+        # Use regenerated text if successful, otherwise keep original
+        if regenerated_text and not regenerated_text.startswith("[Error]"):
             dubbed_text = regenerated_text
-        else:
-            dubbed_text = f"[{request_body.prompt}] " + dubbed_text
     
     # Apply tone if provided
     if request_body.tone and dubbed_text:
@@ -147,11 +188,10 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     
     seg["dubbed_text"] = dubbed_text
     
-    # Store prompt separately for future reference
+    # Store prompt and tone separately for future reference
     if request_body.prompt:
         seg["custom_prompt"] = request_body.prompt
-    
-    # Store tone separately for future reference  
+        
     if request_body.tone:
         seg["tone"] = request_body.tone
 

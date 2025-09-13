@@ -1,6 +1,6 @@
 import os
 from typing import Dict, Any, Optional, Tuple
-from app.services.dub.audio_utils import AudioUtils
+from app.utils.audio import AudioUtils
 
 
 class SeparationUtils:
