@@ -253,13 +253,16 @@ class WhisperXTranscriptionService:
         segments = []
         
         for idx, seg in enumerate(raw_segments):
+            text = seg["text"].strip()
+            
+           
             segments.append({
                 "id": f"whisper_{idx:03d}",
                 "segment_index": idx,
                 "start": int(seg["start"] * 1000),
                 "end": int(seg["end"] * 1000),
                 "duration_ms": int((seg["end"] - seg["start"]) * 1000),
-                "text": seg["text"].strip(),
+                "text": text,
                 "confidence": seg.get("confidence", 0.9)
             })
         
