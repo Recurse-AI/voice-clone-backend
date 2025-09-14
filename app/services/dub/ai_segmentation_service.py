@@ -56,7 +56,6 @@ class AISegmentationService:
                     start_ms = int(seg.get("start", 0))
                     end_ms = int(seg.get("end", 0))
                     
-                   
                     # Convert to seconds for AI prompt
                     start_s = start_ms / 1000.0
                     end_s = end_ms / 1000.0
