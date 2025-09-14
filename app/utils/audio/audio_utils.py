@@ -408,6 +408,54 @@ class AudioUtils:
         except Exception:
             return audio.astype(np.float32)
 
+    def segment_audio_for_transcription(self, audio_path: str, segment_duration_minutes: float = 3.0) -> List[str]:
+        """Split audio into segments for memory-efficient transcription"""
+        try:
+            import librosa
+            
+            # Load audio to get duration
+            audio, sr = librosa.load(audio_path, sr=None)
+            total_duration = len(audio) / sr
+            segment_duration_seconds = segment_duration_minutes * 60
+            
+            # If audio is shorter than segment duration, return original file
+            if total_duration <= segment_duration_seconds:
+                return [audio_path]
+            
+            # Create temp directory for segments  
+            import tempfile
+            temp_dir = tempfile.mkdtemp(prefix="audio_segments_")
+            ffmpeg_path = self._get_ffmpeg_path()
+            
+            segments = []
+            num_segments = int(np.ceil(total_duration / segment_duration_seconds))
+            
+            for i in range(num_segments):
+                start_time = i * segment_duration_seconds
+                segment_path = os.path.join(temp_dir, f"segment_{i:03d}.wav")
+                
+                # Use FFmpeg to extract segment
+                cmd = [
+                    ffmpeg_path, '-y',
+                    '-i', audio_path,
+                    '-ss', str(start_time),
+                    '-t', str(segment_duration_seconds),
+                    '-acodec', 'pcm_s16le',
+                    segment_path
+                ]
+                
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                if result.returncode == 0:
+                    segments.append(segment_path)
+                else:
+                    logger.error(f"Failed to create audio segment {i}: {result.stderr}")
+            
+            return segments
+            
+        except Exception as e:
+            logger.error(f"Audio segmentation failed: {e}")
+            return [audio_path]  # Return original if segmentation fails
+
     @staticmethod
     def apply_final_audio_processing(audio: np.ndarray) -> np.ndarray:
         """Apply final processing to the complete audio for optimal compression"""

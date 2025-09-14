@@ -168,39 +168,85 @@ class WhisperXTranscriptionService:
 
     def _transcribe_direct(self, audio_path: str, language_code: str, job_id: Optional[str] = None) -> Dict[str, Any]:
         import whisperx
+        import shutil
 
         if self.model is None:
             raise Exception("WhisperX model not loaded")
 
         normalized_language = language_service.get_language_code_for_transcription(language_code)
-        audio = whisperx.load_audio(audio_path)
         from app.config.settings import settings
         batch_size = settings.WHISPERX_BATCH_SIZE
 
         try:
-            result = self.model.transcribe(
-                audio,
-                batch_size=batch_size,
-                language=normalized_language if normalized_language != "auto_detect" else None,
-                task="transcribe"
-            )
-
-            detected_language = result.get("language", normalized_language)
-            model_a, metadata = self._get_alignment_model(detected_language)
-            if model_a:
-                result = whisperx.align(result["segments"], model_a, metadata, audio, self.alignment_device, return_char_alignments=False)
-
-            segments = self._convert_to_simple_format(result.get("segments", []))
-
+            # Segment audio into 3-minute chunks to avoid memory issues
+            from app.utils.audio import AudioUtils
+            audio_utils = AudioUtils()
+            segment_paths = audio_utils.segment_audio_for_transcription(audio_path, segment_duration_minutes=3.0)
+            
+            all_segments = []
+            detected_language = normalized_language
+            
+            logger.info(f"Processing {len(segment_paths)} audio segments for transcription")
+            
+            for i, segment_path in enumerate(segment_paths):
+                try:
+                    # Clear GPU memory before processing each segment
+                    self._cleanup_gpu_memory()
+                    
+                    # Load and transcribe segment
+                    audio = whisperx.load_audio(segment_path)
+                    
+                    result = self.model.transcribe(
+                        audio,
+                        batch_size=batch_size,
+                        language=normalized_language if normalized_language != "auto_detect" else None,
+                        task="transcribe"
+                    )
+                    
+                    # Get detected language from first segment
+                    if i == 0:
+                        detected_language = result.get("language", normalized_language)
+                    
+                    # Apply alignment if available
+                    model_a, metadata = self._get_alignment_model(detected_language)
+                    if model_a:
+                        result = whisperx.align(result["segments"], model_a, metadata, audio, self.alignment_device, return_char_alignments=False)
+                    
+                    # Adjust timestamps for segment offset
+                    segment_offset = i * 3.0 * 60  # 3 minutes per segment in seconds
+                    for seg in result.get("segments", []):
+                        seg["start"] += segment_offset
+                        seg["end"] += segment_offset
+                    
+                    all_segments.extend(result.get("segments", []))
+                    logger.info(f"Processed segment {i+1}/{len(segment_paths)}")
+                    
+                except Exception as seg_error:
+                    logger.error(f"Failed to process segment {i}: {seg_error}")
+                    continue
+            
+            # Cleanup temporary segment files
+            if len(segment_paths) > 1:
+                for segment_path in segment_paths:
+                    try:
+                        segment_dir = os.path.dirname(segment_path)
+                        if "audio_segments_" in segment_dir:
+                            shutil.rmtree(segment_dir, ignore_errors=True)
+                            break
+                    except Exception:
+                        pass
+            
+            segments = self._convert_to_simple_format(all_segments)
+            
             return {
                 "success": True,
                 "segments": segments,
                 "sentences": segments,
-                "language": result.get("language", language_code)
+                "language": detected_language
             }
 
         except Exception as e:
-            logger.error(f"Transcription failed (batch_size={batch_size}): {e}")
+            logger.error(f"Segmented transcription failed (batch_size={batch_size}): {e}")
             raise Exception(f"Transcription failed: {str(e)}")
     
     def _convert_to_simple_format(self, raw_segments):

@@ -28,7 +28,9 @@ class AISegmentationService:
             else:
                 logger.error(f"No segments or sentences found in transcription data. Keys available: {list(transcription_data.keys())}")
                 raise ValueError("No segments or sentences found in transcription data")
-            
+            #save it locally for debugging
+            with open("segments.json", "w") as f:
+                json.dump(segments, f, ensure_ascii=False, indent=2)
             if not segments:
                 logger.error(f"Empty segments list received. Transcription data success: {transcription_data.get('success')}, language: {transcription_data.get('language')}")
                 raise ValueError("Segments list is empty - transcription may have failed")
@@ -123,7 +125,7 @@ MANDATORY RULES:
 1. Output EXACTLY {len(segments)} segments (1:1 mapping)
 2. Keep start/end timing exactly as input
 3. Keep original_text exactly as input  
-4. Only translate dubbed_text to {target_language}
+4. Only translate dubbed_text to {target_language}, remember here en means English, es means Spanish, etc.
 5. No merging, no splitting, no changes to structure
 
 {translation_instructions}
