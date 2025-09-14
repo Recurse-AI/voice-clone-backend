@@ -95,27 +95,35 @@ class AISegmentationService:
         target_lang_name = get_language_name(target_language)
         
         if is_same_language:
-            translation_instructions = f"""SAME LANGUAGE PROCESSING:
-- Source and target language are IDENTICAL ({target_lang_name})
-- PRESERVE the original text EXACTLY as is
-- Copy the original_text to dubbed_text WITHOUT any modifications
-- CORRUPTION FIX: If original text has repetitive/corrupted patterns, clean it first then copy"""
+            translation_instructions = f"""SAME LANGUAGE PROCESSING ({target_lang_name}):
+- Source and target are IDENTICAL - NO translation needed
+- CLEAN corrupted/repetitive patterns first
+- Copy cleaned meaningful text to dubbed_text 
+- If purely corrupted, use '[unclear audio]' in {target_lang_name}
+- NEVER output repetitive patterns like "000,000..." or "aaa..."
+- Extract only meaningful speech content"""
         else:
-            translation_instructions = f"""TRANSLATION TO {target_lang_name.upper()}:
-- Translate EVERY WORD into proper {target_lang_name}
-- NEVER change sentence structure or meaning
-- Keep EXACT same meaning and tone as original
-- Only make minimal changes when {target_lang_name} grammar requires it
-- CORRUPTION FIX: Clean any repetitive/corrupted patterns before translating
-- NEVER translate corrupted text patterns - fix them first"""
+            translation_instructions = f"""PROFESSIONAL TRANSLATION TO {target_lang_name.upper()} - ZERO TOLERANCE FOR MIXING:
+- ABSOLUTE RULE: 100% {target_lang_name} ONLY - NO Spanish/German/French/Italian mixing
+- CORRUPTION AUTO-CLEAN: Before translating, automatically detect and remove:
+  * Long repetitive numbers (40,000,000,000,000...)
+  * Repeated character sequences (aaaaaaa, xxxxx...)
+  * Looping words/phrases (juice juice juice, do it do it...)
+  * Symbol spam or transcription artifacts (@#$%, [[[, +++...)
+  * Placeholder text or corrupted patterns
+- MEANINGFUL EXTRACTION: Find the actual speech content within corrupted input
+- CLEAN TRANSLATION: Translate only the meaningful parts to natural {target_lang_name}
+- LANGUAGE PURITY: Every single word must be proper {target_lang_name} vocabulary
+- FALLBACK PROTOCOL: Purely corrupted segments → '[unclear audio]' in {target_lang_name}
+- PRESERVE INTENT: Keep original meaning/tone of actual speech content"""
         
         if preserve_segments:
             if is_same_language:
-                processing_instruction = f"SAME LANGUAGE REDUB - Keep dubbed_text IDENTICAL to original_text"
-                example_dubbed = "exact same text as original_text"
+                processing_instruction = f"SAME LANGUAGE REDUB - Clean corruption then copy to dubbed_text"
+                example_dubbed = "cleaned meaningful text (same as original after corruption removal)"
             else:
-                processing_instruction = f"DIFFERENT LANGUAGE REDUB - Translate dubbed_text to {target_lang_name}"
-                example_dubbed = f"proper translation in {target_lang_name}"
+                processing_instruction = f"TRANSLATION REDUB - Clean corruption then translate to {target_lang_name}"
+                example_dubbed = f"professional {target_lang_name} translation of cleaned text"
             
             return f"""REDUB MODE - EXACT PRESERVATION:
 
@@ -178,7 +186,18 @@ OUTPUT JSON:
   ]
 }}
 
-🚨 VERIFY: Every segment duration (end-start) ≤ 15.0 seconds before output. NO corrupted or repetitive text patterns."""
+🚨 CORRUPTION EXAMPLES TO DETECT & CLEAN:
+- "40,000,000,000,000,000..." → Extract meaningful part or use "[unclear audio]"
+- "juice juice juice juice..." → "juice" (single occurrence) 
+- "aaaaaaaaaaaaaaa..." → Remove entirely or extract meaningful content
+- "कर दो कर दो कर दो" → "कर दो" (clean repetition)
+
+🚨 LANGUAGE MIXING PREVENTION:
+- Target: English → ALL dubbed_text in English (never Spanish/German/French)
+- Target: French → ALL dubbed_text in French (never English/Spanish/German) 
+- NEVER output mixed languages in the same response
+
+🚨 FINAL VERIFICATION: Every segment duration (end-start) ≤ 15.0 seconds. ZERO corruption patterns."""
     
     def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0) -> List[Dict[str, Any]]:
         formatted_segments = []
@@ -237,7 +256,7 @@ OUTPUT JSON:
         return self._translate_segments_preserve_timing(segments, target_language_code)
     
     def _translate_segments_preserve_timing(self, segments: List[Dict], target_language_code: str) -> List[Dict[str, Any]]:
-        chunk_size = 25
+        chunk_size = 10
         all_results = []
         
         for i in range(0, len(segments), chunk_size):
@@ -266,7 +285,7 @@ OUTPUT JSON:
                 response = self._get_openai_client().chat.completions.create(
                     model="gpt-4o",
                     messages=[
-                        {"role": "system", "content": "You are a professional translator. Your only job is to translate text while preserving exact segment timing."},
+                        {"role": "system", "content": f"You are an expert translator with advanced corruption detection capabilities. MANDATORY RULES: 1) ALL translations must be in {self._get_language_name(target_language_code)} ONLY - never mix with Spanish/German/French/etc. 2) CORRUPTION DETECTION: Automatically detect and clean these patterns: repetitive numbers (40,000,000...), repeated characters (aaa...), repeated words (juice juice juice), meaningless symbols, corrupted transcriptions. 3) EXTRACT only meaningful speech content from corrupted input. 4) If text is purely corrupted/meaningless, use '[unclear audio]' in {self._get_language_name(target_language_code)}. 5) NEVER output corrupted patterns in your translations. 6) Ensure natural, professional {self._get_language_name(target_language_code)} output."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=8192,
@@ -318,33 +337,49 @@ OUTPUT JSON:
         return all_results
     
     def _build_translation_only_prompt(self, segments: List[Dict], target_language_code: str) -> str:
-        return f"""You are a professional translator. Translate the text content while preserving EXACT timing and structure.
+        target_lang_name = self._get_language_name(target_language_code)
+        return f"""ADVANCED TRANSLATION WITH CORRUPTION HANDLING - ZERO TOLERANCE POLICY
+
+TARGET LANGUAGE: {target_lang_name} (EXCLUSIVE - NO OTHER LANGUAGES ALLOWED)
 
 INPUT SEGMENTS:
 {json.dumps(segments, ensure_ascii=False, indent=2)}
 
-STRICT TRANSLATION RULES:
-- Translate ONLY the original_text to {self._get_language_name(target_language_code)}
-- PRESERVE exact start/end timing from input - DO NOT change timestamps
-- PRESERVE exact segment IDs from input  
-- DO NOT merge, split, or modify segments
-- DO NOT change segment structure or timing
-- Provide literal, accurate translation of each text
-- Output MUST have same number of segments as input
-- Each output segment must match input segment by ID and timing
+CORRUPTION AUTO-DETECTION & ELIMINATION:
+- SCAN for these corruption patterns and REMOVE automatically:
+  * Repetitive number sequences (40,000,000,000,000... or similar)
+  * Character spam (aaaaaaa, xxxxx, +++++)
+  * Word/phrase loops (juice juice juice, do it do it do it)
+  * Symbol artifacts (@#$%, [[[, ----, corrupted transcription marks)
+  * Meaningless placeholder text or garbled content
+- EXTRACT ONLY the actual meaningful speech content
+- CLEAN before processing - never translate corrupted patterns
+- FALLBACK: If segment is purely corrupted → "[unclear audio]" in {target_lang_name}
 
-OUTPUT FORMAT (JSON):
+TRANSLATION PROTOCOL:
+- LANGUAGE PURITY: 100% {target_lang_name} vocabulary - NEVER mix Spanish/German/French/etc
+- STRUCTURE: Maintain exact timing, segment count, and IDs from input  
+- QUALITY: Natural, professional {target_lang_name} with proper grammar
+- CONSISTENCY: Every dubbed_text must be pure {target_lang_name}
+- MAPPING: EXACTLY {len(segments)} output segments (1:1 with input)
+
+OUTPUT SPECIFICATION (JSON):
 {{
   "segments": [
     {{
-      "id": "[same as input]",
-      "original_text": "[same as input]", 
-      "dubbed_text": "[translation in {self._get_language_name(target_language_code)}]"
+      "id": "[identical to input]",
+      "original_text": "[corruption-cleaned input text]", 
+      "dubbed_text": "[professional {target_lang_name} translation ONLY]"
     }}
   ]
 }}
 
-CRITICAL: Output exactly {len(segments)} segments. Do NOT change timing, merge, or split segments."""
+VALIDATION CHECKLIST:
+✓ Exactly {len(segments)} segments output
+✓ ALL dubbed_text in {target_lang_name} (no language mixing)  
+✓ Zero corruption patterns in output
+✓ Preserved timing and segment IDs
+✓ Natural, meaningful translations"""
     
     def _get_openai_client(self):
         if self._openai_client is None:
@@ -399,7 +434,7 @@ FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
                 response = self._get_openai_client().chat.completions.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": f"You are an expert audio dubbing AI with advanced corruption detection. {'REDUB MODE: Preserve exact timing and structure, 1:1 mapping, only translate dubbed_text.' if preserve_segments else 'FRESH MODE: Intelligent segmentation - merge short segments, split long segments at sentence breaks, target 3-8 seconds for optimal voice cloning.'} CRITICAL: All segments must be ≤15 seconds duration. CORRUPTION HANDLING: If input text contains repetitive patterns (xxx, ..., aaaa, repeated words/phrases), corrupted transcriptions, meaningless symbols, or placeholder text - AUTOMATICALLY extract only the meaningful content. Remove repetitive artifacts but preserve actual speech. Never output corrupted text patterns. Never repeat the same phrase multiple times. Always provide clean, meaningful text in proper target language alphabet. Skip segments that are purely corrupted/meaningless."},
+                        {"role": "system", "content": f"You are an expert audio dubbing AI with ADVANCED CORRUPTION DETECTION and LANGUAGE CONSISTENCY ENFORCEMENT. MODE: {'REDUB - Preserve exact timing/structure, 1:1 mapping, translate dubbed_text only' if preserve_segments else 'FRESH - Intelligent segmentation, merge short segments, split long ones, target 3-8s for optimal voice cloning'}. CRITICAL RULES: 1) All segments must be ≤15 seconds. 2) TARGET LANGUAGE: {target_lang_name} - ALL dubbed_text must be in {target_lang_name} EXCLUSIVELY, NEVER mix with Spanish/German/French/Italian/etc. 3) CORRUPTION AUTO-DETECTION: Identify and clean these patterns automatically: • Repetitive numbers (40,000,000,000...) • Repeated characters (aaaaaaa...) • Repeated words/phrases (juice juice juice...) • Meaningless symbol sequences • Corrupted transcription artifacts • Placeholder text patterns. 4) EXTRACT meaningful speech from corrupted input, ignore artifacts. 5) LANGUAGE PURITY: Each segment must be 100% {target_lang_name}, no mixing. 6) FALLBACK: For purely corrupted segments, use '[unclear audio]' in {target_lang_name}. 7) ANTI-LOOP: Never repeat phrases within/across segments."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=self.max_tokens,
