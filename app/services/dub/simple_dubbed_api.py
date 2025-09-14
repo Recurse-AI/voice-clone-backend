@@ -287,11 +287,13 @@ class SimpleDubbedAPI:
                 return None
             import time
             segment_start_time = time.time()
+            
+            tagged_text = _add_language_tag(dubbed_text, target_language_code)
+            tagged_reference_text = _add_language_tag(original_text or "Reference audio", source_language_code)
+            
             logger.info(f"🎯 Voice cloning {segment_id} starting at {time.strftime('%H:%M:%S')} using reference: {reference_audio_path}")
             logger.info(f"🔍 DEBUG - Target text: '{dubbed_text}' (target_lang: {target_language_code})")
             logger.info(f"🔍 DEBUG - Reference text: '{original_text}' (source_lang: {source_language_code})")
-            logger.info(f"🔍 DEBUG - Tagged generation text: '{tagged_text}'")
-            logger.info(f"🔍 DEBUG - Tagged reference text: '{tagged_reference_text}'")
             import soundfile as sf
             import io
             audio_data, sample_rate = sf.read(reference_audio_path)
@@ -312,8 +314,6 @@ class SimpleDubbedAPI:
             cloned_path = os.path.join(process_temp_dir, cloned_filename).replace('\\', '/')
             
             # Process entire segment as one unit (no chunking)
-            tagged_text = _add_language_tag(dubbed_text, target_language_code)
-            tagged_reference_text = _add_language_tag(original_text or "Reference audio", source_language_code)
             
             premium_check = getattr(self, 'voice_premium_model', False)
             
