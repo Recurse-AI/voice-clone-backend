@@ -116,7 +116,7 @@ class VideoProcessor:
     def _create_final_audio(self, audio_path: str, instruments_path: str, audio_id: str) -> Path:
         """Mix original audio with instrument track and return mixed file path"""
         try:
-            from .audio_utils import AudioUtils
+            from app.utils.audio import AudioUtils
             output_path = self.temp_dir / f"final_mix_{audio_id}.wav"
             AudioUtils.mix_audio_files(audio_path, instruments_path, str(output_path))
             return output_path
@@ -125,15 +125,153 @@ class VideoProcessor:
             return Path(audio_path)
 
 
-    def create_srt_file(self, subtitle_data: List[Dict], output_path: Path) -> None:
-        with open(output_path, 'w', encoding='utf-8') as f:
-            for i, subtitle in enumerate(subtitle_data, 1):
-                start_time = self._seconds_to_srt_time(subtitle['start'])
-                end_time = self._seconds_to_srt_time(subtitle['end'])
+    def _detect_language_type(self, text: str) -> str:
+        """Detect language type for optimal chunking"""
+        if not text:
+            return "latin"
+        
+        # Count different character types
+        cjk_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff' or  # Chinese
+                                           '\u3040' <= c <= '\u309f' or  # Hiragana
+                                           '\u30a0' <= c <= '\u30ff' or  # Katakana
+                                           '\uac00' <= c <= '\ud7af')     # Korean
+        
+        arabic_chars = sum(1 for c in text if '\u0600' <= c <= '\u06ff')
+        
+        total_chars = len(text)
+        
+        if cjk_chars / total_chars > 0.3:
+            return "cjk"
+        elif arabic_chars / total_chars > 0.3:
+            return "arabic"
+        else:
+            return "latin"
+
+    def _get_optimal_char_limit(self, text: str) -> int:
+        """Get optimal character limit based on language type"""
+        lang_type = self._detect_language_type(text)
+        
+        # Character limits optimized for single-line readability
+        limits = {
+            "cjk": 20,      # CJK characters are wider
+            "arabic": 35,   # Arabic has different reading patterns
+            "latin": 42     # Latin languages (English, Spanish, etc.)
+        }
+        
+        return limits.get(lang_type, 42)
+
+    def _chunk_subtitle_text(self, text: str) -> List[str]:
+        """
+        Intelligently chunk subtitle text for single-line display.
+        Handles all languages with smart word/character boundary detection.
+        """
+        if not text:
+            return []
+        
+        max_chars = self._get_optimal_char_limit(text)
+        
+        if len(text) <= max_chars:
+            return [text]
+        
+        chunks = []
+        lang_type = self._detect_language_type(text)
+        
+        if lang_type == "cjk":
+            # For CJK languages, split by character groups since there are no spaces
+            for i in range(0, len(text), max_chars):
+                chunk = text[i:i + max_chars]
+                if chunk.strip():
+                    chunks.append(chunk.strip())
+        else:
+            # For languages with word boundaries (Latin, Arabic, etc.)
+            words = text.split()
+            current_chunk = ""
+            
+            for word in words:
+                test_chunk = f"{current_chunk} {word}".strip()
                 
-                f.write(f"{i}\n")
-                f.write(f"{start_time} --> {end_time}\n")
-                f.write(f"{subtitle['text']}\n\n")
+                if len(test_chunk) <= max_chars:
+                    current_chunk = test_chunk
+                else:
+                    if current_chunk:
+                        chunks.append(current_chunk)
+                        current_chunk = word
+                    else:
+                        # Single word is too long - force split
+                        if len(word) > max_chars:
+                            for i in range(0, len(word), max_chars):
+                                chunk_part = word[i:i + max_chars]
+                                if chunk_part:
+                                    chunks.append(chunk_part)
+                        else:
+                            current_chunk = word
+            
+            if current_chunk:
+                chunks.append(current_chunk)
+        
+        return [chunk for chunk in chunks if chunk.strip()]
+
+    def demo_chunking(self, text: str) -> Dict[str, Any]:
+        """
+        Demonstrate subtitle chunking for different languages.
+        Returns chunking analysis for testing purposes.
+        """
+        if not text:
+            return {"error": "No text provided"}
+        
+        lang_type = self._detect_language_type(text)
+        char_limit = self._get_optimal_char_limit(text)
+        chunks = self._chunk_subtitle_text(text)
+        
+        return {
+            "original_text": text,
+            "language_type": lang_type,
+            "character_limit": char_limit,
+            "original_length": len(text),
+            "chunks": chunks,
+            "chunk_count": len(chunks),
+            "chunk_lengths": [len(chunk) for chunk in chunks],
+            "max_chunk_length": max(len(chunk) for chunk in chunks) if chunks else 0,
+            "all_chunks_single_line": all(len(chunk) <= char_limit for chunk in chunks)
+        }
+
+    def create_srt_file(self, subtitle_data: List[Dict], output_path: Path) -> None:
+        subtitle_index = 1
+        
+        with open(output_path, 'w', encoding='utf-8') as f:
+            for subtitle in subtitle_data:
+                text = subtitle['text'].strip()
+                if not text:
+                    continue
+                
+                # Chunk text for optimal single-line display
+                chunks = self._chunk_subtitle_text(text)
+                
+                if not chunks:
+                    continue
+                
+                # Calculate timing for each chunk
+                start_time = subtitle['start']
+                end_time = subtitle['end']
+                duration = end_time - start_time
+                chunk_duration = duration / len(chunks)
+                
+                for i, chunk in enumerate(chunks):
+                    chunk_start = start_time + (i * chunk_duration)
+                    chunk_end = start_time + ((i + 1) * chunk_duration)
+                    
+                    # Ensure last chunk ends exactly at original end time
+                    if i == len(chunks) - 1:
+                        chunk_end = end_time
+                    
+                    start_time_str = self._seconds_to_srt_time(chunk_start)
+                    end_time_str = self._seconds_to_srt_time(chunk_end)
+                    
+                    f.write(f"{subtitle_index}\n")
+                    f.write(f"{start_time_str} --> {end_time_str}\n")
+                    f.write(f"{chunk}\n\n")
+                    
+                    subtitle_index += 1
     
     def _seconds_to_srt_time(self, seconds: float) -> str:
         hours = int(seconds // 3600)

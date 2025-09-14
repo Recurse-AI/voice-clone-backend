@@ -98,22 +98,32 @@ class AISegmentationService:
             translation_instructions = f"""SAME LANGUAGE PROCESSING:
 - Source and target language are IDENTICAL ({target_lang_name})
 - PRESERVE the original text EXACTLY as is
-- Copy the original_text to dubbed_text WITHOUT any modifications"""
+- Copy the original_text to dubbed_text WITHOUT any modifications
+- CORRUPTION FIX: If original text has repetitive/corrupted patterns, clean it first then copy"""
         else:
             translation_instructions = f"""TRANSLATION TO {target_lang_name.upper()}:
 - Translate EVERY WORD into proper {target_lang_name}
 - NEVER change sentence structure or meaning
 - Keep EXACT same meaning and tone as original
-- Only make minimal changes when {target_lang_name} grammar requires it"""
+- Only make minimal changes when {target_lang_name} grammar requires it
+- CORRUPTION FIX: Clean any repetitive/corrupted patterns before translating
+- NEVER translate corrupted text patterns - fix them first"""
         
         if preserve_segments:
+            if is_same_language:
+                processing_instruction = f"SAME LANGUAGE REDUB - Keep dubbed_text IDENTICAL to original_text"
+                example_dubbed = "exact same text as original_text"
+            else:
+                processing_instruction = f"DIFFERENT LANGUAGE REDUB - Translate dubbed_text to {target_lang_name}"
+                example_dubbed = f"proper translation in {target_lang_name}"
+            
             return f"""REDUB MODE - EXACT PRESERVATION:
 
 MANDATORY RULES:
 1. Output EXACTLY {len(segments)} segments (1:1 mapping)
 2. Keep start/end timing exactly as input
 3. Keep original_text exactly as input  
-4. Only translate dubbed_text to {target_language}
+4. {processing_instruction}
 5. No merging, no splitting, no changes to structure
 
 {translation_instructions}
@@ -129,12 +139,12 @@ OUTPUT JSON FORMAT:
       "start": 0.080,
       "end": 4.560,
       "original_text": "exact text from input",
-      "dubbed_text": "proper translation in {target_lang_name}"
+      "dubbed_text": "{example_dubbed}"
     }}
   ]
 }}
 
-CRITICAL: Must output exactly {len(segments)} segments as valid JSON with proper translations."""
+CRITICAL: Must output exactly {len(segments)} segments as valid JSON. {processing_instruction}. Remove corruption but keep meaningful content."""
         else:
             return f"""FRESH DUBBING MODE:
 
@@ -168,7 +178,7 @@ OUTPUT JSON:
   ]
 }}
 
-🚨 VERIFY: Every segment duration (end-start) ≤ 15.0 seconds before output."""
+🚨 VERIFY: Every segment duration (end-start) ≤ 15.0 seconds before output. NO corrupted or repetitive text patterns."""
     
     def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0) -> List[Dict[str, Any]]:
         formatted_segments = []
@@ -364,6 +374,7 @@ REDUB CHUNK {chunk_number}/{total_chunks}:
 - MANDATORY: Process each input segment as exactly one output segment
 - PRESERVE exact timing and original_text from input
 - TRANSLATE only the dubbed_text field
+- CORRUPTION: Clean any corrupted patterns in original_text before copying/translating
 """
             else:
                 chunk_context = f"""
@@ -375,6 +386,8 @@ FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
 - MANDATORY: All segments ≤ 15.0 seconds duration
 - COVER ALL content exactly once - no gaps, no repetitions
 - DO NOT repeat content from previous chunks
+- CORRUPTION: Clean repetitive/corrupted patterns automatically
+- ANTI-LOOP: Never output the same phrase multiple times in this chunk
 """
             
             target_lang_name = self._get_language_name(target_lang_code)
@@ -386,7 +399,7 @@ FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
                 response = self._get_openai_client().chat.completions.create(
                     model=model,
                     messages=[
-                        {"role": "system", "content": f"You are an expert audio dubbing AI. {'REDUB MODE: Preserve exact timing and structure, 1:1 mapping, only translate dubbed_text.' if preserve_segments else 'FRESH MODE: Intelligent segmentation - merge short segments, split long segments at sentence breaks, target 3-8 seconds for optimal voice cloning.'} CRITICAL: All segments must be ≤15 seconds duration. If input text is corrupted/repetitive/malformed, fix it by extracting only meaningful content. Never output corrupted patterns. Provide real translations in target language with proper alphabet. No placeholder text."},
+                        {"role": "system", "content": f"You are an expert audio dubbing AI with advanced corruption detection. {'REDUB MODE: Preserve exact timing and structure, 1:1 mapping, only translate dubbed_text.' if preserve_segments else 'FRESH MODE: Intelligent segmentation - merge short segments, split long segments at sentence breaks, target 3-8 seconds for optimal voice cloning.'} CRITICAL: All segments must be ≤15 seconds duration. CORRUPTION HANDLING: If input text contains repetitive patterns (xxx, ..., aaaa, repeated words/phrases), corrupted transcriptions, meaningless symbols, or placeholder text - AUTOMATICALLY extract only the meaningful content. Remove repetitive artifacts but preserve actual speech. Never output corrupted text patterns. Never repeat the same phrase multiple times. Always provide clean, meaningful text in proper target language alphabet. Skip segments that are purely corrupted/meaningless."},
                         {"role": "user", "content": prompt}
                     ],
                     max_tokens=self.max_tokens,
