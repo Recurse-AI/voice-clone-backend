@@ -322,13 +322,24 @@ class VideoDownloadService:
             return {"success": False, "error": str(e)}
     
     def delete_file(self, job_id: str) -> Dict[str, Any]:
-        """Manually delete downloaded file by job_id"""
         try:
-            if job_id not in self._downloaded_files:
-                return {"success": False, "error": "File not found"}
-            
-            file_info = self._downloaded_files[job_id]
             deleted_files = self._cleanup_file(job_id)
+            
+            if not deleted_files:
+                job_dirs = [
+                    Path(self.download_dir) / job_id,
+                    Path("tmp") / job_id,
+                    Path("tmp") / "downloads" / job_id
+                ]
+                
+                files_found = False
+                for job_dir in job_dirs:
+                    if job_dir.exists():
+                        files_found = True
+                        break
+                        
+                if not files_found:
+                    return {"success": False, "error": f"No files found for job_id: {job_id}"}
             
             return {
                 "success": True,
@@ -343,29 +354,21 @@ class VideoDownloadService:
         cleanup_utils.schedule_auto_cleanup(job_id, 30)
 
     def _cleanup_file(self, job_id: str) -> list:
-        deleted_files = []
-
         try:
+            deleted_files = []
+            
             if job_id in self._downloaded_files:
                 file_info = self._downloaded_files[job_id]
-                job_dir = Path(file_info["job_dir"])
-
-                # List files before deletion for return value
-                if job_dir.exists() and job_dir.is_dir():
-                    for file_path in job_dir.rglob("*"):
-                        if file_path.is_file():
-                            deleted_files.append(str(file_path))
-
-                # Use centralized cleanup
-                cleanup_utils.cleanup_job(job_id)
-
-                # Remove from tracking
+                job_dir_path = str(file_info["job_dir"])
+                deleted_files = cleanup_utils.delete_file_path(job_dir_path)
                 del self._downloaded_files[job_id]
-
+            else:
+                cleanup_utils.cleanup_job(job_id)
+                
+            return deleted_files
         except Exception as e:
             logger.error(f"Error cleaning up {job_id}: {e}")
-
-        return deleted_files
+            return []
 
 
 

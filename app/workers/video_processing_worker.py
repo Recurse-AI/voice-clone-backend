@@ -401,24 +401,9 @@ def _get_media_duration(file_path: Path) -> Optional[float]:
 
 
 def _schedule_cleanup(job_id: str, output_dir: Path):
-    """Schedule auto-cleanup of files after 5 minutes"""
-    import threading
-    import time
-    import shutil
-    
-    def cleanup_task():
-        time.sleep(300)  # 5 minutes
-        try:
-            if output_dir.exists():
-                shutil.rmtree(output_dir)
-                logger.info(f"🗑️ Auto-cleaned files for job {job_id}")
-        except Exception as e:
-            logger.error(f"❌ Failed to cleanup files for job {job_id}: {e}")
-    
-    # Start cleanup in background thread
-    cleanup_thread = threading.Thread(target=cleanup_task, daemon=True)
-    cleanup_thread.start()
-    logger.info(f"⏰ Scheduled cleanup for job {job_id} in 5 minutes")
+    from app.utils.cleanup_utils import cleanup_utils
+    cleanup_utils.schedule_auto_cleanup(job_id, 30)
+    logger.info(f"⏰ Scheduled cleanup for job {job_id} in 30 minutes")
 
 
 def _fail_job(job_id: str, error: str, error_code: str):
