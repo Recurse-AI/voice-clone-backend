@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# Set working directory to script location
+rm -rf logs/*
+rm -rf tmp/*
+
+
 # Simplified RunPod Startup Script
 # Use environment_setup.sh first for initial setup
 
