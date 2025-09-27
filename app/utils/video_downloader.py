@@ -327,7 +327,7 @@ class VideoDownloadService:
             
             if not deleted_files:
                 job_dirs = [
-                    Path(self.download_dir) / job_id,
+                    Path(settings.TEMP_DIR) / job_id,
                     Path("tmp") / job_id,
                     Path("tmp") / "downloads" / job_id
                 ]
