@@ -35,8 +35,8 @@ def send_email(sender_email: str, receiver_email: str, subject: str, body: str, 
         else:
             msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
-        # Set up the SMTP server and send the email
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+        # Set up the SMTP server for Zoho Mail
+        with smtplib.SMTP('smtp.zoho.com', 587) as server:
             server.starttls()  # Upgrade connection to a secure encrypted SSL/TLS connection
             server.login(sender_email, password)  # Login with sender's email credentials
             server.sendmail(sender_email, receiver_email, msg.as_string())  # Send email
@@ -52,7 +52,7 @@ def send_email(sender_email: str, receiver_email: str, subject: str, body: str, 
         return False
     except smtplib.SMTPConnectError as e:
         logger.error(f"❌ SMTP Connection failed: {e}")
-        logger.error("Check network connectivity and Gmail SMTP settings")
+        logger.error("Check network connectivity and Zoho SMTP settings")
         if raise_on_error:
             raise HTTPException(status_code=500, detail="SMTP connection failed")
         return False
