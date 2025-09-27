@@ -287,7 +287,7 @@ def _mix_audio_files(dubbed_path: Optional[Path], instrument_path: Optional[Path
             cmd.extend([
                 "-i", str(dubbed_path),
                 "-i", str(instrument_path),
-                "-filter_complex", f"[0:a]volume=1.0[dub];[1:a]volume={instrument_volume}[inst];[dub][inst]amix=inputs=2:duration=longest[out]",
+                "-filter_complex", f"[0:a]volume=2.0[dub];[1:a]volume={instrument_volume}[inst];[dub][inst]amix=inputs=2:duration=longest[out]",
                 "-map", "[out]",
                 str(output_path)
             ])
@@ -295,7 +295,7 @@ def _mix_audio_files(dubbed_path: Optional[Path], instrument_path: Optional[Path
             cmd = ["ffmpeg", "-y"]
             if settings.FFMPEG_USE_GPU:
                 cmd.extend(["-hwaccel", "cuda"])
-            cmd.extend(["-i", str(dubbed_path), "-filter:a", "volume=1.0", "-c:a", "mp3", str(output_path)])
+            cmd.extend(["-i", str(dubbed_path), "-filter:a", "volume=2.0", "-c:a", "mp3", str(output_path)])
         elif instrument_path:
             cmd = ["ffmpeg", "-y"]
             if settings.FFMPEG_USE_GPU:
