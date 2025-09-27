@@ -98,7 +98,11 @@ class StripeService:
             mode="setup",
             payment_method_types=['card'],
             success_url=f"{settings.FRONTEND_URL}/subscription/manage?setup_success=true",
-            cancel_url=f"{settings.FRONTEND_URL}/subscription/manage?setup_error=cancelled"
+            cancel_url=f"{settings.FRONTEND_URL}/subscription/manage?setup_error=cancelled",
+            metadata={
+                "userId": user_id,
+                "purpose": "card_add"
+            }
         )
         
         return {
