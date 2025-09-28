@@ -30,6 +30,10 @@ async def upload_file(video_file: UploadFile = File(...), job_id: str = Form(...
         file_size = os.path.getsize(temp_file_path)
         file_size_mb = file_size // (1024 * 1024)
 
+        # Check if this is video upload for dub job
+        if original_filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+            _handle_video_upload_completion(job_id, temp_file_path)
+
         return {
             "success": True,
             "message": MSG_FILE_UPLOADED,
@@ -50,3 +54,27 @@ async def upload_file(video_file: UploadFile = File(...), job_id: str = Form(...
             pass
 
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
+
+
+def _handle_video_upload_completion(job_id: str, video_path: str):
+    """Handle video upload completion - associate with dub job and create default result if needed"""
+    try:
+        from app.services.dub_service import dub_service
+        from app.services.r2_service import R2Service
+        
+        # Upload video to R2 storage
+        r2_service = R2Service()
+        video_filename = os.path.basename(video_path)
+        r2_key = f"videos/{job_id}/{video_filename}"
+        
+        upload_result = r2_service.upload_file(video_path, r2_key, "video/mp4")
+        video_url = upload_result.get("url") if upload_result.get("success") else None
+        
+        # Associate video with dub job (local path + R2 URL)
+        dub_service.associate_video(job_id, video_path, video_url)
+        
+        # Check if dub already completed and needs default result
+        dub_service.check_and_create_default_result(job_id)
+        
+    except Exception as e:
+        logger.error(f"Failed to handle video upload completion for {job_id}: {e}")

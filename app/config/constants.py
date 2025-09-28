@@ -64,6 +64,7 @@ GPU_VOICE_CLONING_LIMIT = 1
 AUDIO_SAMPLE_RATE = 44100
 AUDIO_DEFAULT_FORMAT = "wav"
 VOICE_CLONE_TIMEOUT_SECONDS = 3600
+INSTRUMENT_DEFAULT_VOLUME = 0.7
 
 # Queue Position Constants
 MAX_QUEUE_POSITION_CHECKS = 5  # Maximum number of jobs to check queue position for (performance)

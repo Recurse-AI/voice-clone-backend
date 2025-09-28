@@ -18,6 +18,7 @@ class DubJob(BaseModel):
     
     # File Processing
     local_video_path: Optional[str] = Field(None, description="Local path of uploaded video")
+    video_url: Optional[str] = Field(None, description="R2 URL of uploaded video")
     audio_path: Optional[str] = Field(None, description="Extracted audio path")
     vocal_path: Optional[str] = Field(None, description="Separated vocal path")
     instrument_path: Optional[str] = Field(None, description="Separated instrument path")

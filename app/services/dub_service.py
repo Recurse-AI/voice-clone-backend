@@ -221,6 +221,9 @@ class DubService:
             # Send completion email
             self._send_completion_email(job_id, user_id, result_url, details)
             
+            # Check if we need to create default video result
+            self.check_and_create_default_result(job_id)
+            
             logger.info(f"✅ Dub job completed: {job_id}")
             return True
             
@@ -368,6 +371,103 @@ class DubService:
             
         except Exception as e:
             logger.error(f"Failed to get job status for {job_id}: {e}")
+            return None
+    
+    def associate_video(self, job_id: str, video_path: str, video_url: str = None) -> bool:
+        """Associate uploaded video with dub job"""
+        try:
+            from app.utils.db_sync_operations import SyncDBOperations
+            update_data = {"local_video_path": video_path}
+            if video_url:
+                update_data["video_url"] = video_url
+                
+            SyncDBOperations.update_dub_job_status(job_id, None, None, update_data)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to associate video with job {job_id}: {e}")
+            return False
+    
+    def check_and_create_default_result(self, job_id: str) -> bool:
+        """Check if dub job completed but needs default result"""
+        try:
+            job_data = self.get_job_status(job_id)
+            if not job_data:
+                return False
+                
+            if job_data.get("status") == "completed" and not job_data.get("result_url"):
+                video_path = job_data.get("local_video_path")
+                video_url = job_data.get("video_url")
+                
+                if video_path or video_url:
+                    result = self._create_default_video_result(job_id, video_path, video_url, job_data)
+                    
+                    if result["success"]:
+                        logger.info(f"Default video creation started for dub job {job_id}")
+                        return True
+                        
+            return False
+        except Exception as e:
+            logger.error(f"Failed to create default result for {job_id}: {e}")
+            return False
+    
+    def _create_default_video_result(self, job_id: str, video_path: str, video_url: str, job_data: dict) -> dict:
+        """Create default video using existing video processing pipeline"""
+        try:
+            from app.queue.queue_manager import queue_manager
+            from app.config.constants import INSTRUMENT_DEFAULT_VOLUME
+            
+            # If no local video but have R2 URL, download it first
+            final_video_path = video_path
+            if not video_path or not os.path.exists(video_path):
+                if video_url:
+                    final_video_path = self._download_video_from_r2(job_id, video_url)
+                    if not final_video_path:
+                        return {"success": False, "error": "Failed to download video from R2"}
+                else:
+                    return {"success": False, "error": "No video available"}
+            
+            # Use existing video processing task with dubbed audio and instruments
+            task_data = {
+                "job_id": job_id,  # Use original job_id so result goes to same job
+                "video_file": final_video_path,
+                "dubbed_audio_url": job_data.get("result_urls", {}).get("dubbed_audio_url"),
+                "instrument_audio_url": job_data.get("result_urls", {}).get("instrument_audio_url"),
+                "timeline_audio": None,
+                "subtitle_url": None,
+                "options": f'{{"instrument_volume": {INSTRUMENT_DEFAULT_VOLUME}}}'
+            }
+            
+            # Enqueue the task - it will complete asynchronously and upload final result to R2
+            success = queue_manager.enqueue_video_processing_task(task_data)
+            return {"success": success, "message": "Default video creation started"}
+            
+        except Exception as e:
+            logger.error(f"Failed to create default video result: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _download_video_from_r2(self, job_id: str, video_url: str) -> str:
+        """Download video from R2 URL to local temp path"""
+        try:
+            import requests
+            from pathlib import Path
+            
+            temp_dir = Path(settings.TEMP_DIR) / job_id
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            
+            local_path = temp_dir / "downloaded_video.mp4"
+            
+            response = requests.get(video_url, stream=True)
+            response.raise_for_status()
+            
+            with open(local_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            logger.info(f"Downloaded video from R2 for job {job_id}")
+            return str(local_path)
+            
+        except Exception as e:
+            logger.error(f"Failed to download video from R2 for job {job_id}: {e}")
             return None
 
 
