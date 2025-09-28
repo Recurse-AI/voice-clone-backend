@@ -376,13 +376,31 @@ class DubService:
     def associate_video(self, job_id: str, video_path: str, video_url: str = None) -> bool:
         """Associate uploaded video with dub job"""
         try:
-            from app.utils.db_sync_operations import SyncDBOperations
+            from pymongo import MongoClient
+            from app.config.settings import settings
+            
+            client = MongoClient(settings.MONGODB_URI)
+            db = client[settings.DB_NAME]
+            collection = db.dub_jobs
+            
             update_data = {"local_video_path": video_path}
             if video_url:
                 update_data["video_url"] = video_url
+            
+            result = collection.update_one(
+                {"job_id": job_id},
+                {"$set": update_data}
+            )
+            
+            client.close()
+            
+            if result.modified_count > 0:
+                logger.info(f"Associated video with dub job {job_id}")
+                return True
+            else:
+                logger.warning(f"No dub job found with ID {job_id}")
+                return False
                 
-            SyncDBOperations.update_dub_job_status(job_id, None, None, update_data)
-            return True
         except Exception as e:
             logger.error(f"Failed to associate video with job {job_id}: {e}")
             return False
