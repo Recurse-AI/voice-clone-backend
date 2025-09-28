@@ -341,8 +341,18 @@ class JobSummary(BaseModel):
     status: str
     progress: int
     original_filename: Optional[str] = None
+    target_language: Optional[str] = None
+    source_video_language: Optional[str] = None
+    result_url: Optional[str] = None
+    files: Optional[List[FileInfo]] = None
+    error: Optional[str] = None
     created_at: str
+    updated_at: Optional[str] = None
     completed_at: Optional[str] = None
+    # Separation specific fields
+    audio_url: Optional[str] = None
+    vocal_url: Optional[str] = None
+    instrument_url: Optional[str] = None
 
 class WorkspaceStats(BaseModel):
     """Workspace statistics summary"""
