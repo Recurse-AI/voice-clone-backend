@@ -188,6 +188,14 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     
     seg["dubbed_text"] = dubbed_text
     
+    # Optionally update timings
+    if request_body.start is not None:
+        seg["start"] = request_body.start
+    if request_body.end is not None:
+        seg["end"] = request_body.end
+    if (request_body.start is not None) or (request_body.end is not None):
+        seg["duration_ms"] = max(0, seg["end"] - seg["start"])
+    
     # Store prompt and tone separately for future reference
     if request_body.prompt:
         seg["custom_prompt"] = request_body.prompt

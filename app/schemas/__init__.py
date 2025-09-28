@@ -96,6 +96,29 @@ class RegenerateSegmentRequest(BaseModel):
     tone: Optional[str] = Field(None, description="Optional tone marker like excited, sad, whispering")
     target_language: Optional[str] = None
     prompt: Optional[str] = Field(None, description="Optional custom prompt for text regeneration using OpenAI")
+    start: Optional[int] = None
+    end: Optional[int] = None
+
+    @field_validator('start')
+    @classmethod
+    def validate_start(cls, v):
+        if v is None:
+            return v
+        if v < 0:
+            raise ValueError("Start time must be >= 0")
+        return v
+
+    @field_validator('end')
+    @classmethod
+    def validate_end(cls, v, info):
+        if v is None:
+            return v
+        if v < 0:
+            raise ValueError("End time must be >= 0")
+        if hasattr(info, 'data') and 'start' in info.data and info.data['start'] is not None:
+            if v <= info.data['start']:
+                raise ValueError("End time must be greater than start time")
+        return v
 
 class RegenerateSegmentResponse(BaseModel):
     success: bool
