@@ -4,6 +4,7 @@ Handles complete video processing workflow asynchronously
 """
 import logging
 import json
+import os
 import subprocess
 import requests
 import tempfile
@@ -76,7 +77,7 @@ def process_video_task(task_data: dict):
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"📁 Using output directory: {output_dir}")
         
-        # Process the video using URL
+        # Process the video
         result = _process_video_complete(
             output_dir, job_id, video_url, dubbed_audio_url, 
             instrument_audio_url, timeline_segments, subtitle_url, 
@@ -152,10 +153,14 @@ def _process_video_complete(output_path: Path, job_id: str, video_url: Optional[
         instrument_audio_path = None
         subtitle_path = None
         
+        # Handle video input - download from URL if provided
         if video_url:
-            # Download video from URL
             video_path = output_path / "video_source.mp4"
             _download_file(video_url, video_path)
+            logger.info(f"📥 Downloaded video from URL")
+        else:
+            # No video available - this is fine for audio-only processing
+            video_path = None
         
         if dubbed_audio_url:
             dubbed_audio_path = output_path / "dubbed_audio.mp3"

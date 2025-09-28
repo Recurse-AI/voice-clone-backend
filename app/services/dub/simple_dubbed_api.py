@@ -856,18 +856,19 @@ class SimpleDubbedAPI:
                 return {"success": False, "error": "Job not found"}
             
             video_url = job_data.get("video_url")
+            local_video_path = job_data.get("local_video_path")
             
-            # Skip video creation if no video URL
-            if not video_url:
-                logger.info(f"No video URL available for job {job_id}, skipping video creation")
+            # Skip video creation if neither video URL nor local video path available
+            if not video_url and not local_video_path:
+                logger.info(f"No video URL or local video path available for job {job_id}, skipping video creation")
                 return {"success": True, "skipped": True}
-
+           
             self._update_phase_progress(job_id, "final_processing", 0.7, "Creating video result...")
             logger.info(f"Creating video result for job {job_id}")
             
             # Create video with synchronized video processing logic
             video_result = self._process_video_sync(
-                job_id, video_url, final_audio_path, process_temp_dir,
+                job_id, video_url, local_video_path, final_audio_path, process_temp_dir,
                 vocal_audio_url, instrument_audio_url
             )
             
@@ -878,7 +879,7 @@ class SimpleDubbedAPI:
             return {"success": False, "error": str(e)}
 
 
-    def _process_video_sync(self, job_id: str, video_url: str, audio_path: str, output_dir: str,
+    def _process_video_sync(self, job_id: str, video_url: str, local_video_path: str, audio_path: str, output_dir: str,
                            vocal_audio_url: str = None, instrument_audio_url: str = None) -> dict:
         """Process video synchronously using existing video processing logic"""
         try:
@@ -890,12 +891,22 @@ class SimpleDubbedAPI:
             
             output_dir_path = Path(output_dir)
             
-            # Download video from URL first
+            # Simple approach: Check local first, then download if needed
             downloaded_video_path = output_dir_path / "source_video.mp4"
-            response = requests.get(video_url)
-            response.raise_for_status()
-            with open(downloaded_video_path, "wb") as f:
-                f.write(response.content)
+            if local_video_path and os.path.exists(local_video_path):
+                # Use local video file first
+                import shutil
+                shutil.copy2(local_video_path, downloaded_video_path)
+                logger.info(f"📁 Using local video file: {local_video_path}")
+            elif video_url:
+                # Download video from URL if no local file
+                response = requests.get(video_url)
+                response.raise_for_status()
+                with open(downloaded_video_path, "wb") as f:
+                    f.write(response.content)
+                logger.info(f"📥 Downloaded video from URL for job {job_id}")
+            else:
+                return {"success": False, "error": "No valid video source available"}
             
             final_video_path = output_dir_path / f"final_video_{job_id}.mp4"
             
@@ -953,9 +964,19 @@ class SimpleDubbedAPI:
         """Upload files to R2 and return final results"""
         self._update_phase_progress(job_id, "upload", 0.0, "Uploading and finalizing...")
         
-        # Upload entire directory to R2
+        # Skip all video uploads during folder upload since video is already processed and associated
+        exclude_files = []
+        import os
+        for filename in os.listdir(process_temp_dir):
+            if filename.lower().endswith(('.mp4', '.avi', '.mov', '.webm', '.mkv')):
+                exclude_files.append(filename)
+        
+        if exclude_files:
+            logger.info(f"📎 Skipping video files during folder upload: {exclude_files}")
+        
+        # Upload directory to R2, excluding all video files
         folder_upload_result, manifest_url, manifest_key = upload_process_dir_to_r2(
-            job_id, process_temp_dir, self.r2_storage
+            job_id, process_temp_dir, self.r2_storage, exclude_files=exclude_files
         )
         
         

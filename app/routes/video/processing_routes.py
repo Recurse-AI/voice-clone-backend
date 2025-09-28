@@ -23,15 +23,20 @@ async def process_video_complete(
     options: str = Form("{}")
 ):
     """
-    Complete video processing API - Now uses background queue processing.
+    Complete video/audio processing API - Uses background queue processing.
     
     ALL INPUTS ARE OPTIONAL - But at least ONE must be provided:
-    - video_url: Video URL (from R2 storage)
-    - dubbed_audio_url: Dubbed audio URL  
-    - instrument_audio_url: Background music URL
-    - timeline_audio: JSON array of audio segments
-    - subtitle_url: SRT file URL
-    - options: Processing options (resolution, format, etc.)
+    - video_url: Video URL (optional - for video output)
+    - dubbed_audio_url: Dubbed audio URL (for audio-only processing)  
+    - instrument_audio_url: Background music URL (optional)
+    - timeline_audio: JSON array of audio segments (for timeline reconstruction)
+    - subtitle_url: SRT file URL (optional)
+    - options: Processing options (resolution, format, audio_only, etc.)
+    
+    Use Cases:
+    - Audio-only: provide dubbed_audio_url and/or instrument_audio_url
+    - Video with audio: provide video_url + audio URLs
+    - Timeline reconstruction: provide timeline_audio
     
     Response:
     - job_id: Task identifier for status checking
@@ -57,7 +62,7 @@ async def process_video_complete(
                 success=False,
                 message="No input provided",
                 job_id=job_id,
-                error="At least one input required: video_url, dubbed_audio_url, instrument_audio_url, or timeline_audio",
+                error="At least one input required: video_url (for video), dubbed_audio_url (for audio), instrument_audio_url, or timeline_audio",
                 error_code="NO_INPUT"
             )
         
