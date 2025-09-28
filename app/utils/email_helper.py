@@ -333,10 +333,12 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
     # Create download links HTML
     download_links_html = ""
     if job_type == "dub":
-        if download_urls.get("audio_url"):
-            download_links_html += f'<p><a href="{download_urls["audio_url"]}" class="download-button">🎵 Download Dubbed Audio</a></p>'
-        if download_urls.get("video_url"):
-            download_links_html += f'<p><a href="{download_urls["video_url"]}" class="download-button">🎬 Download Dubbed Video</a></p>'
+        # Always drive users to the unified download page for dubbing jobs
+        download_page_url = f"{settings.FRONTEND_URL}/workspace/dubbing/download/{job_id}"
+        download_links_html = (
+            f'<p><a href="{download_page_url}" class="download-button">🔗 View Download Page</a></p>'
+            f'<p style="font-size:12px;color:#6b7280;word-break:break-all;">If the button does not work: {download_page_url}</p>'
+        )
     else:
         if download_urls.get("separation_url"):
             download_links_html += f'<p><a href="{download_urls["separation_url"]}" class="download-button">🎵 Download Separated Audio</a></p>'
