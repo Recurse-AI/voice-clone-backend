@@ -217,10 +217,12 @@ async def get_video_dub_status(job_id: str):
             files = formatted_job.files
             result_url = formatted_job.result_url
             error = formatted_job.error
+            video_url = job.video_url  # Get original video URL
         else:
             files = {}
             result_url = None
             error = status_data.get("details", {}).get("error")
+            video_url = None
 
         return VideoDubStatusResponse(
             job_id=job_id,
@@ -228,6 +230,7 @@ async def get_video_dub_status(job_id: str):
             progress=status_data["progress"],
             message=status_data.get("details", {}).get("message", f"Status: {status_data['status']}"),
             result_url=result_url,
+            video_url=video_url,  # Add original video URL at top level
             error=error,
             details={
                 "files": files,
@@ -458,6 +461,13 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
         "redub_from": parent_job.target_language,
         "voice_premium_model": getattr(request_body, "voice_premium_model", False)
     }
+    
+    # Inherit video_url from parent job for final video generation
+    # Local path is not needed as it may no longer exist during redub
+    if hasattr(parent_job, 'video_url') and parent_job.video_url:
+        redub_job_data["video_url"] = parent_job.video_url
+    elif parent_job.details and parent_job.details.get("video_url"):
+        redub_job_data["video_url"] = parent_job.details["video_url"]
     
     # Atomic credit reservation + job creation
     result = await credit_service.reserve_credits_and_create_job(

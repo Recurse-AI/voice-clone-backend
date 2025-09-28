@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 @router.post("/process-video-complete", response_model=VideoProcessingResponse)
 async def process_video_complete(
-    video_file: Optional[UploadFile] = File(None),
+    video_url: Optional[str] = Form(None),
     dubbed_audio_url: Optional[str] = Form(None),
     instrument_audio_url: Optional[str] = Form(None),
     timeline_audio: Optional[str] = Form(None),
@@ -26,7 +26,7 @@ async def process_video_complete(
     Complete video processing API - Now uses background queue processing.
     
     ALL INPUTS ARE OPTIONAL - But at least ONE must be provided:
-    - video_file: Video file upload
+    - video_url: Video URL (from R2 storage)
     - dubbed_audio_url: Dubbed audio URL  
     - instrument_audio_url: Background music URL
     - timeline_audio: JSON array of audio segments
@@ -46,7 +46,7 @@ async def process_video_complete(
     try:
         # 1. Quick validation: At least one input required
         has_input = any([
-            video_file,
+            video_url,
             dubbed_audio_url,
             instrument_audio_url, 
             timeline_audio
@@ -57,23 +57,14 @@ async def process_video_complete(
                 success=False,
                 message="No input provided",
                 job_id=job_id,
-                error="At least one input required: video_file, dubbed_audio_url, instrument_audio_url, or timeline_audio",
+                error="At least one input required: video_url, dubbed_audio_url, instrument_audio_url, or timeline_audio",
                 error_code="NO_INPUT"
             )
         
-        # 2. Handle video file upload (save temporarily if provided)
-        video_file_path = None
-        if video_file:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-                content = await video_file.read()
-                tmp.write(content)
-                video_file_path = tmp.name
-                logger.info(f"💾 Video uploaded: {len(content)/1024/1024:.1f} MB")
-        
-        # 3. Prepare task data for queue
+        # 2. Prepare task data for queue
         task_data = {
             "job_id": job_id,
-            "video_file": video_file_path,
+            "video_url": video_url,
             "dubbed_audio_url": dubbed_audio_url,
             "instrument_audio_url": instrument_audio_url,
             "timeline_audio": timeline_audio,
@@ -81,13 +72,13 @@ async def process_video_complete(
             "options": options
         }
         
-        # 4. Initialize job status
+        # 3. Initialize job status
         status_service.update_status(
             job_id, "video_processing", JobStatus.PENDING, 0,
             {"message": "Video processing job queued"}
         )
         
-        # 5. Enqueue the task
+        # 4. Enqueue the task
         success = queue_manager.enqueue_video_processing_task(task_data)
         if not success:
             return VideoProcessingResponse(
@@ -98,7 +89,7 @@ async def process_video_complete(
                 error_code="QUEUE_ERROR"
             )
         
-        # 6. Return immediate response with job ID
+        # 5. Return immediate response with job ID
         return VideoProcessingResponse(
             success=True,
             message="Video processing task queued successfully",

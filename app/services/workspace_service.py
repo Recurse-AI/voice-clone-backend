@@ -150,7 +150,7 @@ class WorkspaceService:
                     # Separation job data
                     job_summary_data = {
                         "job_id": job_data["job_id"],
-                        "status": job_data["status"],
+                        "status": job_data.get("status", "pending"),
                         "progress": job_data.get("progress", 0),
                         "original_filename": job_data.get("original_filename"),
                         "audio_url": job_data.get("audio_url"),
@@ -189,7 +189,7 @@ class WorkspaceService:
 
                     job_summary_data = {
                         "job_id": job_data["job_id"],
-                        "status": job_data["status"],
+                        "status": job_data.get("status", "pending"),
                         "progress": job_data.get("progress", 0),
                         "original_filename": job_data.get("original_filename"),
                         "target_language": job_data.get("target_language"),

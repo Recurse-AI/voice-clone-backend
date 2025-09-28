@@ -31,7 +31,7 @@ async def upload_file(video_file: UploadFile = File(...), job_id: str = Form(...
         file_size_mb = file_size // (1024 * 1024)
 
         # Check if this is video upload for dub job
-        if original_filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+        if original_filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')):
             _handle_video_upload_completion(job_id, temp_file_path)
 
         return {
@@ -72,9 +72,6 @@ def _handle_video_upload_completion(job_id: str, video_path: str):
         
         # Associate video with dub job (local path + R2 URL)
         dub_service.associate_video(job_id, video_path, video_url)
-        
-        # Check if dub already completed and needs default result
-        dub_service.check_and_create_default_result(job_id)
         
     except Exception as e:
         logger.error(f"Failed to handle video upload completion for {job_id}: {e}")

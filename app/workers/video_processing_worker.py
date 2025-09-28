@@ -31,7 +31,7 @@ def process_video_task(task_data: dict):
         )
         
         # Extract parameters from task_data
-        video_file = task_data.get("video_file")
+        video_url = task_data.get("video_url")
         dubbed_audio_url = task_data.get("dubbed_audio_url")
         instrument_audio_url = task_data.get("instrument_audio_url")
         timeline_audio = task_data.get("timeline_audio")
@@ -55,7 +55,7 @@ def process_video_task(task_data: dict):
         
         # Validate: At least one input required
         has_input = any([
-            video_file,
+            video_url,
             dubbed_audio_url,
             instrument_audio_url, 
             len(timeline_segments) > 0
@@ -76,9 +76,9 @@ def process_video_task(task_data: dict):
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"📁 Using output directory: {output_dir}")
         
-        # Process the video (reuse the existing logic from the original endpoint)
+        # Process the video using URL
         result = _process_video_complete(
-            output_dir, job_id, video_file, dubbed_audio_url, 
+            output_dir, job_id, video_url, dubbed_audio_url, 
             instrument_audio_url, timeline_segments, subtitle_url, 
             processing_options
         )
@@ -139,7 +139,7 @@ def process_video_task(task_data: dict):
         _fail_job(job_id, str(e), "UNEXPECTED_ERROR")
 
 
-def _process_video_complete(output_path: Path, job_id: str, video_file: Optional[str], 
+def _process_video_complete(output_path: Path, job_id: str, video_url: Optional[str], 
                            dubbed_audio_url: Optional[str], instrument_audio_url: Optional[str],
                            timeline_segments: List[TimelineAudioSegment], subtitle_url: Optional[str],
                            processing_options: VideoProcessingOptions) -> Dict[str, Any]:
@@ -152,8 +152,10 @@ def _process_video_complete(output_path: Path, job_id: str, video_file: Optional
         instrument_audio_path = None
         subtitle_path = None
         
-        if video_file:
-            video_path = Path(video_file)
+        if video_url:
+            # Download video from URL
+            video_path = output_path / "video_source.mp4"
+            _download_file(video_url, video_path)
         
         if dubbed_audio_url:
             dubbed_audio_path = output_path / "dubbed_audio.mp3"

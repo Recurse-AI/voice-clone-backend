@@ -37,6 +37,7 @@ class VideoDubStatusResponse(BaseModel):
     progress: int
     message: str
     result_url: Optional[str] = None
+    video_url: Optional[str] = None
     error: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
 

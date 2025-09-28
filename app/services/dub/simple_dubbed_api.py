@@ -776,8 +776,12 @@ class SimpleDubbedAPI:
             logger.error(f"Failed to save manifest for job {job_id}: {e}")
             # Don't pass silently - this is critical for manifest availability
 
+        # Create video result if video source is available (before upload)
+        video_result = self._create_video_if_available(job_id, process_temp_dir, final_audio_path, 
+                                                       vocal_audio_url, instrument_audio_url)
+
         # Upload to R2 and get results
-        return self._upload_and_finalize(job_id, process_temp_dir, final_audio_path)
+        return self._upload_and_finalize(job_id, process_temp_dir, final_audio_path, video_result)
     
     def _generate_srt_file(self, job_id: str, dubbed_segments: list, process_temp_dir: str) -> str:
         """Generate SRT subtitle file"""
@@ -840,7 +844,112 @@ class SimpleDubbedAPI:
         except Exception as e:
             logger.error(f"Failed to save process summary: {str(e)}")
     
-    def _upload_and_finalize(self, job_id: str, process_temp_dir: str, final_audio_path: str) -> dict:
+    def _create_video_if_available(self, job_id: str, process_temp_dir: str, final_audio_path: str,
+                                   vocal_audio_url: str = None, instrument_audio_url: str = None) -> dict:
+        """Create video result if video source is available"""
+        try:
+            from app.utils.db_sync_operations import get_dub_job_sync
+            
+            # Get job data to check for video source
+            job_data = get_dub_job_sync(job_id)
+            if not job_data:
+                return {"success": False, "error": "Job not found"}
+            
+            video_url = job_data.get("video_url")
+            
+            # Skip video creation if no video URL
+            if not video_url:
+                logger.info(f"No video URL available for job {job_id}, skipping video creation")
+                return {"success": True, "skipped": True}
+
+            self._update_phase_progress(job_id, "final_processing", 0.7, "Creating video result...")
+            logger.info(f"Creating video result for job {job_id}")
+            
+            # Create video with synchronized video processing logic
+            video_result = self._process_video_sync(
+                job_id, video_url, final_audio_path, process_temp_dir,
+                vocal_audio_url, instrument_audio_url
+            )
+            
+            return video_result
+            
+        except Exception as e:
+            logger.error(f"Failed to create video for job {job_id}: {e}")
+            return {"success": False, "error": str(e)}
+
+
+    def _process_video_sync(self, job_id: str, video_url: str, audio_path: str, output_dir: str,
+                           vocal_audio_url: str = None, instrument_audio_url: str = None) -> dict:
+        """Process video synchronously using existing video processing logic"""
+        try:
+            from app.config.constants import INSTRUMENT_DEFAULT_VOLUME
+            import subprocess
+            import os
+            import requests
+            from pathlib import Path
+            
+            output_dir_path = Path(output_dir)
+            
+            # Download video from URL first
+            downloaded_video_path = output_dir_path / "source_video.mp4"
+            response = requests.get(video_url)
+            response.raise_for_status()
+            with open(downloaded_video_path, "wb") as f:
+                f.write(response.content)
+            
+            final_video_path = output_dir_path / f"final_video_{job_id}.mp4"
+            
+            # Use FFmpeg to combine video with audio
+            cmd = ["ffmpeg", "-y", "-i", str(downloaded_video_path), "-i", audio_path]
+            
+            # Add instrument audio if available
+            if instrument_audio_url:
+                # Download instrument audio
+                instrument_path = output_dir_path / "instrument_audio.mp3"
+                import requests
+                response = requests.get(instrument_audio_url)
+                response.raise_for_status()
+                with open(instrument_path, "wb") as f:
+                    f.write(response.content)
+                
+                cmd.extend(["-i", str(instrument_path)])
+                # Mix dubbed + instrument audio
+                cmd.extend([
+                    "-filter_complex", f"[1:a]volume=2.0[dub];[2:a]volume={INSTRUMENT_DEFAULT_VOLUME}[inst];[dub][inst]amix=inputs=2:duration=longest[out]",
+                    "-map", "0:v", "-map", "[out]"
+                ])
+            else:
+                # Just dubbed audio
+                cmd.extend(["-map", "0:v", "-map", "1:a", "-filter:a", "volume=2.0"])
+            
+            cmd.extend(["-c:v", "libx264", "-c:a", "aac", str(final_video_path)])
+            
+            # Execute FFmpeg
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            if result.returncode != 0:
+                logger.error(f"FFmpeg failed: {result.stderr}")
+                return {"success": False, "error": "Video processing failed"}
+            
+            # Upload video to R2
+            video_r2_key = self.r2_storage.generate_file_path(job_id, "processed", f"final_video_{job_id}.mp4")
+            upload_result = self.r2_storage.upload_file(str(final_video_path), video_r2_key, "video/mp4")
+            
+            if upload_result["success"]:
+                logger.info(f"✅ Video processed and uploaded for job {job_id}")
+                return {
+                    "success": True,
+                    "video_url": upload_result["url"],
+                    "video_filename": f"final_video_{job_id}.mp4",
+                    "local_path": str(final_video_path)
+                }
+            else:
+                return {"success": False, "error": "Failed to upload video to R2"}
+            
+        except Exception as e:
+            logger.error(f"Video processing failed for job {job_id}: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _upload_and_finalize(self, job_id: str, process_temp_dir: str, final_audio_path: str, video_result: dict = None) -> dict:
         """Upload files to R2 and return final results"""
         self._update_phase_progress(job_id, "upload", 0.0, "Uploading and finalizing...")
         
@@ -853,17 +962,34 @@ class SimpleDubbedAPI:
         
         logger.info("Dubbed processing completed successfully")
         
+        # Prepare result with video data if available
+        result_url = None
+        video_upload = None
+        video_error = None
+        
+        if video_result:
+            if video_result.get("success"):
+                result_url = video_result.get("video_url")
+                video_upload = {
+                    "success": True,
+                    "url": video_result.get("video_url"),
+                    "filename": video_result.get("video_filename")
+                }
+                logger.info(f"✅ Video result included for job {job_id}: {result_url}")
+            elif not video_result.get("skipped"):
+                video_error = video_result.get("error")
+                logger.warning(f"⚠️ Video creation failed for job {job_id}: {video_error}")
         
         return {
             "success": True,
             "job_id": job_id,
-            "result_url": None,  # No video result
+            "result_url": result_url,  # Video result URL if created
             "result_urls": {},
             "folder_upload": folder_upload_result,
             "manifest_url": manifest_url,
             "manifest_key": manifest_key,
-            "video_upload": None,
-            "video_error": None
+            "video_upload": video_upload,
+            "video_error": video_error
         }
     
 
