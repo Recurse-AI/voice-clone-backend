@@ -20,14 +20,20 @@ fish_speech_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
 if fish_speech_path not in sys.path:
     sys.path.insert(0, fish_speech_path)
 
+# Try to import fish-speech modules, but don't fail if they're not available
+FISH_SPEECH_AVAILABLE = False
 try:
     from fish_speech.models.text2semantic.inference import launch_thread_safe_queue
     from fish_speech.inference_engine import TTSInferenceEngine
     from fish_speech.models.dac.inference import load_model as load_decoder_model
     from fish_speech.utils.schema import ServeReferenceAudio, ServeTTSRequest
+    FISH_SPEECH_AVAILABLE = True
+    logger = logging.getLogger(__name__)
+    logger.info("✅ Fish Speech modules imported successfully")
 except ImportError as e:
     logging.error(f"Failed to import fish_speech modules: {e}")
-    raise ImportError("Fish Speech modules not found. Please ensure fish-speech is properly installed.")
+    logging.warning("⚠️ Fish Speech functionality will be disabled. Voice cloning features will not work.")
+    FISH_SPEECH_AVAILABLE = False
 
 from app.config.settings import settings
 
@@ -40,9 +46,15 @@ class FishSpeechService:
     def __init__(self):
         from app.config.settings import settings
         
+        # Check if fish-speech is available
+        if not FISH_SPEECH_AVAILABLE:
+            logger.warning("🔧 Fish Speech service initializing in DISABLED mode (fish-speech not available)")
+            self.is_available = False
+            return
+        
         # Traditional initialization - simple and reliable
         logger.info("🔧 Fish Speech service initializing (traditional mode)")
-        
+        self.is_available = True
         
         # Device configuration from settings
         if settings.FISH_SPEECH_DEVICE == "auto":
@@ -92,6 +104,9 @@ class FishSpeechService:
     
     def _check_model_health(self) -> bool:
         """Check if models are still loaded and healthy"""
+        if not self.is_available:
+            return False
+            
         try:
             if not self.is_initialized:
                 return False
@@ -109,6 +124,10 @@ class FishSpeechService:
             return False
     
     def load_model(self) -> bool:
+        if not self.is_available:
+            logger.warning("Fish Speech not available - cannot load model")
+            return False
+            
         max_retries = 2
         retry_delay = 2
 
@@ -180,11 +199,22 @@ class FishSpeechService:
         """
         Generate voice cloning - always uses service worker for optimal performance
         """
+        if not self.is_available:
+            return {
+                "success": False, 
+                "error": "Fish Speech is not available. Please ensure fish-speech is properly installed."
+            }
         return self._generate_via_service_worker(text, reference_audio_bytes, reference_text, job_id, target_language_code, **kwargs)
     
     def _generate_via_service_worker(self, text: str, reference_audio_bytes: bytes, 
                                    reference_text: str, job_id: str = None, target_language_code: str = None, **kwargs) -> Dict[str, Any]:
         """Route voice cloning through Redis service worker for serial processing"""
+        if not self.is_available:
+            return {
+                "success": False, 
+                "error": "Fish Speech is not available. Please ensure fish-speech is properly installed."
+            }
+            
         import uuid
         import time
         import base64
@@ -249,6 +279,12 @@ class FishSpeechService:
     def _generate_direct(self, text: str, reference_audio_bytes: bytes, 
                         reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:
         """Direct voice cloning processing (fallback/legacy method)"""
+        if not self.is_available:
+            return {
+                "success": False, 
+                "error": "Fish Speech is not available. Please ensure fish-speech is properly installed."
+            }
+            
         import time
         start_time = time.time()
         
@@ -338,6 +374,9 @@ class FishSpeechService:
 
     def cleanup(self):
         """Clean up TTSInferenceEngine and free memory"""
+        if not self.is_available:
+            return
+            
         try:
             if self.inference_engine is not None:
                 del self.inference_engine
@@ -384,6 +423,10 @@ def get_fish_speech_service() -> FishSpeechService:
 def initialize_fish_speech() -> bool:
     """Initialize Fish Speech service (called from main.py)"""
     try:
+        if not FISH_SPEECH_AVAILABLE:
+            logger.warning("🚀 Fish Speech not available - skipping initialization")
+            return False
+            
         logger.info("🚀 Preloading FishSpeech model during startup...")
         service = get_fish_speech_service()
         

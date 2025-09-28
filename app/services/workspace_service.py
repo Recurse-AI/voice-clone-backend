@@ -1,5 +1,5 @@
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 from app.config.database import dub_jobs_collection, separation_jobs_collection
 from app.schemas import WorkspaceStats, JobSummary
@@ -101,17 +101,43 @@ class WorkspaceService:
             return {"total": 0, "completed": 0, "processing": 0}
     
     async def _get_recent_jobs(self, collection, user_id: str, limit: int) -> List[JobSummary]:
-        """Get recent jobs with minimal data"""
+        """Get recent jobs with complete data"""
         try:
-            projection = {
-                "job_id": 1,
-                "status": 1,
-                "progress": 1,
-                "created_at": 1,
-                "completed_at": 1,
-                "original_filename": 1,
-                "_id": 0
-            }
+            # Check if this is separation collection
+            is_separation = collection.name == 'separation_jobs'
+            
+            if is_separation:
+                projection = {
+                    "job_id": 1,
+                    "status": 1,
+                    "progress": 1,
+                    "created_at": 1,
+                    "updated_at": 1,
+                    "completed_at": 1,
+                    "original_filename": 1,
+                    "audio_url": 1,
+                    "vocal_url": 1,
+                    "instrument_url": 1,
+                    "error": 1,
+                    "_id": 0
+                }
+            else:
+                # Dub jobs projection (existing)
+                projection = {
+                    "job_id": 1,
+                    "status": 1,
+                    "progress": 1,
+                    "created_at": 1,
+                    "updated_at": 1,
+                    "completed_at": 1,
+                    "original_filename": 1,
+                    "target_language": 1,
+                    "source_video_language": 1,
+                    "result_url": 1,
+                    "details": 1,
+                    "error": 1,
+                    "_id": 0
+                }
 
             cursor = collection.find(
                 {"user_id": user_id},
@@ -120,19 +146,66 @@ class WorkspaceService:
             
             jobs = []
             async for job_data in cursor:
-                # Create base data dictionary
-                job_summary_data = {
-                    "job_id": job_data["job_id"],
-                    "status": job_data["status"],
-                    "progress": job_data.get("progress", 0),
-                    "created_at": job_data["created_at"].isoformat(),
-                    "completed_at": job_data["completed_at"].isoformat() if job_data.get("completed_at") else None
-                }
+                if is_separation:
+                    # Separation job data
+                    job_summary_data = {
+                        "job_id": job_data["job_id"],
+                        "status": job_data["status"],
+                        "progress": job_data.get("progress", 0),
+                        "original_filename": job_data.get("original_filename"),
+                        "audio_url": job_data.get("audio_url"),
+                        "vocal_url": job_data.get("vocal_url"),
+                        "instrument_url": job_data.get("instrument_url"),
+                        "error": job_data.get("error"),
+                        "created_at": job_data["created_at"].isoformat(),
+                        "updated_at": job_data["updated_at"].isoformat() if job_data.get("updated_at") else None,
+                        "completed_at": job_data["completed_at"].isoformat() if job_data.get("completed_at") else None,
+                        # Dub fields (None for separation)
+                        "target_language": None,
+                        "source_video_language": None,
+                        "result_url": None,
+                        "files": None
+                    }
+                else:
+                    # Dub job data (existing logic)
+                    files_info = None
+                    if job_data.get("details") and isinstance(job_data["details"], dict):
+                        folder_upload = job_data["details"].get("folder_upload")
+                        if folder_upload and isinstance(folder_upload, dict):
+                            files_info = []
+                            for filename, upload_data in folder_upload.items():
+                                if isinstance(upload_data, dict) and upload_data.get("success"):
+                                    file_info = {
+                                        "filename": filename,
+                                        "url": upload_data.get("url"),
+                                        "size": upload_data.get("file_size") or upload_data.get("size"),
+                                        "type": self._get_file_type(filename)
+                                    }
+                                    files_info.append(file_info)
+                    
+                    result_url = job_data.get("result_url")
+                    if not result_url and job_data.get("details", {}).get("result_url"):
+                        result_url = job_data["details"]["result_url"]
 
-                if "original_filename" in job_data and job_data["original_filename"]:
-                    job_summary_data["original_filename"] = job_data["original_filename"]
+                    job_summary_data = {
+                        "job_id": job_data["job_id"],
+                        "status": job_data["status"],
+                        "progress": job_data.get("progress", 0),
+                        "original_filename": job_data.get("original_filename"),
+                        "target_language": job_data.get("target_language"),
+                        "source_video_language": job_data.get("source_video_language"),
+                        "result_url": result_url,
+                        "files": files_info,
+                        "error": job_data.get("error"),
+                        "created_at": job_data["created_at"].isoformat(),
+                        "updated_at": job_data["updated_at"].isoformat() if job_data.get("updated_at") else None,
+                        "completed_at": job_data["completed_at"].isoformat() if job_data.get("completed_at") else None,
+                        # Separation fields (None for dub)
+                        "audio_url": None,
+                        "vocal_url": None,
+                        "instrument_url": None
+                    }
 
-                # Create JobSummary from dictionary
                 job_summary = JobSummary(**job_summary_data)
                 jobs.append(job_summary)
             
@@ -152,6 +225,23 @@ class WorkspaceService:
             total_processing_dubs=0,
             total_processing_separations=0
         )
+    
+    def _get_file_type(self, filename: str) -> str:
+        """Determine file type category based on filename"""
+        filename_lower = filename.lower()
+        if filename_lower.endswith('.mp4'):
+            return 'video'
+        elif filename_lower.endswith('.wav'):
+            return 'audio'
+        elif filename_lower.endswith('.srt'):
+            return 'subtitle'
+        elif filename_lower.endswith('.json'):
+            if 'summary' in filename_lower:
+                return 'summary'
+            else:
+                return 'metadata'
+        else:
+            return 'other'
 
 
 # Global service instance
