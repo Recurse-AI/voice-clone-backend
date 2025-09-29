@@ -76,7 +76,6 @@ async def process_video_complete(
             "subtitle_url": subtitle_url,
             "options": options
         }
-        
         # 3. Initialize job status
         status_service.update_status(
             job_id, "video_processing", JobStatus.PENDING, 0,
