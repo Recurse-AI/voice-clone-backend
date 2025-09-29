@@ -306,6 +306,10 @@ class SimpleDubbedAPI:
             logger.info(f"🔍 DEBUG - Reference text: '{original_text}' (source_lang: {source_language_code})")
             import soundfile as sf
             import io
+            # Initialize voice config early to avoid unbound local errors
+            premium_check = getattr(self, 'voice_premium_model', False)
+            voice_type = getattr(self, 'voice_type', None)
+            ai_voice_reference_id = getattr(self, 'reference_id', None)
             reference_audio_bytes = None
             # If using AI voice without premium, try pulling sample audio by reference_id from Fish API via helper
             if voice_type == 'ai_voice' and ai_voice_reference_id and not premium_check:
@@ -334,9 +338,7 @@ class SimpleDubbedAPI:
             
             # Process entire segment as one unit (no chunking)
             
-            premium_check = getattr(self, 'voice_premium_model', False)
-            voice_type = getattr(self, 'voice_type', None)
-            ai_voice_reference_id = getattr(self, 'reference_id', None)
+            # premium_check, voice_type, ai_voice_reference_id already initialized above
             
             if premium_check:
                 from app.services.dub.fish_audio_api_service import FishAudioAPIService
