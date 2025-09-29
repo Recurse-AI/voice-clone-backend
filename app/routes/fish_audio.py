@@ -65,6 +65,7 @@ async def create_fish_model(
     train_mode: str = Form("fast"),
     texts: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
+    voices: Optional[List[str]] = Form(None),
     enhance_audio_quality: Optional[bool] = Form(False),
     cover_image: Optional[UploadFile] = File(None),
     x_fish_audio_key: Optional[str] = Header(None, convert_underscores=False),
@@ -88,6 +89,9 @@ async def create_fish_model(
         form_data["texts"] = texts
     if tags is not None:
         form_data["tags"] = tags
+    if voices is not None:
+        for v in voices:
+            form_data.setdefault("voices", []).append(v)
 
     files = None
     if cover_image is not None:
