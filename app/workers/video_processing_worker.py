@@ -14,6 +14,7 @@ from typing import List, Optional, Dict, Any
 from app.services.simple_status_service import status_service, JobStatus
 from app.schemas import TimelineAudioSegment, VideoProcessingOptions
 from app.config.settings import settings
+from app.config.database import video_processing_jobs_collection
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +39,9 @@ def process_video_task(task_data: dict):
         timeline_audio = task_data.get("timeline_audio")
         subtitle_url = task_data.get("subtitle_url")
         options_str = task_data.get("options", "{}")
-        
         # Parse options
         options_dict = json.loads(options_str) if options_str != "{}" else {}
+        logger.info(f"🎬 options_dict: {options_dict}")
         processing_options = VideoProcessingOptions(**options_dict)
         
         # Parse timeline audio if provided
@@ -107,6 +108,17 @@ def process_video_task(task_data: dict):
                     # Use R2 URL instead of local download URL
                     r2_download_url = upload_result["url"]
                     logger.info(f"✅ File uploaded to R2: {r2_key}")
+                    video_processing_jobs_collection.update_one(
+                        {"options": options_dict},
+                        {
+                            "$set": {
+                                "options": options_dict,
+                                "r2_download_url": r2_download_url
+                            }
+                        },
+                        upsert=True
+                    )
+                    logger.info(f"✅ R2 download URL updated in MongoDB: {r2_download_url}")
                 else:
                     # Fallback to local URL if R2 upload fails
                     r2_download_url = result["download_url"]
