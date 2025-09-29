@@ -44,6 +44,7 @@ async def process_video_complete(
     """
     from app.queue.queue_manager import queue_manager
     from app.services.simple_status_service import status_service, JobStatus
+    from app.config.database import video_processing_jobs_collection
     
     job_id = str(uuid.uuid4())
     logger.info(f"🎬 Enqueueing video processing job {job_id}")
@@ -66,7 +67,29 @@ async def process_video_complete(
                 error_code="NO_INPUT"
             )
         
-        # 2. Prepare task data for queue
+        # 2. Check for existing record based on options
+        try:
+            options_dict = json.loads(options) if options != "{}" else {}
+            
+            # Query for existing record with same options
+            existing_record = await video_processing_jobs_collection.find_one({
+                "options": options_dict
+            })
+            
+            if existing_record and existing_record.get("r2_download_url"):
+                logger.info(f"🔄 Found existing record with same options, returning cached result")
+                return VideoProcessingResponse(
+                    success=True,
+                    message="exist",
+                    job_id=existing_record.get("job_id", "cached"),
+                    download_url=existing_record["r2_download_url"]
+                )
+                
+        except Exception as e:
+            logger.warning(f"Failed to check for existing records: {e}")
+            # Continue with new job creation if check fails
+        
+        # 3. Prepare task data for queue
         task_data = {
             "job_id": job_id,
             "video_url": video_url,
@@ -76,13 +99,13 @@ async def process_video_complete(
             "subtitle_url": subtitle_url,
             "options": options
         }
-        # 3. Initialize job status
+        # 4. Initialize job status
         status_service.update_status(
             job_id, "video_processing", JobStatus.PENDING, 0,
             {"message": "Video processing job queued"}
         )
         
-        # 4. Enqueue the task
+        # 5. Enqueue the task
         success = queue_manager.enqueue_video_processing_task(task_data)
         if not success:
             return VideoProcessingResponse(
@@ -93,7 +116,7 @@ async def process_video_complete(
                 error_code="QUEUE_ERROR"
             )
         
-        # 5. Return immediate response with job ID
+        # 6. Return immediate response with job ID
         return VideoProcessingResponse(
             success=True,
             message="Video processing task queued successfully",

@@ -448,7 +448,8 @@ class VideoProcessingOptions(BaseModel):
     audio_format: Optional[str] = Field("mp3", alias="audioFormat", description="Audio format for audio-only output: wav, mp3, aac")
     target_duration: Optional[int] = Field(None, description="Target duration in milliseconds")
     original_job_id: Optional[str] = Field(None, alias="originalJobId", description="Original job ID that created this processing request")
-    
+    use_background_sound: Optional[bool] = Field(False, alias="useBackgroundSound", description="Use background music if provided")
+
     @field_validator('resolution')
     @classmethod
     def validate_resolution(cls, v):
