@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query, HTTPException, UploadFile, File, Form, Header
 import httpx
 from typing import List, Optional
 from app.config.settings import settings
@@ -52,4 +52,58 @@ async def list_fish_models(
 
     return resp.json()
 
+
+@router.post("/models")
+async def create_fish_model(
+    visibility: str = Form(...),
+    type: str = Form(...),
+    title: str = Form(...),
+    description: Optional[str] = Form(None),
+    train_mode: str = Form("fast"),
+    texts: Optional[str] = Form(None),
+    tags: Optional[str] = Form(None),
+    enhance_audio_quality: Optional[bool] = Form(False),
+    cover_image: Optional[UploadFile] = File(None),
+    x_fish_audio_key: Optional[str] = Header(None, convert_underscores=False),
+):
+    api_key = x_fish_audio_key or settings.FISH_AUDIO_API_KEY
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Fish Audio API key not configured")
+
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    form_data = {
+        "visibility": visibility,
+        "type": type,
+        "title": title,
+        "train_mode": train_mode,
+        "enhance_audio_quality": str(bool(enhance_audio_quality)).lower(),
+    }
+    if description is not None:
+        form_data["description"] = description
+    if texts is not None:
+        form_data["texts"] = texts
+    if tags is not None:
+        form_data["tags"] = tags
+
+    files = None
+    if cover_image is not None:
+        content = await cover_image.read()
+        files = {"cover_image": (cover_image.filename, content, cover_image.content_type or "application/octet-stream")}
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.post(
+                "https://api.fish.audio/model",
+                headers=headers,
+                data=form_data,
+                files=files,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=f"Upstream request failed: {str(exc)}")
+
+    return resp.json()
 
