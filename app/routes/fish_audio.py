@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Query, HTTPException, UploadFile, File, Form, Header
+import os
+import tempfile
 import httpx
 from typing import List, Optional
 from app.config.settings import settings
+from app.services.r2_service import R2Service
 
 router = APIRouter(prefix="/api/fish", tags=["fish-audio"])
 
@@ -65,7 +68,7 @@ async def create_fish_model(
     train_mode: str = Form("fast"),
     texts: Optional[str] = Form(None),
     tags: Optional[str] = Form(None),
-    voices: Optional[List[str]] = Form(None),
+    voices: Optional[List[UploadFile]] = File(None),
     enhance_audio_quality: Optional[bool] = Form(False),
     cover_image: Optional[UploadFile] = File(None),
     x_fish_audio_key: Optional[str] = Header(None, convert_underscores=False),
@@ -89,14 +92,39 @@ async def create_fish_model(
         form_data["texts"] = texts
     if tags is not None:
         form_data["tags"] = tags
+
+    files = []
+    r2_service = R2Service()
+    r2_job_id = r2_service.generate_job_id()
     if voices is not None:
         for v in voices:
-            form_data.setdefault("voices", []).append(v)
-
-    files = None
+            content = await v.read()
+            files.append((
+                "voices",
+                (v.filename, content, v.content_type or "audio/wav")
+            ))
+            # Upload to R2 for persistence
+            try:
+                suffix = os.path.splitext(v.filename)[1] or ".wav"
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(content)
+                    tmp_path = tmp.name
+                r2_key = r2_service.generate_file_path(r2_job_id, "", v.filename)
+                r2_service.upload_file(tmp_path, r2_key, v.content_type or "audio/wav")
+            finally:
+                try:
+                    if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
     if cover_image is not None:
         content = await cover_image.read()
-        files = {"cover_image": (cover_image.filename, content, cover_image.content_type or "application/octet-stream")}
+        files.append((
+            "cover_image",
+            (cover_image.filename, content, cover_image.content_type or "application/octet-stream")
+        ))
+    if not files:
+        files = None
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         try:
