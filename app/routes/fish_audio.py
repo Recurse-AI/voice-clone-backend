@@ -79,8 +79,13 @@ async def create_fish_model(
 
     headers = {"Authorization": f"Bearer {api_key}"}
 
+    # If model is requested as public but no cover image is provided, make it private
+    normalized_visibility = (visibility or "").lower()
+    if normalized_visibility == "public" and cover_image is None:
+        normalized_visibility = "private"
+
     form_data = {
-        "visibility": visibility,
+        "visibility": normalized_visibility,
         "type": type,
         "title": title,
         "train_mode": train_mode,
