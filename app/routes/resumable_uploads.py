@@ -68,7 +68,7 @@ async def patch_upload(
 ):
     current = _read_offset(upload_id)
     if upload_offset != current:
-        raise HTTPException(status_code=409, detail=f"Expected offset {current}")
+        raise HTTPException(status_code=409, detail=f"Expected offset {current}", headers={"Upload-Offset": str(current)})
     data = await chunk.read()
     # Simple max size guard (optional): rely on FE or create settings if needed
     with open(_file_path(upload_id), "ab") as f:
