@@ -38,6 +38,9 @@ async def list_fish_models(
             params.setdefault("language", []).append(lang)
     if title_language:
         params["title_language"] = title_language
+    # Force most liked first by default (no client params needed)
+    params["sort_by"] = "like_count"
+    params["order"] = "desc"
 
     headers = {"Authorization": f"Bearer {settings.FISH_AUDIO_API_KEY}"}
 

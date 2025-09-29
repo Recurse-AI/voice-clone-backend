@@ -26,7 +26,7 @@ class FishAudioAPIService:
         else:
             self.session = None
     
-    def generate_voice_clone(self, text: str, reference_audio_bytes: bytes, reference_text: str, job_id: str = None, target_language_code: str = None) -> Dict[str, Any]:
+    def generate_voice_clone(self, text: str, reference_audio_bytes: bytes = None, reference_text: str = None, job_id: str = None, target_language_code: str = None, reference_id: str = None) -> Dict[str, Any]:
         if not FISH_SDK_AVAILABLE:
             return {"success": False, "error": "Fish Audio SDK not installed. Run: pip install fish-audio-sdk"}
         
@@ -34,7 +34,8 @@ class FishAudioAPIService:
             return {"success": False, "error": "Fish Audio API key not configured"}
         
         try:
-            logger.info(f"Fish API request - text: {len(text)} chars, audio: {len(reference_audio_bytes)} bytes")
+            audio_len = len(reference_audio_bytes) if reference_audio_bytes else 0
+            logger.info(f"Fish API request - text: {len(text)} chars, audio: {audio_len} bytes, reference_id: {reference_id}")
             
             # Create output directory
             output_dir = os.path.join(settings.TEMP_DIR, job_id or "temp")
@@ -46,18 +47,28 @@ class FishAudioAPIService:
             # Text already contains language tag from orchestration layer
             tagged_text = text
             
-            # Try using raw HTTP request with model header (as per Fish Audio docs)
-            request_data = {
-                "text": tagged_text,
-                "references": [{
-                    "audio": reference_audio_bytes,
-                    "text": reference_text
-                }],
-                "format": "wav",
-                "normalize": True,
-                "latency": "normal",
-                "chunk_length": settings.FISH_SPEECH_CHUNK_SIZE
-            }
+            # Build request payload: use reference_id for AI voice, otherwise inline references
+            if reference_id:
+                request_data = {
+                    "text": tagged_text,
+                    "reference_id": reference_id,
+                    "format": "wav",
+                    "normalize": True,
+                    "latency": "normal",
+                    "chunk_length": settings.FISH_SPEECH_CHUNK_SIZE
+                }
+            else:
+                request_data = {
+                    "text": tagged_text,
+                    "references": [{
+                        "audio": reference_audio_bytes,
+                        "text": reference_text or ""
+                    }],
+                    "format": "wav",
+                    "normalize": True,
+                    "latency": "normal",
+                    "chunk_length": settings.FISH_SPEECH_CHUNK_SIZE
+                }
             
             # Use direct HTTP request with proper model header
             with httpx.Client(timeout=300.0) as client:

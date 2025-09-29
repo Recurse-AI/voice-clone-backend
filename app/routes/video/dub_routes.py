@@ -141,7 +141,9 @@ async def start_video_dub(
             "status": "pending",
             "progress": 0,
             "video_subtitle": request_obj.video_subtitle,
-            "voice_premium_model": request_obj.voice_premium_model
+            "voice_premium_model": request_obj.voice_premium_model,
+            "voice_type": getattr(request_obj, "voice_type", None),
+            "reference_id": getattr(request_obj, "reference_id", None)
         }
         
 
@@ -496,7 +498,9 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     # Prepare manifest for redub using utility function
     manifest = job_utils.prepare_manifest_for_redub(
         manifest, redub_job_id, request_body.target_language, parent_job_id, 
-        getattr(request_body, "voice_premium_model", False)
+        getattr(request_body, "voice_premium_model", False),
+        getattr(request_body, "type", None),
+        getattr(request_body, "reference_id", None)
     )
     
     # Create redub request similar to original dub request
@@ -508,7 +512,9 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
             duration=duration,
             source_video_language=parent_job.source_video_language,
             humanReview=getattr(request_body, "humanReview", False),
-            voice_premium_model=getattr(request_body, "voice_premium_model", False)
+            voice_premium_model=getattr(request_body, "voice_premium_model", False),
+            voice_type=getattr(request_body, "voice_type", None),
+            reference_id=getattr(request_body, "reference_id", None)
         )
         logger.info(f"Created redub request: {redub_request.dict()}")
     except Exception as e:

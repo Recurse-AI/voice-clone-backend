@@ -115,7 +115,8 @@ class SimpleDubbedAPI:
                            output_dir: str = None, review_mode: bool = False,
                            manifest_override: Optional[Dict[str, Any]] = None,
                            separation_urls: Optional[Dict[str, str]] = None,
-                           video_subtitle: bool = False, voice_premium_model: bool = False) -> dict:
+                           video_subtitle: bool = False, voice_premium_model: bool = False,
+                           voice_type: Optional[str] = None, reference_id: Optional[str] = None) -> dict:
         """
         Complete dubbed audio processing with clean, modular approach.
         Always generates SRT file. No audio mixing or conditional processing.
@@ -134,10 +135,17 @@ class SimpleDubbedAPI:
             manifest_voice_premium = None
             if manifest_override:
                 manifest_voice_premium = manifest_override.get("voice_premium_model")
+                # Prefer manifest voice config if present
+                if voice_type is None:
+                    voice_type = manifest_override.get("voice_type")
+                if reference_id is None:
+                    reference_id = manifest_override.get("reference_id")
             
             final_voice_premium_model = manifest_voice_premium if manifest_voice_premium is not None else voice_premium_model
             
             self.voice_premium_model = final_voice_premium_model
+            self.voice_type = voice_type
+            self.reference_id = reference_id
             
             # 2. Use provided output directory (already created by caller)
             process_temp_dir = output_dir
@@ -206,7 +214,8 @@ class SimpleDubbedAPI:
                     manifest["voice_premium_model"] = final_voice_premium_model
                 else:
                     manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
-                                            vocal_audio_url, instrument_audio_url, final_voice_premium_model)
+                                            vocal_audio_url, instrument_audio_url, final_voice_premium_model,
+                                            self.voice_type, self.reference_id)
 
                 # Save manifest to disk (both redub and original dub cases)
                 manifest_path = save_manifest_to_dir(manifest, process_temp_dir, job_id)
@@ -279,12 +288,13 @@ class SimpleDubbedAPI:
     def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, original_text: str = "", job_id: str = None, process_temp_dir: str = None, target_language_code: str = "en", source_language_code: str = "en") -> Optional[Dict[str, Any]]:
         """Voice clone dubbed text using AI voice cloning service with reference audio and transcript_id in filename"""
         try:
+            no_reference = False
             if not reference_audio_path:
                 logger.warning(f"No reference audio path provided for {segment_id}")
-                return None
-            if not os.path.exists(reference_audio_path):
+                no_reference = True
+            elif not os.path.exists(reference_audio_path):
                 logger.warning(f"Reference audio file not found: {reference_audio_path} for {segment_id}")
-                return None
+                no_reference = True
             import time
             segment_start_time = time.time()
             
@@ -296,17 +306,26 @@ class SimpleDubbedAPI:
             logger.info(f"🔍 DEBUG - Reference text: '{original_text}' (source_lang: {source_language_code})")
             import soundfile as sf
             import io
-            audio_data, sample_rate = sf.read(reference_audio_path)
-            # Convert to mono if stereo
-            if len(audio_data.shape) > 1:
-                audio_data = audio_data[:, 0]
+            reference_audio_bytes = None
+            # If using AI voice without premium, try pulling sample audio by reference_id from Fish API via helper
+            if voice_type == 'ai_voice' and ai_voice_reference_id and not premium_check:
+                from app.config.settings import settings as _settings
+                from app.services.dub.fish_audio_sample_helper import fetch_sample_audio_wav_bytes
+                reference_audio_bytes, sample_text = fetch_sample_audio_wav_bytes(ai_voice_reference_id, _settings.FISH_AUDIO_API_KEY)
+                if reference_audio_bytes and sample_text:
+                    tagged_reference_text = _add_language_tag(sample_text, source_language_code)
 
-            buffer = io.BytesIO()
-            sf.write(buffer, audio_data, sample_rate, format='WAV')
-            reference_audio_bytes = buffer.getvalue()
-            if not reference_audio_bytes:
-                logger.error(f"Failed to load reference audio: {reference_audio_path}")
-                return None
+            # If not set by sample pull, load from local reference file
+            if reference_audio_bytes is None and not no_reference:
+                audio_data, sample_rate = sf.read(reference_audio_path)
+                if len(audio_data.shape) > 1:
+                    audio_data = audio_data[:, 0]
+                buffer = io.BytesIO()
+                sf.write(buffer, audio_data, sample_rate, format='WAV')
+                reference_audio_bytes = buffer.getvalue()
+                if not reference_audio_bytes:
+                    logger.error(f"Failed to load reference audio: {reference_audio_path}")
+                    no_reference = True
 
             # Extract segment index from segment_id (seg_001 -> 0)
             segment_index = int(segment_id.split('_')[1]) - 1
@@ -316,6 +335,8 @@ class SimpleDubbedAPI:
             # Process entire segment as one unit (no chunking)
             
             premium_check = getattr(self, 'voice_premium_model', False)
+            voice_type = getattr(self, 'voice_type', None)
+            ai_voice_reference_id = getattr(self, 'reference_id', None)
             
             if premium_check:
                 from app.services.dub.fish_audio_api_service import FishAudioAPIService
@@ -323,13 +344,24 @@ class SimpleDubbedAPI:
                 
                 if fish_api.api_key and fish_api.api_key.strip():
                     logger.info("🎯 Using Premium Fish Audio API")
-                    result = fish_api.generate_voice_clone(
-                        text=tagged_text,
-                        reference_audio_bytes=reference_audio_bytes,
-                        reference_text=tagged_reference_text,
-                        job_id=job_id,
-                        target_language_code=target_language_code
-                    )
+                    # If AI voice is selected and reference_id is provided, use it
+                    if voice_type == 'ai_voice' and ai_voice_reference_id:
+                        result = fish_api.generate_voice_clone(
+                            text=tagged_text,
+                            reference_audio_bytes=None,
+                            reference_text=None,
+                            job_id=job_id,
+                            target_language_code=target_language_code,
+                            reference_id=ai_voice_reference_id
+                        )
+                    else:
+                        result = fish_api.generate_voice_clone(
+                            text=tagged_text,
+                            reference_audio_bytes=reference_audio_bytes,
+                            reference_text=tagged_reference_text,
+                            job_id=job_id,
+                            target_language_code=target_language_code
+                        )
                     # If premium API succeeds, skip local model completely
                     if result.get("success"):
                         logger.info(f"✅ Fish API success for {segment_id}")
@@ -769,8 +801,13 @@ class SimpleDubbedAPI:
         
         # Save final manifest (for normal dub / redub lineage)
         try:
-            manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
-                                    vocal_audio_url, instrument_audio_url)
+            manifest = build_manifest(
+                job_id, transcript_id, target_language, dubbed_segments,
+                vocal_audio_url, instrument_audio_url,
+                getattr(self, 'voice_premium_model', False),
+                getattr(self, 'voice_type', None),
+                getattr(self, 'reference_id', None)
+            )
             save_manifest_to_dir(manifest, process_temp_dir, job_id)
         except Exception as e:
             logger.error(f"Failed to save manifest for job {job_id}: {e}")
