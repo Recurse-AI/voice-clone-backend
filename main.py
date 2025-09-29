@@ -14,6 +14,7 @@ from app.routes.stripe import stripe_route
 
 from app.routes.audio_processing import router as audio_processing_router
 from app.routes.uploads import router as uploads_router
+from app.routes.resumable_uploads import router as resumable_uploads_router
 from app.routes.video import router as video_processing_router
 from app.routes.user_jobs import router as user_jobs_router
 from app.routes.youtube_transcript import router as youtube_transcript_router
@@ -156,6 +157,7 @@ app.include_router(stripe_route, tags=["stripe"])
 
 app.include_router(audio_processing_router, prefix="/api", tags=["audio-processing"])
 app.include_router(uploads_router, prefix="", tags=["uploads"])
+app.include_router(resumable_uploads_router, tags=["resumable-uploads"])
 app.include_router(video_processing_router, prefix="/api", tags=["video-processing"])
 app.include_router(user_jobs_router, prefix="/api/jobs", tags=["user-jobs"])
 app.include_router(youtube_transcript_router, prefix="/api", tags=["youtube-transcript"])
