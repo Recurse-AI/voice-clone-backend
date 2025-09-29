@@ -48,6 +48,8 @@ class SimpleDubbedAPI:
         self.transcription_service = get_whisperx_transcription_service()
         self.fish_speech = get_fish_speech_service()
         self._r2_storage = None
+        # Cache AI voice sample audio per reference_id for this job lifecycle
+        self._ai_voice_reference_cache = {}
     
     @property
     def r2_storage(self):
@@ -315,9 +317,18 @@ class SimpleDubbedAPI:
             if voice_type == 'ai_voice' and ai_voice_reference_id and not premium_check:
                 from app.config.settings import settings as _settings
                 from app.services.dub.fish_audio_sample_helper import fetch_sample_audio_wav_bytes
-                reference_audio_bytes, sample_text = fetch_sample_audio_wav_bytes(ai_voice_reference_id, _settings.FISH_AUDIO_API_KEY)
-                if reference_audio_bytes and sample_text:
-                    tagged_reference_text = _add_language_tag(sample_text, source_language_code)
+                # Use cached sample if available; fetch once per job
+                cached = self._ai_voice_reference_cache.get(ai_voice_reference_id)
+                if cached:
+                    reference_audio_bytes, sample_text = cached
+                    if sample_text:
+                        tagged_reference_text = _add_language_tag(sample_text, source_language_code)
+                else:
+                    reference_audio_bytes, sample_text = fetch_sample_audio_wav_bytes(ai_voice_reference_id, _settings.FISH_AUDIO_API_KEY)
+                    if reference_audio_bytes:
+                        self._ai_voice_reference_cache[ai_voice_reference_id] = (reference_audio_bytes, sample_text)
+                        if sample_text:
+                            tagged_reference_text = _add_language_tag(sample_text, source_language_code)
 
             # If not set by sample pull, load from local reference file
             if reference_audio_bytes is None and not no_reference:
