@@ -111,37 +111,37 @@ echo "🔧 Starting RQ Workers..."
 COMMON_LOG="logs/workers.log"
 rm -f "$COMMON_LOG" 2>/dev/null || true
 
-echo "🔍 Setting up separation workers..."
-SEPARATION_WORKERS=${MAX_SEPARATION_WORKERS:-1}
+# echo "🔍 Setting up separation workers..."
+# SEPARATION_WORKERS=${MAX_SEPARATION_WORKERS:-1}
 
-echo "Starting ${SEPARATION_WORKERS} separation worker(s)..."
-for i in $(seq 1 $SEPARATION_WORKERS); do
-    echo "  - Starting sep_worker_${i}..."
-    nohup python workers_starter.py separation_queue sep_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-    sleep 1
-done
+# echo "Starting ${SEPARATION_WORKERS} separation worker(s)..."
+# for i in $(seq 1 $SEPARATION_WORKERS); do
+#     echo "  - Starting sep_worker_${i}..."
+#     nohup python workers_starter.py separation_queue sep_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+#     sleep 1
+# done
 
-echo "🔍 Setting up dub orchestration workers..."
-DUB_WORKERS=${MAX_DUB_ORCHESTRATION_WORKERS:-1}
+# echo "🔍 Setting up dub orchestration workers..."
+# DUB_WORKERS=${MAX_DUB_ORCHESTRATION_WORKERS:-1}
 
-echo "Starting ${DUB_WORKERS} dub orchestration worker(s)..."
-for i in $(seq 1 $DUB_WORKERS); do
-    echo "  - Starting dub_worker_${i}..."
-    nohup python workers_starter.py dub_queue dub_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-    sleep 1
-done
+# echo "Starting ${DUB_WORKERS} dub orchestration worker(s)..."
+# for i in $(seq 1 $DUB_WORKERS); do
+#     echo "  - Starting dub_worker_${i}..."
+#     nohup python workers_starter.py dub_queue dub_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+#     sleep 1
+# done
 
-echo "Starting billing worker..."
-nohup python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+# echo "Starting billing worker..."
+# nohup python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
-echo "🎬 Starting video processing workers..."
-VIDEO_WORKERS=${MAX_VIDEO_PROCESSING_WORKERS:-1}
-echo "Starting ${VIDEO_WORKERS} video processing worker(s)..."
-for i in $(seq 1 $VIDEO_WORKERS); do
-    echo "  - Starting video_worker_${i}..."
-    nohup python workers_starter.py video_processing_queue video_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-    sleep 1
-done
+# echo "🎬 Starting video processing workers..."
+# VIDEO_WORKERS=${MAX_VIDEO_PROCESSING_WORKERS:-1}
+# echo "Starting ${VIDEO_WORKERS} video processing worker(s)..."
+# for i in $(seq 1 $VIDEO_WORKERS); do
+#     echo "  - Starting video_worker_${i}..."
+#     nohup python workers_starter.py video_processing_queue video_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+#     sleep 1
+# done
 
 echo "🎯 Starting VRAM service workers..."
 

@@ -5,6 +5,7 @@ import httpx
 from typing import List, Optional
 from app.config.settings import settings
 from app.services.r2_service import R2Service
+from starlette.concurrency import run_in_threadpool
 
 router = APIRouter(prefix="/api/fish", tags=["fish-audio"])
 
@@ -47,7 +48,7 @@ async def list_fish_models(
 
     headers = {"Authorization": f"Bearer {settings.FISH_AUDIO_API_KEY}"}
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         try:
             resp = await client.get("https://api.fish.audio/model", headers=headers, params=params)
             resp.raise_for_status()
@@ -66,9 +67,9 @@ async def create_fish_model(
     title: str = Form(...),
     description: Optional[str] = Form(None),
     train_mode: str = Form("fast"),
-    texts: Optional[str] = Form(None),
-    tags: Optional[str] = Form(None),
-    voices: Optional[List[UploadFile]] = File(None),
+    texts: Optional[List[str]] = Form(None),
+    tags: Optional[List[str]] = Form(None),
+    voices: List[UploadFile] = File(...),
     enhance_audio_quality: Optional[bool] = Form(False),
     cover_image: Optional[UploadFile] = File(None),
     x_fish_audio_key: Optional[str] = Header(None, convert_underscores=False),
@@ -84,66 +85,72 @@ async def create_fish_model(
     if normalized_visibility == "public" and cover_image is None:
         normalized_visibility = "private"
 
-    form_data = {
-        "visibility": normalized_visibility,
-        "type": type,
-        "title": title,
-        "train_mode": train_mode,
-        "enhance_audio_quality": str(bool(enhance_audio_quality)).lower(),
-    }
+    # Normalize list fields
+    if isinstance(texts, str):
+        texts = [texts]
+    if isinstance(tags, str):
+        tags = [tags]
+
+    # Build one multipart list including form fields and files
+    multipart_parts: List[tuple] = []
+    multipart_parts.append(("visibility", (None, normalized_visibility)))
+    multipart_parts.append(("type", (None, type)))
+    multipart_parts.append(("title", (None, title)))
+    multipart_parts.append(("train_mode", (None, train_mode)))
+    multipart_parts.append(("enhance_audio_quality", (None, str(bool(enhance_audio_quality)).lower())))
     if description is not None:
-        form_data["description"] = description
-    if texts is not None:
-        form_data["texts"] = texts
-    if tags is not None:
-        form_data["tags"] = tags
+        multipart_parts.append(("description", (None, description)))
+    if texts:
+        for t in texts:
+            multipart_parts.append(("texts", (None, t)))
+    if tags:
+        for tg in tags:
+            multipart_parts.append(("tags", (None, tg)))
+
+    if not voices or len(voices) == 0:
+        raise HTTPException(status_code=422, detail="At least one voice file is required")
 
     files = []
     r2_service = R2Service()
     r2_job_id = r2_service.generate_job_id()
-    if voices is not None:
-        for v in voices:
-            content = await v.read()
-            files.append((
-                "voices",
-                (v.filename, content, v.content_type or "audio/wav")
-            ))
-            # Upload to R2 for persistence
+    for v in voices:
+        content = await v.read()
+        multipart_parts.append(("voices", (v.filename, content, v.content_type or "audio/wav")))
+        try:
+            suffix = os.path.splitext(v.filename)[1] or ".wav"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(content)
+                tmp_path = tmp.name
+            r2_key = r2_service.generate_file_path(r2_job_id, "", v.filename)
+            r2_service.upload_file(tmp_path, r2_key, v.content_type or "audio/wav")
+        finally:
             try:
-                suffix = os.path.splitext(v.filename)[1] or ".wav"
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                    tmp.write(content)
-                    tmp_path = tmp.name
-                r2_key = r2_service.generate_file_path(r2_job_id, "", v.filename)
-                r2_service.upload_file(tmp_path, r2_key, v.content_type or "audio/wav")
-            finally:
-                try:
-                    if 'tmp_path' in locals() and os.path.exists(tmp_path):
-                        os.remove(tmp_path)
-                except Exception:
-                    pass
+                if 'tmp_path' in locals() and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
     if cover_image is not None:
         content = await cover_image.read()
-        files.append((
-            "cover_image",
-            (cover_image.filename, content, cover_image.content_type or "application/octet-stream")
-        ))
-    if not files:
-        files = None
+        multipart_parts.append(("cover_image", (cover_image.filename, content, cover_image.content_type or "application/octet-stream")))
+    if not multipart_parts:
+        multipart_parts = None
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        try:
-            resp = await client.post(
+    def _do_post():
+        with httpx.Client(timeout=60.0) as client:
+            response = client.post(
                 "https://api.fish.audio/model",
                 headers=headers,
-                data=form_data,
-                files=files,
+                files=multipart_parts,
             )
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"Upstream request failed: {str(exc)}")
+            response.raise_for_status()
+            return response
+
+    try:
+        resp = await run_in_threadpool(_do_post)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"Upstream request failed: {str(exc)}")
 
     return resp.json()
 
