@@ -3,11 +3,12 @@ from fastapi.responses import FileResponse
 import logging
 import os
 from app.schemas import VideoProcessingResponse
-from typing import Optional
+from typing import Optional, Dict, Any, List
 import uuid
 import json
 import tempfile
 from pathlib import Path
+from app.config.database import video_processing_jobs_collection
 
 router = APIRouter()
 
@@ -66,7 +67,29 @@ async def process_video_complete(
                 error_code="NO_INPUT"
             )
         
-        # 2. Prepare task data for queue
+        # 2. Check for existing record based on options
+        try:
+            options_dict = json.loads(options) if options != "{}" else {}
+            
+            # Query for existing record with same options
+            existing_record = await video_processing_jobs_collection.find_one({
+                "options": options_dict
+            })
+            
+            if existing_record and existing_record.get("r2_download_url"):
+                logger.info(f"🔄 Found existing record with same options, returning cached result")
+                return VideoProcessingResponse(
+                    success=True,
+                    message="exist",
+                    job_id=existing_record.get("job_id", "cached"),
+                    download_url=existing_record["r2_download_url"]
+                )
+                
+        except Exception as e:
+            logger.warning(f"Failed to check for existing records: {e}")
+            # Continue with new job creation if check fails
+        
+        # 3. Prepare task data for queue
         task_data = {
             "job_id": job_id,
             "video_url": video_url,
@@ -76,14 +99,13 @@ async def process_video_complete(
             "subtitle_url": subtitle_url,
             "options": options
         }
-        
-        # 3. Initialize job status
+        # 4. Initialize job status
         status_service.update_status(
             job_id, "video_processing", JobStatus.PENDING, 0,
             {"message": "Video processing job queued"}
         )
         
-        # 4. Enqueue the task
+        # 5. Enqueue the task
         success = queue_manager.enqueue_video_processing_task(task_data)
         if not success:
             return VideoProcessingResponse(
@@ -94,7 +116,7 @@ async def process_video_complete(
                 error_code="QUEUE_ERROR"
             )
         
-        # 5. Return immediate response with job ID
+        # 6. Return immediate response with job ID
         return VideoProcessingResponse(
             success=True,
             message="Video processing task queued successfully",
@@ -177,3 +199,31 @@ async def download_processed_file(job_id: str, filename: str):
     except Exception as e:
         logger.error(f"❌ Failed to serve file {filename} for job {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/fetch-download-history/{original_job_id}")
+async def fetch_video_processing_by_original_job_id(original_job_id: str):
+    """
+    Fetch all video processing records that have the specified original_job_id
+    
+    Args:
+        original_job_id: The original job ID to search for
+        
+    Returns:
+        List of all matching records
+    """
+    try:
+        # Query using dot notation to access nested field
+        cursor = video_processing_jobs_collection.find({
+            "options.originalJobId": original_job_id
+        }).sort("_id", -1)
+       
+        records = await cursor.to_list(length=None)
+
+        for record in records:
+            record.pop('_id', None)
+        
+        return records
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch video processing records for original_job_id {original_job_id}: {e}")
+        return []

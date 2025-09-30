@@ -18,7 +18,7 @@ dub_jobs_collection: AsyncIOMotorCollection = db.dub_jobs
 users_collection: AsyncIOMotorCollection = db.users
 pricing_collection: AsyncIOMotorCollection = db.pricing
 transaction_collection: AsyncIOMotorCollection = db.creditTransaction
-
+video_processing_jobs_collection: AsyncIOMotorCollection = db.video_processing_jobs
 
 
 _loop_local_async_client: ContextVar[Optional[AsyncIOMotorClient]] = ContextVar(
@@ -65,5 +65,6 @@ __all__ = [
     "users_collection", 
     "pricing_collection",
     "transaction_collection",
+    "video_processing_jobs_collection",
     "verify_connection"
 ]
