@@ -3,11 +3,12 @@ from fastapi.responses import FileResponse
 import logging
 import os
 from app.schemas import VideoProcessingResponse
-from typing import Optional
+from typing import Optional, Dict, Any, List
 import uuid
 import json
 import tempfile
 from pathlib import Path
+from app.config.database import video_processing_jobs_collection
 
 router = APIRouter()
 
@@ -44,7 +45,6 @@ async def process_video_complete(
     """
     from app.queue.queue_manager import queue_manager
     from app.services.simple_status_service import status_service, JobStatus
-    from app.config.database import video_processing_jobs_collection
     
     job_id = str(uuid.uuid4())
     logger.info(f"🎬 Enqueueing video processing job {job_id}")
@@ -199,3 +199,31 @@ async def download_processed_file(job_id: str, filename: str):
     except Exception as e:
         logger.error(f"❌ Failed to serve file {filename} for job {job_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/fetch-download-history/{original_job_id}")
+async def fetch_video_processing_by_original_job_id(original_job_id: str):
+    """
+    Fetch all video processing records that have the specified original_job_id
+    
+    Args:
+        original_job_id: The original job ID to search for
+        
+    Returns:
+        List of all matching records
+    """
+    try:
+        # Query using dot notation to access nested field
+        cursor = video_processing_jobs_collection.find({
+            "options.originalJobId": original_job_id
+        }).sort("_id", -1)
+       
+        records = await cursor.to_list(length=None)
+
+        for record in records:
+            record.pop('_id', None)
+        
+        return records
+        
+    except Exception as e:
+        logger.error(f"Failed to fetch video processing records for original_job_id {original_job_id}: {e}")
+        return []
