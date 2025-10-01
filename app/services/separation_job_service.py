@@ -38,6 +38,13 @@ class SeparationJobService(BaseJobService[SeparationJob]):
             if job_data:
                 job_data['id'] = str(job_data['_id'])
                 del job_data['_id']
+                # Handle missing fields for legacy data
+                if 'audio_url' not in job_data or job_data['audio_url'] is None:
+                    job_data['audio_url'] = job_data.get('details', {}).get('audio_url')
+                if 'vocal_url' not in job_data or job_data['vocal_url'] is None:
+                    job_data['vocal_url'] = job_data.get('details', {}).get('vocal_url')
+                if 'instrument_url' not in job_data or job_data['instrument_url'] is None:
+                    job_data['instrument_url'] = job_data.get('details', {}).get('instrument_url')
                 return SeparationJob(**job_data)
             return None
             
@@ -84,7 +91,9 @@ class SeparationJobService(BaseJobService[SeparationJob]):
             async for job_data in cursor:
                 job_data['id'] = str(job_data['_id'])
                 del job_data['_id']
-                # Handle missing vocal_url and instrument_url fields
+                # Handle missing fields for legacy data
+                if 'audio_url' not in job_data or job_data['audio_url'] is None:
+                    job_data['audio_url'] = job_data.get('details', {}).get('audio_url')
                 if 'vocal_url' not in job_data or job_data['vocal_url'] is None:
                     job_data['vocal_url'] = job_data.get('details', {}).get('vocal_url')
                 if 'instrument_url' not in job_data or job_data['instrument_url'] is None:
@@ -138,6 +147,13 @@ class SeparationJobService(BaseJobService[SeparationJob]):
             async for job_data in cursor:
                 job_data['id'] = str(job_data['_id'])
                 del job_data['_id']
+                # Handle missing fields for legacy data
+                if 'audio_url' not in job_data or job_data['audio_url'] is None:
+                    job_data['audio_url'] = job_data.get('details', {}).get('audio_url')
+                if 'vocal_url' not in job_data or job_data['vocal_url'] is None:
+                    job_data['vocal_url'] = job_data.get('details', {}).get('vocal_url')
+                if 'instrument_url' not in job_data or job_data['instrument_url'] is None:
+                    job_data['instrument_url'] = job_data.get('details', {}).get('instrument_url')
                 jobs.append(SeparationJob(**job_data))
             
             return jobs

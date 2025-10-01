@@ -12,7 +12,7 @@ class SeparationJob(BaseModel):
     progress: int = Field(0, ge=0, le=100, description="Progress percentage")
     
     # Input
-    audio_url: str = Field(..., description="Original audio URL for separation")
+    audio_url: Optional[str] = Field(None, description="Original audio URL for separation")
     caller_info: Optional[str] = Field(None, description="API caller information")
     original_filename: Optional[str] = Field(None, description="Original filename")
     

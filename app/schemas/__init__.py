@@ -412,6 +412,19 @@ class DubJobDetailResponse(BaseModel):
     job: Optional[UserDubJob] = None
     error: Optional[str] = None
 
+# Clip Job Request Schema
+class GenerateClipsRequest(BaseModel):
+    video_url: str
+    srt_url: Optional[str] = None
+    start_time: float
+    end_time: float
+    expected_duration: float
+    subtitle_style: Optional[str] = None
+    subtitle_preset: Optional[str] = "reels"
+    subtitle_font: Optional[str] = None
+    subtitle_font_size: Optional[int] = None
+    subtitle_wpl: Optional[int] = None
+
 # Clip Job Response Schemas
 class ClipJobListResponse(BaseModel):
     success: bool

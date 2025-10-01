@@ -1,31 +1,23 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
-from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import uuid
 import os
 import tempfile
+import logging
 from app.services.r2_service import R2Service
 from app.repositories.clip_repository import ClipRepository
 from app.dependencies.auth import get_current_user
 from app.queue.queue_manager import QueueManager
+from app.models import ClipJob
+from app.schemas import (
+    ClipJobListResponse, 
+    ClipJobDetailResponse, 
+    GenerateClipsRequest
+)
+from app.config.constants import DEFAULT_QUERY_LIMIT
 
 router = APIRouter()
-
-@router.get("/test-auth")
-async def test_auth(user=Depends(get_current_user)):
-    return {"success": True, "user_id": user.id, "email": user.email}
-
-class GenerateClipsRequest(BaseModel):
-    video_url: str
-    srt_url: Optional[str] = None
-    start_time: float
-    end_time: float
-    expected_duration: float
-    subtitle_style: Optional[str] = None
-    subtitle_preset: Optional[str] = "reels"
-    subtitle_font: Optional[str] = None
-    subtitle_font_size: Optional[int] = None
-    subtitle_wpl: Optional[int] = None
+logger = logging.getLogger(__name__)
 
 @router.post("/upload-clip-video")
 async def upload_clip_video(video_file: UploadFile = File(...), user=Depends(get_current_user)):
@@ -150,3 +142,62 @@ async def get_clip_job_status(job_id: str, user=Depends(get_current_user)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/list", response_model=ClipJobListResponse)
+async def get_user_clips(
+    page: int = 1,
+    limit: int = None,
+    current_user = Depends(get_current_user)
+):
+    """Get paginated clip jobs for current user"""
+    try:
+        user_id = str(current_user.id)
+        page = max(1, page)
+        actual_limit = limit or DEFAULT_QUERY_LIMIT
+        
+        repo = ClipRepository()
+        jobs, total_count = await repo.get_user_jobs(user_id, page, actual_limit)
+        
+        clip_jobs = [ClipJob(**job) for job in jobs]
+        
+        return ClipJobListResponse(
+            success=True,
+            message=f"Found {len(clip_jobs)} clip jobs",
+            jobs=clip_jobs,
+            total=total_count,
+            page=page,
+            limit=actual_limit,
+            total_pages=(total_count + actual_limit - 1) // actual_limit
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get user clips: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get clip jobs")
+
+@router.get("/clip/{job_id}", response_model=ClipJobDetailResponse)
+async def get_clip_job_detail(
+    job_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get detailed clip job information"""
+    try:
+        user_id = str(current_user.id)
+        repo = ClipRepository()
+        job = await repo.get_by_id(job_id)
+        
+        if not job:
+            raise HTTPException(status_code=404, detail="Clip job not found")
+        
+        if job["user_id"] != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        clip_job = ClipJob(**job)
+        return ClipJobDetailResponse(success=True, job=clip_job)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get clip job detail: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get clip job details")
