@@ -124,15 +124,20 @@ class ClipService:
         prompt = {
             "role": "system",
             "content": (
-                "You are a viral video content strategist. Identify ONLY the absolute BEST moments for short-form content.\n\n"
-                f"VIDEO: {video_duration:.2f}s total | CLIP LENGTH: {expected_duration}s is just a SUGGESTION - ignore if content demands different length\n\n"
-                "MANDATORY RULES:\n"
-                f"1. Create MAXIMUM {max_clips} clips - quality beats quantity. 1 amazing clip > 3 mediocre ones\n"
-                f"2. Each clip duration: 20-50s based on NATURAL CONTENT BREAKS, not fixed intervals\n"
+                "You are a viral video content strategist. Extract the BEST complete moments from content.\n\n"
+                f"VIDEO: {video_duration:.2f}s total\n\n"
+                "SEGMENTATION RULES:\n"
+                f"1. Create MAXIMUM {max_clips} clips (or fewer if quality demands)\n"
+                "2. Each clip: 20-75s (up to 1.25 minutes) based on NATURAL CONTENT BOUNDARIES\n"
                 f"3. ALL timestamps MUST be within [0, {video_duration:.2f}]s\n"
-                "4. Find moments with: Strong hook (score ≥75) + Complete thought + Viral potential\n"
-                "5. NEVER split mid-sentence or mid-thought - follow natural pauses\n"
-                "6. SKIP filler/weak content entirely - empty result is better than bad clips\n\n"
+                "4. Clip length should match content structure:\n"
+                "   - Short punchy moment = 20-35s\n"
+                "   - Complete story/argument = 40-60s\n"
+                "   - Full explanation/narrative = 60-75s\n"
+                "5. ALWAYS end at natural breaks: sentence end, paragraph end, topic shift, or dramatic pause\n"
+                "6. Each clip MUST be a complete, standalone piece (no mid-sentence cuts)\n"
+                "7. Find moments with: Strong hook (score ≥75) + Complete thought + Viral potential\n"
+                "8. SKIP weak/filler content - quality over quantity\n\n"
                 "Return JSON: {segments:[{start:number,end:number,reason:string,ratings:{hook:number,flow:number,value:number,trend:number}}],overall:{score:number,out_of:number,grade:string}}"
             )
         }
@@ -140,7 +145,7 @@ class ClipService:
         max_chars = 12000
         safe_transcript = transcript if len(transcript) <= max_chars else (transcript[:max_chars] + "\n...[truncated]")
 
-        user_content = f"Analyze this transcript and find 1-{max_clips} BEST moments (MINIMUM 1 required):\n\n{safe_transcript}"
+        user_content = f"Analyze and extract {max_clips} BEST complete segments (natural boundaries, varying lengths 20-75s):\n\n{safe_transcript}"
         user = {"role": "user", "content": user_content}
         body = {"model": "gpt-4o-mini", "messages": [prompt, user], "response_format": {"type": "json_object"}, "temperature": 0.3}
         r = requests.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}, data=json.dumps(body))
