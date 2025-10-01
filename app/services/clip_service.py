@@ -140,7 +140,7 @@ class ClipService:
         max_chars = 12000
         safe_transcript = transcript if len(transcript) <= max_chars else (transcript[:max_chars] + "\n...[truncated]")
 
-        user_content = f"Analyze this transcript and find the {max_clips} BEST moments (or fewer if low quality):\n\n{safe_transcript}"
+        user_content = f"Analyze this transcript and find 1-{max_clips} BEST moments (MINIMUM 1 required):\n\n{safe_transcript}"
         user = {"role": "user", "content": user_content}
         body = {"model": "gpt-4o-mini", "messages": [prompt, user], "response_format": {"type": "json_object"}, "temperature": 0.3}
         r = requests.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}, data=json.dumps(body))
