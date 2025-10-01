@@ -66,6 +66,7 @@ _STYLE_ALIASES = {
     "baby steps": "typewriter",
     "grow": "gradient reveal",
     "breathe": "wave liquid",
+    "minimal": "normal",
 }
 
 
@@ -191,6 +192,9 @@ def _create_animation_for_word(anim_type: str, word_params: dict, effect_config:
             f"\\t({off_s},{mid},\\fscx{over}\\fscy{over}\\alpha&H00&)"
             f"\\t({mid},{off_e},\\fscx{settle}\\fscy{settle}\\1c{c2_eff})"
         )
+
+    if anim_type == "none":
+        return ""
 
     # Default to "pop" animation
     return f"\\t({off_s},{mid},\\fscx{scale}\\fscy{scale}\\1c{c1_eff})\\t({mid},{off_e},\\fscx{scale}\\fscy{scale}\\1c{c2_eff}){blur_t1}{blur_t2}{alpha_t}{glitch_t}"
@@ -395,6 +399,8 @@ def _effect_text_multiline(effect: str, words: List[Dict], base_start_ms: int, w
             initial_transform = "\\fscx95\\fscy95"
         elif anim == "rise":
             initial_transform = "\\fscx100\\fscy85"
+        elif anim == "none":
+            initial_transform = "\\fscx100\\fscy100"
 
         word_params = {
             'off_s': off_s, 'mid': mid, 'off_e': off_e,
@@ -406,6 +412,8 @@ def _effect_text_multiline(effect: str, words: List[Dict], base_start_ms: int, w
         animation_tags = _create_animation_for_word(anim, word_params, cfg)
 
         base_color = "&H00FFFFFF&" if anim in ["pop", "bounce"] else c1_eff
+        if anim == "none":
+            base_color = c1_eff
         
         parts.append(
             f"{{\\k{dur_cs}{btag}{itag}{initial_transform}{alpha_pre}\\1c{base_color}"

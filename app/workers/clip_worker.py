@@ -90,11 +90,12 @@ async def _process_clip_job_async(job_id: str, user_id: str):
             seg["text"] = seg_text
             seg["words"] = seg_words_copy
             
-            if seg_words_copy and job.get("subtitle_style"):
+            subtitle_style = job.get("subtitle_style")
+            if seg_words_copy and subtitle_style and subtitle_style.lower() not in ["none", ""]:
                 final_clip = os.path.join(temp_dir, f"final_{i+1}.mp4")
                 service.render_subtitles(
                     seg_clip, seg_words_copy, final_clip,
-                    style=job.get("subtitle_style"),
+                    style=subtitle_style,
                     preset=job.get("subtitle_preset", "reels"),
                     font=job.get("subtitle_font"),
                     font_size=job.get("subtitle_font_size"),

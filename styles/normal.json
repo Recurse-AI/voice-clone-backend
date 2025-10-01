@@ -1,0 +1,17 @@
+{
+  "style_name": "Normal",
+  "font": "Montserrat-Bold",
+  "anim": "none",
+  "alpha": 0,
+  "scale": 100,
+  "blur": 0,
+  "glitch": 0,
+  "c1": "&H00FFFFFF&",
+  "c2": "&H00FFFFFF&",
+  "bold": 1,
+  "italic": 0,
+  "bord": 4,
+  "shad": 2,
+  "line_pre": "\\an2"
+}
+
