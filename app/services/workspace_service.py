@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from app.config.database import dub_jobs_collection, separation_jobs_collection
+from app.config.database import dub_jobs_collection, separation_jobs_collection, clip_jobs_collection
 from app.schemas import WorkspaceStats, JobSummary
 
 logger = logging.getLogger(__name__)
@@ -19,11 +19,13 @@ class WorkspaceService:
             stats_data = await self._get_user_statistics(user_id)
             recent_dubs = await self._get_recent_jobs(dub_jobs_collection, user_id, recent_limit)
             recent_separations = await self._get_recent_jobs(separation_jobs_collection, user_id, recent_limit)
+            recent_clips = await self._get_recent_jobs(clip_jobs_collection, user_id, recent_limit)
             
             return {
                 "stats": stats_data,
                 "recent_dubs": recent_dubs,
-                "recent_separations": recent_separations
+                "recent_separations": recent_separations,
+                "recent_clips": recent_clips
             }
             
         except Exception as e:
@@ -31,23 +33,28 @@ class WorkspaceService:
             return {
                 "stats": self._empty_stats(),
                 "recent_dubs": [],
-                "recent_separations": []
+                "recent_separations": [],
+                "recent_clips": []
             }
     
     async def _get_user_statistics(self, user_id: str) -> WorkspaceStats:
         """Get user statistics with aggregation pipeline for efficiency"""
         try:
-            # Use aggregation pipeline for both collections
+            # Use aggregation pipeline for all collections
             dub_stats = await self._get_collection_stats(dub_jobs_collection, user_id)
             separation_stats = await self._get_collection_stats(separation_jobs_collection, user_id)
+            clip_stats = await self._get_collection_stats(clip_jobs_collection, user_id)
             
             return WorkspaceStats(
                 total_dubs=dub_stats["total"],
                 total_separations=separation_stats["total"],
+                total_clips=clip_stats["total"],
                 total_completed_dubs=dub_stats["completed"],
                 total_completed_separations=separation_stats["completed"],
+                total_completed_clips=clip_stats["completed"],
                 total_processing_dubs=dub_stats["processing"],
-                total_processing_separations=separation_stats["processing"]
+                total_processing_separations=separation_stats["processing"],
+                total_processing_clips=clip_stats["processing"]
             )
             
         except Exception as e:
@@ -103,10 +110,25 @@ class WorkspaceService:
     async def _get_recent_jobs(self, collection, user_id: str, limit: int) -> List[JobSummary]:
         """Get recent jobs with complete data"""
         try:
-            # Check if this is separation collection
+            # Check collection type
             is_separation = collection.name == 'separation_jobs'
+            is_clip = collection.name == 'clip_jobs'
             
-            if is_separation:
+            if is_clip:
+                projection = {
+                    "job_id": 1,
+                    "status": 1,
+                    "progress": 1,
+                    "created_at": 1,
+                    "updated_at": 1,
+                    "completed_at": 1,
+                    "video_url": 1,
+                    "segments": 1,
+                    "overall_rating": 1,
+                    "error_message": 1,
+                    "_id": 0
+                }
+            elif is_separation:
                 projection = {
                     "job_id": 1,
                     "status": 1,
@@ -146,7 +168,26 @@ class WorkspaceService:
             
             jobs = []
             async for job_data in cursor:
-                if is_separation:
+                if is_clip:
+                    # Clip job data
+                    job_summary_data = {
+                        "job_id": job_data["job_id"],
+                        "status": job_data.get("status", "pending"),
+                        "progress": job_data.get("progress", 0),
+                        "original_filename": f"{len(job_data.get('segments', []))} segments",
+                        "error": job_data.get("error_message"),
+                        "created_at": job_data["created_at"].isoformat(),
+                        "updated_at": job_data["updated_at"].isoformat() if job_data.get("updated_at") else None,
+                        "completed_at": job_data["completed_at"].isoformat() if job_data.get("completed_at") else None,
+                        "target_language": None,
+                        "source_video_language": None,
+                        "result_url": job_data["segments"][0]["clip_url"] if job_data.get("segments") else None,
+                        "files": None,
+                        "audio_url": None,
+                        "vocal_url": None,
+                        "instrument_url": None
+                    }
+                elif is_separation:
                     # Separation job data
                     job_summary_data = {
                         "job_id": job_data["job_id"],
@@ -220,10 +261,13 @@ class WorkspaceService:
         return WorkspaceStats(
             total_dubs=0,
             total_separations=0,
+            total_clips=0,
             total_completed_dubs=0,
             total_completed_separations=0,
+            total_completed_clips=0,
             total_processing_dubs=0,
-            total_processing_separations=0
+            total_processing_separations=0,
+            total_processing_clips=0
         )
     
     def _get_file_type(self, filename: str) -> str:

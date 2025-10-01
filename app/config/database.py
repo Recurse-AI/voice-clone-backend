@@ -15,6 +15,7 @@ db = client[settings.DB_NAME]
 # Collections
 separation_jobs_collection: AsyncIOMotorCollection = db.separation_jobs
 dub_jobs_collection: AsyncIOMotorCollection = db.dub_jobs
+clip_jobs_collection: AsyncIOMotorCollection = db.clip_jobs
 users_collection: AsyncIOMotorCollection = db.users
 pricing_collection: AsyncIOMotorCollection = db.pricing
 transaction_collection: AsyncIOMotorCollection = db.creditTransaction
@@ -61,7 +62,8 @@ __all__ = [
     "sync_client",
     "db", 
     "separation_jobs_collection", 
-    "dub_jobs_collection", 
+    "dub_jobs_collection",
+    "clip_jobs_collection",
     "users_collection", 
     "pricing_collection",
     "transaction_collection",

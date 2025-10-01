@@ -39,8 +39,8 @@ async def get_workspace_status(
 ):
     """
     Get comprehensive workspace status including:
-    - Total statistics (dubs, separations, completed jobs)
-    - Recent dubs and separations
+    - Total statistics (dubs, separations, clips, completed jobs)
+    - Recent dubs, separations, and clips
     - Processing job counts
     
     **Parameters:**
@@ -67,7 +67,8 @@ async def get_workspace_status(
             message=f"Workspace status retrieved successfully",
             stats=workspace_data["stats"],
             recent_dubs=workspace_data["recent_dubs"],
-            recent_separations=workspace_data["recent_separations"]
+            recent_separations=workspace_data["recent_separations"],
+            recent_clips=workspace_data["recent_clips"]
         )
         
     except HTTPException:

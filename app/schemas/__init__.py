@@ -390,10 +390,13 @@ class WorkspaceStats(BaseModel):
     """Workspace statistics summary"""
     total_dubs: int = Field(..., description="Total number of dub jobs")
     total_separations: int = Field(..., description="Total number of separation jobs")
+    total_clips: int = Field(..., description="Total number of clip jobs")
     total_completed_dubs: int = Field(..., description="Number of completed dub jobs")
     total_completed_separations: int = Field(..., description="Number of completed separation jobs")
+    total_completed_clips: int = Field(..., description="Number of completed clip jobs")
     total_processing_dubs: int = Field(..., description="Number of dubs currently processing")
     total_processing_separations: int = Field(..., description="Number of separations currently processing")
+    total_processing_clips: int = Field(..., description="Number of clips currently processing")
 
 class WorkspaceStatusResponse(BaseModel):
     """Comprehensive workspace status response"""
@@ -402,6 +405,7 @@ class WorkspaceStatusResponse(BaseModel):
     stats: WorkspaceStats = Field(..., description="Workspace statistics")
     recent_dubs: List[JobSummary] = Field(..., description="Recent dub jobs")
     recent_separations: List[JobSummary] = Field(..., description="Recent separation jobs")
+    recent_clips: List[JobSummary] = Field(..., description="Recent clip jobs")
 
 # Individual Job Detail Schemas
 class SeparationJobDetailResponse(BaseModel):
