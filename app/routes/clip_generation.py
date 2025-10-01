@@ -201,3 +201,26 @@ async def get_clip_job_detail(
     except Exception as e:
         logger.error(f"Failed to get clip job detail: {e}")
         raise HTTPException(status_code=500, detail="Failed to get clip job details")
+
+@router.delete("/clip/{job_id}")
+async def delete_clip_job(
+    job_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Delete clip job"""
+    try:
+        user_id = str(current_user.id)
+        repo = ClipRepository()
+        
+        deleted = await repo.delete(job_id, user_id)
+        
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Clip job not found")
+        
+        return {"success": True, "message": "Clip job deleted"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete clip job: {e}")
+        raise HTTPException(status_code=500, detail="Failed to delete clip job")

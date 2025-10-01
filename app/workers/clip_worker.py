@@ -91,19 +91,23 @@ async def _process_clip_job_async(job_id: str, user_id: str):
             seg["words"] = seg_words_copy
             
             subtitle_style = job.get("subtitle_style")
+            preset = job.get("subtitle_preset", "reels")
+            
             if seg_words_copy and subtitle_style and subtitle_style.lower() not in ["none", ""]:
                 final_clip = os.path.join(temp_dir, f"final_{i+1}.mp4")
                 service.render_subtitles(
                     seg_clip, seg_words_copy, final_clip,
                     style=subtitle_style,
-                    preset=job.get("subtitle_preset", "reels"),
+                    preset=preset,
                     font=job.get("subtitle_font"),
                     font_size=job.get("subtitle_font_size"),
                     wpl=job.get("subtitle_wpl")
                 )
                 upload_path = final_clip
             else:
-                upload_path = seg_clip
+                resized_clip = os.path.join(temp_dir, f"resized_{i+1}.mp4")
+                service.resize_video(seg_clip, resized_clip, preset=preset)
+                upload_path = resized_clip
             
             r2_key = f"clips/{user_id}/{job_id}/seg_{i+1}.mp4"
             result = service.r2.upload_file(upload_path, r2_key, "video/mp4")

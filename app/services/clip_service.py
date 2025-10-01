@@ -115,8 +115,8 @@ class ClipService:
         prompt = {
             "role": "system",
             "content": (
-                "You are a video content editor for short-form content. Identify highly engaging segments; the target duration is a soft guide. "
-                "Return as many or as few segments as the content quality warrants—you do NOT need to cover the full video. "
+                "You are a video content editor for short-form content. Identify highly engaging segments where EACH segment should be around the target duration. "
+                "The target duration is PER SEGMENT (not total). Find as many quality segments as exist—you do NOT need to cover the full video. "
                 "Return STRICT JSON: {segments:[{start:number,end:number,reason:string,ratings:{hook:number,flow:number,value:number,trend:number}}],overall:{score:number,out_of:number,grade:string}}. "
                 "All ratings MUST be 0-100. overall.out_of MUST be 100. Segments must be sorted, non-overlapping, and within [0,T]."
             )
@@ -125,7 +125,7 @@ class ClipService:
         max_chars = 12000
         safe_transcript = transcript if len(transcript) <= max_chars else (transcript[:max_chars] + "\n...[truncated]")
 
-        user_content = f"Target (soft): {expected_duration}s. Transcript:\n{safe_transcript}"
+        user_content = f"Target duration PER SEGMENT: ~{expected_duration}s (can be shorter or longer based on content quality). Transcript:\n{safe_transcript}"
         user = {"role": "user", "content": user_content}
         body = {"model": "gpt-4o-mini", "messages": [prompt, user], "response_format": {"type": "json_object"}, "temperature": 0.2}
         r = requests.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}, data=json.dumps(body))
@@ -145,6 +145,26 @@ class ClipService:
                 words = re.findall(r'\b\w+\b', sentence)
                 result.append({"sentence": sentence.strip(), "words": words})
         return result
+    
+    def resize_video(self, video_path: str, out_path: str, preset: str = "reels"):
+        size_map = {"reels": (1080, 1920), "square": (1080, 1080), "landscape": (1920, 1080), "fourfive": (1080, 1350)}
+        w, h = size_map.get(preset, (1080, 1920))
+        
+        fc = (
+            f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,"
+            f"boxblur=20:1,crop={w}:{h}[bg];"
+            f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];"
+            f"[bg][fg]overlay=(W-w)/2:(H-h)/2[vout]"
+        )
+        
+        cmd = [
+            self._ffmpeg(), '-y', '-i', video_path,
+            '-filter_complex', fc,
+            '-map', '[vout]', '-map', '0:a?',
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '23', '-c:a', 'copy',
+            out_path
+        ]
+        subprocess.run(cmd, check=True)
     
     def render_subtitles(self, video_path: str, words: List[Dict[str, Any]], out_path: str, style: str = "karaoke", preset: str = "reels", font: str = None, font_size: int = None, wpl: int = None):
         size_map = {"reels": (1080, 1920), "square": (1080, 1080), "landscape": (1920, 1080), "fourfive": (1080, 1350)}
