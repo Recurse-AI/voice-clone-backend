@@ -272,10 +272,12 @@ class VideoDownloadRequest(BaseModel):
 class VideoDownloadResponse(BaseModel):
     success: bool
     message: str
-    job_id: Optional[str] = None       # New field for consistency with other APIs
+    job_id: Optional[str] = None
+    r2_url: Optional[str] = None
+    r2_key: Optional[str] = None
     video_info: Optional[Dict[str, Any]] = None
-    download_info: Optional[Dict[str, Any]] = None  # Extended download details
-    available_formats: Optional[List[Dict[str, Any]]] = None  # Available quality options
+    download_info: Optional[Dict[str, Any]] = None
+    available_formats: Optional[List[Dict[str, Any]]] = None
     cloudflare: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
@@ -414,8 +416,8 @@ class DubJobDetailResponse(BaseModel):
 
 # Clip Job Request Schema
 class GenerateClipsRequest(BaseModel):
-    video_url: str
-    srt_url: Optional[str] = None
+    video_url: str = Field(..., description="R2 bucket URL to video file")
+    srt_url: Optional[str] = Field(None, description="R2 bucket URL to SRT subtitle file")
     start_time: float
     end_time: float
     expected_duration: float

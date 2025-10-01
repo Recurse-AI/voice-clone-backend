@@ -7,7 +7,6 @@ import requests
 from typing import Dict, Any, List
 from app.config.settings import settings
 from app.services.r2_service import R2Service
-from app.services.url_handler import URLHandler
 from app.repositories.clip_repository import ClipRepository
 from app.subtitles import build_ass_from_words
 from scripts.render_subtitles import render as render_video_with_subtitles
@@ -16,7 +15,6 @@ class ClipService:
     def __init__(self):
         self.r2 = R2Service()
         self.repo = ClipRepository()
-        self.url_handler = URLHandler()
     
     def _ffmpeg(self):
         return os.environ.get("FFMPEG_PATH", "ffmpeg")
@@ -34,8 +32,17 @@ class ClipService:
         return float(s)
     
     def download_video(self, url: str, local_path: str) -> Dict[str, Any]:
-        result = self.url_handler.download_from_url(url, local_path)
-        return result
+        try:
+            response = requests.get(url, stream=True, timeout=60)
+            response.raise_for_status()
+            
+            with open(local_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            
+            return {'success': True, 'local_path': local_path}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
     
     def trim_video(self, src: str, ss: float, to: float, out_path: str):
         dur = max(0.0, to - ss)

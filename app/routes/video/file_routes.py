@@ -1,140 +1,108 @@
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
 import logging
-from app.schemas import (
-    VideoDownloadRequest,
-    VideoDownloadResponse,
-    FileDeleteRequest,
-    FileDeleteResponse,
-)
+import tempfile
+import os
+import uuid
+import yt_dlp
+from app.schemas import VideoDownloadRequest, VideoDownloadResponse
 
 router = APIRouter()
-
 logger = logging.getLogger(__name__)
 
 @router.post("/download-media", response_model=VideoDownloadResponse)
 async def download_media(request: VideoDownloadRequest):
-    """Download media (video/audio) from URL and store locally"""
+    """Download media from YouTube/social media and upload to R2 bucket"""
+    temp_dir = None
     try:
-        from app.utils.video_downloader import video_download_service
+        from app.services.r2_service import R2Service
         
         logger.info(f"Media download request: {request.url}")
-
-        result = await video_download_service.download_video(
-            url=request.url,
-            quality=request.quality,
-            resolution=request.resolution,
-            max_filesize=request.max_filesize,
-            format_preference=request.format_preference,
-            audio_quality=request.audio_quality,
-            prefer_free_formats=request.prefer_free_formats,
-            include_subtitles=request.include_subtitles
-        )
-
-        if result["success"]:
-            logger.info(f"Media download successful: {result['job_id']}")
-            # Build video_info from the new response structure
-            video_info = {
-                "title": result.get("title", "Unknown"),
-                "duration": result.get("duration", 0),
-                "uploader": "Unknown",  # Not in new structure, set default
-                "filename": result.get("filename", ""),
-                "file_size": result.get("file_size", 0),
-                "local_path": "",  # Not in new structure, set empty
-                "downloaded_at": "",  # Not in new structure, set empty
-            }
-
-            # Build download_info from the new response structure
-            download_info = {
-                "requested_quality": result.get("quality_note", ""),
-                "actual_format": result.get("format", "Unknown"),
-                "resolution": result.get("resolution", "Unknown"),
-                "format": result.get("format", "Unknown"),
-                "filesize_approx": result.get("file_size", "Unknown"),
-            }
-
-            return VideoDownloadResponse(
-                success=True,
-                message="Download successful",
-                job_id=result["job_id"],
-                video_info=video_info,
-                download_info=download_info,
-                available_formats=result.get("available_formats", [])
-            )
-        else:
-            logger.error(f"Media download failed: {result['error']}")
+        
+        temp_dir = tempfile.mkdtemp(prefix="download_")
+        output_template = os.path.join(temp_dir, "%(title)s.%(ext)s")
+        
+        quality_format = "bv*+ba/best"
+        if request.resolution:
+            res_int = int(request.resolution.replace("p", ""))
+            quality_format = f"bv*[height<={res_int}]+ba/best"
+        elif request.quality == "worst":
+            quality_format = "worst"
+        
+        ydl_opts = {
+            "outtmpl": output_template,
+            "format": quality_format,
+            "merge_output_format": "mp4",
+            "noplaylist": True,
+            "quiet": True,
+            "no_warnings": True,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(request.url, download=True)
+        
+        downloaded_files = [f for f in os.listdir(temp_dir) if os.path.isfile(os.path.join(temp_dir, f))]
+        if not downloaded_files:
+            return VideoDownloadResponse(success=False, message="Download failed", error="No file downloaded")
+        
+        file_path = os.path.join(temp_dir, downloaded_files[0])
+        filename = downloaded_files[0]
+        file_size = os.path.getsize(file_path)
+        
+        r2_service = R2Service()
+        file_id = str(uuid.uuid4())
+        r2_key = f"downloads/{file_id}/{filename}"
+        content_type = r2_service._get_content_type(filename)
+        
+        upload_result = r2_service.upload_file(file_path, r2_key, content_type)
+        
+        if not upload_result.get("success"):
+            logger.error(f"R2 upload failed: {upload_result.get('error')}")
             return VideoDownloadResponse(
                 success=False,
-                message="Media download failed",
-                error=result["error"]
+                message="Upload to R2 failed",
+                error=upload_result.get("error")
             )
+        
+        logger.info(f"Upload to R2 successful: {upload_result['url']}")
+        
+        video_info = {
+            "title": info.get("title", "Unknown"),
+            "duration": info.get("duration", 0),
+            "uploader": info.get("uploader", "Unknown"),
+            "filename": filename,
+            "file_size": file_size,
+            "local_path": "",
+            "downloaded_at": "",
+        }
+        
+        download_info = {
+            "requested_quality": request.quality or "best",
+            "actual_format": info.get("ext", "Unknown"),
+            "resolution": f"{info.get('width', 'N/A')}x{info.get('height', 'N/A')}",
+            "format": info.get("ext", "Unknown"),
+            "filesize_approx": file_size,
+        }
+        
+        return VideoDownloadResponse(
+            success=True,
+            message="Download and upload successful",
+            r2_url=upload_result["url"],
+            r2_key=r2_key,
+            video_info=video_info,
+            download_info=download_info
+        )
+        
     except Exception as e:
-        logger.error(f"Media download endpoint error: {str(e)}")
+        logger.error(f"Endpoint error: {str(e)}")
         return VideoDownloadResponse(
             success=False,
             message="Internal server error",
             error=str(e)
         )
-
-@router.delete("/file-delete", response_model=FileDeleteResponse)
-async def delete_downloaded_file(request: FileDeleteRequest):
-    """Delete locally stored downloaded file by job_id"""
-    try:
-        from app.utils.video_downloader import video_download_service
-        
-        logger.info(f"File delete request for job_id: {request.job_id}")
-        
-        result = video_download_service.delete_file(request.job_id)
-        
-        if result["success"]:
-            logger.info(f"File delete successful for job_id: {request.job_id}")
-            return FileDeleteResponse(
-                success=True,
-                message="File deleted successfully",
-                deleted_files=result["deleted_files"]
-            )
-        else:
-            logger.error(f"File delete failed for job_id {request.job_id}: {result['error']}")
-            return FileDeleteResponse(
-                success=False,
-                message="File delete failed",
-                error=result["error"]
-            )
-    except Exception as e:
-        logger.error(f"File delete endpoint error for {request.job_id}: {str(e)}")
-        return FileDeleteResponse(
-            success=False,
-            message="Internal server error",
-            error=str(e)
-        )
-
-@router.get("/file-serve/{job_id}")
-async def serve_downloaded_file(job_id: str):
-    """Serve the actual downloaded file content by job_id"""
-    try:
-        from app.utils.video_downloader import video_download_service
-        
-        logger.info(f"File serve request for job_id: {job_id}")
-        
-        result = video_download_service.get_file_path(job_id)
-        
-        if not result["success"]:
-            logger.warning(f"File serve failed for job_id {job_id}: {result['error']}")
-            raise HTTPException(status_code=404, detail=result["error"])
-        
-        file_path = result["file_path"]
-        filename = result["filename"]
-        
-        logger.info(f"Serving file for job_id {job_id}: {filename}")
-        
-        return FileResponse(
-            path=file_path,
-            filename=filename,
-            media_type='application/octet-stream'
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"File serve endpoint error for {job_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+    finally:
+        if temp_dir and os.path.exists(temp_dir):
+            import shutil
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp dir: {cleanup_error}")
