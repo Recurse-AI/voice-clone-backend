@@ -1,10 +1,12 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, Request
 import logging
 from app.schemas import (
-    UserSeparationListResponse, UserDubListResponse, 
+    UserSeparationListResponse, UserDubListResponse,
     SeparationJobDetailResponse, DubJobDetailResponse,
-    UserSeparationJob, UserDubJob, WorkspaceStatusResponse
+    UserSeparationJob, UserDubJob, WorkspaceStatusResponse,
+    ClipJobListResponse, ClipJobDetailResponse
 )
+from app.models import ClipJob
 from app.services.separation_job_service import separation_job_service
 from app.services.dub_job_service import dub_job_service
 from app.services.job_response_service import job_response_service
@@ -215,6 +217,70 @@ async def get_user_dubs(
     except Exception as e:
         logger.error(f"Failed to get user dubs: {e}")
         raise HTTPException(status_code=500, detail="Failed to get dub jobs")
+
+@router.get("/clips", response_model=ClipJobListResponse)
+async def get_user_clips(
+    page: int = 1,
+    limit: int = None,
+    current_user = Depends(get_current_user)
+):
+    """Get paginated clip jobs for current user"""
+    try:
+        from app.repositories.clip_repository import ClipRepository
+        from app.config.constants import DEFAULT_QUERY_LIMIT
+        
+        user_id = str(current_user.id)
+        page = max(1, page)
+        actual_limit = limit or DEFAULT_QUERY_LIMIT
+        
+        repo = ClipRepository()
+        jobs, total_count = await repo.get_user_jobs(user_id, page, actual_limit)
+        
+        clip_jobs = [ClipJob(**job) for job in jobs]
+        
+        return ClipJobListResponse(
+            success=True,
+            message=f"Found {len(clip_jobs)} clip jobs",
+            jobs=clip_jobs,
+            total=total_count,
+            page=page,
+            limit=actual_limit,
+            total_pages=(total_count + actual_limit - 1) // actual_limit
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get user clips: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get clip jobs")
+
+@router.get("/clip/{job_id}", response_model=ClipJobDetailResponse)
+async def get_clip_job_detail(
+    job_id: str,
+    current_user = Depends(get_current_user)
+):
+    """Get detailed clip job information"""
+    try:
+        from app.repositories.clip_repository import ClipRepository
+        
+        user_id = str(current_user.id)
+        repo = ClipRepository()
+        job = await repo.get_by_id(job_id)
+        
+        if not job:
+            raise HTTPException(status_code=404, detail="Clip job not found")
+        
+        if job["user_id"] != user_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+        
+        clip_job = ClipJob(**job)
+        return ClipJobDetailResponse(success=True, job=clip_job)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get clip job detail: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get clip job details")
 
 @router.get("/dub/{job_id}", response_model=DubJobDetailResponse)
 async def get_dub_job_detail(

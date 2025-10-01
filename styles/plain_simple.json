@@ -1,0 +1,14 @@
+{
+  "style_name": "Plain & Simple",
+  "font": "Montserrat-Bold",
+  "anim": "pop",
+  "alpha": 0,
+  "scale": 100,
+  "c1": "&H00FFFFFF&",
+  "c2": "&H00000000&",
+  "line1_c": "&H000080FF&",
+  "line2_c": "&H0032CD32&",
+  "line1_bold": 1,
+  "line2_bold": 1,
+  "line_pre": "\\an2\\bord12\\shad8\\3c&H00000000&\\4c&H90000000&"
+}

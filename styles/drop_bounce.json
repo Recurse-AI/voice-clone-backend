@@ -1,0 +1,10 @@
+{
+  "scale": 108,
+  "c1": "&H00FFA500&",
+  "c2": "&H00FFD700&",
+  "blur": 0,
+  "glitch": 1,
+  "line_pre": "\\an8\\bord4\\shad3",
+  "style_name": "Karaoke",
+  "font": "Roboto"
+}

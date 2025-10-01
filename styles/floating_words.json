@@ -1,0 +1,15 @@
+{
+  "style_name": "Floating Words",
+  "font": "Poppins-Bold",
+  "anim": "drift",
+  "scale": 115,
+  "c1": "&H000080FF&",
+  "c2": "&H00FFFFFF&",
+  "line1_c": "&H000080FF&",
+  "line2_c": "&H0032CD32&",
+  "line1_bold": 1,
+  "line2_bold": 1,
+  "blur": 3,
+  "alpha": 0,
+  "line_pre": "\\an2\\bord8\\shad12\\3c&H00000000&\\4c&H70000000&"
+}

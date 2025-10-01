@@ -233,7 +233,14 @@ class CreditService:
         # Check if user has valid payment method
         await self._validate_payg_payment_method(user_id)
         
-        collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
+        if job_type == JobType.DUB:
+            collection_name = "dub_jobs"
+        elif job_type == JobType.SEPARATION:
+            collection_name = "separation_jobs"
+        elif job_type == JobType.CLIP:
+            collection_name = "clip_jobs"
+        else:
+            collection_name = "dub_jobs"
         
         # Create simple job data for PAYG
         filtered_job_data = {k: v for k, v in job_data.items() if k not in ["job_id", "user_id"]}
@@ -247,6 +254,12 @@ class CreditService:
             "updated_at": datetime.now(timezone.utc)
         }
         final_job_data.update(filtered_job_data)
+        
+        # Add default fields for clip jobs if missing
+        if job_type == JobType.CLIP:
+            final_job_data.setdefault("status", "pending")
+            final_job_data.setdefault("progress", 0)
+            final_job_data.setdefault("segments", [])
         
         # Simple job insertion - no transactions needed for PAYG
         try:
@@ -287,7 +300,14 @@ class CreditService:
                 f"Insufficient credits. Required: {required_credits}, Available: {available_credits}"
             )
         
-        collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
+        if job_type == JobType.DUB:
+            collection_name = "dub_jobs"
+        elif job_type == JobType.SEPARATION:
+            collection_name = "separation_jobs"
+        elif job_type == JobType.CLIP:
+            collection_name = "clip_jobs"
+        else:
+            collection_name = "dub_jobs"
         
         # Simple credit deduction without complex transactions
         try:
@@ -311,18 +331,24 @@ class CreditService:
                     "Insufficient credits"
                 )
             
-            # Create simple job data for credit pack
+            # Create job data for credit pack
             filtered_job_data = {k: v for k, v in job_data.items() if k not in ["job_id", "user_id"]}
             final_job_data = {
                 "job_id": job_data["job_id"],
                 "user_id": user_id,
                 "credits_required": required_credits,
-                "credits_reserved": True,  # Add missing flag for refund checking
+                "credits_reserved": True,
                 "billing_type": "credit_pack",
                 "created_at": datetime.now(timezone.utc),
                 "updated_at": datetime.now(timezone.utc)
             }
             final_job_data.update(filtered_job_data)
+            
+            # Add default fields for clip jobs if missing
+            if job_type == JobType.CLIP:
+                final_job_data.setdefault("status", "pending")
+                final_job_data.setdefault("progress", 0)
+                final_job_data.setdefault("segments", [])
             
             loop_db = get_async_db()
             await loop_db[collection_name].insert_one(final_job_data)

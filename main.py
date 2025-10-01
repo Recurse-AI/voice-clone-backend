@@ -19,6 +19,7 @@ from app.routes.video import router as video_processing_router
 from app.routes.user_jobs import router as user_jobs_router
 from app.routes.youtube_transcript import router as youtube_transcript_router
 from app.routes.fish_audio import router as fish_audio_router
+from app.routes.clip_generation import router as clip_generation_router
 
 from app.middleware.auth_middleware import AuthMiddleware
 from starlette.middleware.sessions import SessionMiddleware
@@ -164,6 +165,7 @@ app.include_router(video_processing_router, prefix="/api", tags=["video-processi
 app.include_router(user_jobs_router, prefix="/api/jobs", tags=["user-jobs"])
 app.include_router(youtube_transcript_router, prefix="/api", tags=["youtube-transcript"])
 app.include_router(fish_audio_router)
+app.include_router(clip_generation_router, prefix="/api/clips", tags=["clip-generation"])
 
 
 @app.get("/", response_model=StatusResponse)

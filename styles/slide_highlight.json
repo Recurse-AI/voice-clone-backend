@@ -1,0 +1,9 @@
+{
+  "scale": 102,
+  "c1": "&H00FFA500&",
+  "c2": "&H00FF4500&",
+  "blur": 0,
+  "line_pre": "\\an2",
+  "style_name": "KaraokeBox",
+  "font": "Lato"
+}

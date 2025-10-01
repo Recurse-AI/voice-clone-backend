@@ -412,6 +412,21 @@ class DubJobDetailResponse(BaseModel):
     job: Optional[UserDubJob] = None
     error: Optional[str] = None
 
+# Clip Job Response Schemas
+class ClipJobListResponse(BaseModel):
+    success: bool
+    message: str
+    jobs: List[Any]  # List of ClipJob from models
+    total: int
+    page: Optional[int] = None
+    limit: Optional[int] = None
+    total_pages: Optional[int] = None
+
+class ClipJobDetailResponse(BaseModel):
+    success: bool
+    job: Optional[Any] = None  # ClipJob from models
+    error: Optional[str] = None
+
 # Process Video Complete API Schemas
 class TimelineAudioSegment(BaseModel):
     start: int = Field(..., description="Start time in milliseconds")

@@ -1,0 +1,16 @@
+{
+  "style_name": "Gameplay HUD",
+  "font": "Roboto",
+  "anim": "expand",
+  "scale": 103,
+  "c1": "&H00FFFFFF&",
+  "c2": "&H00FFA500&",
+  "line1_c": "&H00FFFFFF&",
+  "line2_c": "&H00FFA500&",
+  "bold": 1,
+  "italic": 0,
+  "line1_bold": 1,
+  "line2_bold": 1,
+  "line_pre": "\\an8\\bord6\\shad3\\3c&H00000000&\\4c&H80000000&"
+}
+

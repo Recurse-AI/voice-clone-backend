@@ -1,0 +1,9 @@
+{
+  "scale": 100,
+  "c1": "&H00FF6347&",
+  "c2": "&H00FFA500&",
+  "blur": 0,
+  "line_pre": "\\an1\\bord2\\shad1",
+  "style_name": "Simple",
+  "font": "Roboto"
+}

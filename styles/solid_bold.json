@@ -1,0 +1,14 @@
+{
+  "style_name": "Solid Bold",
+  "font": "Montserrat-Bold",
+  "anim": "rise",
+  "scale": 130,
+  "c1": "&H000080FF&",
+  "c2": "&H00000000&",
+  "line1_c": "&H000080FF&",
+  "line2_c": "&H00FFFFFF&",
+  "line1_bold": 1,
+  "line2_bold": 1,
+  "uppercase": 0,
+  "line_pre": "\\an2\\bord15\\shad10\\3c&H00000000&\\4c&H90000000&"
+}

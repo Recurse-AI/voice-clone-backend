@@ -29,6 +29,7 @@ class QueueManager:
         self._whisperx_service_queue = None
         self._fish_speech_service_queue = None
         self._video_processing_queue = None
+        self._clip_queue = None
     
     def _get_redis_client(self) -> Optional[Redis]:
         """Get Redis client with connection validation and retry"""
@@ -133,6 +134,16 @@ class QueueManager:
                 logger.info("✅ Video processing queue initialized")
 
         return self._video_processing_queue
+    
+    def get_clip_queue(self) -> Optional[Queue]:
+        """Get clip generation queue with lazy initialization"""
+        if self._clip_queue is None:
+            redis_client = self._get_redis_client()
+            if redis_client:
+                self._clip_queue = Queue("clip_queue", connection=redis_client)
+                logger.info("✅ Clip queue initialized")
+        
+        return self._clip_queue
 
     
     def enqueue_separation_task(self, job_id: str, runpod_request_id: str, 
@@ -263,8 +274,8 @@ class QueueManager:
             job = queue.enqueue(
                 'app.workers.video_processing_worker.process_video_task',
                 task_data,
-                job_timeout=7200,  # 2 hours timeout for video processing
-                result_ttl=3600    # Keep result for 1 hour after completion
+                job_timeout=7200,
+                result_ttl=3600
             )
             
             logger.info(f"✅ Enqueued video processing task: {task_data.get('job_id')} (RQ job: {job.id})")
@@ -272,6 +283,27 @@ class QueueManager:
             
         except Exception as e:
             logger.error(f"❌ Failed to enqueue video processing task: {e}")
+            return False
+    
+    def enqueue(self, func, *args, **kwargs):
+        """Generic enqueue method for any task"""
+        try:
+            queue_name = kwargs.pop('queue_name', 'clip_queue')
+            if queue_name == 'clip_queue':
+                queue = self.get_clip_queue()
+            else:
+                queue = self.get_dub_queue()
+            
+            if not queue:
+                logger.error(f"❌ Queue {queue_name} not available")
+                return False
+            
+            job = queue.enqueue(func, *args, **kwargs)
+            logger.info(f"✅ Enqueued task to {queue_name} (RQ job: {job.id})")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to enqueue task: {e}")
             return False
 
     def enqueue_with_load_balance(self, request_data: dict, service_type: str) -> bool:
@@ -444,5 +476,10 @@ def get_fish_speech_service_queue() -> Optional[Queue]:
 def get_video_processing_queue() -> Optional[Queue]:
     """Get video processing queue"""
     return queue_manager.get_video_processing_queue()
+
+
+def get_clip_queue() -> Optional[Queue]:
+    """Get clip queue"""
+    return queue_manager.get_clip_queue()
 
 

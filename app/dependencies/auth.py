@@ -15,14 +15,7 @@ async def get_current_user(
     user = request.scope.get("user")
     if user:
         return TokenUser(id=user["id"], email=user["email"])
-    
-    # For normal auth, require credentials
-    if not credentials:
-        raise HTTPException(
-            status_code=401,
-            detail="Authentication required"
-        )
-    
+        
     try:
         token = credentials.credentials
         if not token:

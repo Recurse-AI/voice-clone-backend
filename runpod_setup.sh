@@ -54,6 +54,7 @@ pkill -9 -f "python.*check_workers" 2>/dev/null || true
 pkill -9 -f "python.*separation_worker" 2>/dev/null || true
 pkill -9 -f "python.*dub_worker" 2>/dev/null || true
 pkill -9 -f "python.*billing_worker" 2>/dev/null || true
+pkill -9 -f "python.*clip_worker" 2>/dev/null || true
 pkill -9 -f "python.*whisperx_service_worker" 2>/dev/null || true
 pkill -9 -f "python.*fish_speech_service_worker" 2>/dev/null || true
 pkill -9 -f "python.*video_processing_worker" 2>/dev/null || true
@@ -241,6 +242,15 @@ nohup ./venv/bin/python workers_starter.py dub_queue resume_worker_2 redis://127
 
 echo "  - Starting billing worker..."
 nohup ./venv/bin/python workers_starter.py billing_queue billing_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+
+echo "🎬 Starting clip generation workers..."
+CLIP_WORKERS=${MAX_CLIP_WORKERS:-2}
+echo "  - Starting ${CLIP_WORKERS} clip worker(s)..."
+for i in $(seq 1 $CLIP_WORKERS); do
+    echo "    - Starting clip_worker_${i}..."
+    nohup ./venv/bin/python workers_starter.py clip_queue clip_worker_${i} redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+    sleep 1
+done
 
 # VRAM Service Workers (Serial Processing)
 echo "🎯 Starting VRAM service workers..."

@@ -1,0 +1,12 @@
+{
+  "scale": 103,
+  "c1": "&H000080FF&",
+  "c2": "&H000080FF&",
+  "blur": 1,
+  "anim": "rise",
+  "alpha": 0,
+  "line_pre": "\\an2\\bord8\\shad4\\3c&H00000000&\\4c&H70000000&",
+  "style_name": "GreenOrange Rise",
+  "font": "Montserrat"
+}
+

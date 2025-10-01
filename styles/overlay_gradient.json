@@ -1,0 +1,11 @@
+{
+  "scale": 104,
+  "c1": "&H00FFA500&",
+  "c2": "&H0032CD32&",
+  "blur": 2,
+  "anim": "slide",
+  "alpha": 1,
+  "line_pre": "\\an2\\bord5\\shad4\\3c&H60FFD700&\\4c&H60000000&",
+  "style_name": "Karaoke",
+  "font": "Montserrat"
+}

@@ -1,0 +1,12 @@
+{
+  "style_name": "Invert White BG",
+  "font": "Montserrat",
+  "anim": "slide",
+  "scale": 102,
+  "c1": "&H00000000&",
+  "c2": "&H00000000&",
+  "bold": 1,
+  "italic": 0,
+  "line_pre": "\\an2\\bord10\\shad0\\3c&H00FFFFFF&\\4c&H00FFFFFF&"
+}
+

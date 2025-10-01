@@ -23,6 +23,9 @@ class CreditCalculatorUtil:
         elif job_type == JobType.SEPARATION:
             duration_minutes = duration_seconds / 60.0
             credits = duration_minutes * CreditRates.SEPARATION_RATE_PER_MINUTE
+        elif job_type == JobType.CLIP:
+            duration_minutes = duration_seconds / 60.0
+            credits = duration_minutes * CreditRates.CLIP_RATE_PER_MINUTE
         else:
             raise ValueError(f"Unknown job type: {job_type}")
         

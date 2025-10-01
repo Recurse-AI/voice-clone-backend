@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     # OpenAI Configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     
+    # AssemblyAI Configuration
+    ASSEMBLYAI_API_KEY: str = os.getenv("ASSEMBLYAI_API_KEY", "")
+
+    # YouTube download quality cap (via yt-dlp)
+    YTDLP_MAX_HEIGHT: int = int(os.getenv("YTDLP_MAX_HEIGHT", "1080"))  # set 1080 for FullHD
+    
     # HuggingFace Configuration
     HF_TOKEN: str = os.getenv("HF_TOKEN", "")
     

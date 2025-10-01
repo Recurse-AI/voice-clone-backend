@@ -1,0 +1,11 @@
+{
+  "style_name": "Cinematic Elegance",
+  "font": "Roboto-Medium",
+  "anim": "rise",
+  "scale": 102,
+  "blur": 2,
+  "alpha": 1,
+  "c1": "&H00FF8C00&",
+  "c2": "&H00FFA500&",
+  "line_pre": "\\an2"
+}

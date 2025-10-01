@@ -1,53 +1,40 @@
 from fastapi import Request, HTTPException, status
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 import jwt
 import logging
 from typing import Optional, Dict, Any
 from datetime import datetime, timezone
+from bson import ObjectId
 from app.config.settings import settings
 from app.config.database import users_collection, db
 
 logger = logging.getLogger(__name__)
 
-class AuthMiddleware:
+class AuthMiddleware(BaseHTTPMiddleware):
     """Enhanced authentication middleware that handles both JWT tokens and share tokens"""
     
-    def __init__(self, app):
-        self.app = app
-    
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-        
-        request = Request(scope, receive)
-        
-        # Check if this endpoint requires authentication
+    async def dispatch(self, request: Request, call_next):
         if self._requires_auth(request.url.path):
             try:
-                # Get user (either from share token or JWT)
                 user = await self._get_user_from_token(request)
                 if not user:
-                    response = JSONResponse(
+                    return JSONResponse(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         content={"detail": "Invalid or missing authentication token"}
                     )
-                    await response(scope, receive, send)
-                    return
-                
-                # Add user to request state
-                scope["user"] = user
-                
+
+                request.state.user = user
+                request.scope["user"] = user
             except Exception as e:
                 logger.error(f"Authentication error: {e}")
-                response = JSONResponse(
+                return JSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     content={"detail": "Authentication failed"}
                 )
-                await response(scope, receive, send)
-                return
         
-        await self.app(scope, receive, send)
+        response = await call_next(request)
+        return response
     
     def _requires_auth(self, path: str) -> bool:
         """Check if the path requires authentication"""
@@ -57,9 +44,9 @@ class AuthMiddleware:
             "/api/audio-separation", # Audio separation
             "/upload-file",         # File uploads
             "/api/voice-clone-segment", # Voice cloning
-
             "/api/dubbing/",        # Dubbing APIs
             "/api/stripe/",         # Stripe APIs (except webhooks)
+            "/api/clips/",          # Clip generation APIs
         ]
         
         # Skip auth for specific endpoints
@@ -92,21 +79,19 @@ class AuthMiddleware:
     async def _get_user_from_token(self, request: Request) -> Optional[Dict[str, Any]]:
         """Extract user from JWT token"""
         try:
-            # JWT authentication only
             authorization = request.headers.get("Authorization")
             if not authorization or not authorization.startswith("Bearer "):
                 return None
             
             token = authorization.split(" ")[1]
             
-            # Decode JWT token
             try:
                 payload = jwt.decode(
                     token, 
                     settings.SECRET_KEY, 
                     algorithms=[settings.ALGORITHM]
                 )
-                user_id = payload.get("sub")
+                user_id = payload.get("sub") or payload.get("id")
                 if not user_id:
                     return None
                 
@@ -117,7 +102,6 @@ class AuthMiddleware:
                 logger.warning(f"Invalid token: {e}")
                 return None
             
-            # Get user from database
             return await self._get_user_by_id(user_id)
             
         except Exception as e:
@@ -129,20 +113,19 @@ class AuthMiddleware:
     async def _get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
         """Common user lookup logic - reusable"""
         try:
-            user = await users_collection.find_one({"_id": user_id})
+            user = await users_collection.find_one({"_id": ObjectId(user_id)})
             if not user:
                 return None
                 
-            # Convert ObjectId to string for JSON serialization
             user["id"] = str(user["_id"])
             del user["_id"]
             
-            # Remove password field for security
             if "password" in user:
                 del user["password"]
             
             return user
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error looking up user {user_id}: {e}")
             return None
 
 # Helper function to get current user from request

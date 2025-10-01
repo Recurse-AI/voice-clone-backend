@@ -1,0 +1,10 @@
+{
+  "scale": 106,
+  "c1": "&H00FFA500&",
+  "c2": "&H00FFA500&",
+  "blur": 6,
+  "alpha": 1,
+  "line_pre": "\\an2\\bord8\\shad0\\3c&H80FFA500&\\alpha&H35&",
+  "style_name": "Karaoke",
+  "font": "Poppins"
+}

@@ -1,0 +1,12 @@
+{
+  "scale": 104,
+  "c1": "&H0032CD32&",
+  "c2": "&H00FFA500&",
+  "blur": 6,
+  "anim": "pop",
+  "alpha": 1,
+  "line_pre": "\\an2\\bord10\\shad5\\3c&H00000000&\\4c&H70000000&\\alpha&H20&",
+  "lock_colors": 1,
+  "style_name": "Glass Neon",
+  "font": "Poppins"
+}

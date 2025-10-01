@@ -1,0 +1,12 @@
+{
+  "scale": 102,
+  "c1": "&H000080FF&",
+  "c2": "&H000080FF&",
+  "blur": 0,
+  "anim": "float",
+  "alpha": 0,
+  "line_pre": "\\an2\\bord7\\shad3\\3c&H00000000&\\4c&H60000000&",
+  "style_name": "GreenOrange Float",
+  "font": "Montserrat"
+}
+

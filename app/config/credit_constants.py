@@ -8,11 +8,13 @@ class JobType(Enum):
     """Job types with their credit rates"""
     DUB = "dub"
     SEPARATION = "separation"
+    CLIP = "clip"
 
 class CreditRates:
     """Credit calculation rates"""
     DUB_RATE_PER_SECOND = 0.135
     SEPARATION_RATE_PER_MINUTE = 2.5
+    CLIP_RATE_PER_MINUTE = 3.75
     COST_PER_CREDIT_USD = 0.04
 
 class ThresholdBilling:
