@@ -84,6 +84,11 @@ class SeparationJobService(BaseJobService[SeparationJob]):
             async for job_data in cursor:
                 job_data['id'] = str(job_data['_id'])
                 del job_data['_id']
+                # Handle missing vocal_url and instrument_url fields
+                if 'vocal_url' not in job_data or job_data['vocal_url'] is None:
+                    job_data['vocal_url'] = job_data.get('details', {}).get('vocal_url')
+                if 'instrument_url' not in job_data or job_data['instrument_url'] is None:
+                    job_data['instrument_url'] = job_data.get('details', {}).get('instrument_url')
                 jobs.append(SeparationJob(**job_data))
             
             return jobs, total_count
