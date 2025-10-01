@@ -111,21 +111,35 @@ class ClipService:
                 return st
             time.sleep(2)
     
-    def segment_openai(self, transcript: str, expected_duration: float) -> Dict[str, Any]:
+    def get_video_duration(self, video_path: str) -> float:
+        cmd = [self._ffmpeg().replace("ffmpeg", "ffprobe"), "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", video_path]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+        return 0.0
+
+    def segment_openai(self, transcript: str, expected_duration: float, video_duration: float) -> Dict[str, Any]:
+        max_clips = 3 if video_duration <= 300 else 5
+        
         prompt = {
             "role": "system",
             "content": (
-                "You are a video content editor for short-form content. Identify highly engaging segments where EACH segment should be around the target duration. "
-                "The target duration is PER SEGMENT (not total). Find as many quality segments as exist—you do NOT need to cover the full video. "
-                "Return STRICT JSON: {segments:[{start:number,end:number,reason:string,ratings:{hook:number,flow:number,value:number,trend:number}}],overall:{score:number,out_of:number,grade:string}}. "
-                "All ratings MUST be 0-100. overall.out_of MUST be 100. Segments must be sorted, non-overlapping, and within [0,T]."
+                "You are an expert video editor for viral short-form content. Your job is to identify ONLY the BEST, most engaging moments. "
+                f"CRITICAL RULES:\n"
+                f"1. Video duration is {video_duration:.2f}s - ALL segments MUST be within [0, {video_duration:.2f}]\n"
+                f"2. Quality over quantity - create MAX {max_clips} clips for optimal engagement\n"
+                f"3. Expected duration (~{expected_duration}s) is a GUIDELINE, not mandatory - prioritize natural content breaks\n"
+                f"4. Select only HIGH-VALUE moments (strong hook, clear message, viral potential)\n"
+                f"5. Skip weak/filler content - better to have 1-2 great clips than many mediocre ones\n"
+                f"6. Each segment must have hook score ≥70 OR value score ≥75\n"
+                "Return JSON: {segments:[{start:number,end:number,reason:string,ratings:{hook:number,flow:number,value:number,trend:number}}],overall:{score:number,out_of:number,grade:string}}"
             )
         }
 
         max_chars = 12000
         safe_transcript = transcript if len(transcript) <= max_chars else (transcript[:max_chars] + "\n...[truncated]")
 
-        user_content = f"Target duration PER SEGMENT: ~{expected_duration}s (can be shorter or longer based on content quality). Transcript:\n{safe_transcript}"
+        user_content = f"Video: {video_duration:.2f}s | Target per clip: ~{expected_duration}s (flexible) | Max clips: {max_clips}\n\nTranscript:\n{safe_transcript}"
         user = {"role": "user", "content": user_content}
         body = {"model": "gpt-4o-mini", "messages": [prompt, user], "response_format": {"type": "json_object"}, "temperature": 0.2}
         r = requests.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}, data=json.dumps(body))

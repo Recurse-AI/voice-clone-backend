@@ -61,9 +61,22 @@ async def _process_clip_job_async(job_id: str, user_id: str):
         await repo.update(job_id, {"transcript": transcript_text})
         
         await repo.update_status(job_id, "segmenting", 40)
-        seg_resp = service.segment_openai(transcript_text, job["expected_duration"])
+        video_duration = job["end_time"] - job["start_time"]
+        seg_resp = service.segment_openai(transcript_text, job["expected_duration"], video_duration)
         segments = seg_resp.get("segments", [])
         overall = seg_resp.get("overall", {})
+        
+        valid_segments = []
+        for s in segments:
+            start, end = float(s["start"]), float(s["end"])
+            if start >= video_duration or end > video_duration:
+                logger.warning(f"Skipping segment [{start}-{end}s] - exceeds video duration {video_duration}s")
+                continue
+            if end - start < 1.0:
+                logger.warning(f"Skipping segment [{start}-{end}s] - too short (< 1s)")
+                continue
+            valid_segments.append(s)
+        segments = valid_segments
         
         await repo.update(job_id, {"overall_rating": overall})
         
@@ -72,7 +85,7 @@ async def _process_clip_job_async(job_id: str, user_id: str):
         total_segs = len(segments)
         for i, seg in enumerate(segments):
             seg_start = max(0.0, float(seg["start"]))
-            seg_end = max(seg_start, float(seg["end"]))
+            seg_end = min(video_duration, max(seg_start, float(seg["end"])))
             
             seg_clip = os.path.join(temp_dir, f"seg_{i+1}.mp4")
             service.cut_segment(base_clip, seg_start, seg_end, seg_clip)
