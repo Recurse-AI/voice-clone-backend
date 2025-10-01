@@ -15,6 +15,12 @@ async def get_current_user(
     user = request.scope.get("user")
     if user:
         return TokenUser(id=user["id"], email=user["email"])
+    
+    if not credentials:
+        raise HTTPException(
+            status_code=403,
+            detail="Not authenticated"
+        )
         
     try:
         token = credentials.credentials
@@ -26,6 +32,8 @@ async def get_current_user(
         payload = decode_jwt_token(token)
         return TokenUser(**payload)
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Token error: {str(e)}")
         raise HTTPException(

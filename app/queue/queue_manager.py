@@ -298,7 +298,12 @@ class QueueManager:
                 logger.error(f"❌ Queue {queue_name} not available")
                 return False
             
-            job = queue.enqueue(func, *args, **kwargs)
+            job = queue.enqueue(
+                func, *args,
+                job_timeout=3600,
+                result_ttl=1800,
+                **kwargs
+            )
             logger.info(f"✅ Enqueued task to {queue_name} (RQ job: {job.id})")
             return True
             

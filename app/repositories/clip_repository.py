@@ -27,10 +27,3 @@ class ClipRepository(BaseRepository):
     
     async def update_segments(self, job_id: str, segments: List[Dict[str, Any]]) -> bool:
         return await self.update(job_id, {"segments": segments})
-    
-    async def get_user_jobs(self, user_id: str, page: int = 1, limit: int = 10) -> tuple[List[Dict[str, Any]], int]:
-        """Get paginated clip jobs for a user"""
-        skip = (page - 1) * limit
-        jobs = await self.find_many({"user_id": user_id}, skip=skip, limit=limit, sort=[("created_at", -1)])
-        total = await self.count({"user_id": user_id})
-        return jobs, total

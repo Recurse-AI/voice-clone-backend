@@ -35,6 +35,7 @@ async def download_media(request: VideoDownloadRequest):
             "noplaylist": True,
             "quiet": True,
             "no_warnings": True,
+            "nocheckcertificate": True,
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -93,11 +94,22 @@ async def download_media(request: VideoDownloadRequest):
         )
         
     except Exception as e:
-        logger.error(f"Endpoint error: {str(e)}")
+        error_msg = str(e)
+        logger.error(f"Endpoint error: {error_msg}")
+        
+        if "401" in error_msg or "Unauthorized" in error_msg:
+            message = "Video requires authentication or is not accessible"
+        elif "403" in error_msg or "Forbidden" in error_msg:
+            message = "Video access forbidden or region-restricted"
+        elif "404" in error_msg:
+            message = "Video not found"
+        else:
+            message = "Failed to download video"
+        
         return VideoDownloadResponse(
             success=False,
-            message="Internal server error",
-            error=str(e)
+            message=message,
+            error=error_msg
         )
     finally:
         if temp_dir and os.path.exists(temp_dir):
