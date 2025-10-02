@@ -425,8 +425,9 @@ def _animated_text_multiline(
         off_e = max(off_s + 1, w["end"] - base_start_ms)
         mid = off_s + max(1, (off_e - off_s) // 2)
         word = _sanitize_text(w["text"])
+        btag = "\\b0" if non_latin else "\\b1"
         parts.append(
-            f"{{\\k{dur_cs}{'\\b0' if non_latin else '\\b1'}\\fscx100\\fscy100\\1c&H00FFFFFF&"
+            f"{{\\k{dur_cs}{btag}\\fscx100\\fscy100\\1c&H00FFFFFF&"
             f"\\t({off_s},{mid},\\fscx103\\fscy103\\1c&H00FFA500&)"
             f"\\t({mid},{off_e},\\fscx103\\fscy103\\1c&H00FFD700&)"
             f"\\t({off_e},{off_e+1},\\fscx100\\fscy100\\1c&H00FFFFFF&)}}{word}"
