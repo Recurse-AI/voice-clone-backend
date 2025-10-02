@@ -208,13 +208,26 @@ def _create_animation_for_word(anim_type: str, word_params: dict, effect_config:
 def _ass_header(resolution: Tuple[int, int], font_name: str, font_size: int, letter_spacing: float) -> str:
     x, y = resolution
     
-    # Use actual font file names for better compatibility
+    # Map all font variants to actual file names
     font_mapping = {
         "Montserrat": "Montserrat-Bold",
+        "Montserrat-Bold": "Montserrat-Bold",
+        "Montserrat-Regular": "Montserrat-Regular",
         "Poppins": "Poppins-Bold",
+        "Poppins-Bold": "Poppins-Bold",
+        "Poppins-Regular": "Poppins-Regular",
+        "Poppins-Medium": "Poppins-Regular",
         "Lato": "Lato-Bold",
+        "Lato-Bold": "Lato-Bold",
+        "Lato-Regular": "Lato-Regular",
         "Roboto": "Roboto-Bold",
-        "NotoSansDevanagari": "NotoSansDevanagari-Bold"
+        "Roboto-Bold": "Roboto-Bold",
+        "Roboto-Regular": "Roboto-Regular",
+        "Roboto-Medium": "Roboto-Medium",
+        "Roboto-Light": "Roboto-Light",
+        "NotoSansDevanagari": "NotoSansDevanagari-Bold",
+        "NotoSansDevanagari-Bold": "NotoSansDevanagari-Bold",
+        "NotoSansDevanagari-Regular": "NotoSansDevanagari-Regular"
     }
     actual_font = font_mapping.get(font_name, font_name)
     
@@ -275,10 +288,23 @@ def _ass_events(pages: List[List[Dict]], style: str, words_per_line: int, page_c
             # Use actual font file name for better compatibility
             font_mapping = {
                 "Montserrat": "Montserrat-Bold",
+                "Montserrat-Bold": "Montserrat-Bold",
+                "Montserrat-Regular": "Montserrat-Regular",
                 "Poppins": "Poppins-Bold",
+                "Poppins-Bold": "Poppins-Bold",
+                "Poppins-Regular": "Poppins-Regular",
+                "Poppins-Medium": "Poppins-Regular",
                 "Lato": "Lato-Bold",
+                "Lato-Bold": "Lato-Bold",
+                "Lato-Regular": "Lato-Regular",
                 "Roboto": "Roboto-Bold",
-                "NotoSansDevanagari": "NotoSansDevanagari-Bold"
+                "Roboto-Bold": "Roboto-Bold",
+                "Roboto-Regular": "Roboto-Regular",
+                "Roboto-Medium": "Roboto-Medium",
+                "Roboto-Light": "Roboto-Light",
+                "NotoSansDevanagari": "NotoSansDevanagari-Bold",
+                "NotoSansDevanagari-Bold": "NotoSansDevanagari-Bold",
+                "NotoSansDevanagari-Regular": "NotoSansDevanagari-Regular"
             }
             actual_font = font_mapping.get(detected_font, detected_font)
             line_pre = f"{line_pre}\\fn{actual_font}"
