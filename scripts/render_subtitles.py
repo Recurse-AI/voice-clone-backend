@@ -23,6 +23,7 @@ def render(video_path: str, ass_path: str, output_path: str, fontsdir: str = Non
         abs_fonts = os.path.abspath(fontsdir)
         env['ASS_FONTSDIR'] = abs_fonts
         env['FONTCONFIG_PATH'] = abs_fonts
+        env['FONTCONFIG_FILE'] = os.path.join(abs_fonts, 'fonts.conf')
     
     # Build filter chain using only the filename (no drive letters in filter)
     if size:

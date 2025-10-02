@@ -100,7 +100,12 @@ def build_ass_from_words(
     page_colors: List[Tuple[str, str]] | None = None,
 ) -> str:
     pages = _group_words_into_pages(words, gap_ms, max_words_per_line, max_lines)
-    header = _ass_header(resolution, font_name, font_size, letter_spacing)
+    
+    # Auto-detect font based on text content
+    sample_text = " ".join(w.get("text", "") for w in words[:10])  # Sample first 10 words
+    selected_font = _auto_select_font(sample_text, font_name)
+    
+    header = _ass_header(resolution, selected_font, font_size, letter_spacing)
     # Resolve aliases and normalize before event rendering
     resolved_style = _resolve_style(style)
     events = _ass_events(pages, resolved_style, max_words_per_line, page_colors)
@@ -252,6 +257,9 @@ def _ass_events(pages: List[List[Dict]], style: str, words_per_line: int, page_c
         line_pre = cfg.get("line_pre", "\\an2")
         font_override = cfg.get("font")
         if font_override and "\\fn" not in line_pre:
+            # Auto-detect font based on page content
+            page_text = " ".join(w.get("text", "") for w in page_words)
+            font_override = _auto_select_font(page_text, font_override)
             line_pre = f"{line_pre}\\fn{font_override}"
         # Optional explicit outline/shadow thickness
         if "\\bord" not in line_pre and cfg.get("bord") is not None:
@@ -306,6 +314,13 @@ def _detect_language_type(text: str) -> str:
     elif (devanagari_chars + bengali_chars) / total_chars > 0.3:
         return "indic"
     return "latin"
+
+def _auto_select_font(text: str, default_font: str) -> str:
+    """Auto-select appropriate font based on text content"""
+    lang_type = _detect_language_type(text)
+    if lang_type == "indic":
+        return "NotoSansDevanagari"
+    return default_font
 
 def _get_char_limit(text: str) -> int:
     """Get optimal character limit based on language"""
