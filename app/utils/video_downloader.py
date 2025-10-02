@@ -180,7 +180,8 @@ class VideoDownloadService:
                 "hls_prefer_native": True,
                 "concurrent_fragments": 3,
                 "fragment_retries": 5,
-                "extractor_args": {"youtube": {"player_client": ["ios", "android"], "skip": ["hls", "dash"]}},
+                "extractor_args": {"youtube": {"player_client": ["ios"]}},
+                "http_headers": {"User-Agent": "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"},
             }
             
             # Download with retry and fallback mechanism

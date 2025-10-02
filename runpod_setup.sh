@@ -40,6 +40,16 @@ export TORCH_COMPILE_BACKEND=inductor
 echo "🐍 Activating virtual environment..."
 source venv/bin/activate
 
+# Upgrade yt-dlp to latest version
+echo "🔧 Upgrading yt-dlp..."
+pip install --upgrade yt-dlp --quiet
+
+# Setup auto-update cron job for yt-dlp (runs daily at 3 AM)
+echo "⏰ Setting up auto-update schedule..."
+chmod +x auto_update_ytdlp.sh
+SCRIPT_PATH="$(pwd)/auto_update_ytdlp.sh"
+(crontab -l 2>/dev/null | grep -v "auto_update_ytdlp.sh"; echo "0 3 * * * $SCRIPT_PATH") | crontab - 2>/dev/null || true
+
 # Create directories
 mkdir -p ./tmp ./logs
 chmod 755 ./tmp ./logs
@@ -136,6 +146,7 @@ redis-server --daemonize yes \
   --tcp-backlog 1024
 
 sleep 2
+
 
 # Quick Redis verification
 REDIS_RETRIES=3
