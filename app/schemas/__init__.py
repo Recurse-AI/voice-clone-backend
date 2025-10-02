@@ -319,7 +319,7 @@ class UserSeparationJob(BaseModel):
     job_id: str
     status: str
     progress: int
-    audio_url: str
+    audio_url: Optional[str] = None
     vocal_url: Optional[str] = None
     instrument_url: Optional[str] = None
     error: Optional[str] = None

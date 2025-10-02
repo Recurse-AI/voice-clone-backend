@@ -282,6 +282,37 @@ def _ass_events(pages: List[List[Dict]], style: str, words_per_line: int, page_c
     return "\n".join(rows)
 
 
+def _detect_language_type(text: str) -> str:
+    """Detect language type for character limit optimization"""
+    if not text:
+        return "latin"
+    
+    cjk_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff' or
+                                       '\u3040' <= c <= '\u309f' or
+                                       '\u30a0' <= c <= '\u30ff' or
+                                       '\uac00' <= c <= '\ud7af')
+    arabic_chars = sum(1 for c in text if '\u0600' <= c <= '\u06ff')
+    devanagari_chars = sum(1 for c in text if '\u0900' <= c <= '\u097f')
+    bengali_chars = sum(1 for c in text if '\u0980' <= c <= '\u09ff')
+    
+    total_chars = len(text)
+    if total_chars == 0:
+        return "latin"
+    
+    if cjk_chars / total_chars > 0.3:
+        return "cjk"
+    elif arabic_chars / total_chars > 0.3:
+        return "arabic"
+    elif (devanagari_chars + bengali_chars) / total_chars > 0.3:
+        return "indic"
+    return "latin"
+
+def _get_char_limit(text: str) -> int:
+    """Get optimal character limit based on language"""
+    lang_type = _detect_language_type(text)
+    limits = {"cjk": 18, "arabic": 30, "indic": 35, "latin": 40}
+    return limits.get(lang_type, 40)
+
 def _group_words_into_pages(
     words: List[Dict], gap_ms: int, words_per_line: int, max_lines: int
 ) -> List[List[Dict]]:
@@ -300,13 +331,32 @@ def _group_words_into_pages(
     if cur:
         blocks.append(cur)
 
-    page_size = words_per_line * max_lines
     pages: List[List[Dict]] = []
     for blk in blocks:
-        i = 0
-        while i < len(blk):
-            pages.append(blk[i : i + page_size])
-            i += page_size
+        page: List[Dict] = []
+        char_count = 0
+        
+        for word in blk:
+            word_text = word.get("text", "")
+            word_len = len(word_text)
+            test_len = char_count + word_len + (1 if char_count > 0 else 0)
+            
+            if not page:
+                char_limit = _get_char_limit(word_text)
+                page.append(word)
+                char_count = word_len
+            elif test_len <= char_limit:
+                page.append(word)
+                char_count = test_len
+            else:
+                pages.append(page)
+                page = [word]
+                char_count = word_len
+                char_limit = _get_char_limit(word_text)
+        
+        if page:
+            pages.append(page)
+    
     return pages
 
 

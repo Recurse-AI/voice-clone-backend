@@ -1,102 +1,78 @@
 from fastapi import APIRouter, HTTPException
 import logging
-import tempfile
+from pathlib import Path
 import os
 import uuid
-import yt_dlp
 from app.schemas import VideoDownloadRequest, VideoDownloadResponse
+from app.utils.video_downloader import video_download_service
+from app.config.settings import settings
+from app.services.r2_service import R2Service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 @router.post("/download-media", response_model=VideoDownloadResponse)
 async def download_media(request: VideoDownloadRequest):
-    """Download media from YouTube/social media and upload to R2 bucket"""
-    temp_dir = None
+    """Download media from YouTube/social media using resilient downloader, then upload to R2 bucket"""
     try:
-        from app.services.r2_service import R2Service
-        
         logger.info(f"Media download request: {request.url}")
-        
-        temp_dir = tempfile.mkdtemp(prefix="download_")
-        output_template = os.path.join(temp_dir, "%(title)s.%(ext)s")
-        
-        quality_format = "bv*+ba/best"
-        if request.resolution:
-            res_int = int(request.resolution.replace("p", ""))
-            quality_format = f"bv*[height<={res_int}]+ba/best"
-        elif request.quality == "worst":
-            quality_format = "worst"
-        
-        ydl_opts = {
-            "outtmpl": output_template,
-            "format": quality_format,
-            "merge_output_format": "mp4",
-            "noplaylist": True,
-            "quiet": True,
-            "no_warnings": True,
-            "nocheckcertificate": True,
-        }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(request.url, download=True)
-        
-        downloaded_files = [f for f in os.listdir(temp_dir) if os.path.isfile(os.path.join(temp_dir, f))]
-        if not downloaded_files:
-            return VideoDownloadResponse(success=False, message="Download failed", error="No file downloaded")
-        
-        file_path = os.path.join(temp_dir, downloaded_files[0])
-        filename = downloaded_files[0]
-        file_size = os.path.getsize(file_path)
-        
+
+        # 1) Download locally using resilient service (retries, fallbacks, tuned yt-dlp)
+        res = await video_download_service.download_video(
+            url=request.url,
+            quality=request.quality,
+            resolution=request.resolution,
+            max_filesize=request.max_filesize,
+            format_preference=request.format_preference,
+            audio_quality=request.audio_quality,
+            prefer_free_formats=bool(request.prefer_free_formats),
+            include_subtitles=bool(request.include_subtitles),
+        )
+
+        if not res.get("success"):
+            return VideoDownloadResponse(success=False, message="Failed to download video", error=res.get("error"))
+
+        job_id = res.get("job_id")
+        filename = res.get("filename")
+        local_path = Path(settings.TEMP_DIR) / job_id / filename
+        if not local_path.exists():
+            return VideoDownloadResponse(success=False, message="Download failed", error="Downloaded file not found")
+
+        # 2) Upload to R2
         r2_service = R2Service()
-        file_id = str(uuid.uuid4())
-        r2_key = f"downloads/{file_id}/{filename}"
+        r2_key = f"downloads/{job_id}/{filename}"
         content_type = r2_service._get_content_type(filename)
-        
-        upload_result = r2_service.upload_file(file_path, r2_key, content_type)
-        
+        upload_result = r2_service.upload_file(str(local_path), r2_key, content_type)
         if not upload_result.get("success"):
             logger.error(f"R2 upload failed: {upload_result.get('error')}")
-            return VideoDownloadResponse(
-                success=False,
-                message="Upload to R2 failed",
-                error=upload_result.get("error")
-            )
-        
-        logger.info(f"Upload to R2 successful: {upload_result['url']}")
-        
+            return VideoDownloadResponse(success=False, message="Upload to R2 failed", error=upload_result.get("error"))
+
+        # 3) Build response preserving existing shape fields
         video_info = {
-            "title": info.get("title", "Unknown"),
-            "duration": info.get("duration", 0),
-            "uploader": info.get("uploader", "Unknown"),
+            "title": res.get("title", "Unknown"),
+            "duration": res.get("duration", 0),
             "filename": filename,
-            "file_size": file_size,
-            "local_path": "",
-            "downloaded_at": "",
+            "file_size": res.get("file_size", 0),
         }
-        
         download_info = {
             "requested_quality": request.quality or "best",
-            "actual_format": info.get("ext", "Unknown"),
-            "resolution": f"{info.get('width', 'N/A')}x{info.get('height', 'N/A')}",
-            "format": info.get("ext", "Unknown"),
-            "filesize_approx": file_size,
+            "resolution": res.get("resolution", "Unknown"),
+            "format": res.get("format", "Unknown"),
         }
-        
+
         return VideoDownloadResponse(
             success=True,
             message="Download and upload successful",
+            job_id=job_id,
             r2_url=upload_result["url"],
             r2_key=r2_key,
             video_info=video_info,
             download_info=download_info
         )
-        
+
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Endpoint error: {error_msg}")
-        
         if "401" in error_msg or "Unauthorized" in error_msg:
             message = "Video requires authentication or is not accessible"
         elif "403" in error_msg or "Forbidden" in error_msg:
@@ -105,16 +81,4 @@ async def download_media(request: VideoDownloadRequest):
             message = "Video not found"
         else:
             message = "Failed to download video"
-        
-        return VideoDownloadResponse(
-            success=False,
-            message=message,
-            error=error_msg
-        )
-    finally:
-        if temp_dir and os.path.exists(temp_dir):
-            import shutil
-            try:
-                shutil.rmtree(temp_dir)
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup temp dir: {cleanup_error}")
+        return VideoDownloadResponse(success=False, message=message, error=error_msg)
