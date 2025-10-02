@@ -207,6 +207,17 @@ def _create_animation_for_word(anim_type: str, word_params: dict, effect_config:
 
 def _ass_header(resolution: Tuple[int, int], font_name: str, font_size: int, letter_spacing: float) -> str:
     x, y = resolution
+    
+    # Use actual font file names for better compatibility
+    font_mapping = {
+        "Montserrat": "Montserrat-Bold",
+        "Poppins": "Poppins-Bold",
+        "Lato": "Lato-Bold",
+        "Roboto": "Roboto-Bold",
+        "NotoSansDevanagari": "NotoSansDevanagari-Bold"
+    }
+    actual_font = font_mapping.get(font_name, font_name)
+    
     return (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -217,9 +228,9 @@ def _ass_header(resolution: Tuple[int, int], font_name: str, font_size: int, let
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Simple,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,{letter_spacing},0,1,6,3,2,60,60,140,1\n"
-        f"Style: Karaoke,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,{letter_spacing},0,1,7,3,2,60,60,140,1\n"
-        f"Style: KaraokeBox,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,1,0,0,0,100,100,{letter_spacing},0,3,0,0,2,60,60,160,1\n\n"
+        f"Style: Simple,{actual_font},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,{letter_spacing},0,1,6,3,2,60,60,140,1\n"
+        f"Style: Karaoke,{actual_font},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,{letter_spacing},0,1,7,3,2,60,60,140,1\n"
+        f"Style: KaraokeBox,{actual_font},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,1,0,0,0,100,100,{letter_spacing},0,3,0,0,2,60,60,160,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -259,8 +270,18 @@ def _ass_events(pages: List[List[Dict]], style: str, words_per_line: int, page_c
         if font_override and "\\fn" not in line_pre:
             # Auto-detect font based on page content
             page_text = " ".join(w.get("text", "") for w in page_words)
-            font_override = _auto_select_font(page_text, font_override)
-            line_pre = f"{line_pre}\\fn{font_override}"
+            detected_font = _auto_select_font(page_text, font_override)
+            
+            # Use actual font file name for better compatibility
+            font_mapping = {
+                "Montserrat": "Montserrat-Bold",
+                "Poppins": "Poppins-Bold",
+                "Lato": "Lato-Bold",
+                "Roboto": "Roboto-Bold",
+                "NotoSansDevanagari": "NotoSansDevanagari-Bold"
+            }
+            actual_font = font_mapping.get(detected_font, detected_font)
+            line_pre = f"{line_pre}\\fn{actual_font}"
         # Optional explicit outline/shadow thickness
         if "\\bord" not in line_pre and cfg.get("bord") is not None:
             try:
