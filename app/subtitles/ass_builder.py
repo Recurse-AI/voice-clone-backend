@@ -2,6 +2,7 @@ from typing import List, Dict, Literal, Tuple
 import unicodedata
 import os
 import json
+import base64
 
 AssStyle = Literal["simple", "karaoke"]
 
@@ -87,6 +88,38 @@ def resolve_style_name(name: str) -> str:
     return _resolve_style(name)
 
 
+def _embed_fonts_section(fonts_to_embed: List[str]) -> str:
+    """Embed font files in ASS format using base64 encoding."""
+    if not fonts_to_embed:
+        return ""
+    
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    fonts_dir = os.path.join(base_dir, "assets", "fonts")
+    
+    sections = []
+    for font_filename in fonts_to_embed:
+        font_path = os.path.join(fonts_dir, font_filename)
+        if not os.path.exists(font_path):
+            continue
+        
+        try:
+            with open(font_path, "rb") as f:
+                font_data = f.read()
+            encoded = base64.b64encode(font_data).decode("ascii")
+            
+            # Split into 80-char lines as per ASS spec
+            lines = [encoded[i:i+80] for i in range(0, len(encoded), 80)]
+            
+            sections.append(f"fontname: {font_filename}")
+            sections.extend(lines)
+        except Exception:
+            pass
+    
+    if sections:
+        return "\n[Fonts]\n" + "\n".join(sections) + "\n"
+    return ""
+
+
 def build_ass_from_words(
     words: List[Dict],
     style: AssStyle = "karaoke",
@@ -102,14 +135,18 @@ def build_ass_from_words(
     pages = _group_words_into_pages(words, gap_ms, max_words_per_line, max_lines)
     
     # Auto-detect font based on text content
-    sample_text = " ".join(w.get("text", "") for w in words[:10])  # Sample first 10 words
+    sample_text = " ".join(w.get("text", "") for w in words)
     selected_font = _auto_select_font(sample_text, font_name)
     
+    # Determine which fonts to embed
+    fonts_to_embed = _get_required_fonts(sample_text, selected_font)
+    
     header = _ass_header(resolution, selected_font, font_size, letter_spacing)
-    # Resolve aliases and normalize before event rendering
     resolved_style = _resolve_style(style)
     events = _ass_events(pages, resolved_style, max_words_per_line, page_colors)
-    return header + "\n" + events
+    fonts_section = _embed_fonts_section(fonts_to_embed)
+    
+    return header + fonts_section + "\n" + events
 
 
 def _create_animation_for_word(anim_type: str, word_params: dict, effect_config: dict) -> str:
@@ -358,6 +395,31 @@ def _auto_select_font(text: str, default_font: str) -> str:
     if lang_type != "latin":
         return "Noto Sans Devanagari"
     return default_font or "Montserrat"
+
+
+def _get_required_fonts(text: str, selected_font: str) -> List[str]:
+    """Get list of font files to embed based on text content."""
+    lang_type = _detect_language_type(text)
+    fonts = []
+    
+    if lang_type == "indic":
+        fonts.extend([
+            "NotoSansDevanagari-Regular.ttf",
+            "NotoSansDevanagari-Bold.ttf"
+        ])
+    
+    # Always include the selected font if it's a known font
+    font_files = {
+        "Montserrat": ["Montserrat-Regular.ttf", "Montserrat-Bold.ttf"],
+        "Poppins": ["Poppins-Regular.ttf", "Poppins-Bold.ttf"],
+        "Roboto": ["Roboto-Regular.ttf", "Roboto-Bold.ttf"],
+        "Lato": ["Lato-Regular.ttf", "Lato-Bold.ttf"],
+    }
+    
+    if selected_font in font_files and lang_type == "latin":
+        fonts.extend(font_files[selected_font])
+    
+    return fonts
 
 def _get_char_limit(text: str) -> int:
     """Get optimal character limit based on language"""
