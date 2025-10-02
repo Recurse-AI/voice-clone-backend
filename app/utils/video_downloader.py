@@ -60,11 +60,11 @@ class VideoDownloadService:
                 delay = 2 ** attempt
                 await asyncio.sleep(delay)
 
-    def _get_fallback_format(self, error: Exception) -> str | None:
+    def _get_fallback_formats(self, error: Exception) -> list[str] | None:
         error_msg = str(error).lower()
 
         if "requested format is not available" in error_msg:
-            return "best"
+            return ["best", "bestvideo+bestaudio/best", "bestvideo+bestaudio", "worst"]
 
         elif "video unavailable" in error_msg:
             raise Exception("Video is private or deleted")
@@ -186,19 +186,25 @@ class VideoDownloadService:
                 "extractor_args": {"youtube": {"player_client": ["android", "web"], "player_skip": ["js", "configs"]}},
             }
             
-            # Download with simple retry mechanism
+            # Download with retry and fallback mechanism
             try:
                 await self._download_with_retry(ydl_opts, url)
             except Exception as download_error:
-                # Try fallback format
-                fallback_format = self._get_fallback_format(download_error)
-                if fallback_format:
-                    ydl_opts["format"] = fallback_format
-                    try:
-                        ydl = yt_dlp.YoutubeDL(ydl_opts)
-                        ydl.download([url])
-                    except Exception as fallback_error:
-                        return {"success": False, "error": f"Download failed: {str(fallback_error)}"}
+                fallback_formats = self._get_fallback_formats(download_error)
+                if fallback_formats:
+                    last_error = download_error
+                    for fallback_format in fallback_formats:
+                        ydl_opts["format"] = fallback_format
+                        try:
+                            ydl = yt_dlp.YoutubeDL(ydl_opts)
+                            ydl.download([url])
+                            logger.info(f"Successfully downloaded with fallback format: {fallback_format}")
+                            break
+                        except Exception as e:
+                            last_error = e
+                            continue
+                    else:
+                        return {"success": False, "error": f"Download failed: {str(last_error)}"}
                 else:
                     return {"success": False, "error": f"Download failed: {str(download_error)}"}
             
