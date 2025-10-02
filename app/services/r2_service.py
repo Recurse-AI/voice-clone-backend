@@ -299,8 +299,33 @@ class R2Service:
         return f"job_{uuid.uuid4()}"
     
     def _sanitize_filename(self, filename: str) -> str:
-        """Sanitize filename by replacing spaces with hyphens"""
-        return filename.replace(' ', '-')
+        """Sanitize filename for URL-safe storage by replacing special characters"""
+        import re
+        
+        # Extract extension
+        name_parts = filename.rsplit('.', 1)
+        name = name_parts[0]
+        ext = f".{name_parts[1]}" if len(name_parts) > 1 else ""
+        
+        # Replace spaces with hyphens
+        name = name.replace(' ', '-')
+        
+        # Keep only ASCII alphanumeric, hyphen, underscore, dot
+        # Remove all other characters (including Unicode)
+        name = re.sub(r'[^a-zA-Z0-9\-_.]', '-', name)
+        
+        # Remove multiple consecutive hyphens
+        name = re.sub(r'-+', '-', name)
+        
+        # Remove leading/trailing hyphens
+        name = name.strip('-')
+        
+        # If name becomes empty after sanitization, use timestamp
+        if not name:
+            from datetime import datetime
+            name = f"file_{int(datetime.now().timestamp())}"
+        
+        return f"{name}{ext}"
     
     def _get_content_type(self, filename: str) -> str:
         """Get content type based on file extension"""
