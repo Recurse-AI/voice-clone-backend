@@ -224,6 +224,7 @@ def _ass_header(resolution: Tuple[int, int], font_name: str, font_size: int, let
         "NotoSansDevanagari-Bold": "Noto Sans Devanagari",
         "NotoSansDevanagari-Regular": "Noto Sans Devanagari",
     }
+    # If text requires Indic, force Noto Sans Devanagari regardless of user choice
     family = family_mapping.get(font_name, font_name or "Montserrat")
     
     return (
@@ -276,7 +277,7 @@ def _ass_events(pages: List[List[Dict]], style: str, words_per_line: int, page_c
         line_pre = cfg.get("line_pre", "\\an2")
         font_override = cfg.get("font")
         if font_override and "\\fn" not in line_pre:
-            # Auto-detect family based on content; keep family name (not file)
+            # Auto-detect family based on content; if Indic, force Noto Sans Devanagari
             page_text = " ".join(w.get("text", "") for w in page_words)
             detected = _auto_select_font(page_text, font_override)
             family_alias = {
@@ -352,14 +353,11 @@ def _detect_language_type(text: str) -> str:
     return "latin"
 
 def _auto_select_font(text: str, default_font: str) -> str:
-    """Keep user's font choice, fallback chain in fonts.conf handles compatibility"""
-    if not default_font:
-        lang_type = _detect_language_type(text)
-        if lang_type == "indic":
-            return "NotoSansDevanagari"
-        return "Arial"
-    
-    return default_font
+    """Use user's font for Latin, otherwise force a universal fallback family."""
+    lang_type = _detect_language_type(text)
+    if lang_type != "latin":
+        return "Noto Sans Devanagari"
+    return default_font or "Montserrat"
 
 def _get_char_limit(text: str) -> int:
     """Get optimal character limit based on language"""
