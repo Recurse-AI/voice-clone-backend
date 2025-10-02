@@ -14,7 +14,8 @@ async def _complete_billing_async(job_id: str, job_type: str, user_id: str, bill
     """Complete billing operation async"""
     # Lazy import to ensure DB client binds to the active event loop
     from app.services.credit_service import credit_service
-    job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
+    job_type_map = {"dub": JobType.DUB, "separation": JobType.SEPARATION, "clip": JobType.CLIP}
+    job_type_enum = job_type_map.get(job_type.lower(), JobType.DUB)
     
     result = await credit_service.complete_job_billing(job_id, job_type_enum, user_id, billing_percentage)
     
@@ -30,7 +31,8 @@ async def _refund_credits_async(job_id: str, job_type: str, reason: str) -> Dict
     """Refund credits operation async"""
     # Lazy import to ensure DB client binds to the active event loop
     from app.services.credit_service import credit_service
-    job_type_enum = JobType.DUB if job_type.lower() == "dub" else JobType.SEPARATION
+    job_type_map = {"dub": JobType.DUB, "separation": JobType.SEPARATION, "clip": JobType.CLIP}
+    job_type_enum = job_type_map.get(job_type.lower(), JobType.DUB)
     
     result = await credit_service.refund_job_credits(job_id, job_type_enum, reason)
     

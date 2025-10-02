@@ -228,7 +228,8 @@ class R2Service:
 
             content_type = self._get_content_type(filename)
             base_path = settings.R2_BASE_PATH.rstrip('/')
-            r2_key = f"{base_path}/temp/{job_id}/{filename}"
+            sanitized_filename = self._sanitize_filename(filename)
+            r2_key = f"{base_path}/temp/{job_id}/{sanitized_filename}"
 
             upload_tasks.append({
                 'filename': filename,
@@ -288,11 +289,18 @@ class R2Service:
     def generate_file_path(self, job_id: str, file_type: str = "", filename: str = "") -> str:
         """Generate R2 file path with base path"""
         base_path = settings.R2_BASE_PATH.rstrip('/')
-        return f"{base_path}/temp/{job_id}/{filename}" if filename else f"{base_path}/temp/{job_id}/"
+        if filename:
+            sanitized_filename = self._sanitize_filename(filename)
+            return f"{base_path}/temp/{job_id}/{sanitized_filename}"
+        return f"{base_path}/temp/{job_id}/"
     
     def generate_job_id(self) -> str:
         """Generate unique job ID with prefix"""
         return f"job_{uuid.uuid4()}"
+    
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize filename by replacing spaces with hyphens"""
+        return filename.replace(' ', '-')
     
     def _get_content_type(self, filename: str) -> str:
         """Get content type based on file extension"""

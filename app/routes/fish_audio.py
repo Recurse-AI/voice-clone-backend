@@ -121,7 +121,8 @@ async def create_fish_model(
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 tmp.write(content)
                 tmp_path = tmp.name
-            r2_key = r2_service.generate_file_path(r2_job_id, "", v.filename)
+            sanitized_filename = r2_service._sanitize_filename(v.filename)
+            r2_key = r2_service.generate_file_path(r2_job_id, "", sanitized_filename)
             r2_service.upload_file(tmp_path, r2_key, v.content_type or "audio/wav")
         finally:
             try:

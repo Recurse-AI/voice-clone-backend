@@ -40,7 +40,8 @@ async def download_media(request: VideoDownloadRequest):
 
         # 2) Upload to R2
         r2_service = R2Service()
-        r2_key = f"downloads/{job_id}/{filename}"
+        sanitized_filename = r2_service._sanitize_filename(filename)
+        r2_key = f"downloads/{job_id}/{sanitized_filename}"
         content_type = r2_service._get_content_type(filename)
         upload_result = r2_service.upload_file(str(local_path), r2_key, content_type)
         if not upload_result.get("success"):

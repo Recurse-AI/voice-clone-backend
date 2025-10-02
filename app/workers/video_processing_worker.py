@@ -95,7 +95,8 @@ def process_video_task(task_data: dict):
                 r2_service = R2Service()
                 
                 # Generate R2 key for processed video/audio
-                r2_key = r2_service.generate_file_path(job_id, "processed", result["output_filename"])
+                sanitized_output_filename = r2_service._sanitize_filename(result["output_filename"])
+                r2_key = r2_service.generate_file_path(job_id, "processed", sanitized_output_filename)
                 
                 # Upload final processed file to R2
                 upload_result = r2_service.upload_file(

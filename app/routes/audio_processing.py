@@ -67,7 +67,8 @@ async def start_audio_separation(
         # Upload to R2 storage
         r2_service = R2Service()
         original_filename = os.path.basename(local_audio_path)
-        r2_audio_key = f"audio/{job_id}/{original_filename}"
+        sanitized_filename = r2_service._sanitize_filename(original_filename)
+        r2_audio_key = f"audio/{job_id}/{sanitized_filename}"
         
         audio_upload_result = r2_service.upload_file(local_audio_path, r2_audio_key)
         if not audio_upload_result.get("success"):

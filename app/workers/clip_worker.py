@@ -8,6 +8,50 @@ from app.repositories.clip_repository import ClipRepository
 
 logger = logging.getLogger(__name__)
 
+def _send_clip_completion_email(job_id: str, user_id: str):
+    """Send completion email notification for clip jobs"""
+    try:
+        from app.utils.db_sync_operations import get_user_sync
+        from app.utils.email_helper import send_email, create_job_completion_template
+        from app.config.settings import settings
+
+        user = get_user_sync(user_id)
+        if not user:
+            logger.warning(f"User {user_id} not found, skipping email")
+            return
+
+        logger.info(f"Sending completion email to user {user_id} ({user.get('email')}) for clip job {job_id}")
+
+        download_urls = {"clips_url": f"{settings.FRONTEND_URL}/workspace/clips/results/{job_id}"}
+        
+        html_body = create_job_completion_template(
+            user.get('name', 'User'), "clip", job_id, download_urls
+        )
+
+        subject = "✂️ Your Video Clips are Ready - ClearVocals"
+
+        if not settings.EMAIL_HOST_USER or not settings.EMAIL_HOST_PASSWORD:
+            logger.warning(f"⚠️ Email credentials not configured - skipping email for clip job {job_id}")
+            return
+
+        email_sent = send_email(
+            sender_email=settings.EMAIL_HOST_USER,
+            receiver_email=user.get('email'),
+            subject=subject,
+            body=html_body,
+            password=settings.EMAIL_HOST_PASSWORD,
+            is_html=True,
+            raise_on_error=False
+        )
+        
+        if email_sent:
+            logger.info(f"✅ Completion email sent for clip job {job_id}")
+        else:
+            logger.error(f"❌ Email failed for clip job {job_id}")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to send completion email for clip job {job_id}: {e}")
+
 def process_clip_job(job_id: str, user_id: str):
     try:
         asyncio.run(_process_clip_job_async(job_id, user_id))
@@ -18,6 +62,15 @@ def process_clip_job(job_id: str, user_id: str):
 async def _update_failed(job_id: str, error: str):
     repo = ClipRepository()
     await repo.update(job_id, {"status": "failed", "error_message": error})
+    
+    # Refund credits on failure
+    try:
+        job = await repo.get_by_id(job_id)
+        if job:
+            from app.utils.job_utils import job_utils
+            job_utils.refund_job_credits_sync(job_id, "clip", "job_failed")
+    except Exception as e:
+        logger.error(f"Failed to refund credits for clip job {job_id}: {e}")
 
 async def _process_clip_job_async(job_id: str, user_id: str):
     repo = ClipRepository()
@@ -134,6 +187,19 @@ async def _process_clip_job_async(job_id: str, user_id: str):
             await repo.update_status(job_id, "rendering", progress)
         
         await repo.update(job_id, {"status": "completed", "progress": 100, "completed_at": datetime.now(timezone.utc)})
+        
+        # Complete credit billing
+        try:
+            from app.utils.job_utils import job_utils
+            job_utils.complete_job_billing_sync(job_id, "clip", user_id, 1.0)
+        except Exception as e:
+            logger.error(f"Failed to complete billing for clip job {job_id}: {e}")
+        
+        # Send completion email
+        try:
+            _send_clip_completion_email(job_id, user_id)
+        except Exception as e:
+            logger.error(f"Failed to send completion email for clip job {job_id}: {e}")
         
     finally:
         import shutil

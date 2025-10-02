@@ -112,7 +112,8 @@ async def finalize_upload(upload_id: str, sha256: str | None = Query(default=Non
             from app.services.dub_service import dub_service
             from app.services.r2_service import R2Service
             r2_service = R2Service()
-            r2_key = f"videos/{upload_id}/{final_name}"
+            sanitized_final_name = r2_service._sanitize_filename(final_name)
+            r2_key = f"videos/{upload_id}/{sanitized_final_name}"
             upload_result = r2_service.upload_file(final_path, r2_key, "video/mp4")
             video_url = upload_result.get("url") if upload_result.get("success") else None
             dub_service.associate_video(upload_id, final_path, video_url)

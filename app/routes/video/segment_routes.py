@@ -131,7 +131,8 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
         manifest_url_out = (up_res or {}).get("url") or manifest_url
     else:
         # If key not known, upload new copy and persist key for future overwrites
-        r2_key = r2.generate_file_path(job_id, "", os.path.basename(manifest_path))
+        manifest_filename = r2._sanitize_filename(os.path.basename(manifest_path))
+        r2_key = r2.generate_file_path(job_id, "", manifest_filename)
         res = r2.upload_file(manifest_path, r2_key, content_type="application/json")
         manifest_url_out = res.get("url") if res.get("success") else manifest_url
         if res.get("success"):
@@ -221,7 +222,8 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
         if up.get("success"):
             manifest_url = up.get("url")
     else:
-        r2_key = r2.generate_file_path(job_id, "", os.path.basename(manifest_path))
+        manifest_filename = r2._sanitize_filename(os.path.basename(manifest_path))
+        r2_key = r2.generate_file_path(job_id, "", manifest_filename)
         up = r2.upload_file(manifest_path, r2_key, content_type="application/json")
         if up.get("success"):
             manifest_url = up.get("url")

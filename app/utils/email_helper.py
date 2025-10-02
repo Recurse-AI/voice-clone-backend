@@ -327,17 +327,25 @@ def send_reset_email_background_task(background_tasks: BackgroundTasks, email: s
 
 def create_job_completion_template(name: str, job_type: str, job_id: str, download_urls: dict) -> str:
     """Job completion email template"""
-    job_title = "Video Dubbing" if job_type == "dub" else "Audio Separation"
-    emoji = "🎬" if job_type == "dub" else "🎵"
+    job_titles = {"dub": "Video Dubbing", "separation": "Audio Separation", "clip": "Video Clips"}
+    job_title = job_titles.get(job_type, "Job")
+    
+    emojis = {"dub": "🎬", "separation": "🎵", "clip": "✂️"}
+    emoji = emojis.get(job_type, "✅")
     
     # Create download links HTML
     download_links_html = ""
     if job_type == "dub":
-        # Always drive users to the unified download page for dubbing jobs
         download_page_url = f"{settings.FRONTEND_URL}/workspace/dubbing/download/{job_id}"
         download_links_html = (
             f'<p><a href="{download_page_url}" class="download-button">🔗 View Download Page</a></p>'
             f'<p style="font-size:12px;color:#6b7280;word-break:break-all;">If the button does not work: {download_page_url}</p>'
+        )
+    elif job_type == "clip":
+        clips_page_url = f"{settings.FRONTEND_URL}/workspace/clips/results/{job_id}"
+        download_links_html = (
+            f'<p><a href="{clips_page_url}" class="download-button">✂️ View Your Clips</a></p>'
+            f'<p style="font-size:12px;color:#6b7280;word-break:break-all;">If the button does not work: {clips_page_url}</p>'
         )
     else:
         if download_urls.get("separation_url"):
@@ -440,10 +448,13 @@ def send_job_completion_email_background_task(background_tasks: BackgroundTasks,
                                              job_type: str, job_id: str, download_urls: dict):
     """Send job completion notification email"""
     try:
-        job_title = "Video Dubbing" if job_type == "dub" else "Audio Separation"
-        emoji = "🎬" if job_type == "dub" else "🎵"
+        job_titles = {"dub": "Video Dubbing", "separation": "Audio Separation", "clip": "Video Clips"}
+        job_title = job_titles.get(job_type, "Job")
+        
+        emojis = {"dub": "🎬", "separation": "🎵", "clip": "✂️"}
+        emoji = emojis.get(job_type, "✅")
 
-        subject = f"{emoji} Your {job_title} is Ready - ClearVocals"
+        subject = f"{emoji} Your {job_title} {'are' if job_type == 'clip' else 'is'} Ready - ClearVocals"
 
         html_body = create_job_completion_template(name, job_type, job_id, download_urls)
 
