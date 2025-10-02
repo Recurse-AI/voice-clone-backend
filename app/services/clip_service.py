@@ -96,7 +96,7 @@ class ClipService:
             up.raise_for_status()
         audio_url = up.json()["upload_url"]
         
-        payload = {"audio_url": audio_url, "speaker_labels": False, "language_detection": True, "punctuate": True, "format_text": True}
+        payload = {"audio_url": audio_url, "speech_model": "best", "speaker_labels": False, "language_detection": True, "punctuate": True, "format_text": True}
         r = requests.post("https://api.assemblyai.com/v2/transcript", headers={**headers, "content-type": "application/json"}, data=json.dumps(payload))
         r.raise_for_status()
         tid = r.json()["id"]
