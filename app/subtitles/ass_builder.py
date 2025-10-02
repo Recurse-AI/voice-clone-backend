@@ -237,9 +237,9 @@ def _ass_header(resolution: Tuple[int, int], font_name: str, font_size: int, let
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Simple,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,{letter_spacing},0,1,6,3,2,60,60,140,1\n"
-        f"Style: Karaoke,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,{letter_spacing},0,1,7,3,2,60,60,140,1\n"
-        f"Style: KaraokeBox,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,1,0,0,0,100,100,{letter_spacing},0,3,0,0,2,60,60,160,1\n\n"
+        f"Style: Simple,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,{letter_spacing},0,1,6,3,2,60,60,140,1\n"
+        f"Style: Karaoke,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,{letter_spacing},0,1,7,3,2,60,60,140,1\n"
+        f"Style: KaraokeBox,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,0,0,0,0,100,100,{letter_spacing},0,3,0,0,2,60,60,160,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -362,7 +362,7 @@ def _auto_select_font(text: str, default_font: str) -> str:
 def _get_char_limit(text: str) -> int:
     """Get optimal character limit based on language"""
     lang_type = _detect_language_type(text)
-    limits = {"cjk": 18, "arabic": 30, "indic": 35, "latin": 40}
+    limits = {"cjk": 18, "arabic": 30, "indic": 24, "latin": 40}
     return limits.get(lang_type, 40)
 
 def _group_words_into_pages(
