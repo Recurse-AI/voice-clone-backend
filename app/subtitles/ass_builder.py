@@ -416,6 +416,9 @@ def _animated_text_multiline(
     words: List[Dict], base_start_ms: int, words_per_line: int
 ) -> str:
     parts: List[str] = []
+    # If page contains non-latin, avoid bold to reduce glyph mapping issues
+    page_text = " ".join(w.get("text", "") for w in words)
+    non_latin = _detect_language_type(page_text) != "latin"
     for idx, w in enumerate(words, start=1):
         dur_cs = max(1, int((w["end"] - w["start"]) / 10))
         off_s = max(0, w["start"] - base_start_ms)
@@ -423,7 +426,7 @@ def _animated_text_multiline(
         mid = off_s + max(1, (off_e - off_s) // 2)
         word = _sanitize_text(w["text"])
         parts.append(
-            f"{{\\k{dur_cs}\\b1\\fscx100\\fscy100\\1c&H00FFFFFF&"
+            f"{{\\k{dur_cs}{'\\b0' if non_latin else '\\b1'}\\fscx100\\fscy100\\1c&H00FFFFFF&"
             f"\\t({off_s},{mid},\\fscx103\\fscy103\\1c&H00FFA500&)"
             f"\\t({mid},{off_e},\\fscx103\\fscy103\\1c&H00FFD700&)"
             f"\\t({off_e},{off_e+1},\\fscx100\\fscy100\\1c&H00FFFFFF&)}}{word}"
