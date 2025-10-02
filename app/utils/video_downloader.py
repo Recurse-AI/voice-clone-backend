@@ -184,27 +184,32 @@ class VideoDownloadService:
             }
             
             # Download with retry and fallback mechanism
+            download_success = False
             try:
                 await self._download_with_retry(ydl_opts, url)
+                download_success = True
             except Exception as download_error:
-                logger.warning(f"Initial download failed: {str(download_error)[:100]}")
+                logger.error(f"Initial download failed, trying fallbacks: {str(download_error)[:100]}")
                 fallback_configs = self._get_fallback_configs(download_error)
                 if fallback_configs:
                     last_error = download_error
-                    for config in fallback_configs:
+                    for idx, config in enumerate(fallback_configs):
+                        logger.info(f"Trying fallback {idx+1}/{len(fallback_configs)}: format={config['format']}, client={config['extractor_args']['youtube']['player_client'][0]}")
                         ydl_opts["format"] = config["format"]
                         ydl_opts["extractor_args"] = config["extractor_args"]
                         ydl_opts["quiet"] = True
                         try:
                             ydl = yt_dlp.YoutubeDL(ydl_opts)
                             ydl.download([url])
-                            logger.info(f"Downloaded successfully with fallback: format={config['format']}, client={config['extractor_args']['youtube']['player_client'][0]}")
+                            logger.info(f"✓ Fallback successful: format={config['format']}, client={config['extractor_args']['youtube']['player_client'][0]}")
+                            download_success = True
                             break
                         except Exception as e:
-                            logger.warning(f"Fallback failed (format={config['format']}): {str(e)[:80]}")
+                            logger.error(f"✗ Fallback {idx+1} failed: {str(e)[:100]}")
                             last_error = e
                             continue
-                    else:
+                    
+                    if not download_success:
                         return {"success": False, "error": f"All download attempts failed. Last error: {str(last_error)}"}
                 else:
                     return {"success": False, "error": f"Download failed: {str(download_error)}"}
