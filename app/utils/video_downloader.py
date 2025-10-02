@@ -47,29 +47,25 @@ class VideoDownloadService:
         return f"bv*+ba{size_filter}/best{size_filter}"
 
     async def _download_with_retry(self, ydl_opts: Dict[str, Any], url: str) -> yt_dlp.YoutubeDL:
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 ydl = yt_dlp.YoutubeDL(ydl_opts)
                 ydl.download([url])
                 return ydl
             except Exception as e:
-                if attempt == 2:  # Last attempt
+                if attempt == 1:
                     raise e
+                await asyncio.sleep(2)
 
-                # Simple exponential backoff
-                delay = 2 ** attempt
-                await asyncio.sleep(delay)
-
-    def _get_fallback_formats(self, error: Exception) -> list[str] | None:
+    def _get_fallback_configs(self, error: Exception) -> list[dict] | None:
         error_msg = str(error).lower()
 
         if "requested format is not available" in error_msg or "http error 403" in error_msg or "forbidden" in error_msg:
             return [
-                "b",
-                "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
-                "(bv*+ba/b)[protocol^=http]",
-                "18",
-                "worst"
+                {"format": "18", "extractor_args": {"youtube": {"player_client": ["ios"]}}},
+                {"format": "b", "extractor_args": {"youtube": {"player_client": ["mweb"]}}},
+                {"format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]", "extractor_args": {"youtube": {"player_client": ["android"]}}},
+                {"format": "worst", "extractor_args": {"youtube": {"player_client": ["ios"]}}},
             ]
 
         elif "video unavailable" in error_msg:
@@ -173,8 +169,8 @@ class VideoDownloadService:
                 "noplaylist": True,
                 "timeout": 600,
                 "ignoreerrors": False,
-                "no_warnings": False,
-                "quiet": False,
+                "no_warnings": True,
+                "quiet": True,
                 "no_color": True,
                 "extractaudio": False,
                 "embed_subs": include_subtitles,
@@ -183,7 +179,7 @@ class VideoDownloadService:
                 "merge_output_format": "mp4",
                 "hls_prefer_native": True,
                 "concurrent_fragments": 3,
-                "fragment_retries": 10,
+                "fragment_retries": 5,
                 "extractor_args": {"youtube": {"player_client": ["ios", "android"], "skip": ["hls", "dash"]}},
             }
             
@@ -192,19 +188,20 @@ class VideoDownloadService:
                 await self._download_with_retry(ydl_opts, url)
             except Exception as download_error:
                 logger.warning(f"Initial download failed: {str(download_error)[:100]}")
-                fallback_formats = self._get_fallback_formats(download_error)
-                if fallback_formats:
+                fallback_configs = self._get_fallback_configs(download_error)
+                if fallback_configs:
                     last_error = download_error
-                    for fallback_format in fallback_formats:
-                        ydl_opts["format"] = fallback_format
-                        ydl_opts["extractor_args"] = {"youtube": {"player_client": ["ios"]}}
+                    for config in fallback_configs:
+                        ydl_opts["format"] = config["format"]
+                        ydl_opts["extractor_args"] = config["extractor_args"]
+                        ydl_opts["quiet"] = True
                         try:
                             ydl = yt_dlp.YoutubeDL(ydl_opts)
                             ydl.download([url])
-                            logger.info(f"Successfully downloaded with fallback format: {fallback_format}")
+                            logger.info(f"Downloaded successfully with fallback: format={config['format']}, client={config['extractor_args']['youtube']['player_client'][0]}")
                             break
                         except Exception as e:
-                            logger.warning(f"Fallback {fallback_format} failed: {str(e)[:80]}")
+                            logger.warning(f"Fallback failed (format={config['format']}): {str(e)[:80]}")
                             last_error = e
                             continue
                     else:
