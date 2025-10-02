@@ -154,7 +154,12 @@ class CreditService:
     async def _get_job_safely(self, job_id: str, job_type: JobType) -> Optional[Dict[str, Any]]:
         """Safely get job data with error handling"""
         try:
-            collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
+            collection_map = {
+                JobType.DUB: "dub_jobs",
+                JobType.SEPARATION: "separation_jobs",
+                JobType.CLIP: "clip_jobs"
+            }
+            collection_name = collection_map.get(job_type, "dub_jobs")
             loop_db = get_async_db()
             return await loop_db[collection_name].find_one({"job_id": job_id})
         except Exception as e:
