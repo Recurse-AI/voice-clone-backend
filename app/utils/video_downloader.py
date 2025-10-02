@@ -35,16 +35,20 @@ class VideoDownloadService:
         if quality == "worst":
             return "worst"
 
-        size_filter = f"[filesize<{max_filesize}]" if max_filesize else ""
+        return "best"
 
-        if resolution:
-            try:
-                res_int = int(resolution.replace("p", ""))
-                return f"bv*[height<={res_int}]+ba[height<={res_int}]{size_filter}/best[height<={res_int}]{size_filter}/bv*+ba{size_filter}/best{size_filter}"
-            except ValueError:
-                pass
-
-        return f"bv*+ba{size_filter}/best{size_filter}"
+    def _progress_hook(self, d):
+        if d['status'] == 'downloading':
+            if 'total_bytes' in d:
+                percent = (d['downloaded_bytes'] / d['total_bytes']) * 100
+                print(f"\rDownloading: {d['downloaded_bytes']/1024/1024:.1f}MB / {d['total_bytes']/1024/1024:.1f}MB ({percent:.1f}%)", end='', flush=True)
+            elif 'total_bytes_estimate' in d:
+                percent = (d['downloaded_bytes'] / d['total_bytes_estimate']) * 100
+                print(f"\rDownloading: {d['downloaded_bytes']/1024/1024:.1f}MB / ~{d['total_bytes_estimate']/1024/1024:.1f}MB ({percent:.1f}%)", end='', flush=True)
+            else:
+                print(f"\rDownloading: {d['downloaded_bytes']/1024/1024:.1f}MB", end='', flush=True)
+        elif d['status'] == 'finished':
+            print(f"\n✓ Download completed: {d['filename']}")
 
     async def _download_with_retry(self, ydl_opts: Dict[str, Any], url: str) -> yt_dlp.YoutubeDL:
         for attempt in range(2):
@@ -62,10 +66,10 @@ class VideoDownloadService:
 
         if "requested format is not available" in error_msg or "http error 403" in error_msg or "forbidden" in error_msg:
             return [
-                {"format": "18", "extractor_args": {"youtube": {"player_client": ["ios"]}}},
-                {"format": "b", "extractor_args": {"youtube": {"player_client": ["mweb"]}}},
-                {"format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]", "extractor_args": {"youtube": {"player_client": ["android"]}}},
-                {"format": "worst", "extractor_args": {"youtube": {"player_client": ["ios"]}}},
+                {"format": "best", "extractor_args": {"youtube": {"player_client": ["web"]}}},
+                {"format": "worst", "extractor_args": {"youtube": {"player_client": ["mweb"]}}},
+                {"format": "best", "extractor_args": {"youtube": {"player_client": ["android", "web"]}}},
+                {"format": "best", "extractor_args": {"youtube": {"player_client": ["android"]}}},
             ]
 
         elif "video unavailable" in error_msg:
@@ -169,8 +173,8 @@ class VideoDownloadService:
                 "noplaylist": True,
                 "timeout": 600,
                 "ignoreerrors": False,
-                "no_warnings": True,
-                "quiet": True,
+                "no_warnings": False,
+                "quiet": False,
                 "no_color": True,
                 "extractaudio": False,
                 "embed_subs": include_subtitles,
@@ -180,8 +184,9 @@ class VideoDownloadService:
                 "hls_prefer_native": True,
                 "concurrent_fragments": 3,
                 "fragment_retries": 5,
-                "extractor_args": {"youtube": {"player_client": ["ios"]}},
+                "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
                 "http_headers": {"User-Agent": "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"},
+                "progress_hooks": [self._progress_hook],
             }
             
             # Download with retry and fallback mechanism
@@ -198,7 +203,7 @@ class VideoDownloadService:
                         logger.info(f"Trying fallback {idx+1}/{len(fallback_configs)}: format={config['format']}, client={config['extractor_args']['youtube']['player_client'][0]}")
                         ydl_opts["format"] = config["format"]
                         ydl_opts["extractor_args"] = config["extractor_args"]
-                        ydl_opts["quiet"] = True
+                        ydl_opts["quiet"] = False
                         try:
                             ydl = yt_dlp.YoutubeDL(ydl_opts)
                             ydl.download([url])
