@@ -21,9 +21,11 @@ def render(video_path: str, ass_path: str, output_path: str, fontsdir: str = Non
     env = os.environ.copy()
     if fontsdir:
         abs_fonts = os.path.abspath(fontsdir)
-        env['ASS_FONTSDIR'] = abs_fonts
         env['FONTCONFIG_PATH'] = abs_fonts
         env['FONTCONFIG_FILE'] = os.path.join(abs_fonts, 'fonts.conf')
+    
+    # Always set fontsdir for libass to find fonts
+    env['LIBASS_FONTS_DIR'] = fontsdir if fontsdir else '/usr/share/fonts'
     
     # Build filter chain using only the filename (no drive letters in filter)
     if size:
@@ -32,16 +34,19 @@ def render(video_path: str, ass_path: str, output_path: str, fontsdir: str = Non
         # Default to vertical reels size if not provided
         w, h = 1080, 1920
 
-    # Build a blur background composition:
-    # [0:v] -> background scaled to cover, blurred, cropped to WxH
-    # [0:v] -> foreground scaled to fit inside WxH, overlaid centered
-    # then apply subtitles on top
+    # Build a blur background composition and apply subtitles
+    # Escape font directory path for FFmpeg filter
+    fontsdir_param = ""
+    if fontsdir:
+        fonts_escaped = abs_fonts.replace('\\', '\\\\').replace(':', '\\:')
+        fontsdir_param = f":fontsdir={fonts_escaped}"
+    
     fc = (
         f"[0:v]scale={w}:{h}:force_original_aspect_ratio=increase,"
         f"boxblur=20:1,crop={w}:{h}[bg];"
         f"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease[fg];"
         f"[bg][fg]overlay=(W-w)/2:(H-h)/2[base];"
-        f"[base]subtitles={ass_name}[vout]"
+        f"[base]subtitles={ass_name}{fontsdir_param}[vout]"
     )
 
     cmd = [
