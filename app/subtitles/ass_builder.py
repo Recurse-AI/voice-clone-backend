@@ -316,11 +316,17 @@ def _detect_language_type(text: str) -> str:
     return "latin"
 
 def _auto_select_font(text: str, default_font: str) -> str:
-    """Auto-select appropriate font based on text content"""
+    """Auto-select appropriate font with fallback for language support"""
     lang_type = _detect_language_type(text)
+    
     if lang_type == "indic":
         return "NotoSansDevanagari"
-    return default_font
+    elif lang_type == "arabic":
+        return "Arial"
+    elif lang_type == "cjk":
+        return "Arial"
+    
+    return default_font if default_font else "Arial"
 
 def _get_char_limit(text: str) -> int:
     """Get optimal character limit based on language"""

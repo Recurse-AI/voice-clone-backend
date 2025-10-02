@@ -129,6 +129,24 @@ async def _process_clip_job_async(job_id: str, user_id: str):
                 logger.warning(f"Skipping segment [{start}-{end}s] - too short (< 1s)")
                 continue
             valid_segments.append(s)
+        
+        if not valid_segments and segments:
+            logger.warning("All segments filtered out, creating fallback segment from available content")
+            valid_segments = [{
+                "start": 0.0,
+                "end": min(video_duration, max(s.get("end", video_duration) for s in segments)),
+                "reason": "Fallback segment - original segments filtered",
+                "ratings": segments[0].get("ratings", {})
+            }]
+        elif not valid_segments:
+            logger.warning("No segments available, creating single segment from entire video")
+            valid_segments = [{
+                "start": 0.0,
+                "end": video_duration,
+                "reason": "Full video segment - no valid segments found",
+                "ratings": {}
+            }]
+        
         segments = valid_segments
         
         await repo.update(job_id, {"overall_rating": overall})
