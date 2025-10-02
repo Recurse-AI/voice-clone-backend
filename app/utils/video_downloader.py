@@ -63,8 +63,14 @@ class VideoDownloadService:
     def _get_fallback_formats(self, error: Exception) -> list[str] | None:
         error_msg = str(error).lower()
 
-        if "requested format is not available" in error_msg:
-            return ["best", "bestvideo+bestaudio/best", "bestvideo+bestaudio", "worst"]
+        if "requested format is not available" in error_msg or "http error 403" in error_msg or "forbidden" in error_msg:
+            return [
+                "b",
+                "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
+                "(bv*+ba/b)[protocol^=http]",
+                "18",
+                "worst"
+            ]
 
         elif "video unavailable" in error_msg:
             raise Exception("Video is private or deleted")
@@ -167,8 +173,8 @@ class VideoDownloadService:
                 "noplaylist": True,
                 "timeout": 600,
                 "ignoreerrors": False,
-                "no_warnings": True,
-                "quiet": True,
+                "no_warnings": False,
+                "quiet": False,
                 "no_color": True,
                 "extractaudio": False,
                 "embed_subs": include_subtitles,
@@ -176,35 +182,33 @@ class VideoDownloadService:
                 "writeautomaticsub": include_subtitles,
                 "merge_output_format": "mp4",
                 "hls_prefer_native": True,
-                "geo_bypass": True,
-                "geo_bypass_country": "US",
                 "concurrent_fragments": 3,
                 "fragment_retries": 10,
-                "retry_sleep": 5,
-                "socket_timeout": 30,
-                "http_chunk_size": 10485760,
-                "extractor_args": {"youtube": {"player_client": ["android", "web"], "player_skip": ["js", "configs"]}},
+                "extractor_args": {"youtube": {"player_client": ["ios", "android"], "skip": ["hls", "dash"]}},
             }
             
             # Download with retry and fallback mechanism
             try:
                 await self._download_with_retry(ydl_opts, url)
             except Exception as download_error:
+                logger.warning(f"Initial download failed: {str(download_error)[:100]}")
                 fallback_formats = self._get_fallback_formats(download_error)
                 if fallback_formats:
                     last_error = download_error
                     for fallback_format in fallback_formats:
                         ydl_opts["format"] = fallback_format
+                        ydl_opts["extractor_args"] = {"youtube": {"player_client": ["ios"]}}
                         try:
                             ydl = yt_dlp.YoutubeDL(ydl_opts)
                             ydl.download([url])
                             logger.info(f"Successfully downloaded with fallback format: {fallback_format}")
                             break
                         except Exception as e:
+                            logger.warning(f"Fallback {fallback_format} failed: {str(e)[:80]}")
                             last_error = e
                             continue
                     else:
-                        return {"success": False, "error": f"Download failed: {str(last_error)}"}
+                        return {"success": False, "error": f"All download attempts failed. Last error: {str(last_error)}"}
                 else:
                     return {"success": False, "error": f"Download failed: {str(download_error)}"}
             
