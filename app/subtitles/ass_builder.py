@@ -208,28 +208,23 @@ def _create_animation_for_word(anim_type: str, word_params: dict, effect_config:
 def _ass_header(resolution: Tuple[int, int], font_name: str, font_size: int, letter_spacing: float) -> str:
     x, y = resolution
     
-    # Map all font variants to actual file names
-    font_mapping = {
-        "Montserrat": "Montserrat-Bold",
-        "Montserrat-Bold": "Montserrat-Bold",
-        "Montserrat-Regular": "Montserrat-Regular",
-        "Poppins": "Poppins-Bold",
-        "Poppins-Bold": "Poppins-Bold",
-        "Poppins-Regular": "Poppins-Regular",
-        "Poppins-Medium": "Poppins-Regular",
-        "Lato": "Lato-Bold",
-        "Lato-Bold": "Lato-Bold",
-        "Lato-Regular": "Lato-Regular",
-        "Roboto": "Roboto-Bold",
-        "Roboto-Bold": "Roboto-Bold",
-        "Roboto-Regular": "Roboto-Regular",
-        "Roboto-Medium": "Roboto-Medium",
-        "Roboto-Light": "Roboto-Light",
-        "NotoSansDevanagari": "NotoSansDevanagari-Bold",
-        "NotoSansDevanagari-Bold": "NotoSansDevanagari-Bold",
-        "NotoSansDevanagari-Regular": "NotoSansDevanagari-Regular"
+    # Use family names; let fontconfig resolve variants and fallback
+    family_mapping = {
+        "Montserrat-Bold": "Montserrat",
+        "Montserrat-Regular": "Montserrat",
+        "Poppins-Bold": "Poppins",
+        "Poppins-Regular": "Poppins",
+        "Poppins-Medium": "Poppins",
+        "Lato-Bold": "Lato",
+        "Lato-Regular": "Lato",
+        "Roboto-Bold": "Roboto",
+        "Roboto-Regular": "Roboto",
+        "Roboto-Medium": "Roboto",
+        "Roboto-Light": "Roboto",
+        "NotoSansDevanagari-Bold": "Noto Sans Devanagari",
+        "NotoSansDevanagari-Regular": "Noto Sans Devanagari",
     }
-    actual_font = font_mapping.get(font_name, font_name)
+    family = family_mapping.get(font_name, font_name or "Montserrat")
     
     return (
         "[Script Info]\n"
@@ -241,9 +236,9 @@ def _ass_header(resolution: Tuple[int, int], font_name: str, font_size: int, let
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Simple,{actual_font},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,{letter_spacing},0,1,6,3,2,60,60,140,1\n"
-        f"Style: Karaoke,{actual_font},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,{letter_spacing},0,1,7,3,2,60,60,140,1\n"
-        f"Style: KaraokeBox,{actual_font},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,1,0,0,0,100,100,{letter_spacing},0,3,0,0,2,60,60,160,1\n\n"
+        f"Style: Simple,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,{letter_spacing},0,1,6,3,2,60,60,140,1\n"
+        f"Style: Karaoke,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,1,0,0,0,100,100,{letter_spacing},0,1,7,3,2,60,60,140,1\n"
+        f"Style: KaraokeBox,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,1,0,0,0,100,100,{letter_spacing},0,3,0,0,2,60,60,160,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -281,33 +276,27 @@ def _ass_events(pages: List[List[Dict]], style: str, words_per_line: int, page_c
         line_pre = cfg.get("line_pre", "\\an2")
         font_override = cfg.get("font")
         if font_override and "\\fn" not in line_pre:
-            # Auto-detect font based on page content
+            # Auto-detect family based on content; keep family name (not file)
             page_text = " ".join(w.get("text", "") for w in page_words)
-            detected_font = _auto_select_font(page_text, font_override)
-            
-            # Use actual font file name for better compatibility
-            font_mapping = {
-                "Montserrat": "Montserrat-Bold",
-                "Montserrat-Bold": "Montserrat-Bold",
-                "Montserrat-Regular": "Montserrat-Regular",
-                "Poppins": "Poppins-Bold",
-                "Poppins-Bold": "Poppins-Bold",
-                "Poppins-Regular": "Poppins-Regular",
-                "Poppins-Medium": "Poppins-Regular",
-                "Lato": "Lato-Bold",
-                "Lato-Bold": "Lato-Bold",
-                "Lato-Regular": "Lato-Regular",
-                "Roboto": "Roboto-Bold",
-                "Roboto-Bold": "Roboto-Bold",
-                "Roboto-Regular": "Roboto-Regular",
-                "Roboto-Medium": "Roboto-Medium",
-                "Roboto-Light": "Roboto-Light",
-                "NotoSansDevanagari": "NotoSansDevanagari-Bold",
-                "NotoSansDevanagari-Bold": "NotoSansDevanagari-Bold",
-                "NotoSansDevanagari-Regular": "NotoSansDevanagari-Regular"
+            detected = _auto_select_font(page_text, font_override)
+            family_alias = {
+                "Montserrat-Bold": "Montserrat",
+                "Montserrat-Regular": "Montserrat",
+                "Poppins-Bold": "Poppins",
+                "Poppins-Regular": "Poppins",
+                "Poppins-Medium": "Poppins",
+                "Lato-Bold": "Lato",
+                "Lato-Regular": "Lato",
+                "Roboto-Bold": "Roboto",
+                "Roboto-Regular": "Roboto",
+                "Roboto-Medium": "Roboto",
+                "Roboto-Light": "Roboto",
+                "NotoSansDevanagari": "Noto Sans Devanagari",
+                "NotoSansDevanagari-Bold": "Noto Sans Devanagari",
+                "NotoSansDevanagari-Regular": "Noto Sans Devanagari",
             }
-            actual_font = font_mapping.get(detected_font, detected_font)
-            line_pre = f"{line_pre}\\fn{actual_font}"
+            family = family_alias.get(detected, detected)
+            line_pre = f"{line_pre}\\fn{family}"
         # Optional explicit outline/shadow thickness
         if "\\bord" not in line_pre and cfg.get("bord") is not None:
             try:
