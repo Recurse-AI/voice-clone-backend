@@ -26,25 +26,50 @@ class VideoDownloadService:
         # Track downloaded files for auto cleanup
         self._downloaded_files = {}  # {job_id: {"path": str, "created_at": datetime}}
     
+    def _preprocess_facebook_url(self, url: str) -> str:
+        """Preprocess Facebook URLs to handle share links better"""
+        if "facebook.com/share/v/" in url.lower():
+            # Extract video ID from share URL
+            import re
+            match = re.search(r'/share/v/([^/?]+)', url)
+            if match:
+                video_id = match.group(1)
+                # Try to construct a direct video URL
+                direct_url = f"https://www.facebook.com/video.php?v={video_id}"
+                logger.info(f"Facebook share URL detected, trying direct URL: {direct_url}")
+                return direct_url
+            else:
+                logger.warning("Facebook share URL detected but couldn't extract video ID")
+        
+        return url
+
     def _generate_job_id(self) -> str:
         """Generate unique job ID"""
         import uuid
         return str(uuid.uuid4())
 
-    def _get_format_selector(self, quality: str | None, resolution: str | None, max_filesize: str | None) -> str:
+    def _get_format_selector(self, quality: str | None, resolution: str | None, max_filesize: str | None, is_audio: bool = False) -> str:
+        if is_audio:
+            if quality == "worst":
+                return "ba/worst"
+            return "ba/b"
+        
         if quality == "worst":
             return "worst"
+        return "best"
 
-        size_filter = f"[filesize<{max_filesize}]" if max_filesize else ""
-
-        if resolution:
-            try:
-                res_int = int(resolution.replace("p", ""))
-                return f"bv*[height<={res_int}]+ba[height<={res_int}]{size_filter}/best[height<={res_int}]{size_filter}/bv*+ba{size_filter}/best{size_filter}"
-            except ValueError:
-                pass
-
-        return f"bv*+ba{size_filter}/best{size_filter}"
+    def _progress_hook(self, d):
+        if d['status'] == 'downloading':
+            if 'total_bytes' in d:
+                percent = (d['downloaded_bytes'] / d['total_bytes']) * 100
+                print(f"\rDownloading: {d['downloaded_bytes']/1024/1024:.1f}MB / {d['total_bytes']/1024/1024:.1f}MB ({percent:.1f}%)", end='', flush=True)
+            elif 'total_bytes_estimate' in d:
+                percent = (d['downloaded_bytes'] / d['total_bytes_estimate']) * 100
+                print(f"\rDownloading: {d['downloaded_bytes']/1024/1024:.1f}MB / ~{d['total_bytes_estimate']/1024/1024:.1f}MB ({percent:.1f}%)", end='', flush=True)
+            else:
+                print(f"\rDownloading: {d['downloaded_bytes']/1024/1024:.1f}MB", end='', flush=True)
+        elif d['status'] == 'finished':
+            print(f"\n✓ Download completed: {d['filename']}")
 
     async def _download_with_retry(self, ydl_opts: Dict[str, Any], url: str) -> yt_dlp.YoutubeDL:
         for attempt in range(2):
@@ -57,22 +82,48 @@ class VideoDownloadService:
                     raise e
                 await asyncio.sleep(2)
 
-    def _get_fallback_configs(self, error: Exception) -> list[dict] | None:
+    def _get_fallback_configs(self, error: Exception, is_audio: bool = False, is_direct_audio: bool = False) -> list[dict] | None:
         error_msg = str(error).lower()
 
         if "requested format is not available" in error_msg or "http error 403" in error_msg or "forbidden" in error_msg:
-            return [
-                {"format": "18", "extractor_args": {"youtube": {"player_client": ["ios"]}}},
-                {"format": "b", "extractor_args": {"youtube": {"player_client": ["mweb"]}}},
-                {"format": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]", "extractor_args": {"youtube": {"player_client": ["android"]}}},
-                {"format": "worst", "extractor_args": {"youtube": {"player_client": ["ios"]}}},
-            ]
+            if is_direct_audio:
+                # For direct audio files, just try different formats
+                return [
+                    {"format": "best"},
+                    {"format": "worst"},
+                ]
+            elif is_audio:
+                return [
+                    {"format": "ba/b", "extractor_args": {"youtube": {"player_client": ["web"]}}},
+                    {"format": "ba/worst", "extractor_args": {"youtube": {"player_client": ["mweb"]}}},
+                    {"format": "ba/b", "extractor_args": {"youtube": {"player_client": ["android", "web"]}}},
+                    {"format": "ba/b", "extractor_args": {"youtube": {"player_client": ["android"]}}},
+                ]
+            else:
+                # Check if it's a Facebook URL for specific fallbacks
+                if "facebook.com" in str(error).lower():
+                    return [
+                        {"format": "best", "extractor_args": {"facebook": {"player_client": ["mobile"]}}},
+                        {"format": "worst", "extractor_args": {"facebook": {"player_client": ["web"]}}},
+                        {"format": "best", "extractor_args": {"facebook": {"player_client": ["mobile", "web"]}}},
+                        {"format": "best", "extractor_args": {"youtube": {"player_client": ["web"]}}},
+                    ]
+                else:
+                    return [
+                        {"format": "best", "extractor_args": {"youtube": {"player_client": ["web"]}}},
+                        {"format": "worst", "extractor_args": {"youtube": {"player_client": ["mweb"]}}},
+                        {"format": "best", "extractor_args": {"youtube": {"player_client": ["android", "web"]}}},
+                        {"format": "best", "extractor_args": {"youtube": {"player_client": ["android"]}}},
+                    ]
 
         elif "video unavailable" in error_msg:
-            raise Exception("Video is private or deleted")
+            raise Exception("Media is private or deleted")
 
         elif "sign in to confirm your age" in error_msg:
             raise Exception("Age-restricted content")
+
+        elif "unsupported url" in error_msg and "facebook.com" in error_msg:
+            raise Exception("Facebook URL is not accessible. Try using the direct video URL instead of share link.")
 
         return None
 
@@ -136,12 +187,25 @@ class VideoDownloadService:
             Dict with success status and detailed file/format info
         """
         try:
+            # Preprocess URL to handle Facebook share links
+            url = self._preprocess_facebook_url(url)
+            
             # Generate unique job ID and directory
             job_id = self._generate_job_id()
             job_dir = Path(settings.TEMP_DIR) / job_id
             job_dir.mkdir(parents=True, exist_ok=True)
             
-            quality_format = self._get_format_selector(quality, resolution, max_filesize)
+            # Detect if URL is audio-only (platforms only, not direct files)
+            is_audio = (
+                'soundcloud.com' in url.lower() or
+                'spotify.com' in url.lower() or
+                'bandcamp.com' in url.lower()
+            )
+            
+            # Check if it's a direct audio file (different handling)
+            is_direct_audio = any(url.lower().endswith(ext) for ext in ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'])
+            
+            quality_format = self._get_format_selector(quality, resolution, max_filesize, is_audio)
             logger.info(f"Initial format selector: {quality_format}")
 
             output_template = str(job_dir / "%(title)s.%(ext)s")
@@ -158,7 +222,14 @@ class VideoDownloadService:
                 available_formats = info.get("formats", [])
                 
                 if not available_formats:
-                    return {"success": False, "error": "No video formats available"}
+                    return {"success": False, "error": "No media formats available"}
+
+                # Enhanced audio detection - check if only audio formats are available
+                audio_only_formats = [f for f in available_formats if f.get("vcodec") == "none" and f.get("acodec") != "none"]
+                if len(audio_only_formats) > 0 and len([f for f in available_formats if f.get("vcodec") != "none"]) == 0:
+                    is_audio = True
+                    quality_format = self._get_format_selector(quality, resolution, max_filesize, is_audio)
+                    logger.info(f"Detected audio-only content, updated format selector: {quality_format}")
 
                 format_info = self._analyze_available_formats(available_formats, quality_format, resolution)
             
@@ -169,20 +240,37 @@ class VideoDownloadService:
                 "noplaylist": True,
                 "timeout": 600,
                 "ignoreerrors": False,
-                "no_warnings": True,
-                "quiet": True,
+                "no_warnings": False,
+                "quiet": False,
                 "no_color": True,
-                "extractaudio": False,
                 "embed_subs": include_subtitles,
                 "writesubtitles": include_subtitles,
                 "writeautomaticsub": include_subtitles,
-                "merge_output_format": "mp4",
                 "hls_prefer_native": True,
                 "concurrent_fragments": 3,
                 "fragment_retries": 5,
-                "extractor_args": {"youtube": {"player_client": ["ios"]}},
-                "http_headers": {"User-Agent": "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"},
+                "extractor_args": {
+                    "youtube": {"player_client": ["android", "web"]},
+                    "facebook": {"player_client": ["mobile", "web"]}
+                },
+                "http_headers": {
+                    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5.1 Mobile/15E148 Safari/604.1"
+                },
+                "progress_hooks": [self._progress_hook],
             }
+            
+            # Configure options based on content type
+            if is_audio:
+                # For audio-only platform URLs, use extract-audio flag (like yt-dlp preset)
+                ydl_opts["extractaudio"] = True
+                ydl_opts["audioformat"] = format_preference or "mp3"
+                ydl_opts["audioquality"] = audio_quality or "192"
+            elif is_direct_audio:
+                # For direct audio files, just download as-is (no extraction needed)
+                logger.info("Direct audio file detected, downloading as-is")
+            else:
+                # For video URLs, merge video and audio
+                ydl_opts["merge_output_format"] = format_preference or "mp4"
             
             # Download with retry and fallback mechanism
             download_success = False
@@ -191,18 +279,26 @@ class VideoDownloadService:
                 download_success = True
             except Exception as download_error:
                 logger.error(f"Initial download failed, trying fallbacks: {str(download_error)[:100]}")
-                fallback_configs = self._get_fallback_configs(download_error)
+                fallback_configs = self._get_fallback_configs(download_error, is_audio, is_direct_audio)
                 if fallback_configs:
                     last_error = download_error
                     for idx, config in enumerate(fallback_configs):
-                        logger.info(f"Trying fallback {idx+1}/{len(fallback_configs)}: format={config['format']}, client={config['extractor_args']['youtube']['player_client'][0]}")
+                        client_info = config.get("extractor_args", {}).get("youtube", {}).get("player_client", ["direct"])[0]
+                        logger.info(f"Trying fallback {idx+1}/{len(fallback_configs)}: format={config['format']}, client={client_info}")
                         ydl_opts["format"] = config["format"]
-                        ydl_opts["extractor_args"] = config["extractor_args"]
-                        ydl_opts["quiet"] = True
+                        if "extractor_args" in config:
+                            ydl_opts["extractor_args"] = config["extractor_args"]
+                        ydl_opts["quiet"] = False
+                        
+                        # Ensure audio extraction is maintained for audio platforms
+                        if is_audio:
+                            ydl_opts["extractaudio"] = True
+                            ydl_opts["audioformat"] = format_preference or "mp3"
+                            ydl_opts["audioquality"] = audio_quality or "192"
                         try:
                             ydl = yt_dlp.YoutubeDL(ydl_opts)
                             ydl.download([url])
-                            logger.info(f"✓ Fallback successful: format={config['format']}, client={config['extractor_args']['youtube']['player_client'][0]}")
+                            logger.info(f"✓ Fallback successful: format={config['format']}, client={client_info}")
                             download_success = True
                             break
                         except Exception as e:
@@ -307,10 +403,10 @@ class VideoDownloadService:
             job_dir = temp_dir / job_id
 
             if job_dir.exists() and job_dir.is_dir():
-                # Look for video files in the job directory
-                video_extensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv']
+                # Look for media files in the job directory (video and audio)
+                media_extensions = ['.mp4', '.webm', '.mkv', '.avi', '.mov', '.flv', '.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac']
                 for file_path in job_dir.glob("*"):
-                    if file_path.is_file() and file_path.suffix.lower() in video_extensions:
+                    if file_path.is_file() and file_path.suffix.lower() in media_extensions:
                         # Check if file is too old (more than 1 hour to be safe)
                         file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime, timezone.utc)
                         if datetime.now(timezone.utc) - file_mtime > timedelta(hours=1):
