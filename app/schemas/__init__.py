@@ -13,10 +13,11 @@ class StatusResponse(BaseModel):
 class VideoDubRequest(BaseModel):
     """
     Request for video dubbing process.
-    Video must be uploaded using upload-file API first, then provide that job_id here.
-    No video_url field needed as video will be stored locally.
+    Provide file_url (video/audio from R2 or external URL).
+    Video files will be downloaded and audio extracted locally.
     """
-    job_id: str = Field(..., description="Unique job ID for the dubbing process (from /upload-file API)")
+    job_id: str = Field(..., description="Unique job ID for the dubbing process")
+    file_url: str = Field(..., description="URL to video or audio file (from /upload-file or external)")
     target_language: str = Field(..., description="Target language for dubbing")
     project_title: Optional[str] = Field("Untitled Project", description="Project title for the dubbing job")
     duration: Optional[float] = Field(None, gt=0, le=14400, description="Video duration in seconds (max 4 hours)")
@@ -27,6 +28,13 @@ class VideoDubRequest(BaseModel):
     # Voice config
     voice_type: Optional[str] = Field(None, description="Voice mode: 'voice_clone' or 'ai_voice'")
     reference_id: Optional[str] = Field(None, description="Reference ID for AI voice when type is 'ai_voice'")
+    
+    @field_validator('file_url')
+    @classmethod
+    def validate_file_url(cls, v):
+        if not v.startswith(('http://', 'https://')):
+            raise ValueError("file_url must start with http:// or https://")
+        return v
 
 class VideoDubResponse(BaseModel):
     success: bool

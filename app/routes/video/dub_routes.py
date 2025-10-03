@@ -85,73 +85,101 @@ def get_dub_queue_position(job_id: str) -> Optional[int]:
 
 @router.post("/video-dub", response_model=VideoDubResponse)
 async def start_video_dub(
-    request: str = Form(..., description="JSON string of VideoDubRequest"),
-    srt_file: Optional[UploadFile] = File(None, description="SRT subtitle file"),
+    request: VideoDubRequest,
+    srt_file: Optional[UploadFile] = File(None),
     current_user = Depends(get_current_user)
 ):
     try:
-        # Parse and validate the JSON request
-        import json
-        try:
-            request_data = json.loads(request)
-            logger.info(f"📝 Received request data: {request_data}")
-            request_obj = VideoDubRequest(**request_data)
-            logger.info(f"✅ Successfully parsed VideoDubRequest: {request_obj}")
-        except json.JSONDecodeError as e:
-            logger.error(f"❌ JSON decode error: {e}")
-            raise HTTPException(status_code=400, detail="Invalid JSON in request field")
-        except Exception as e:
-            logger.error(f"❌ Validation error: {e} | Request data: {request_data}")
-            raise HTTPException(status_code=422, detail=f"Invalid request data: {str(e)}")
+        from app.config.settings import settings
+        from app.utils.audio.audio_utils import AudioUtils
+        import requests
         
         user_id = current_user.id
-        if request_obj.duration is None or request_obj.duration <= 0:
+        if request.duration is None or request.duration <= 0:
             raise HTTPException(status_code=400, detail="Duration is required and must be greater than 0 seconds")
         
-        # Handle SRT file when video_subtitle is true
-        if request_obj.video_subtitle:
-            from app.config.settings import settings
-            job_dir = os.path.join(settings.TEMP_DIR, request_obj.job_id)
-            srt_path = os.path.join(job_dir, f"{request_obj.job_id}.srt")
+        job_dir = os.path.join(settings.TEMP_DIR, request.job_id)
+        os.makedirs(job_dir, exist_ok=True)
+        
+        logger.info(f"📥 Downloading file from: {request.file_url}")
+        file_extension = os.path.splitext(request.file_url.split('?')[0])[-1].lower()
+        temp_download_path = os.path.join(job_dir, f"original{file_extension}")
+        
+        try:
+            response = requests.get(request.file_url, stream=True, timeout=120)
+            response.raise_for_status()
+            with open(temp_download_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logger.info(f"✅ File downloaded: {temp_download_path}")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to download file: {str(e)}")
+        
+        video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v'}
+        audio_extensions = {'.mp3', '.wav', '.aac', '.flac', '.ogg', '.m4a', '.wma'}
+        
+        is_video = file_extension in video_extensions
+        video_url = None
+        
+        if is_video:
+            logger.info(f"🎬 Video detected, extracting audio...")
+            audio_utils = AudioUtils()
+            audio_path = os.path.join(job_dir, f"{request.job_id}.wav")
+            result = audio_utils.extract_audio_from_video(temp_download_path, audio_path)
+            
+            if not result.get("success"):
+                raise HTTPException(status_code=500, detail=f"Audio extraction failed: {result.get('error')}")
+            
+            video_url = request.file_url
+            logger.info(f"✅ Audio extracted: {audio_path}")
+        elif file_extension in audio_extensions:
+            logger.info(f"🎵 Audio file detected")
+            audio_path = os.path.join(job_dir, f"{request.job_id}{file_extension}")
+            os.rename(temp_download_path, audio_path)
+            logger.info(f"✅ Audio file ready: {audio_path}")
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_extension}")
+        
+        if request.video_subtitle:
+            srt_path = os.path.join(job_dir, f"{request.job_id}.srt")
             
             if srt_file:
-                # SRT file provided in this request
                 if not srt_file.filename.lower().endswith('.srt'):
                     raise HTTPException(status_code=400, detail="Only SRT files are supported")
                 
-                os.makedirs(job_dir, exist_ok=True)
                 with open(srt_path, "wb") as buffer:
                     content = await srt_file.read()
                     buffer.write(content)
             else:
-                # Check if SRT file was uploaded previously via /upload-file
                 if not os.path.exists(srt_path):
                     raise HTTPException(
                         status_code=400, 
-                        detail="SRT file is required when video_subtitle is true. Upload via /upload-file endpoint first or include in this request."
+                        detail="SRT file is required when video_subtitle is true"
                     )
         
         job_data = {
-            "job_id": request_obj.job_id,
+            "job_id": request.job_id,
             "user_id": user_id,
-            "target_language": request_obj.target_language,
-            "original_filename": request_obj.project_title,
-            "source_video_language": request_obj.source_video_language,
-            "duration": request_obj.duration,
+            "target_language": request.target_language,
+            "original_filename": request.project_title,
+            "source_video_language": request.source_video_language,
+            "duration": request.duration,
             "status": "pending",
             "progress": 0,
-            "video_subtitle": request_obj.video_subtitle,
-            "voice_premium_model": request_obj.voice_premium_model,
-            "voice_type": getattr(request_obj, "voice_type", None),
-            "reference_id": getattr(request_obj, "reference_id", None)
+            "video_subtitle": request.video_subtitle,
+            "voice_premium_model": request.voice_premium_model,
+            "voice_type": getattr(request, "voice_type", None),
+            "reference_id": getattr(request, "reference_id", None)
         }
         
+        if video_url:
+            job_data["video_url"] = video_url
 
         result = await credit_service.reserve_credits_and_create_job(
             user_id=user_id,
             job_data=job_data,
             job_type=CreditJobType.DUB,
-            duration_seconds=request_obj.duration
+            duration_seconds=request.duration
         )
         
         if not result["success"]:
@@ -164,9 +192,8 @@ async def start_video_dub(
                 }
             )
         
-        # Set initial status
         status_service.update_status(
-            request_obj.job_id, "dub", JobStatus.PENDING, 0,
+            request.job_id, "dub", JobStatus.PENDING, 0,
             {
                 "user_id": user_id,
                 "created_at": datetime.now().isoformat(),
@@ -174,10 +201,9 @@ async def start_video_dub(
                 "message": "Job queued for processing"
             }
         )
-        logger.info(f"✅ DUB JOB CREATED: {request_obj.job_id} - Status: PENDING")
+        logger.info(f"✅ DUB JOB CREATED: {request.job_id} - Status: PENDING")
         
-        # Enqueue job for background processing
-        success = enqueue_dub_job(request_obj, user_id)
+        success = enqueue_dub_job(request, user_id)
         if not success:
             return JSONResponse(
                 status_code=500,
@@ -188,12 +214,12 @@ async def start_video_dub(
                 }
             )
         
-        logger.info(f"Started video dub job {request_obj.job_id} for user {user_id}")
+        logger.info(f"Started video dub job {request.job_id} for user {user_id}")
         return VideoDubResponse(
             success=True,
             message="Video dub started successfully",
-            job_id=request_obj.job_id,
-            status_check_url=f"/api/video-dub-status/{request_obj.job_id}"
+            job_id=request.job_id,
+            status_check_url=f"/api/video-dub-status/{request.job_id}"
         )
         
     except Exception as e:
