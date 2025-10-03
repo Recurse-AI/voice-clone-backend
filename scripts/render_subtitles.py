@@ -10,7 +10,9 @@ def render(video_path: str, ass_path: str, output_path: str, fontsdir: str = Non
     if not ffmpeg:
         raise RuntimeError("FFmpeg not found")
     
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
     
     abs_ass = os.path.abspath(ass_path)
     ass_dir = os.path.dirname(abs_ass) or "."

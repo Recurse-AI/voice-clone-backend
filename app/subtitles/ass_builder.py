@@ -2,7 +2,6 @@ from typing import List, Dict, Literal, Tuple
 import unicodedata
 import os
 import json
-import base64
 
 AssStyle = Literal["simple", "karaoke"]
 
@@ -88,42 +87,10 @@ def resolve_style_name(name: str) -> str:
     return _resolve_style(name)
 
 
-def _embed_fonts_section(fonts_to_embed: List[str]) -> str:
-    """Embed font files in ASS format using base64 encoding."""
-    if not fonts_to_embed:
-        return ""
-    
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    fonts_dir = os.path.join(base_dir, "assets", "fonts")
-    
-    sections = []
-    for font_filename in fonts_to_embed:
-        font_path = os.path.join(fonts_dir, font_filename)
-        if not os.path.exists(font_path):
-            continue
-        
-        try:
-            with open(font_path, "rb") as f:
-                font_data = f.read()
-            encoded = base64.b64encode(font_data).decode("ascii")
-            
-            # Split into 80-char lines as per ASS spec
-            lines = [encoded[i:i+80] for i in range(0, len(encoded), 80)]
-            
-            sections.append(f"fontname: {font_filename}")
-            sections.extend(lines)
-        except Exception:
-            pass
-    
-    if sections:
-        return "\n[Fonts]\n" + "\n".join(sections) + "\n"
-    return ""
-
-
 def build_ass_from_words(
     words: List[Dict],
     style: AssStyle = "karaoke",
-    resolution: Tuple[int, int] = (1080, 1920),  # 9:16 by default
+    resolution: Tuple[int, int] = (1080, 1920),
     font_name: str = "Montserrat",
     font_size: int = 200,
     gap_ms: int = 500,
@@ -133,20 +100,14 @@ def build_ass_from_words(
     page_colors: List[Tuple[str, str]] | None = None,
 ) -> str:
     pages = _group_words_into_pages(words, gap_ms, max_words_per_line, max_lines)
-    
-    # Auto-detect font based on text content
     sample_text = " ".join(w.get("text", "") for w in words)
     selected_font = _auto_select_font(sample_text, font_name)
-    
-    # Determine which fonts to embed
-    fonts_to_embed = _get_required_fonts(sample_text, selected_font)
     
     header = _ass_header(resolution, selected_font, font_size, letter_spacing)
     resolved_style = _resolve_style(style)
     events = _ass_events(pages, resolved_style, max_words_per_line, page_colors)
-    fonts_section = _embed_fonts_section(fonts_to_embed)
     
-    return header + fonts_section + "\n" + events
+    return header + "\n" + events
 
 
 def _create_animation_for_word(anim_type: str, word_params: dict, effect_config: dict) -> str:
@@ -244,26 +205,6 @@ def _create_animation_for_word(anim_type: str, word_params: dict, effect_config:
 
 def _ass_header(resolution: Tuple[int, int], font_name: str, font_size: int, letter_spacing: float) -> str:
     x, y = resolution
-    
-    # Use family names; let fontconfig resolve variants and fallback
-    family_mapping = {
-        "Montserrat-Bold": "Montserrat",
-        "Montserrat-Regular": "Montserrat",
-        "Poppins-Bold": "Poppins",
-        "Poppins-Regular": "Poppins",
-        "Poppins-Medium": "Poppins",
-        "Lato-Bold": "Lato",
-        "Lato-Regular": "Lato",
-        "Roboto-Bold": "Roboto",
-        "Roboto-Regular": "Roboto",
-        "Roboto-Medium": "Roboto",
-        "Roboto-Light": "Roboto",
-        "NotoSansDevanagari-Bold": "Noto Sans Devanagari",
-        "NotoSansDevanagari-Regular": "Noto Sans Devanagari",
-    }
-    # If text requires Indic, force Noto Sans Devanagari regardless of user choice
-    family = family_mapping.get(font_name, font_name or "Montserrat")
-    
     return (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -274,9 +215,9 @@ def _ass_header(resolution: Tuple[int, int], font_name: str, font_size: int, let
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Simple,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,{letter_spacing},0,1,6,3,2,60,60,140,1\n"
-        f"Style: Karaoke,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,{letter_spacing},0,1,7,3,2,60,60,140,1\n"
-        f"Style: KaraokeBox,{family},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,0,0,0,0,100,100,{letter_spacing},0,3,0,0,2,60,60,160,1\n\n"
+        f"Style: Simple,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,{letter_spacing},0,1,6,3,2,60,60,140,1\n"
+        f"Style: Karaoke,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,{letter_spacing},0,1,7,3,2,60,60,140,1\n"
+        f"Style: KaraokeBox,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,0,0,0,0,100,100,{letter_spacing},0,3,0,0,2,60,60,160,1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
@@ -310,31 +251,12 @@ def _ass_events(pages: List[List[Dict]], style: str, words_per_line: int, page_c
             # Display name but use base header style to avoid missing style warnings
             style_display = cfg.get("style_name") or style_l.title()
             style_used = "Karaoke"
-        # Per-effect alignment/box, optional per-style font, and disable auto-wrap
         line_pre = cfg.get("line_pre", "\\an2")
         font_override = cfg.get("font")
         if font_override and "\\fn" not in line_pre:
-            # Auto-detect family based on content; if Indic, force Noto Sans Devanagari
             page_text = " ".join(w.get("text", "") for w in page_words)
             detected = _auto_select_font(page_text, font_override)
-            family_alias = {
-                "Montserrat-Bold": "Montserrat",
-                "Montserrat-Regular": "Montserrat",
-                "Poppins-Bold": "Poppins",
-                "Poppins-Regular": "Poppins",
-                "Poppins-Medium": "Poppins",
-                "Lato-Bold": "Lato",
-                "Lato-Regular": "Lato",
-                "Roboto-Bold": "Roboto",
-                "Roboto-Regular": "Roboto",
-                "Roboto-Medium": "Roboto",
-                "Roboto-Light": "Roboto",
-                "NotoSansDevanagari": "Noto Sans Devanagari",
-                "NotoSansDevanagari-Bold": "Noto Sans Devanagari",
-                "NotoSansDevanagari-Regular": "Noto Sans Devanagari",
-            }
-            family = family_alias.get(detected, detected)
-            line_pre = f"{line_pre}\\fn{family}"
+            line_pre = f"{line_pre}\\fn{detected}"
         # Optional explicit outline/shadow thickness
         if "\\bord" not in line_pre and cfg.get("bord") is not None:
             try:
@@ -390,36 +312,9 @@ def _detect_language_type(text: str) -> str:
     return "latin"
 
 def _auto_select_font(text: str, default_font: str) -> str:
-    """Use user's font for Latin, otherwise force a universal fallback family."""
+    """Use user's font for English only, system font for all other languages."""
     lang_type = _detect_language_type(text)
-    if lang_type != "latin":
-        return "Noto Sans Devanagari"
-    return default_font or "Montserrat"
-
-
-def _get_required_fonts(text: str, selected_font: str) -> List[str]:
-    """Get list of font files to embed based on text content."""
-    lang_type = _detect_language_type(text)
-    fonts = []
-    
-    if lang_type == "indic":
-        fonts.extend([
-            "NotoSansDevanagari-Regular.ttf",
-            "NotoSansDevanagari-Bold.ttf"
-        ])
-    
-    # Always include the selected font if it's a known font
-    font_files = {
-        "Montserrat": ["Montserrat-Regular.ttf", "Montserrat-Bold.ttf"],
-        "Poppins": ["Poppins-Regular.ttf", "Poppins-Bold.ttf"],
-        "Roboto": ["Roboto-Regular.ttf", "Roboto-Bold.ttf"],
-        "Lato": ["Lato-Regular.ttf", "Lato-Bold.ttf"],
-    }
-    
-    if selected_font in font_files and lang_type == "latin":
-        fonts.extend(font_files[selected_font])
-    
-    return fonts
+    return default_font if lang_type == "latin" else "Arial"
 
 def _get_char_limit(text: str) -> int:
     """Get optimal character limit based on language"""
@@ -478,22 +373,30 @@ def _animated_text_multiline(
     words: List[Dict], base_start_ms: int, words_per_line: int
 ) -> str:
     parts: List[str] = []
-    # If page contains non-latin, avoid bold to reduce glyph mapping issues
     page_text = " ".join(w.get("text", "") for w in words)
-    non_latin = _detect_language_type(page_text) != "latin"
+    is_latin = _detect_language_type(page_text) == "latin"
+    
     for idx, w in enumerate(words, start=1):
         dur_cs = max(1, int((w["end"] - w["start"]) / 10))
         off_s = max(0, w["start"] - base_start_ms)
         off_e = max(off_s + 1, w["end"] - base_start_ms)
         mid = off_s + max(1, (off_e - off_s) // 2)
         word = _sanitize_text(w["text"])
-        btag = "\\b0" if non_latin else "\\b1"
-        parts.append(
-            f"{{\\k{dur_cs}{btag}\\fscx100\\fscy100\\1c&H00FFFFFF&"
-            f"\\t({off_s},{mid},\\fscx103\\fscy103\\1c&H00FFA500&)"
-            f"\\t({mid},{off_e},\\fscx103\\fscy103\\1c&H00FFD700&)"
-            f"\\t({off_e},{off_e+1},\\fscx100\\fscy100\\1c&H00FFFFFF&)}}{word}"
-        )
+        
+        if is_latin:
+            parts.append(
+                f"{{\\k{dur_cs}\\b1\\fscx100\\fscy100\\1c&H00FFFFFF&"
+                f"\\t({off_s},{mid},\\fscx103\\fscy103\\1c&H00FFA500&)"
+                f"\\t({mid},{off_e},\\fscx103\\fscy103\\1c&H00FFD700&)"
+                f"\\t({off_e},{off_e+1},\\fscx100\\fscy100\\1c&H00FFFFFF&)}}{word}"
+            )
+        else:
+            parts.append(
+                f"{{\\k{dur_cs}\\b0\\fscx100\\fscy100\\1c&H00FFFFFF&"
+                f"\\t({off_s},{mid},\\1c&H00FFA500&)"
+                f"\\t({mid},{off_e},\\1c&H00FFD700&)}}{word}"
+            )
+        
         if idx % words_per_line == 0 and idx != len(words):
             parts.append("\\N")
         else:
@@ -503,16 +406,19 @@ def _animated_text_multiline(
 
 def _effect_text_multiline(effect: str, words: List[Dict], base_start_ms: int, words_per_line: int, c1_override: str | None = None, c2_override: str | None = None) -> str:
     cfg = _EFFECTS.get(effect, {})
+    page_text = " ".join(w.get("text", "") for w in words)
+    is_latin = _detect_language_type(page_text) == "latin"
+    
     scale = cfg.get("scale", 103)
     c1 = c1_override or cfg.get("c1", "&H00FFFFFF&")
     c2 = c2_override or cfg.get("c2", "&H00FFFFFF&")
-    blur_peak = cfg.get("blur", 0)
-    alpha_in = cfg.get("alpha", 0) == 1
-    glitch = cfg.get("glitch", 0) == 1
-    anim_default = cfg.get("anim", "pop")  # pop | fade | slide | bounce | rise | float | swim | zoom_and_pan
+    blur_peak = cfg.get("blur", 0) if is_latin else 0
+    alpha_in = cfg.get("alpha", 0) == 1 if is_latin else False
+    glitch = cfg.get("glitch", 0) == 1 if is_latin else False
+    anim_default = cfg.get("anim", "pop") if is_latin else "fade"
     uppercase = cfg.get("uppercase", 0) == 1
-    bold_default = 1 if cfg.get("bold") is None else (1 if int(cfg.get("bold")) != 0 else 0)
-    italic_default = 0 if cfg.get("italic") is None else (1 if int(cfg.get("italic")) != 0 else 0)
+    bold_default = (1 if cfg.get("bold") is None else (1 if int(cfg.get("bold")) != 0 else 0)) if is_latin else 0
+    italic_default = (0 if cfg.get("italic") is None else (1 if int(cfg.get("italic")) != 0 else 0)) if is_latin else 0
     parts: List[str] = []
     for idx, w in enumerate(words, start=1):
         dur_cs = max(1, int((w["end"] - w["start"]) / 10))
@@ -533,9 +439,13 @@ def _effect_text_multiline(effect: str, words: List[Dict], base_start_ms: int, w
             bold_flag = cfg.get("line2_bold")
         if bold_flag is None:
             bold_flag = bold_default
+        bold_flag = bold_flag if is_latin else 0
+        
         ital_flag = cfg.get("line1_italic") if line_group == 0 else cfg.get("line2_italic")
         if ital_flag is None:
             ital_flag = italic_default
+        ital_flag = ital_flag if is_latin else 0
+        
         btag = "\\b1" if int(bold_flag) != 0 else "\\b0"
         itag = "\\i1" if int(ital_flag) != 0 else "\\i0"
         blur_t1 = f"\\t({off_s},{mid},\\blur{blur_peak})" if blur_peak else ""
