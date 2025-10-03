@@ -40,31 +40,51 @@ async def start_audio_separation(
     request: AudioSeparationRequest,
     current_user = Depends(get_current_user)
 ):
-    """Start audio separation job using clean service architecture"""
     try:
         user_id = current_user.id
         job_id = request.job_id
         
         logger.info(f"Starting separation job {job_id} for user {user_id}")
 
-        # Validate uploaded file
         job_dir = os.path.join(settings.TEMP_DIR, job_id)
-        if not os.path.exists(job_dir):
-            raise HTTPException(status_code=400, detail="Upload directory not found")
-
-        files = os.listdir(job_dir)
-        if not files:
-            raise HTTPException(status_code=400, detail="No files found in upload directory")
-
-        local_audio_path = os.path.join(job_dir, files[0])
-        if not os.path.exists(local_audio_path):
-            raise HTTPException(status_code=400, detail="Uploaded file not found on disk")
-            
-        # Verify audio format
-        if not local_audio_path.lower().endswith(('.mp3', '.wav', '.m4a', '.flac', '.aac', '.ogg', '.mp4', '.mov', '.avi', '.mkv')):
-            raise HTTPException(status_code=400, detail="Uploaded file is not an audio format")
+        os.makedirs(job_dir, exist_ok=True)
         
-        # Upload to R2 storage
+        logger.info(f"📥 Downloading file from: {request.file_url}")
+        file_extension = os.path.splitext(request.file_url.split('?')[0])[-1].lower()
+        temp_download_path = os.path.join(job_dir, f"original{file_extension}")
+        
+        try:
+            response = requests.get(request.file_url, stream=True, timeout=120)
+            response.raise_for_status()
+            with open(temp_download_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            logger.info(f"✅ File downloaded: {temp_download_path}")
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to download file: {str(e)}")
+        
+        video_extensions = {'.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v'}
+        audio_extensions = {'.mp3', '.wav', '.aac', '.flac', '.ogg', '.m4a', '.wma'}
+        
+        is_video = file_extension in video_extensions
+        local_audio_path = temp_download_path
+        
+        if is_video:
+            logger.info(f"🎬 Video detected, extracting audio...")
+            audio_utils = AudioUtils()
+            audio_path = os.path.join(job_dir, f"{job_id}.wav")
+            result = audio_utils.extract_audio_from_video(temp_download_path, audio_path)
+            
+            if not result.get("success"):
+                raise HTTPException(status_code=500, detail=f"Audio extraction failed: {result.get('error')}")
+            
+            local_audio_path = audio_path
+            logger.info(f"✅ Audio extracted: {audio_path}")
+        elif file_extension in audio_extensions:
+            logger.info(f"🎵 Audio file detected")
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_extension}")
+        
         r2_service = R2Service()
         original_filename = os.path.basename(local_audio_path)
         sanitized_filename = r2_service._sanitize_filename(original_filename)

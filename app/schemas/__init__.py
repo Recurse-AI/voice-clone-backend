@@ -147,9 +147,17 @@ class RegenerateSegmentResponse(BaseModel):
 
 # Audio Separation API Schemas
 class AudioSeparationRequest(BaseModel):
-    job_id: str = Field(..., min_length=1, description="Unique job ID for audio separation (from /upload-file API)")
+    job_id: str = Field(..., min_length=1, description="Unique job ID for audio separation")
+    file_url: str = Field(..., description="URL to audio/video file (from /upload-file or external)")
     duration: float = Field(..., gt=0, le=7200, description="Audio duration in seconds (max 2 hours)")
     callerInfo: Optional[str] = Field(None, max_length=255, description="Caller information")
+    
+    @field_validator('file_url')
+    @classmethod
+    def validate_file_url(cls, v):
+        if not v.startswith(('http://', 'https://')):
+            raise ValueError("file_url must start with http:// or https://")
+        return v
 
 class AudioSeparationResponse(BaseModel):
     success: bool
