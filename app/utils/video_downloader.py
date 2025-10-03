@@ -82,7 +82,7 @@ class VideoDownloadService:
                     raise e
                 await asyncio.sleep(2)
 
-    def _get_fallback_configs(self, error: Exception, is_audio: bool = False, is_direct_audio: bool = False) -> list[dict] | None:
+    def _get_fallback_configs(self, error: Exception, is_audio: bool = False, is_direct_audio: bool = False, cookies_file: str | None = None, cookies_from_browser: str | None = None) -> list[dict] | None:
         error_msg = str(error).lower()
 
         if "requested format is not available" in error_msg or "http error 403" in error_msg or "forbidden" in error_msg:
@@ -119,8 +119,21 @@ class VideoDownloadService:
         elif "video unavailable" in error_msg:
             raise Exception("Media is private or deleted")
 
-        elif "sign in to confirm your age" in error_msg:
-            raise Exception("Age-restricted content")
+        elif "sign in to confirm your age" in error_msg or "sign in to confirm you're not a bot" in error_msg:
+            # Try cookie-based authentication fallbacks
+            fallbacks = []
+            if cookies_file:
+                fallbacks.append({"format": "best", "cookies": cookies_file})
+            elif cookies_from_browser:
+                fallbacks.append({"format": "best", "cookiesfrombrowser": (cookies_from_browser,)})
+            else:
+                # Try different browser cookie sources
+                fallbacks.extend([
+                    {"format": "best", "cookiesfrombrowser": ("chrome",)},
+                    {"format": "best", "cookiesfrombrowser": ("firefox",)},
+                    {"format": "best", "cookiesfrombrowser": ("edge",)},
+                ])
+            return fallbacks
 
         elif "unsupported url" in error_msg and "facebook.com" in error_msg:
             raise Exception("Facebook URL is not accessible. Try using the direct video URL instead of share link.")
@@ -169,7 +182,9 @@ class VideoDownloadService:
         format_preference: str | None = None,
         audio_quality: str | None = None,
         prefer_free_formats: bool = False,
-        include_subtitles: bool = False
+        include_subtitles: bool = False,
+        cookies_file: str | None = None,
+        cookies_from_browser: str | None = None
     ) -> Dict[str, Any]:
         """Download video from URL with advanced quality controls.
         
@@ -182,6 +197,8 @@ class VideoDownloadService:
             audio_quality: Audio quality preference
             prefer_free_formats: Whether to prefer open formats over proprietary
             include_subtitles: Whether to download subtitles if available
+            cookies_file: Path to cookies file for authentication
+            cookies_from_browser: Browser to extract cookies from (e.g., "chrome")
         
         Returns:
             Dict with success status and detailed file/format info
@@ -259,6 +276,14 @@ class VideoDownloadService:
                 "progress_hooks": [self._progress_hook],
             }
             
+            # Add cookie support for authentication
+            if cookies_file:
+                ydl_opts["cookies"] = cookies_file
+                logger.info(f"Using cookies file: {cookies_file}")
+            elif cookies_from_browser:
+                ydl_opts["cookiesfrombrowser"] = (cookies_from_browser,)
+                logger.info(f"Extracting cookies from browser: {cookies_from_browser}")
+            
             # Configure options based on content type
             if is_audio:
                 # For audio-only platform URLs, use extract-audio flag (like yt-dlp preset)
@@ -279,7 +304,7 @@ class VideoDownloadService:
                 download_success = True
             except Exception as download_error:
                 logger.error(f"Initial download failed, trying fallbacks: {str(download_error)[:100]}")
-                fallback_configs = self._get_fallback_configs(download_error, is_audio, is_direct_audio)
+                fallback_configs = self._get_fallback_configs(download_error, is_audio, is_direct_audio, cookies_file, cookies_from_browser)
                 if fallback_configs:
                     last_error = download_error
                     for idx, config in enumerate(fallback_configs):
@@ -288,6 +313,10 @@ class VideoDownloadService:
                         ydl_opts["format"] = config["format"]
                         if "extractor_args" in config:
                             ydl_opts["extractor_args"] = config["extractor_args"]
+                        if "cookies" in config:
+                            ydl_opts["cookies"] = config["cookies"]
+                        if "cookiesfrombrowser" in config:
+                            ydl_opts["cookiesfrombrowser"] = config["cookiesfrombrowser"]
                         ydl_opts["quiet"] = False
                         
                         # Ensure audio extraction is maintained for audio platforms
