@@ -306,7 +306,7 @@ echo "  - Starting WhisperX service worker (1 worker for 16GB VRAM)..."
 nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 # echo "  - Starting WhisperX service worker (2nd worker for 16GB VRAM)..."
-# LOAD_WHISPERX_MODEL=true LOAD_FISH_SPEECH_MODEL=false nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
+# nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_2 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 echo "  - Starting Fish Speech service worker (1 worker for 16GB VRAM)..."
 nohup ./venv/bin/python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
@@ -363,16 +363,27 @@ echo ""
 echo "🖥️  GPU Monitoring:"
 echo "   nvidia-smi -l 2    # Monitor GPU every 2 seconds"
 echo ""
-echo "🔐 PO Token Plugin Status:"
+echo "🎯 YouTube Download Status:"
+
+    # Check for cookies file
+    if [ -f "youtube_cookies.txt" ]; then
+        echo "   ✅ YouTube Cookies: FOUND"
+        echo "   📊 HD/4K downloads: ENABLED"
+    elif [ -f "www.youtube.com_cookies.txt" ]; then
+        echo "   ✅ YouTube Cookies: FOUND (www.youtube.com_cookies.txt)"
+        echo "   📊 HD/4K downloads: ENABLED"
+    else
+        echo "   ⚠️ YouTube Cookies: NOT FOUND"
+        echo "   🔄 Auto-fetch will run on server startup"
+        echo "   💡 Set YOUTUBE_EMAIL and YOUTUBE_PASSWORD in .env"
+    fi
+
+# Check PO Token plugin
 if python -c "import bgutil_ytdlp_pot_provider" 2>/dev/null; then
     PLUGIN_VERSION=$(pip show bgutil-ytdlp-pot-provider 2>/dev/null | grep Version | cut -d' ' -f2)
     echo "   ✅ PO Token Plugin: INSTALLED (v${PLUGIN_VERSION})"
-    echo "   🎯 HD/4K YouTube downloads: ENABLED"
-    echo "   📝 Using online token generation (no local server needed)"
 else
-    echo "   ❌ PO Token Plugin: NOT INSTALLED"
-    echo "   ⚠️ YouTube downloads using fallback system (limited HD)"
-    echo "   📦 To install: pip install bgutil-ytdlp-pot-provider"
+    echo "   ⚠️ PO Token Plugin: NOT INSTALLED"
 fi
 echo ""
 echo "🔴 Stop Commands:"

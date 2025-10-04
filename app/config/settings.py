@@ -142,6 +142,12 @@ class Settings(BaseSettings):
     
     # Fish Audio API Configuration
     FISH_AUDIO_API_KEY: str = os.getenv("FISH_AUDIO_API_KEY", "")
+
+
+    # YouTube Cookie Configuration
+    YOUTUBE_EMAIL: str = os.getenv("YOUTUBE_EMAIL", "")
+    YOUTUBE_PASSWORD: str = os.getenv("YOUTUBE_PASSWORD", "")
+    COOKIE_MAX_AGE_DAYS: int = int(os.getenv("COOKIE_MAX_AGE_DAYS", "10"))
     
     model_config = {"env_file": ".env", "case_sensitive": True, "extra": "ignore"}
 

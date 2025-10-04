@@ -35,10 +35,17 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Health check: Verify critical dependencies first
     logger.info("🏥 Performing startup health checks...")
+    
+    # Start cookie auto-refresh scheduler
+    try:
+        from app.services.cookie_scheduler import cookie_scheduler
+        import asyncio
+        asyncio.create_task(cookie_scheduler.start())
+        logger.info("🔄 Cookie auto-refresh scheduler started")
+    except Exception as e:
+        logger.warning(f"Cookie scheduler not started: {e}")
 
-    # MongoDB connection check - coordinate to run only once per deployment
     mongodb_lock_acquired = await startup_sync.acquire_startup_lock("mongodb_check", timeout=30)
 
     if mongodb_lock_acquired:
