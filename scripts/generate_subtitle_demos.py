@@ -72,7 +72,6 @@ def main():
     env = os.environ.copy()
     env['ASS_FONTSDIR'] = str(fonts_dir.absolute())
     env['FONTCONFIG_PATH'] = str(fonts_dir.absolute())
-    env['FONTCONFIG_FILE'] = str(fonts_dir.absolute() / 'fonts.conf')
     
     ffmpeg = get_ffmpeg_path()
     cmd = [

@@ -326,30 +326,51 @@ def send_reset_email_background_task(background_tasks: BackgroundTasks, email: s
 
 
 def create_job_completion_template(name: str, job_type: str, job_id: str, download_urls: dict) -> str:
-    """Job completion email template"""
+    """Job completion email template with distinct colors for each job type"""
     job_titles = {"dub": "Video Dubbing", "separation": "Audio Separation", "clip": "Video Clips"}
     job_title = job_titles.get(job_type, "Job")
     
     emojis = {"dub": "🎬", "separation": "🎵", "clip": "✂️"}
     emoji = emojis.get(job_type, "✅")
     
+    # Define color schemes for each job type
+    colors = {
+        "dub": {
+            "gradient": "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
+            "light_bg": "#eff6ff",
+            "border": "#bfdbfe",
+            "text": "#1e3a8a",
+            "link": "#3b82f6"
+        },
+        "separation": {
+            "gradient": "linear-gradient(135deg, #10b981 0%, #059669 100%)",
+            "light_bg": "#f0fdf4",
+            "border": "#bbf7d0",
+            "text": "#065f46",
+            "link": "#10b981"
+        },
+        "clip": {
+            "gradient": "linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)",
+            "light_bg": "#faf5ff",
+            "border": "#e9d5ff",
+            "text": "#5b21b6",
+            "link": "#8b5cf6"
+        }
+    }
+    
+    color_scheme = colors.get(job_type, colors["dub"])
+    
     # Create download links HTML
     download_links_html = ""
     if job_type == "dub":
         download_page_url = f"{settings.FRONTEND_URL}/workspace/dubbing/download/{job_id}"
-        download_links_html = (
-            f'<p><a href="{download_page_url}" class="download-button">🔗 View Download Page</a></p>'
-            f'<p style="font-size:12px;color:#6b7280;word-break:break-all;">If the button does not work: {download_page_url}</p>'
-        )
+        download_links_html = f'<p><a href="{download_page_url}" class="download-button">View Download Page</a></p>'
     elif job_type == "clip":
         clips_page_url = f"{settings.FRONTEND_URL}/workspace/clips/results/{job_id}"
-        download_links_html = (
-            f'<p><a href="{clips_page_url}" class="download-button">✂️ View Your Clips</a></p>'
-            f'<p style="font-size:12px;color:#6b7280;word-break:break-all;">If the button does not work: {clips_page_url}</p>'
-        )
+        download_links_html = f'<p><a href="{clips_page_url}" class="download-button">View Your Clips</a></p>'
     else:
         if download_urls.get("separation_url"):
-            download_links_html += f'<p><a href="{download_urls["separation_url"]}" class="download-button">🎵 Download Separated Audio</a></p>'
+            download_links_html = f'<p><a href="{download_urls["separation_url"]}" class="download-button">Download Separated Audio</a></p>'
     
     return f"""
     <!DOCTYPE html>
@@ -360,29 +381,25 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
         <title>{job_title} Completed - ClearVocals</title>
         <style>
             * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f5f5f5; }}
-            .email-container {{ max-width: 600px; margin: 0 auto; background-color: #ffffff; }}
-            .header {{ background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); padding: 40px 20px; text-align: center; }}
-            .logo {{ color: #ffffff; font-size: 28px; font-weight: bold; margin-bottom: 10px; }}
-            .header-subtitle {{ color: #fed7aa; font-size: 16px; }}
-            .content {{ padding: 40px 30px; }}
-            .greeting {{ font-size: 24px; color: #333333; margin-bottom: 20px; }}
-            .message {{ font-size: 16px; color: #666666; line-height: 1.6; margin-bottom: 30px; }}
-            .download-button {{ display: inline-block; background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); 
-                               color: #ffffff; text-decoration: none; padding: 15px 30px; border-radius: 8px; 
-                               font-size: 16px; font-weight: bold; text-align: center; margin: 10px 0; 
-                               box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4); transition: all 0.3s ease; }}
-            .download-button:hover {{ transform: translateY(-2px); box-shadow: 0 6px 16px rgba(249, 115, 22, 0.5); }}
-            .job-info {{ background-color: #fff7ed; border: 1px solid #fed7aa; padding: 20px; 
-                        border-radius: 8px; margin: 25px 0; }}
-            .job-info-text {{ font-size: 14px; color: #9a3412; }}
-            .footer {{ background-color: #f8f9fa; padding: 30px; text-align: center; border-top: 1px solid #e9ecef; }}
-            .footer-text {{ font-size: 14px; color: #666666; margin-bottom: 10px; }}
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f9fafb; }}
+            .email-container {{ max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; }}
+            .header {{ background: {color_scheme["gradient"]}; padding: 32px 20px; text-align: center; }}
+            .logo {{ color: #ffffff; font-size: 24px; font-weight: 600; }}
+            .content {{ padding: 32px 30px; }}
+            .greeting {{ font-size: 22px; color: #111827; margin-bottom: 16px; font-weight: 600; }}
+            .message {{ font-size: 15px; color: #6b7280; line-height: 1.5; margin-bottom: 24px; }}
+            .download-button {{ display: inline-block; background: {color_scheme["gradient"]}; 
+                               color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; 
+                               font-size: 15px; font-weight: 600; margin: 8px 0; }}
+            .job-info {{ background-color: {color_scheme["light_bg"]}; border-left: 3px solid {color_scheme["link"]}; 
+                        padding: 16px; border-radius: 4px; margin: 20px 0; }}
+            .job-info-text {{ font-size: 13px; color: {color_scheme["text"]}; line-height: 1.6; }}
+            .footer {{ background-color: #f9fafb; padding: 24px; text-align: center; border-top: 1px solid #e5e7eb; }}
+            .footer-text {{ font-size: 13px; color: #6b7280; margin-bottom: 8px; }}
             @media only screen and (max-width: 600px) {{
-                .content {{ padding: 20px 15px; }}
-                .header {{ padding: 30px 15px; }}
+                .content {{ padding: 24px 20px; }}
+                .header {{ padding: 24px 20px; }}
                 .greeting {{ font-size: 20px; }}
-                .download-button {{ padding: 12px 24px; font-size: 14px; }}
             }}
         </style>
     </head>
@@ -390,15 +407,13 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
         <div class="email-container">
             <div class="header">
                 <div class="logo">{emoji} ClearVocals</div>
-                <div class="header-subtitle">{job_title} Complete!</div>
             </div>
             
             <div class="content">
-                <h1 class="greeting">Great news, {name}! ✨</h1>
+                <h1 class="greeting">Hi {name},</h1>
                 
                 <p class="message">
-                    Your {job_title.lower()} job has been completed successfully! 
-                    You can now download your processed files using the links below.
+                    Your {job_title.lower()} has been completed successfully.
                 </p>
                 
                 <div style="text-align: center;">
@@ -407,34 +422,21 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
                 
                 <div class="job-info">
                     <p class="job-info-text">
-                        📋 <strong>Job Details:</strong><br>
-                        • Job ID: {job_id}<br>
-                        • Type: {job_title}<br>
-                        • Status: Completed<br>
-                        • Processed: {time.strftime('%Y-%m-%d %H:%M:%S UTC')}
+                        <strong>Job ID:</strong> {job_id}<br>
+                        <strong>Type:</strong> {job_title}<br>
+                        <strong>Status:</strong> Completed
                     </p>
                 </div>
-                
-                <p class="message">
-                    Need to process more audio or video? Visit your ClearVocals workspace to start new jobs:
-                    <br><br>
-                    <a href="{settings.FRONTEND_URL}/workspace" style="color: #f97316; text-decoration: none; font-weight: bold;">
-                        🚀 Go to Workspace
-                    </a>
-                </p>
             </div>
             
             <div class="footer">
                 <p class="footer-text">
-                    <strong>ClearVocals Team</strong><br>
-                    Your AI-powered voice companion
+                    <strong>ClearVocals Team</strong>
                 </p>
-                
                 <p class="footer-text">
-                    Need help? <a href="mailto:support@clearvocals.io" style="color: #f97316;">support@clearvocals.io</a>
+                    Need help? <a href="mailto:support@clearvocals.io" style="color: {color_scheme["link"]}; text-decoration: none;">support@clearvocals.io</a>
                 </p>
-                
-                <p style="font-size: 12px; color: #999999; margin-top: 15px;">
+                <p style="font-size: 12px; color: #9ca3af; margin-top: 12px;">
                     © 2024 ClearVocals. All rights reserved.
                 </p>
             </div>
