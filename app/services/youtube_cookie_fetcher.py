@@ -14,7 +14,7 @@ class YouTubeCookieFetcher:
         self.password = settings.YOUTUBE_PASSWORD
         self.profile_dir = Path("tmp/browser_profile")
     
-    async def fetch_cookies(self) -> dict:
+    async def fetch_cookies(self, manual_mode: bool = False) -> dict:
         if not self.email or not self.password:
             return {"success": False, "error": "YouTube credentials not set in .env"}
         
@@ -24,8 +24,11 @@ class YouTubeCookieFetcher:
             async with async_playwright() as p:
                 context = await p.chromium.launch_persistent_context(
                     str(self.profile_dir),
-                    headless=True,
-                    args=['--disable-blink-features=AutomationControlled'],
+                    headless=not manual_mode,
+                    args=[
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-features=IsolateOrigins,site-per-process'
+                    ],
                     user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                 )
                 page = context.pages[0] if context.pages else await context.new_page()
@@ -38,28 +41,37 @@ class YouTubeCookieFetcher:
                 is_logged_in = 'ucbcb' in page_content or await page.locator('button[aria-label*="Google Account"]').count() > 0
                 
                 if not is_logged_in:
-                    logger.info("Not logged in. Starting auto-login...")
-                    
-                    await page.goto("https://accounts.google.com/ServiceLogin?service=youtube", wait_until="networkidle")
-                    await asyncio.sleep(3)
-                    
-                    logger.info(f"Entering email: {self.email}")
-                    await page.fill('input[type="email"]', self.email)
-                    await page.press('input[type="email"]', 'Enter')
-                    await asyncio.sleep(4)
-                    
-                    logger.info("Entering password...")
-                    await page.wait_for_selector('input[type="password"]', timeout=10000)
-                    await asyncio.sleep(1)
-                    await page.fill('input[type="password"]', self.password)
-                    await page.press('input[type="password"]', 'Enter')
-                    await asyncio.sleep(6)
-                    
-                    if "challenge" in page.url or "verification" in page.url:
-                        await context.close()
-                        return {"success": False, "error": "Google security challenge - requires manual verification"}
-                    
-                    logger.info("✅ Login successful")
+                    if manual_mode:
+                        logger.warning("⚠️ Not logged in. Browser will stay open for MANUAL login.")
+                        logger.warning("Please login in the browser window, then press Enter here...")
+                        input("Press Enter after logging in manually...")
+                    else:
+                        logger.info("Not logged in. Starting auto-login...")
+                        
+                        await page.goto("https://accounts.google.com/ServiceLogin?service=youtube", wait_until="networkidle")
+                        await asyncio.sleep(3)
+                        
+                        logger.info(f"Entering email: {self.email}")
+                        await page.fill('input[type="email"]', self.email)
+                        await asyncio.sleep(0.5)
+                        await page.press('input[type="email"]', 'Enter')
+                        await asyncio.sleep(5)
+                        
+                        logger.info("Entering password...")
+                        await page.wait_for_selector('input[type="password"]', timeout=10000)
+                        await asyncio.sleep(1)
+                        await page.fill('input[type="password"]', self.password)
+                        await asyncio.sleep(0.5)
+                        await page.press('input[type="password"]', 'Enter')
+                        
+                        logger.warning("⚠️ If you get security notification on your device, approve it now...")
+                        await asyncio.sleep(15)
+                        
+                        if "challenge" in page.url or "verification" in page.url:
+                            logger.warning("Security challenge detected. Waiting 30 seconds for approval...")
+                            await asyncio.sleep(30)
+                        
+                        logger.info("✅ Login process completed")
                 
                 logger.info("Extracting cookies...")
                 cookies = await context.cookies()
