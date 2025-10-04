@@ -157,9 +157,9 @@ class VideoDownloadService:
                             "format_id": f.get("format_id"),
                             "resolution": f"{height}p",
                             "ext": ext,
-                            "filesize_mb": round(filesize / (1024*1024), 2) if filesize else None,
-                            "fps": f.get("fps"),
-                            "vcodec": f.get("vcodec", "").split(".")[0]
+                            "filesize_mb": round(filesize / (1024*1024), 2) if filesize else 0,
+                            "fps": f.get("fps", 30),
+                            "vcodec": f.get("vcodec", "").split(".")[0] if f.get("vcodec") else "unknown"
                         })
                 
                 format_list.sort(key=lambda x: int(x["resolution"].replace("p", "")), reverse=True)
