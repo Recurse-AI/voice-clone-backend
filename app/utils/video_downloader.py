@@ -137,12 +137,6 @@ class VideoDownloadService:
                 "quiet": True,
                 "no_warnings": True,
                 "extract_flat": False,
-                "extractor_args": {
-                    "youtube": {
-                        "player_client": ["android_creator", "android", "ios", "web"],
-                        "skip": ["translated_subs"]
-                    }
-                }
             }
             
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -151,15 +145,16 @@ class VideoDownloadService:
                     return {"success": False, "error": "Could not extract video information"}
                 
                 formats = info.get("formats", [])
-                video_formats = [f for f in formats if f.get("vcodec") != "none" and f.get("url")]
-                audio_formats = [f for f in formats if f.get("vcodec") == "none" and f.get("acodec") != "none" and f.get("url")]
+                # Include ALL video formats (don't filter by URL - some formats have it missing)
+                video_formats = [f for f in formats if f.get("vcodec") != "none"]
+                audio_formats = [f for f in formats if f.get("vcodec") == "none" and f.get("acodec") != "none"]
                 
                 best_audio = max(audio_formats, key=lambda x: x.get("abr", 0)) if audio_formats else None
                 best_audio_id = best_audio.get("format_id") if best_audio else None
                 best_audio_size = best_audio.get("filesize") or best_audio.get("filesize_approx", 0) if best_audio else 0
                 
                 format_list = []
-                seen_heights = set()
+                seen_formats = {}  # Track best format for each resolution+ext combo
                 
                 # Show ALL video formats (including video-only for high quality)
                 for f in video_formats:
@@ -167,23 +162,26 @@ class VideoDownloadService:
                     if height <= 0:
                         continue
                     
-                    # Skip duplicate resolutions
-                    if height in seen_heights:
-                        continue
-                    
-                    seen_heights.add(height)
-                    
                     ext = f.get("ext", "mp4")
                     filesize = f.get("filesize") or f.get("filesize_approx", 0)
                     acodec = f.get("acodec", "none")
                     has_audio = acodec != "none"
+                    
+                    # Create unique key for resolution+extension combo
+                    format_key = f"{height}_{ext}_{has_audio}"
+                    
+                    # Keep the one with larger filesize (better quality)
+                    if format_key in seen_formats:
+                        existing_size = seen_formats[format_key].get("_filesize", 0)
+                        if filesize <= existing_size:
+                            continue
                     
                     # Estimate final size (video + audio if needed)
                     estimated_size = filesize
                     if not has_audio and best_audio_size:
                         estimated_size = filesize + best_audio_size
                     
-                    format_list.append({
+                    format_obj = {
                         "format_id": f.get("format_id"),
                         "resolution": f"{height}p",
                         "ext": ext,
@@ -194,10 +192,18 @@ class VideoDownloadService:
                         "needs_audio_merge": not has_audio,
                         "audio_format_id": best_audio_id if not has_audio else None,
                         "note": f"High quality (will merge with audio)" if not has_audio else "Includes audio",
-                        "quality": f.get("quality", 0)
-                    })
+                        "quality": f.get("quality", 0),
+                        "_filesize": filesize  # Internal tracking
+                    }
+                    
+                    seen_formats[format_key] = format_obj
                 
-                format_list.sort(key=lambda x: int(x["resolution"].replace("p", "")), reverse=True)
+                # Convert to list and sort
+                format_list = list(seen_formats.values())
+                for fmt in format_list:
+                    fmt.pop("_filesize", None)  # Remove internal field
+                
+                format_list.sort(key=lambda x: (int(x["resolution"].replace("p", "")), x["ext"]), reverse=True)
                 
                 return {
                     "success": True,
