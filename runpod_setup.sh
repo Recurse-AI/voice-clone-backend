@@ -102,12 +102,15 @@ fuser -k 3000/tcp 2>/dev/null || true
 fuser -k 4416/tcp 2>/dev/null || true
 
 # Kill any processes using our ports (alternative method)
-lsof -ti:8000 | xargs kill -9 2>/dev/null || true
-lsof -ti:6379 | xargs kill -9 2>/dev/null || true
-lsof -ti:8080 | xargs kill -9 2>/dev/null || true
-lsof -ti:5000 | xargs kill -9 2>/dev/null || true
-lsof -ti:3000 | xargs kill -9 2>/dev/null || true
-lsof -ti:4416 | xargs kill -9 2>/dev/null || true
+# Check if lsof is available, if not skip this step
+if command -v lsof >/dev/null 2>&1; then
+    lsof -ti:8000 | xargs kill -9 2>/dev/null || true
+    lsof -ti:6379 | xargs kill -9 2>/dev/null || true
+    lsof -ti:8080 | xargs kill -9 2>/dev/null || true
+    lsof -ti:5000 | xargs kill -9 2>/dev/null || true
+    lsof -ti:3000 | xargs kill -9 2>/dev/null || true
+    lsof -ti:4416 | xargs kill -9 2>/dev/null || true
+fi
 
 # Comprehensive file cleanup
 echo "🧹 Cleaning up temporary files and logs..."
@@ -142,35 +145,80 @@ echo "🔐 Starting BGUtil PO Token Provider..."
 # Check if Node.js is installed
 if ! command -v node >/dev/null 2>&1; then
     echo "📦 Node.js not found, installing..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>/dev/null || true
-    apt-get install -y nodejs 2>/dev/null || echo "Node.js installation attempted"
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || true
+    apt-get install -y nodejs || true
+    
+    # Verify Node.js installation
+    if command -v node >/dev/null 2>&1; then
+        echo "✅ Node.js installed: $(node --version)"
+    else
+        echo "❌ Node.js installation failed"
+        echo "⚠️ BGUtil server will not be available"
+        echo "   YouTube downloads will use fallback system"
+    fi
+else
+    echo "✅ Node.js already installed: $(node --version)"
 fi
 
-# Check if bgutils-provider is installed
-if ! command -v bgutils-provider >/dev/null 2>&1; then
-    echo "📦 Installing bgutils-provider..."
-    npm install -g bgutils-provider 2>/dev/null || echo "bgutils-provider installation attempted"
+# Check if npm is available
+if ! command -v npm >/dev/null 2>&1; then
+    echo "❌ npm not found, cannot install bgutils-provider"
+else
+    echo "✅ npm available: $(npm --version)"
+    
+    # Check if bgutils-provider is installed
+    if ! command -v bgutils-provider >/dev/null 2>&1; then
+        echo "📦 Installing bgutils-provider..."
+        
+        # Try installation with visible errors
+        if npm install -g bgutils-provider; then
+            echo "✅ bgutils-provider installed successfully"
+        else
+            echo "❌ bgutils-provider installation failed"
+            echo "   Trying alternative installation method..."
+            
+            # Try with --force flag
+            npm install -g bgutils-provider --force || true
+        fi
+    else
+        echo "✅ bgutils-provider already installed"
+    fi
 fi
 
 # Start BGUtil server in background
 if command -v bgutils-provider >/dev/null 2>&1; then
     echo "🚀 Starting BGUtil PO Token server on port 4416..."
-    nohup bgutils-provider > /dev/null 2>&1 &
+    
+    # Kill any existing bgutils-provider
+    pkill -9 -f "bgutils-provider" 2>/dev/null || true
+    sleep 1
+    
+    # Start in background
+    nohup bgutils-provider > logs/bgutil.log 2>&1 &
     BGUTIL_PID=$!
-    sleep 2
+    echo "   Started with PID: $BGUTIL_PID"
+    
+    # Wait for server to initialize
+    sleep 3
     
     # Verify BGUtil server
     if curl -s http://127.0.0.1:4416/ping > /dev/null 2>&1; then
-        echo "✅ BGUtil PO Token server running (PID: $BGUTIL_PID)"
+        echo "✅ BGUtil PO Token server running and responding"
         echo "   🎯 HD/4K YouTube formats now enabled!"
+        echo "   📋 Log: logs/bgutil.log"
     else
-        echo "⚠️ BGUtil server started but health check failed"
+        echo "⚠️ BGUtil server started but not responding"
+        echo "   Check logs/bgutil.log for details"
         echo "   YouTube downloads will use fallback system"
     fi
 else
-    echo "⚠️ BGUtil server not available"
+    echo "⚠️ BGUtil server not available (bgutils-provider not found)"
     echo "   YouTube downloads will use fallback system (360p-720p)"
-    echo "   To enable HD formats: npm install -g bgutils-provider"
+    echo ""
+    echo "   To manually install:"
+    echo "   1. npm install -g bgutils-provider"
+    echo "   2. bgutils-provider &"
+    echo "   3. curl http://127.0.0.1:4416/ping"
 fi
 
 # START REDIS
@@ -372,12 +420,29 @@ echo "🖥️  GPU Monitoring:"
 echo "   nvidia-smi -l 2    # Monitor GPU every 2 seconds"
 echo ""
 echo "🔐 PO Token Server:"
-if pgrep -f "bgutils-provider" > /dev/null; then
-    echo "   ✅ BGUtil server running on port 4416"
-    echo "   🎯 HD/4K YouTube downloads enabled"
+if pgrep -f "bgutils-provider" > /dev/null 2>&1; then
+    # Server is running, check if responding
+    if curl -s http://127.0.0.1:4416/ping > /dev/null 2>&1; then
+        echo "   ✅ BGUtil server: RUNNING & RESPONDING"
+        echo "   🎯 HD/4K YouTube downloads: ENABLED"
+        echo "   📊 Port: 4416"
+    else
+        echo "   ⚠️ BGUtil server: RUNNING but NOT RESPONDING"
+        echo "   Check: tail -f logs/bgutil.log"
+    fi
 else
-    echo "   ⚠️ BGUtil server not running"
-    echo "   To start: bgutils-provider &"
+    echo "   ⚠️ BGUtil server: NOT RUNNING"
+    
+    # Check if bgutils-provider is installed
+    if command -v bgutils-provider >/dev/null 2>&1; then
+        echo "   📦 bgutils-provider: INSTALLED"
+        echo "   🔧 To start: bgutils-provider &"
+    else
+        echo "   ❌ bgutils-provider: NOT INSTALLED"
+        echo "   📦 To install: npm install -g bgutils-provider"
+    fi
+    
+    echo "   ⚠️ YouTube downloads using fallback system (limited HD)"
 fi
 echo ""
 echo "🔴 Stop Commands:"

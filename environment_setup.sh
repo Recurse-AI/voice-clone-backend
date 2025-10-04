@@ -50,6 +50,7 @@ apt-get install -y \
     redis-server \
     wget \
     gnupg2 \
+    lsof \
     2>/dev/null || echo "Some packages might already be installed"
 
 # Install Node.js for BGUtil PO Token Provider
