@@ -184,6 +184,10 @@ class SeparationStatusResponse(BaseModel):
 # Video Download Schemas
 class VideoDownloadRequest(BaseModel):
     url: str = Field(..., min_length=1, description="Video URL from supported platforms")
+    format_id: Optional[str] = Field(
+        None,
+        description="Specific format ID from available-formats endpoint. If provided, overrides quality/resolution."
+    )
     quality: Optional[str] = Field(
         "best", 
         description="Video quality preference. Use 'best' for highest quality, 'worst' for smallest file, or specify custom yt-dlp format selectors."

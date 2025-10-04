@@ -128,6 +128,56 @@ class VideoDownloadService:
         return None
 
 
+    async def get_available_formats(self, url: str) -> Dict[str, Any]:
+        """Get list of available formats without downloading."""
+        try:
+            url = self._preprocess_facebook_url(url)
+            
+            with yt_dlp.YoutubeDL({"quiet": True}) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    return {"success": False, "error": "Could not extract video information"}
+                
+                formats = info.get("formats", [])
+                video_formats = [f for f in formats if f.get("vcodec") != "none"]
+                audio_formats = [f for f in formats if f.get("vcodec") == "none" and f.get("acodec") != "none"]
+                
+                format_list = []
+                seen = set()
+                
+                for f in video_formats:
+                    height = f.get("height", 0)
+                    ext = f.get("ext", "unknown")
+                    filesize = f.get("filesize") or f.get("filesize_approx", 0)
+                    key = f"{height}_{ext}"
+                    
+                    if key not in seen and height > 0:
+                        seen.add(key)
+                        format_list.append({
+                            "format_id": f.get("format_id"),
+                            "resolution": f"{height}p",
+                            "ext": ext,
+                            "filesize_mb": round(filesize / (1024*1024), 2) if filesize else None,
+                            "fps": f.get("fps"),
+                            "vcodec": f.get("vcodec", "").split(".")[0]
+                        })
+                
+                format_list.sort(key=lambda x: int(x["resolution"].replace("p", "")), reverse=True)
+                
+                return {
+                    "success": True,
+                    "title": info.get("title"),
+                    "duration": info.get("duration", 0),
+                    "uploader": info.get("uploader"),
+                    "thumbnail": info.get("thumbnail"),
+                    "formats": format_list,
+                    "has_audio_only": len(audio_formats) > 0,
+                    "default_format": format_list[0] if format_list else None
+                }
+        except Exception as e:
+            logger.error(f"Error getting formats: {e}")
+            return {"success": False, "error": str(e)}
+
     def _analyze_available_formats(self, formats: list, requested_format: str, requested_resolution: str | None = None) -> Dict[str, Any]:
         if not formats:
             return {"available_formats": [], "selected_format": {}, "resolution": "Unknown",
@@ -138,11 +188,9 @@ class VideoDownloadService:
             return {"available_formats": [], "selected_format": {}, "resolution": "Unknown",
                    "ext": "Unknown", "filesize": "Unknown", "resolution_match": False}
 
-        # Sort by quality (height first)
         video_formats.sort(key=lambda f: f.get("height", 0) or 0, reverse=True)
         selected = video_formats[0]
 
-        # Check if requested resolution matches
         resolution_match = False
         if requested_resolution:
             req_height = int(requested_resolution.replace("p", "")) if requested_resolution.replace("p", "").isdigit() else 0
@@ -163,6 +211,7 @@ class VideoDownloadService:
     async def download_video(
         self, 
         url: str, 
+        format_id: str | None = None,
         quality: str | None = None,
         resolution: str | None = None,
         max_filesize: str | None = None,
@@ -175,6 +224,7 @@ class VideoDownloadService:
         
         Args:
             url: Video URL to download
+            format_id: Specific format ID (overrides quality/resolution)
             quality: yt-dlp quality format (default: "best")
             resolution: Preferred resolution height (e.g., "720", "1080")
             max_filesize: Maximum file size (e.g., "100M", "1G")
@@ -205,8 +255,12 @@ class VideoDownloadService:
             # Check if it's a direct audio file (different handling)
             is_direct_audio = any(url.lower().endswith(ext) for ext in ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'])
             
-            quality_format = self._get_format_selector(quality, resolution, max_filesize, is_audio)
-            logger.info(f"Initial format selector: {quality_format}")
+            if format_id:
+                quality_format = format_id
+                logger.info(f"Using specific format_id: {format_id}")
+            else:
+                quality_format = self._get_format_selector(quality, resolution, max_filesize, is_audio)
+                logger.info(f"Initial format selector: {quality_format}")
 
             output_template = str(job_dir / "%(title)s.%(ext)s")
             

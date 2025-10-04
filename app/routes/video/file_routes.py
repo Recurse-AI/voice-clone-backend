@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 import logging
 from pathlib import Path
 import os
@@ -11,6 +11,18 @@ from app.services.r2_service import R2Service
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+@router.get("/available-formats")
+async def get_available_formats(url: str = Query(..., description="Video URL to check formats")):
+    """Get list of available download formats without downloading."""
+    try:
+        result = await video_download_service.get_available_formats(url)
+        if not result.get("success"):
+            raise HTTPException(status_code=400, detail=result.get("error", "Failed to get formats"))
+        return result
+    except Exception as e:
+        logger.error(f"Error getting formats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/download-media", response_model=VideoDownloadResponse)
 async def download_media(request: VideoDownloadRequest):
     """Download media from YouTube/social media using resilient downloader, then upload to R2 bucket"""
@@ -20,6 +32,7 @@ async def download_media(request: VideoDownloadRequest):
         # 1) Download locally using resilient service (retries, fallbacks, tuned yt-dlp)
         res = await video_download_service.download_video(
             url=request.url,
+            format_id=request.format_id,
             quality=request.quality,
             resolution=request.resolution,
             max_filesize=request.max_filesize,
