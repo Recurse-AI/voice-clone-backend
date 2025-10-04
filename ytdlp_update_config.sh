@@ -25,4 +25,3 @@ RESTART_CMD="pkill -f 'uvicorn main:app' && sleep 2 && cd '$SCRIPT_DIR' && nohup
 # Note: Script checks DAILY but only updates when new version is available
 # Crontab schedule: 0 3 * * * (every day at 3 AM)
 # Only restarts server when an actual update happens
-

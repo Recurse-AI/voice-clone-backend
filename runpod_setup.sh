@@ -40,9 +40,10 @@ export TORCH_COMPILE_BACKEND=inductor
 echo "🐍 Activating virtual environment..."
 source venv/bin/activate
 
-# Upgrade yt-dlp to latest version
-echo "🔧 Upgrading yt-dlp..."
+# Upgrade yt-dlp and PO Token provider
+echo "🔧 Upgrading yt-dlp and PO Token provider..."
 pip install --upgrade yt-dlp --quiet
+pip install --upgrade bgutil-ytdlp-pot-provider --quiet
 
 # Setup auto-update cron job for yt-dlp (runs daily at 3 AM)
 echo "⏰ Setting up auto-update schedule..."
@@ -88,12 +89,17 @@ pkill -9 -f "redis" 2>/dev/null || true
 pkill -9 -f "worker" 2>/dev/null || true
 pkill -9 -f "starter" 2>/dev/null || true
 
+# Kill BGUtil server if running
+pkill -9 -f "bgutils-provider" 2>/dev/null || true
+pkill -9 -f "node.*bgutils" 2>/dev/null || true
+
 # Free all relevant ports
 fuser -k 8000/tcp 2>/dev/null || true
 fuser -k 6379/tcp 2>/dev/null || true
 fuser -k 8080/tcp 2>/dev/null || true
 fuser -k 5000/tcp 2>/dev/null || true
 fuser -k 3000/tcp 2>/dev/null || true
+fuser -k 4416/tcp 2>/dev/null || true
 
 # Kill any processes using our ports (alternative method)
 lsof -ti:8000 | xargs kill -9 2>/dev/null || true
@@ -101,6 +107,7 @@ lsof -ti:6379 | xargs kill -9 2>/dev/null || true
 lsof -ti:8080 | xargs kill -9 2>/dev/null || true
 lsof -ti:5000 | xargs kill -9 2>/dev/null || true
 lsof -ti:3000 | xargs kill -9 2>/dev/null || true
+lsof -ti:4416 | xargs kill -9 2>/dev/null || true
 
 # Comprehensive file cleanup
 echo "🧹 Cleaning up temporary files and logs..."
@@ -128,6 +135,43 @@ if pgrep -f "uvicorn\|python.*main\|redis-server\|rq.*worker" > /dev/null; then
 fi
 
 echo "✅ Comprehensive cleanup completed - all previous processes killed and cleaned"
+
+# START BGUTIL SERVER FOR PO TOKEN
+echo "🔐 Starting BGUtil PO Token Provider..."
+
+# Check if Node.js is installed
+if ! command -v node >/dev/null 2>&1; then
+    echo "📦 Node.js not found, installing..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>/dev/null || true
+    apt-get install -y nodejs 2>/dev/null || echo "Node.js installation attempted"
+fi
+
+# Check if bgutils-provider is installed
+if ! command -v bgutils-provider >/dev/null 2>&1; then
+    echo "📦 Installing bgutils-provider..."
+    npm install -g bgutils-provider 2>/dev/null || echo "bgutils-provider installation attempted"
+fi
+
+# Start BGUtil server in background
+if command -v bgutils-provider >/dev/null 2>&1; then
+    echo "🚀 Starting BGUtil PO Token server on port 4416..."
+    nohup bgutils-provider > /dev/null 2>&1 &
+    BGUTIL_PID=$!
+    sleep 2
+    
+    # Verify BGUtil server
+    if curl -s http://127.0.0.1:4416/ping > /dev/null 2>&1; then
+        echo "✅ BGUtil PO Token server running (PID: $BGUTIL_PID)"
+        echo "   🎯 HD/4K YouTube formats now enabled!"
+    else
+        echo "⚠️ BGUtil server started but health check failed"
+        echo "   YouTube downloads will use fallback system"
+    fi
+else
+    echo "⚠️ BGUtil server not available"
+    echo "   YouTube downloads will use fallback system (360p-720p)"
+    echo "   To enable HD formats: npm install -g bgutils-provider"
+fi
 
 # START REDIS
 echo "🚀 Starting fresh Redis server..."
@@ -327,6 +371,16 @@ echo ""
 echo "🖥️  GPU Monitoring:"
 echo "   nvidia-smi -l 2    # Monitor GPU every 2 seconds"
 echo ""
+echo "🔐 PO Token Server:"
+if pgrep -f "bgutils-provider" > /dev/null; then
+    echo "   ✅ BGUtil server running on port 4416"
+    echo "   🎯 HD/4K YouTube downloads enabled"
+else
+    echo "   ⚠️ BGUtil server not running"
+    echo "   To start: bgutils-provider &"
+fi
+echo ""
 echo "🔴 Stop Commands:"
 echo "   pkill -f 'uvicorn.*main:app' && pkill -f 'rq.*worker'"
 echo "   pkill -f 'video_processing_worker'  # Stop video workers"
+echo "   pkill -f 'bgutils-provider'  # Stop PO Token server"

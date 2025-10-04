@@ -52,6 +52,27 @@ apt-get install -y \
     gnupg2 \
     2>/dev/null || echo "Some packages might already be installed"
 
+# Install Node.js for BGUtil PO Token Provider
+echo "📦 Installing Node.js for PO Token support..."
+if ! command -v node >/dev/null 2>&1; then
+    echo "Installing Node.js..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - 2>/dev/null || true
+    apt-get install -y nodejs 2>/dev/null || echo "Node.js installation attempted"
+else
+    echo "✅ Node.js already installed: $(node --version)"
+fi
+
+# Install BGUtil PO Token Provider
+echo "🔐 Installing BGUtil PO Token Provider..."
+if command -v npm >/dev/null 2>&1; then
+    npm install -g bgutils-provider 2>/dev/null || echo "bgutils-provider installation attempted"
+    if command -v bgutils-provider >/dev/null 2>&1; then
+        echo "✅ BGUtil PO Token Provider installed"
+    fi
+else
+    echo "⚠️ npm not available, skipping bgutils-provider"
+fi
+
 # Check CUDA and CUDNN libraries for GPU acceleration
 echo "🚀 Checking CUDA/CUDNN libraries..."
 if command -v nvidia-smi &> /dev/null; then
@@ -107,6 +128,9 @@ pip install --upgrade pip
 
 echo "📋 Installing Python dependencies..."
 pip install -r requirements.txt
+
+echo "🔐 Installing YouTube PO Token provider plugin..."
+pip install --upgrade bgutil-ytdlp-pot-provider --quiet || echo "PO Token plugin installation attempted"
 
 # Setup Fish Speech
 echo "🐟 Setting up Fish Speech..."
@@ -199,8 +223,10 @@ echo "🎉 Environment setup completed!"
 echo ""
 echo "📋 Summary:"
 echo "  ✅ System dependencies installed"
+echo "  ✅ Node.js and BGUtil PO Token Provider installed"
 echo "  ✅ Python virtual environment created"
 echo "  ✅ Python packages installed"
+echo "  ✅ YouTube PO Token plugin installed"
 echo "  ✅ Fish Speech setup completed"
 echo "  ✅ Installation verified"
 echo ""

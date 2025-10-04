@@ -100,21 +100,13 @@ class VideoDownloadService:
                     {"format": "ba/b", "extractor_args": {"youtube": {"player_client": ["android"]}}},
                 ]
             else:
-                # Check if it's a Facebook URL for specific fallbacks
-                if "facebook.com" in str(error).lower():
-                    return [
-                        {"format": "best", "extractor_args": {"facebook": {"player_client": ["mobile"]}}},
-                        {"format": "worst", "extractor_args": {"facebook": {"player_client": ["web"]}}},
-                        {"format": "best", "extractor_args": {"facebook": {"player_client": ["mobile", "web"]}}},
-                        {"format": "best", "extractor_args": {"youtube": {"player_client": ["web"]}}},
-                    ]
-                else:
-                    return [
-                        {"format": "best", "extractor_args": {"youtube": {"player_client": ["web"]}}},
-                        {"format": "worst", "extractor_args": {"youtube": {"player_client": ["mweb"]}}},
-                        {"format": "best", "extractor_args": {"youtube": {"player_client": ["android", "web"]}}},
-                        {"format": "best", "extractor_args": {"youtube": {"player_client": ["android"]}}},
-                    ]
+                # Video fallbacks: try formats with audio first (more reliable)
+                return [
+                    {"format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"},  # Try mp4 with audio
+                    {"format": "bestvideo+bestaudio/best"},  # Any format with audio
+                    {"format": "best[ext=mp4]/best"},  # Best mp4 or any
+                    {"format": "18"},  # Format 18 (360p with audio) - most reliable
+                ]
 
         elif "video unavailable" in error_msg:
             raise Exception("Media is private or deleted")
@@ -157,7 +149,8 @@ class VideoDownloadService:
                 seen_formats = {}  # Track best format for each resolution+ext combo
                 
                 # Show ALL video formats (including video-only for high quality)
-                for f in video_formats:
+                # Prefer formats with audio (more reliable to download)
+                for f in sorted(video_formats, key=lambda x: (x.get("acodec", "none") != "none"), reverse=True):
                     height = f.get("height", 0)
                     if height <= 0:
                         continue
@@ -166,14 +159,25 @@ class VideoDownloadService:
                     filesize = f.get("filesize") or f.get("filesize_approx", 0)
                     acodec = f.get("acodec", "none")
                     has_audio = acodec != "none"
+                    format_id = f.get("format_id")
                     
-                    # Create unique key for resolution+extension combo
-                    format_key = f"{height}_{ext}_{has_audio}"
+                    # Create unique key for resolution+extension
+                    format_key = f"{height}_{ext}"
                     
-                    # Keep the one with larger filesize (better quality)
+                    # Prefer formats with audio (more downloadable)
                     if format_key in seen_formats:
-                        existing_size = seen_formats[format_key].get("_filesize", 0)
-                        if filesize <= existing_size:
+                        existing = seen_formats[format_key]
+                        # If existing has audio, keep it (unless new one is also with audio and bigger)
+                        if existing.get("has_audio"):
+                            if not has_audio:
+                                continue  # Keep existing with audio
+                            elif filesize <= existing.get("_filesize", 0):
+                                continue  # Keep existing larger one
+                        # If new has audio but existing doesn't, replace
+                        elif has_audio:
+                            pass  # Will replace below
+                        # Both no audio, keep larger one
+                        elif filesize <= existing.get("_filesize", 0):
                             continue
                     
                     # Estimate final size (video + audio if needed)
@@ -181,8 +185,11 @@ class VideoDownloadService:
                     if not has_audio and best_audio_size:
                         estimated_size = filesize + best_audio_size
                     
+                    # Check if format is likely downloadable (has audio or is streaming format)
+                    is_downloadable = has_audio or filesize == 0 or "-" in str(format_id)
+                    
                     format_obj = {
-                        "format_id": f.get("format_id"),
+                        "format_id": format_id,
                         "resolution": f"{height}p",
                         "ext": ext,
                         "filesize_mb": round(estimated_size / (1024*1024), 2) if estimated_size else 0,
@@ -191,19 +198,24 @@ class VideoDownloadService:
                         "has_audio": has_audio,
                         "needs_audio_merge": not has_audio,
                         "audio_format_id": best_audio_id if not has_audio else None,
-                        "note": f"High quality (will merge with audio)" if not has_audio else "Includes audio",
+                        "note": f"Includes audio (recommended)" if has_audio else "High quality (will merge with audio)",
                         "quality": f.get("quality", 0),
+                        "is_downloadable": is_downloadable,
                         "_filesize": filesize  # Internal tracking
                     }
                     
                     seen_formats[format_key] = format_obj
                 
-                # Convert to list and sort
+                # Convert to list and sort (formats with audio first)
                 format_list = list(seen_formats.values())
                 for fmt in format_list:
                     fmt.pop("_filesize", None)  # Remove internal field
                 
-                format_list.sort(key=lambda x: (int(x["resolution"].replace("p", "")), x["ext"]), reverse=True)
+                # Sort: resolution desc, but formats with audio come first at same resolution
+                format_list.sort(key=lambda x: (
+                    int(x["resolution"].replace("p", "")),
+                    x["has_audio"]  # True comes after False, so formats with audio last
+                ), reverse=True)
                 
                 return {
                     "success": True,
@@ -355,9 +367,16 @@ class VideoDownloadService:
             is_direct_audio = any(url.lower().endswith(ext) for ext in ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'])
             
             if format_id:
-                # Use smart merge function that handles video-only formats
+                # Smart format selection with fallbacks
+                # Try: specific format + audio, then format alone, then similar quality with audio
                 logger.info(f"Using format_id {format_id} with automatic audio merge if needed")
-                quality_format = f"{format_id}+bestaudio[ext=m4a]/{format_id}+bestaudio/{format_id}"
+                
+                # If format has "-" it's likely a streaming format (more reliable)
+                if "-" in str(format_id):
+                    quality_format = format_id  # Direct download
+                else:
+                    # Try to merge with audio, with fallbacks
+                    quality_format = f"{format_id}+bestaudio/{format_id}/bestvideo+bestaudio/best"
             else:
                 quality_format = self._get_format_selector(quality, resolution, max_filesize, is_audio)
                 logger.info(f"Initial format selector: {quality_format}")

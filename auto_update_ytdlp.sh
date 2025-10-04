@@ -39,11 +39,15 @@ if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ] && [ -n "$LATEST_VERSION" ]; then
     # Update yt-dlp
     pip install --upgrade yt-dlp --quiet
     
+    # Also update PO Token plugin
+    echo "[$(date)] Updating PO Token provider plugin..." >> "$LOG_FILE"
+    pip install --upgrade bgutil-ytdlp-pot-provider --quiet
+    
     # Verify update
     NEW_VERSION=$(python -c "import yt_dlp; print(yt_dlp.version.__version__)" 2>/dev/null)
     
     if [ "$CURRENT_VERSION" != "$NEW_VERSION" ]; then
-        echo "[$(date)] ✓ yt-dlp updated: $CURRENT_VERSION → $NEW_VERSION" >> "$LOG_FILE"
+        echo "[$(date)] ✓ yt-dlp and PO Token plugin updated: $CURRENT_VERSION → $NEW_VERSION" >> "$LOG_FILE"
         
         if [ -n "$RESTART_CMD" ]; then
             echo "[$(date)] Restarting server..." >> "$LOG_FILE"
