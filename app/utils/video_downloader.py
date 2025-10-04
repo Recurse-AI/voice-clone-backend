@@ -135,11 +135,12 @@ class VideoDownloadService:
             
             ydl_opts = {
                 "quiet": True,
-                "no_warnings": False,
+                "no_warnings": True,
+                "extract_flat": False,
                 "extractor_args": {
                     "youtube": {
-                        "player_client": ["android", "web", "ios"],
-                        "skip": ["hls", "dash"]
+                        "player_client": ["android_creator", "android", "ios", "web"],
+                        "skip": ["translated_subs"]
                     }
                 }
             }
@@ -150,41 +151,48 @@ class VideoDownloadService:
                     return {"success": False, "error": "Could not extract video information"}
                 
                 formats = info.get("formats", [])
-                video_formats = [f for f in formats if f.get("vcodec") != "none"]
-                audio_formats = [f for f in formats if f.get("vcodec") == "none" and f.get("acodec") != "none"]
+                video_formats = [f for f in formats if f.get("vcodec") != "none" and f.get("url")]
+                audio_formats = [f for f in formats if f.get("vcodec") == "none" and f.get("acodec") != "none" and f.get("url")]
                 
                 best_audio = max(audio_formats, key=lambda x: x.get("abr", 0)) if audio_formats else None
                 
                 format_list = []
-                seen = set()
+                seen_heights = set()
                 
+                # Group formats by height to get best quality for each resolution
                 for f in video_formats:
                     height = f.get("height", 0)
-                    ext = f.get("ext", "unknown")
+                    if height <= 0:
+                        continue
+                    
+                    # Skip if we already have this height
+                    if height in seen_heights:
+                        continue
+                    
+                    seen_heights.add(height)
+                    
+                    ext = f.get("ext", "mp4")
                     filesize = f.get("filesize") or f.get("filesize_approx", 0)
                     acodec = f.get("acodec", "none")
                     has_audio = acodec != "none"
-                    key = f"{height}_{ext}"
                     
-                    if key not in seen and height > 0:
-                        seen.add(key)
-                        
-                        estimated_size = filesize
-                        if not has_audio and best_audio:
-                            audio_size = best_audio.get("filesize") or best_audio.get("filesize_approx", 0)
-                            if filesize and audio_size:
-                                estimated_size = filesize + audio_size
-                        
-                        format_list.append({
-                            "format_id": f.get("format_id"),
-                            "resolution": f"{height}p",
-                            "ext": ext,
-                            "filesize_mb": round(estimated_size / (1024*1024), 2) if estimated_size else 0,
-                            "fps": f.get("fps", 30),
-                            "vcodec": f.get("vcodec", "").split(".")[0] if f.get("vcodec") else "unknown",
-                            "has_audio": has_audio,
-                            "note": "Video+Audio will be merged" if not has_audio else "Includes audio"
-                        })
+                    estimated_size = filesize
+                    if not has_audio and best_audio:
+                        audio_size = best_audio.get("filesize") or best_audio.get("filesize_approx", 0)
+                        if filesize and audio_size:
+                            estimated_size = filesize + audio_size
+                    
+                    format_list.append({
+                        "format_id": f.get("format_id"),
+                        "resolution": f"{height}p",
+                        "ext": ext,
+                        "filesize_mb": round(estimated_size / (1024*1024), 2) if estimated_size else 0,
+                        "fps": f.get("fps", 30),
+                        "vcodec": f.get("vcodec", "").split(".")[0] if f.get("vcodec") else "unknown",
+                        "has_audio": has_audio,
+                        "note": "Video+Audio will be merged" if not has_audio else "Includes audio",
+                        "quality": f.get("quality", 0)
+                    })
                 
                 format_list.sort(key=lambda x: int(x["resolution"].replace("p", "")), reverse=True)
                 
