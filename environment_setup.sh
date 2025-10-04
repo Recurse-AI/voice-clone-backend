@@ -113,7 +113,7 @@ echo "📋 Installing Python dependencies..."
 pip install -r requirements.txt
 
 echo "🎭 Installing Playwright browsers for auto cookie fetch..."
-python -m playwright install chromium --with-deps
+python -m playwright install --with-deps chromium
 
 echo "🔐 Installing YouTube PO Token provider plugin..."
 pip install --upgrade bgutil-ytdlp-pot-provider --quiet || echo "PO Token plugin installation attempted"
