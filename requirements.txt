@@ -109,6 +109,7 @@ aiofiles
 
 # Video downloading
 yt-dlp
+playwright
 
 # YouTube transcript API
 youtube-transcript-api
