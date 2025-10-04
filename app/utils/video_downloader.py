@@ -155,17 +155,19 @@ class VideoDownloadService:
                 audio_formats = [f for f in formats if f.get("vcodec") == "none" and f.get("acodec") != "none" and f.get("url")]
                 
                 best_audio = max(audio_formats, key=lambda x: x.get("abr", 0)) if audio_formats else None
+                best_audio_id = best_audio.get("format_id") if best_audio else None
+                best_audio_size = best_audio.get("filesize") or best_audio.get("filesize_approx", 0) if best_audio else 0
                 
                 format_list = []
                 seen_heights = set()
                 
-                # Group formats by height to get best quality for each resolution
+                # Show ALL video formats (including video-only for high quality)
                 for f in video_formats:
                     height = f.get("height", 0)
                     if height <= 0:
                         continue
                     
-                    # Skip if we already have this height
+                    # Skip duplicate resolutions
                     if height in seen_heights:
                         continue
                     
@@ -176,11 +178,10 @@ class VideoDownloadService:
                     acodec = f.get("acodec", "none")
                     has_audio = acodec != "none"
                     
+                    # Estimate final size (video + audio if needed)
                     estimated_size = filesize
-                    if not has_audio and best_audio:
-                        audio_size = best_audio.get("filesize") or best_audio.get("filesize_approx", 0)
-                        if filesize and audio_size:
-                            estimated_size = filesize + audio_size
+                    if not has_audio and best_audio_size:
+                        estimated_size = filesize + best_audio_size
                     
                     format_list.append({
                         "format_id": f.get("format_id"),
@@ -190,7 +191,9 @@ class VideoDownloadService:
                         "fps": f.get("fps", 30),
                         "vcodec": f.get("vcodec", "").split(".")[0] if f.get("vcodec") else "unknown",
                         "has_audio": has_audio,
-                        "note": "Video+Audio will be merged" if not has_audio else "Includes audio",
+                        "needs_audio_merge": not has_audio,
+                        "audio_format_id": best_audio_id if not has_audio else None,
+                        "note": f"High quality (will merge with audio)" if not has_audio else "Includes audio",
                         "quality": f.get("quality", 0)
                     })
                 
@@ -240,6 +243,64 @@ class VideoDownloadService:
         }
 
 
+    async def download_video_with_audio(
+        self,
+        url: str,
+        video_format_id: str,
+        audio_format_id: str = "bestaudio",
+        output_format: str = "mp4"
+    ) -> Dict[str, Any]:
+        """Download video and audio separately, then merge with FFmpeg."""
+        try:
+            url = self._preprocess_facebook_url(url)
+            job_id = self._generate_job_id()
+            job_dir = Path(settings.TEMP_DIR) / job_id
+            job_dir.mkdir(parents=True, exist_ok=True)
+            
+            logger.info(f"Downloading video={video_format_id} + audio={audio_format_id}")
+            
+            # Combined format selector: video + audio
+            format_selector = f"{video_format_id}+{audio_format_id}"
+            output_template = str(job_dir / "%(title)s.%(ext)s")
+            
+            ydl_opts = {
+                "outtmpl": output_template,
+                "format": format_selector,
+                "merge_output_format": output_format,
+                "postprocessor_args": ["-ar", "44100"],  # Audio sample rate
+                "noplaylist": True,
+                "quiet": False,
+            }
+            
+            await self._download_with_retry(ydl_opts, url)
+            
+            downloaded_files = list(job_dir.glob("*"))
+            if not downloaded_files:
+                return {"success": False, "error": "Download failed"}
+            
+            downloaded_file = downloaded_files[0]
+            file_size = downloaded_file.stat().st_size
+            
+            self._downloaded_files[job_id] = {
+                "path": str(downloaded_file),
+                "job_dir": str(job_dir),
+                "created_at": datetime.now(timezone.utc),
+                "filename": downloaded_file.name,
+                "file_size": file_size
+            }
+            
+            self._schedule_auto_cleanup(job_id)
+            
+            return {
+                "success": True,
+                "job_id": job_id,
+                "filename": downloaded_file.name,
+                "file_size": file_size
+            }
+        except Exception as e:
+            logger.error(f"Download with audio merge error: {e}")
+            return {"success": False, "error": str(e)}
+
     async def download_video(
         self, 
         url: str, 
@@ -288,24 +349,9 @@ class VideoDownloadService:
             is_direct_audio = any(url.lower().endswith(ext) for ext in ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'])
             
             if format_id:
-                # Check if format already has audio by extracting info
-                try:
-                    with yt_dlp.YoutubeDL({"quiet": True}) as ydl_check:
-                        info = ydl_check.extract_info(url, download=False)
-                        formats = info.get("formats", [])
-                        selected_fmt = next((f for f in formats if f.get("format_id") == format_id), None)
-                        has_audio = selected_fmt and selected_fmt.get("acodec") != "none" if selected_fmt else False
-                        
-                        if has_audio:
-                            quality_format = format_id
-                            logger.info(f"Using format_id {format_id} (already includes audio)")
-                        else:
-                            quality_format = f"{format_id}+bestaudio[ext=m4a]/{format_id}+bestaudio"
-                            logger.info(f"Using format_id {format_id} with audio merge: {quality_format}")
-                except Exception as e:
-                    # Fallback: try to merge audio
-                    quality_format = f"{format_id}+bestaudio[ext=m4a]/{format_id}+bestaudio"
-                    logger.info(f"Could not check format audio, using merge: {quality_format}")
+                # Use smart merge function that handles video-only formats
+                logger.info(f"Using format_id {format_id} with automatic audio merge if needed")
+                quality_format = f"{format_id}+bestaudio[ext=m4a]/{format_id}+bestaudio/{format_id}"
             else:
                 quality_format = self._get_format_selector(quality, resolution, max_filesize, is_audio)
                 logger.info(f"Initial format selector: {quality_format}")
