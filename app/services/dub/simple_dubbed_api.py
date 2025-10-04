@@ -960,12 +960,18 @@ class SimpleDubbedAPI:
             
             final_video_path = output_dir_path / f"final_video_{job_id}.mp4"
             
-            # Use FFmpeg to combine video with audio
-            cmd = ["ffmpeg", "-y", "-i", str(downloaded_video_path), "-i", audio_path]
+            # GPU-accelerated video encoding
+            video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
+            preset = 'p4' if settings.FFMPEG_USE_GPU else 'veryfast'
+            
+            cmd = ["ffmpeg", "-y"]
+            if settings.FFMPEG_USE_GPU:
+                cmd.extend(["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"])
+            
+            cmd.extend(["-i", str(downloaded_video_path), "-i", audio_path])
             
             # Add instrument audio if available
             if instrument_audio_url:
-                # Download instrument audio
                 instrument_path = output_dir_path / "instrument_audio.mp3"
                 import requests
                 response = requests.get(instrument_audio_url)
@@ -974,19 +980,22 @@ class SimpleDubbedAPI:
                     f.write(response.content)
                 
                 cmd.extend(["-i", str(instrument_path)])
-                # Mix dubbed + instrument audio
                 cmd.extend([
                     "-filter_complex", f"[1:a]volume=2.0[dub];[2:a]volume={INSTRUMENT_DEFAULT_VOLUME}[inst];[dub][inst]amix=inputs=2:duration=longest[out]",
                     "-map", "0:v", "-map", "[out]"
                 ])
             else:
-                # Just dubbed audio
                 cmd.extend(["-map", "0:v", "-map", "1:a", "-filter:a", "volume=2.0"])
             
-            cmd.extend(["-c:v", "libx264", "-c:a", "aac", str(final_video_path)])
+            cmd.extend([
+                "-c:v", video_codec, "-preset", preset, 
+                "-b:v", "5M", "-maxrate", "6M", "-bufsize", "12M",
+                "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart",
+                str(final_video_path)
+            ])
             
-            # Execute FFmpeg
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
             if result.returncode != 0:
                 logger.error(f"FFmpeg failed: {result.stderr}")
                 return {"success": False, "error": "Video processing failed"}

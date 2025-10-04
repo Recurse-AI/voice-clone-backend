@@ -338,13 +338,14 @@ def _process_video_with_audio(video_path: Path, audio_path: Optional[Path], subt
         video_ext = video_path.suffix
         output_path = temp_path / f"final_video_{job_id}{video_ext}"
         
-        # GPU acceleration for video encoding
         video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
-        preset = 'fast' if settings.FFMPEG_USE_GPU else 'medium'
+        preset = 'fast' if settings.FFMPEG_USE_GPU else 'veryfast'
         
         cmd = ["ffmpeg", "-y"]
         if settings.FFMPEG_USE_GPU:
             cmd.extend(["-hwaccel", "cuda"])
+        else:
+            cmd.extend(["-threads", "0"])
         cmd.extend(["-i", str(video_path)])
         
         if audio_path:

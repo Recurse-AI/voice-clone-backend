@@ -47,13 +47,16 @@ def render(video_path: str, ass_path: str, output_path: str, fontsdir: str = Non
     cmd = [
         ffmpeg,
         '-y',
+        '-threads', '0',
         '-i', video_path,
         '-filter_complex', fc,
         '-map', '[vout]',
         '-map', '0:a?',
         '-c:v', 'libx264',
-        '-preset', 'fast',
+        '-preset', 'ultrafast',
         '-crf', '23',
+        '-tune', 'fastdecode',
+        '-x264-params', 'ref=1:bframes=0:subme=1:me_range=4',
         '-c:a', 'copy',
         output_path,
     ]

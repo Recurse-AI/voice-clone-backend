@@ -62,32 +62,42 @@ class VideoProcessor:
                     # For Unix-like systems, use as-is
                     subtitle_path_str = str(subtitle_path)
                 
-                # High-quality settings optimized for social media platforms
                 video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
-                preset = 'fast' if settings.FFMPEG_USE_GPU else 'slow'  # Better quality preset
-                cmd.extend([
+                preset = 'fast' if settings.FFMPEG_USE_GPU else 'veryfast'
+                
+                base_cmd = [
                     '-vf', f"subtitles='{subtitle_path_str}':force_style='Fontname=Arial-Bold,Fontsize={self.subtitle_font_size},Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV={self.subtitle_margin_bottom}'",
                     '-c:v', video_codec,
                     '-preset', preset,
-                    '-crf', '20',  # High quality for platform upload
-                    '-maxrate', '6000k',  # Max bitrate for platform compatibility
-                    '-bufsize', '12000k',  # Buffer size for consistent quality
-                    '-profile:v', 'high',  # High profile for better compression
-                    '-level', '4.1',  # Compatibility with most platforms
-                ])
-            else:
-                # High-quality re-encoding even without subtitles for platform optimization
-                video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
-                preset = 'fast' if settings.FFMPEG_USE_GPU else 'slow'
-                cmd.extend([
-                    '-c:v', video_codec,
-                    '-preset', preset,
-                    '-crf', '20',  # Consistent high quality
+                    '-crf', '20',
                     '-maxrate', '6000k',
                     '-bufsize', '12000k',
                     '-profile:v', 'high',
                     '-level', '4.1',
-                ])
+                ]
+                
+                if not settings.FFMPEG_USE_GPU:
+                    base_cmd.extend(['-threads', '0', '-tune', 'fastdecode'])
+                
+                cmd.extend(base_cmd)
+            else:
+                video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
+                preset = 'fast' if settings.FFMPEG_USE_GPU else 'veryfast'
+                
+                base_cmd = [
+                    '-c:v', video_codec,
+                    '-preset', preset,
+                    '-crf', '20',
+                    '-maxrate', '6000k',
+                    '-bufsize', '12000k',
+                    '-profile:v', 'high',
+                    '-level', '4.1',
+                ]
+                
+                if not settings.FFMPEG_USE_GPU:
+                    base_cmd.extend(['-threads', '0'])
+                
+                cmd.extend(base_cmd)
             
             cmd.extend([
                 '-c:a', 'aac',
