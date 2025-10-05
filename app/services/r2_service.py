@@ -33,7 +33,8 @@ class R2Service:
                 config=boto3.session.Config(
                     retries={'max_attempts': 2},
                     read_timeout=10,
-                    connect_timeout=5
+                    connect_timeout=5,
+                    max_pool_connections=50
                 )
             )
             logger.info(f"R2 client initialized with optimized timeouts")

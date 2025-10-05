@@ -919,23 +919,36 @@ class SimpleDubbedAPI:
             from pathlib import Path
             
             output_dir_path = Path(output_dir)
-            
-            # Simple approach: Check local first, then download if needed
             downloaded_video_path = output_dir_path / "source_video.mp4"
-            if local_video_path and os.path.exists(local_video_path):
-                # Use local video file first
-                import shutil
-                shutil.copy2(local_video_path, downloaded_video_path)
-                logger.info(f"📁 Using local video file: {local_video_path}")
-            elif video_url:
-                # Download video from URL if no local file
-                response = requests.get(video_url)
-                response.raise_for_status()
-                with open(downloaded_video_path, "wb") as f:
-                    f.write(response.content)
-                logger.info(f"📥 Downloaded video from URL for job {job_id}")
+            
+            # Priority: 1. original.* (from video-dub API download), 2. local_video_path, 3. Download from URL
+            if not downloaded_video_path.exists():
+                # Check for original.* files from video-dub API initial download
+                video_found = False
+                for ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.m4v']:
+                    original_path = output_dir_path / f"original{ext}"
+                    if original_path.exists():
+                        import shutil
+                        shutil.copy2(original_path, downloaded_video_path)
+                        logger.info(f"📁 Using original video file: {original_path}")
+                        video_found = True
+                        break
+                
+                if not video_found:
+                    if local_video_path and os.path.exists(local_video_path):
+                        import shutil
+                        shutil.copy2(local_video_path, downloaded_video_path)
+                        logger.info(f"📁 Copied local video file: {local_video_path}")
+                    elif video_url:
+                        response = requests.get(video_url)
+                        response.raise_for_status()
+                        with open(downloaded_video_path, "wb") as f:
+                            f.write(response.content)
+                        logger.info(f"📥 Downloaded video from URL for job {job_id}")
+                    else:
+                        return {"success": False, "error": "No valid video source available"}
             else:
-                return {"success": False, "error": "No valid video source available"}
+                logger.info(f"📁 Video already exists: {downloaded_video_path}")
             
             final_video_path = output_dir_path / f"final_video_{job_id}.mp4"
             
