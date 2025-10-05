@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, File, UploadFile, Form
 import logging
 from pathlib import Path
 import os
 import uuid
+import json
+from typing import Optional
 from app.schemas import VideoDownloadRequest, VideoDownloadResponse
 from app.utils.video_downloader import video_download_service
 from app.config.settings import settings
@@ -24,23 +26,41 @@ async def get_available_formats(url: str = Query(..., description="Video URL to 
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/download-media", response_model=VideoDownloadResponse)
-async def download_media(request: VideoDownloadRequest):
+async def download_media(
+    request: str = Form(...),
+    cookie_file: Optional[UploadFile] = File(None)
+):
     """Download media from YouTube/social media using resilient downloader, then upload to R2 bucket"""
+    user_cookie_path = None
     try:
-        logger.info(f"Media download request: {request.url}")
+        request_data = json.loads(request)
+        request_obj = VideoDownloadRequest(**request_data)
+        
+        logger.info(f"Media download request: {request_obj.url}")
+
+        if cookie_file:
+            cookie_dir = Path(settings.TEMP_DIR) / "cookies"
+            cookie_dir.mkdir(parents=True, exist_ok=True)
+            user_cookie_path = cookie_dir / f"user_{uuid.uuid4()}.txt"
+            
+            with open(user_cookie_path, "wb") as f:
+                content = await cookie_file.read()
+                f.write(content)
+            
+            logger.info(f"User cookie file saved: {user_cookie_path}")
 
         # 1) Download locally using resilient service (retries, fallbacks, tuned yt-dlp)
         res = await video_download_service.download_video(
-            url=request.url,
-            format_id=request.format_id,
-            quality=request.quality,
-            resolution=request.resolution,
-            max_filesize=request.max_filesize,
-            format_preference=request.format_preference,
-            audio_quality=request.audio_quality,
-            prefer_free_formats=bool(request.prefer_free_formats),
-            include_subtitles=bool(request.include_subtitles),
-            user_cookie_file=request.user_cookie_file,
+            url=request_obj.url,
+            format_id=request_obj.format_id,
+            quality=request_obj.quality,
+            resolution=request_obj.resolution,
+            max_filesize=request_obj.max_filesize,
+            format_preference=request_obj.format_preference,
+            audio_quality=request_obj.audio_quality,
+            prefer_free_formats=bool(request_obj.prefer_free_formats),
+            include_subtitles=bool(request_obj.include_subtitles),
+            user_cookie_file=str(user_cookie_path) if user_cookie_path else None,
         )
 
         if not res.get("success"):
@@ -70,7 +90,7 @@ async def download_media(request: VideoDownloadRequest):
             "file_size": res.get("file_size", 0),
         }
         download_info = {
-            "requested_quality": request.quality or "best",
+            "requested_quality": request_obj.quality or "best",
             "resolution": res.get("resolution", "Unknown"),
             "format": res.get("format", "Unknown"),
         }
@@ -85,6 +105,8 @@ async def download_media(request: VideoDownloadRequest):
             download_info=download_info
         )
 
+    except json.JSONDecodeError:
+        return VideoDownloadResponse(success=False, message="Invalid JSON in request field", error="Invalid request format")
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Endpoint error: {error_msg}")
@@ -97,3 +119,10 @@ async def download_media(request: VideoDownloadRequest):
         else:
             message = "Failed to download video"
         return VideoDownloadResponse(success=False, message=message, error=error_msg)
+    finally:
+        if user_cookie_path and os.path.exists(user_cookie_path):
+            try:
+                os.remove(user_cookie_path)
+                logger.info(f"Cleaned up user cookie file: {user_cookie_path}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup cookie file: {e}")

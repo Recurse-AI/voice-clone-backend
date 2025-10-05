@@ -216,10 +216,6 @@ class VideoDownloadRequest(BaseModel):
         False,
         description="Download available subtitles/captions if available"
     )
-    user_cookie_file: Optional[str] = Field(
-        None,
-        description="Optional path to user's cookie file for authenticated downloads"
-    )
     
     @field_validator('url')
     @classmethod
