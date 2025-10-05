@@ -382,6 +382,12 @@ class SimpleDubbedAPI:
             reference_audio_bytes = None
             
             if voice_type == 'ai_voice' and ai_voice_id:
+                if is_premium:
+                    logger.info(f"🎙️ Using AI voice reference_id directly with premium API: {ai_voice_id}")
+                else:
+                    logger.info(f"🎙️ Fetching AI voice sample for local model: {ai_voice_id}")
+            
+            if voice_type == 'ai_voice' and ai_voice_id and not is_premium:
                 audio_bytes, sample_text = self._get_ai_voice_reference(ai_voice_id, source_language_code)
                 reference_audio_bytes = audio_bytes
                 if sample_text:
