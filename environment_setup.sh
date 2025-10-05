@@ -82,6 +82,7 @@ fi
 
 source venv/bin/activate
 pip install --upgrade pip
+apt-get install fonts-noto fonts-noto-extra
 
 echo "📋 Installing Python dependencies..."
 pip install -r requirements.txt
