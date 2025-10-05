@@ -1,6 +1,6 @@
 #!/bin/bash
-# Auto-update yt-dlp script - Checks daily, updates only when new version available
-# Usage: Add to crontab: 0 3 * * * /path/to/auto_update_ytdlp.sh (runs daily at 3 AM)
+# Auto-update yt-dlp script - Checks monthly, updates only when new version available
+# Usage: Add to crontab: 0 3 1 * * /path/to/auto_update_ytdlp.sh (runs 1st of every month at 3 AM)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -49,22 +49,19 @@ if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ] && [ -n "$LATEST_VERSION" ]; then
     if [ "$CURRENT_VERSION" != "$NEW_VERSION" ]; then
         echo "[$(date)] ✓ yt-dlp and PO Token plugin updated: $CURRENT_VERSION → $NEW_VERSION" >> "$LOG_FILE"
         
-        if [ -n "$RESTART_CMD" ]; then
-            echo "[$(date)] Restarting server..." >> "$LOG_FILE"
-            eval "$RESTART_CMD"
-            echo "[$(date)] ✓ Server restarted successfully" >> "$LOG_FILE"
-        else
-            echo "[$(date)] ⚠ Update complete. Manual server restart required." >> "$LOG_FILE"
-        fi
+        echo "[$(date)] Restarting server..." >> "$LOG_FILE"
+        pkill -f "uvicorn.*main:app" 2>/dev/null || true
+        sleep 3
+        
+        cd "$(dirname "$0")"
+        nohup ./venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 > logs/info.log 2>&1 &
+        
+        echo "[$(date)] ✓ Server restarted successfully" >> "$LOG_FILE"
     else
         echo "[$(date)] ⚠ Update failed or already at latest version" >> "$LOG_FILE"
     fi
 else
-    # No update needed - keep log minimal (only log every 7 days to avoid spam)
-    if [ ! -f "logs/.last_check" ] || [ $(find logs/.last_check -mtime +6 2>/dev/null | wc -l) -gt 0 ]; then
-        echo "[$(date)] ✓ yt-dlp up to date ($CURRENT_VERSION)" >> "$LOG_FILE"
-        touch logs/.last_check
-    fi
+    echo "[$(date)] ✓ yt-dlp up to date ($CURRENT_VERSION)" >> "$LOG_FILE"
 fi
 
 deactivate

@@ -539,24 +539,6 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
         getattr(request_body, "reference_id", None)
     )
     
-    # Create redub request similar to original dub request
-    try:
-        redub_request = VideoDubRequest(
-            job_id=redub_job_id,
-            target_language=request_body.target_language,
-            project_title=f"Redub - {parent_job.original_filename}",
-            duration=duration,
-            source_video_language=parent_job.source_video_language,
-            humanReview=getattr(request_body, "humanReview", False),
-            voice_premium_model=getattr(request_body, "voice_premium_model", False),
-            voice_type=getattr(request_body, "voice_type", None),
-            reference_id=getattr(request_body, "reference_id", None)
-        )
-        logger.info(f"Created redub request: {redub_request.dict()}")
-    except Exception as e:
-        logger.error(f"Failed to create redub request: {e}")
-        raise HTTPException(status_code=400, detail=f"Invalid redub request parameters: {str(e)}")
-    
     # Enqueue redub job
     from app.queue.dub_tasks import process_redub_task
     dub_queue = get_dub_queue()

@@ -194,7 +194,7 @@ class VideoDownloadRequest(BaseModel):
     )
     resolution: Optional[str] = Field(
         None,
-        description="Preferred resolution (e.g., '1080', '720', '480', '360'). Will try to get best quality at this resolution."
+        description="Preferred resolution (e.g., '1080', '720', '480', '360'). Max 1080p. Will try to get best quality at this resolution."
     )
     max_filesize: Optional[str] = Field(
         None,
@@ -215,6 +215,10 @@ class VideoDownloadRequest(BaseModel):
     include_subtitles: Optional[bool] = Field(
         False,
         description="Download available subtitles/captions if available"
+    )
+    user_cookie_file: Optional[str] = Field(
+        None,
+        description="Optional path to user's cookie file for authenticated downloads"
     )
     
     @field_validator('url')

@@ -38,8 +38,14 @@ class VideoDownloadService:
             return "ba/b"
         
         if quality == "worst":
-            return "worst[ext=mp4]/worst"
-        return "best[ext=mp4]/best/18"
+            return "worst[height<=1080][ext=mp4]/worst[height<=1080]/worst"
+        
+        if resolution:
+            res_int = int(resolution.replace("p", "")) if resolution.replace("p", "").isdigit() else 1080
+            res_int = min(res_int, 1080)
+            return f"best[height<={res_int}][ext=mp4]/best[height<={res_int}]/best[height<=1080][ext=mp4]/best[height<=1080]/18"
+        
+        return "best[height<=1080][ext=mp4]/best[height<=1080]/18"
 
     def _progress_hook(self, d):
         if d['status'] == 'finished':
@@ -59,7 +65,7 @@ class VideoDownloadService:
     def _get_fallback_configs(self, error: Exception, is_audio: bool = False, is_direct_audio: bool = False) -> list[dict] | None:
         error_msg = str(error).lower()
 
-        if "requested format is not available" in error_msg or "http error 403" in error_msg or "forbidden" in error_msg:
+        if "requested format is not available" in error_msg or "http error 403" in error_msg or "forbidden" in error_msg or "format" in error_msg:
             if is_direct_audio:
                 return [{"format": "best"}, {"format": "worst"}]
             elif is_audio:
@@ -69,8 +75,8 @@ class VideoDownloadService:
                 ]
             else:
                 return [
-                    {"format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"},
-                    {"format": "bestvideo+bestaudio/best"},
+                    {"format": "best[height<=1080][ext=mp4]/best[height<=1080]/18"},
+                    {"format": "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best[height<=1080]"},
                     {"format": "18"},
                 ]
 
@@ -94,7 +100,7 @@ class VideoDownloadService:
                     return {"success": False, "error": "Could not extract video information"}
                 
                 formats = info.get("formats", [])
-                video_formats = [f for f in formats if f.get("vcodec") != "none"]
+                video_formats = [f for f in formats if f.get("vcodec") != "none" and f.get("height", 0) <= 1080]
                 audio_formats = [f for f in formats if f.get("vcodec") == "none" and f.get("acodec") != "none"]
                 
                 best_audio = max(audio_formats, key=lambda x: x.get("abr", 0)) if audio_formats else None
@@ -105,7 +111,7 @@ class VideoDownloadService:
                 
                 for f in sorted(video_formats, key=lambda x: (x.get("acodec", "none") != "none"), reverse=True):
                     height = f.get("height", 0)
-                    if height <= 0:
+                    if height <= 0 or height > 1080:
                         continue
                     
                     ext = f.get("ext", "mp4")
@@ -240,10 +246,6 @@ class VideoDownloadService:
                            user_cookie_file: str | None = None) -> Dict[str, Any]:
         self.user_cookie_file = user_cookie_file
         
-        if 'youtube.com' in url or 'youtu.be' in url:
-            from app.services.cookie_refresh_service import cookie_refresh_service
-            await cookie_refresh_service.validate_and_refresh_if_needed()
-        
         try:
             url = self._preprocess_facebook_url(url)
             job_id = self._generate_job_id()
@@ -254,7 +256,7 @@ class VideoDownloadService:
             is_direct_audio = any(url.lower().endswith(ext) for ext in ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'])
             
             if format_id:
-                quality_format = format_id if "-" in str(format_id) else f"{format_id}+bestaudio/{format_id}/bestvideo+bestaudio/best"
+                quality_format = f"{format_id}+bestaudio/{format_id}/best[height<=1080][ext=mp4]/best[height<=1080]/18" if "-" not in str(format_id) else format_id
             else:
                 quality_format = self._get_format_selector(quality, resolution, max_filesize, is_audio)
 
@@ -323,10 +325,6 @@ class VideoDownloadService:
             try:
                 await self._download_with_retry(ydl_opts, url)
                 download_success = True
-                
-                if 'youtube.com' in url or 'youtu.be' in url:
-                    from app.services.cookie_refresh_service import cookie_refresh_service
-                    cookie_refresh_service.record_download()
             except Exception as download_error:
                 logger.error(f"Download failed: {str(download_error)[:100]}")
                 fallback_configs = self._get_fallback_configs(download_error, is_audio, is_direct_audio)

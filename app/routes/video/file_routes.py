@@ -40,6 +40,7 @@ async def download_media(request: VideoDownloadRequest):
             audio_quality=request.audio_quality,
             prefer_free_formats=bool(request.prefer_free_formats),
             include_subtitles=bool(request.include_subtitles),
+            user_cookie_file=request.user_cookie_file,
         )
 
         if not res.get("success"):
