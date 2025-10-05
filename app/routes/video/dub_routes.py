@@ -535,7 +535,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     manifest = job_utils.prepare_manifest_for_redub(
         manifest, redub_job_id, request_body.target_language, parent_job_id, 
         getattr(request_body, "voice_premium_model", False),
-        getattr(request_body, "type", None),
+        getattr(request_body, "voice_type", None),
         getattr(request_body, "reference_id", None)
     )
     
