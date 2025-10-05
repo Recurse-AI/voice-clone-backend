@@ -291,8 +291,7 @@ OUTPUT JSON:
                 response_format={"type": "json_object"}
             )
             
-            ai_response = response.output_text or response.output[0].content[0].text if hasattr(response, 'output') else response.choices[0].message.content
-            ai_response = ai_response.strip()
+            ai_response = response.output_text.strip()
             result = json.loads(ai_response)
             
             chunk_results = []
@@ -471,8 +470,7 @@ FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
                     response_format={"type": "json_object"}
                 )
                 
-                ai_response = response.output_text or response.output[0].content[0].text if hasattr(response, 'output') else response.choices[0].message.content
-                ai_response = ai_response.strip()
+                ai_response = response.output_text.strip()
                 result = json.loads(ai_response)
                 
                 ai_segments = result.get("segments", [])

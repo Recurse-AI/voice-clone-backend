@@ -5,6 +5,7 @@ import time
 import subprocess
 import requests
 from typing import Dict, Any, List
+from openai import OpenAI
 from app.config.settings import settings
 from app.services.r2_service import R2Service
 from app.repositories.clip_repository import ClipRepository
@@ -15,6 +16,12 @@ class ClipService:
     def __init__(self):
         self.r2 = R2Service()
         self.repo = ClipRepository()
+        self._openai_client = None
+    
+    def _get_openai_client(self) -> OpenAI:
+        if not self._openai_client:
+            self._openai_client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        return self._openai_client
     
     def _ffmpeg(self):
         return os.environ.get("FFMPEG_PATH", "ffmpeg")
@@ -209,35 +216,20 @@ class ClipService:
         
         time.sleep(0.5)
         
-        input_messages = [
-            {"role": "system", "content": [{"type": "text", "text": prompt["content"]}]},
-            {"role": "user", "content": [{"type": "text", "text": user_content}]}
-        ]
-        
-        body = {
-            "model": "gpt-5-mini",
-            "input": input_messages,
-            "text": {"verbosity": "medium"},
-            "reasoning": {"effort": "low"},
-            "temperature": 0.2,
-            "max_tokens": 2000,
-            "response_format": {"type": "json_object"}
-        }
-        
-        r = requests.post(
-            "https://api.openai.com/v1/responses",
-            headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"},
-            json=body,
-            timeout=60
+        response = self._get_openai_client().responses.create(
+            model="gpt-5-mini",
+            input=[
+                {"role": "system", "content": [{"type": "text", "text": prompt["content"]}]},
+                {"role": "user", "content": [{"type": "text", "text": user_content}]}
+            ],
+            text={"verbosity": "medium"},
+            reasoning={"effort": "low"},
+            temperature=0.2,
+            max_tokens=2000,
+            response_format={"type": "json_object"}
         )
-        r.raise_for_status()
         
-        resp = r.json()
-        text = resp.get("output_text") or resp.get("output", [{}])[0].get("content", [{}])[0].get("text", "")
-        if not text and "choices" in resp:
-            text = resp["choices"][0]["message"]["content"]
-        
-        return json.loads(text)
+        return json.loads(response.output_text.strip())
     
     def cut_segment(self, base_clip: str, ss: float, to: float, out_path: str):
         cmd = [self._ffmpeg(), "-y", "-ss", f"{ss:.3f}", "-to", f"{to:.3f}", "-i", base_clip, "-c", "copy", out_path]
