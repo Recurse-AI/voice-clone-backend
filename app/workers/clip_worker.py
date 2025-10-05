@@ -187,20 +187,13 @@ async def _process_clip_job_async(job_id: str, user_id: str):
             valid_segments.append(s)
         
         if not valid_segments and segments:
-            logger.warning("All segments filtered out, creating fallback segment from available content")
+            logger.warning("All AI segments had invalid timestamps, using first segment with clamped values")
+            first_seg = segments[0]
             valid_segments = [{
                 "start": 0.0,
-                "end": min(video_duration, max(s.get("end", video_duration) for s in segments)),
-                "reason": "Fallback segment - original segments filtered",
-                "ratings": segments[0].get("ratings", {})
-            }]
-        elif not valid_segments:
-            logger.warning("No segments available, creating single segment from entire video")
-            valid_segments = [{
-                "start": 0.0,
-                "end": video_duration,
-                "reason": "Full video segment - no valid segments found",
-                "ratings": {}
+                "end": min(video_duration, max(30.0, video_duration * 0.3)),
+                "reason": first_seg.get("reason", "Best available moment (timestamps adjusted)"),
+                "ratings": first_seg.get("ratings", {})
             }]
         
         segments = valid_segments

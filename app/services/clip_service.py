@@ -120,38 +120,96 @@ class ClipService:
 
     def segment_openai(self, transcript: str, expected_duration: float, video_duration: float) -> Dict[str, Any]:
         import time
-        max_clips = 2 if video_duration <= 180 else 3
+        
         
         prompt = {
             "role": "system",
             "content": (
-                "You are a viral video content strategist. Extract the BEST complete moments from content.\n\n"
-                f"VIDEO: {video_duration:.2f}s total\n\n"
-                "SEGMENTATION RULES:\n"
-                f"1. Create MAXIMUM {max_clips} clips (or fewer if quality demands)\n"
-                "2. Each clip: 20-75s (up to 1.25 minutes) based on NATURAL CONTENT BOUNDARIES\n"
-                f"3. ALL timestamps MUST be within [0, {video_duration:.2f}]s\n"
-                "4. Clip length should match content structure:\n"
-                "   - Short punchy moment = 20-35s\n"
-                "   - Complete story/argument = 40-60s\n"
-                "   - Full explanation/narrative = 60-75s\n"
-                "5. ALWAYS end at natural breaks: sentence end, paragraph end, topic shift, or dramatic pause\n"
-                "6. Each clip MUST be a complete, standalone piece (no mid-sentence cuts)\n"
-                "7. Find moments with: Strong hook (score ≥75) + Complete thought + Viral potential\n"
-                "8. SKIP weak/filler content - quality over quantity\n\n"
-                "Return JSON: {segments:[{start:number,end:number,reason:string,ratings:{hook:number,flow:number,value:number,trend:number}}],overall:{score:number,out_of:number,grade:string}}"
+                "You are an ELITE viral content curator. Your mission: Extract ONLY the absolute BEST moments.\n\n"
+                f"📹 VIDEO: {video_duration:.2f}s ({video_duration/60:.1f} minutes)\n"
+                f"⏱️ User preference: ~{expected_duration:.0f}s clips (FLEXIBLE - not strict)\n\n"
+                "🎯 YOUR DECISION: You decide how many clips (1-5 max) based PURELY on quality.\n"
+                "   • 12-min video with only 1 excellent moment? Return 1 clip.\n"
+                "   • 20-min video with 5 excellent moments? Return all 5.\n"
+                "   • Poor quality content? Return 1 BEST available moment (minimum).\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "🔥 QUALITY-FIRST RULES (NO COMPROMISE):\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                "1. MINIMUM QUALITY THRESHOLD:\n"
+                "   ✓ PREFER clips scoring ≥80/100\n"
+                "   ✓ ALWAYS return at least 1 clip (pick the best available)\n"
+                "   ✓ If multiple clips score ≥80, include them (up to 5 max)\n"
+                "   ✓ If nothing scores ≥80, return the single BEST moment you can find\n"
+                "   ✓ Better to return 1 amazing clip than 5 mediocre ones\n\n"
+                "2. SCORING CRITERIA (Each 0-100):\n"
+                "   • hook: Instant attention grab (first 3s impact)\n"
+                "   • flow: Narrative completeness & pacing\n"
+                "   • value: Educational/Entertainment/Emotional impact\n"
+                "   • trend: Viral potential & shareability\n"
+                "   OVERALL SCORE = (hook×0.35 + flow×0.25 + value×0.25 + trend×0.15)\n\n"
+                "3. PERFECT CLIP ANATOMY:\n"
+                "   • Duration: 20-75s (FLEXIBLE range based on content)\n"
+                f"   • Timestamps: MUST be within [0, {video_duration:.2f}]s\n"
+                f"   • Try to aim around {expected_duration:.0f}s BUT prioritize natural boundaries\n"
+                "   • EXAMPLE: User wants 30s clips but you find amazing 75s moment? USE IT!\n"
+                "   • EXAMPLE: User wants 60s clips but perfect moment is 25s? USE IT!\n"
+                "   • Structure:\n"
+                "     - Opens with STRONG hook (question/statement/action)\n"
+                "     - Contains COMPLETE thought/story/argument\n"
+                "     - Ends with SATISFYING conclusion or cliffhanger\n"
+                "   • NO mid-sentence cuts, NO abrupt endings\n\n"
+                "4. CONTENT QUALITY MARKERS:\n"
+                "   ✓ Emotional peaks (surprise, laughter, insight)\n"
+                "   ✓ Unique insights or controversial takes\n"
+                "   ✓ Storytelling with clear beginning-middle-end\n"
+                "   ✓ Quotable moments or memorable phrases\n"
+                "   ✓ Visual or conceptual 'aha!' moments\n"
+                "   ✗ Filler, rambling, repetitive content\n"
+                "   ✗ Setup without payoff\n"
+                "   ✗ Generic or obvious statements\n\n"
+                "5. STRATEGIC SELECTION:\n"
+                "   • Prioritize DIVERSE content types across clips\n"
+                "   • Avoid overlapping topics/themes\n"
+                "   • Each clip should stand alone perfectly\n"
+                "   • If transcript quality is poor, return FEWER clips\n\n"
+                "6. MINIMUM GUARANTEE:\n"
+                "   • ALWAYS return at least 1 clip (frontend requirement)\n"
+                "   • If nothing scores ≥80, pick the BEST available moment\n"
+                "   • Mark low-quality content with honest score (<80)\n"
+                "   • Explain quality limitations in 'reason' field\n\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                "📊 OUTPUT FORMAT:\n"
+                "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                '{"segments":[{"start":0,"end":0,"reason":"Why this is EXCEPTIONAL","ratings":{"hook":0,"flow":0,"value":0,"trend":0,"overall":0}}],"overall":{"score":0,"out_of":100,"grade":"A+/A/B/C/F","quality_assessment":"Brief analysis"}}'
             )
         }
 
         max_chars = 12000
         safe_transcript = transcript if len(transcript) <= max_chars else (transcript[:max_chars] + "\n...[truncated]")
 
-        user_content = f"Analyze and extract {max_clips} BEST complete segments (natural boundaries, varying lengths 20-75s):\n\n{safe_transcript}"
+        user_content = (
+            f"🎬 ANALYZE THIS {video_duration/60:.1f}-MINUTE VIDEO:\n\n"
+            f"User prefers: ~{expected_duration:.0f}s clips (but FLEXIBILITY allowed for quality)\n"
+            "You can create 1-5 clips - YOUR CHOICE based on quality.\n\n"
+            "🚨 CRITICAL RULES:\n"
+            "1. MUST return at least 1 clip (frontend requirement)\n"
+            "2. PREFER clips scoring ≥80/100, but return best available if needed\n"
+            "3. Natural content boundaries > exact duration match\n"
+            "4. Complete moments > hitting target length\n\n"
+            "Decision examples:\n"
+            f"• User wants {expected_duration:.0f}s but perfect moment is 75s? → Use 75s clip!\n"
+            f"• User wants {expected_duration:.0f}s but best moment is 25s? → Use 25s clip!\n"
+            "• Found 3 clips scoring ≥80? → Return all 3\n"
+            "• Found 1 clip scoring ≥80? → Return 1 clip\n"
+            "• Nothing scores ≥80? → Return 1 BEST available moment (mark honest score)\n\n"
+            "Remember: Quality & completeness > matching preferred duration.\n\n"
+            f"TRANSCRIPT:\n{safe_transcript}"
+        )
         user = {"role": "user", "content": user_content}
         
         time.sleep(0.5)
         
-        body = {"model": "gpt-5-mini", "messages": [prompt, user], "response_format": {"type": "json_object"}, "temperature": 0.3}
+        body = {"model": "gpt-5-mini", "messages": [prompt, user], "response_format": {"type": "json_object"}, "temperature": 0.2}
         r = requests.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}, data=json.dumps(body))
         r.raise_for_status()
         content = r.json()["choices"][0]["message"]["content"]
