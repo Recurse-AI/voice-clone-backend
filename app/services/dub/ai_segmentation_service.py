@@ -286,7 +286,7 @@ OUTPUT JSON:
                 ],
                 text={"verbosity": "low"},
                 reasoning={"effort": "minimal"},
-                max_tokens=8192,
+                max_output_tokens=8192,
                 temperature=0.1,
                 response_format={"type": "json_object"}
             )
@@ -465,7 +465,7 @@ FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
                     ],
                     text={"verbosity": "low"},
                     reasoning={"effort": "minimal"},
-                    max_tokens=self.max_tokens,
+                    max_output_tokens=self.max_tokens,
                     temperature=0.1,
                     response_format={"type": "json_object"}
                 )
