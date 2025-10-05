@@ -119,7 +119,7 @@ class FishAudioAPIService:
                 if len(data) == 0:
                     return {"success": False, "error": "Fish API returned empty audio"}
 
-                sf.write(output_path, data.astype('float32'), sample_rate)
+                sf.write(output_path, data, sample_rate, subtype='PCM_16')
                 
                 logger.info(f"✅ Fish API success: {len(data)} samples at {sample_rate}Hz")
                 return {"success": True, "output_path": output_path}

@@ -239,6 +239,11 @@ class VideoDownloadService:
                            prefer_free_formats: bool = False, include_subtitles: bool = False,
                            user_cookie_file: str | None = None) -> Dict[str, Any]:
         self.user_cookie_file = user_cookie_file
+        
+        if 'youtube.com' in url or 'youtu.be' in url:
+            from app.services.cookie_refresh_service import cookie_refresh_service
+            await cookie_refresh_service.validate_and_refresh_if_needed()
+        
         try:
             url = self._preprocess_facebook_url(url)
             job_id = self._generate_job_id()
@@ -318,6 +323,10 @@ class VideoDownloadService:
             try:
                 await self._download_with_retry(ydl_opts, url)
                 download_success = True
+                
+                if 'youtube.com' in url or 'youtu.be' in url:
+                    from app.services.cookie_refresh_service import cookie_refresh_service
+                    cookie_refresh_service.record_download()
             except Exception as download_error:
                 logger.error(f"Download failed: {str(download_error)[:100]}")
                 fallback_configs = self._get_fallback_configs(download_error, is_audio, is_direct_audio)

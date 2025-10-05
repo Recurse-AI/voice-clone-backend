@@ -35,7 +35,7 @@ def fetch_sample_audio_wav_bytes(reference_id: str, api_key: Optional[str]) -> T
                 if hasattr(audio_arr, "shape") and len(audio_arr.shape) > 1:
                     audio_arr = audio_arr[:, 0]
                 wav_buf = io.BytesIO()
-                sf.write(wav_buf, audio_arr, sr, format="WAV")
+                sf.write(wav_buf, audio_arr, sr, format="WAV", subtype='PCM_16')
                 return wav_buf.getvalue(), sample_text
             except Exception:
                 return None, None

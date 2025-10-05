@@ -14,9 +14,21 @@ class YouTubeCookieFetcher:
         self.password = settings.YOUTUBE_PASSWORD
         self.profile_dir = Path("tmp/browser_profile")
     
-    async def fetch_cookies(self, manual_mode: bool = False) -> dict:
+    def _clear_browser_profile(self):
+        import shutil
+        if self.profile_dir.exists():
+            try:
+                shutil.rmtree(self.profile_dir)
+                logger.info("Browser profile cleared")
+            except Exception as e:
+                logger.warning(f"Failed to clear profile: {e}")
+    
+    async def fetch_cookies(self, manual_mode: bool = False, force_refresh: bool = False) -> dict:
         if not self.email or not self.password:
             return {"success": False, "error": "YouTube credentials not set in .env"}
+        
+        if force_refresh:
+            self._clear_browser_profile()
         
         try:
             self.profile_dir.mkdir(parents=True, exist_ok=True)

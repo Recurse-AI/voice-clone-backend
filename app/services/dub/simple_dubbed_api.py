@@ -353,7 +353,7 @@ class SimpleDubbedAPI:
             if len(audio_data.shape) > 1:
                 audio_data = audio_data[:, 0]
             
-            sf.write(cloned_path, audio_data.astype(np.float32), sample_rate)
+            sf.write(cloned_path, audio_data, sample_rate, subtype='PCM_16')
             os.remove(output_path)
             
             duration_ms = int(len(audio_data) / sample_rate * 1000)

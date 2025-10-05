@@ -326,121 +326,135 @@ def send_reset_email_background_task(background_tasks: BackgroundTasks, email: s
 
 
 def create_job_completion_template(name: str, job_type: str, job_id: str, download_urls: dict) -> str:
-    """Job completion email template with distinct colors for each job type"""
+    """Enhanced job completion email template with modern design"""
     job_titles = {"dub": "Video Dubbing", "separation": "Audio Separation", "clip": "Video Clips"}
     job_title = job_titles.get(job_type, "Job")
     
     emojis = {"dub": "🎬", "separation": "🎵", "clip": "✂️"}
     emoji = emojis.get(job_type, "✅")
     
-    # Define color schemes for each job type
     colors = {
-        "dub": {
-            "gradient": "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
-            "light_bg": "#eff6ff",
-            "border": "#bfdbfe",
-            "text": "#1e3a8a",
-            "link": "#3b82f6"
-        },
-        "separation": {
-            "gradient": "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-            "light_bg": "#f0fdf4",
-            "border": "#bbf7d0",
-            "text": "#065f46",
-            "link": "#10b981"
-        },
-        "clip": {
-            "gradient": "linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)",
-            "light_bg": "#faf5ff",
-            "border": "#e9d5ff",
-            "text": "#5b21b6",
-            "link": "#8b5cf6"
-        }
+        "dub": {"gradient": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", "accent": "#667eea", "light": "#f3f4ff"},
+        "separation": {"gradient": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)", "accent": "#f093fb", "light": "#fff5f7"},
+        "clip": {"gradient": "linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)", "accent": "#4facfe", "light": "#f0fbff"}
     }
+    color = colors.get(job_type, colors["dub"])
     
-    color_scheme = colors.get(job_type, colors["dub"])
-    
-    # Create download links HTML
-    download_links_html = ""
     if job_type == "dub":
         download_page_url = f"{settings.FRONTEND_URL}/workspace/dubbing/download/{job_id}"
-        download_links_html = f'<p><a href="{download_page_url}" class="download-button">View Download Page</a></p>'
+        download_links = f'<a href="{download_page_url}" class="cta-button">🎬 View & Download</a>'
     elif job_type == "clip":
         clips_page_url = f"{settings.FRONTEND_URL}/workspace/clips/results/{job_id}"
-        download_links_html = f'<p><a href="{clips_page_url}" class="download-button">View Your Clips</a></p>'
+        download_links = f'<a href="{clips_page_url}" class="cta-button">✂️ View Your Clips</a>'
     else:
-        if download_urls.get("separation_url"):
-            download_links_html = f'<p><a href="{download_urls["separation_url"]}" class="download-button">Download Separated Audio</a></p>'
+        url = download_urls.get("separation_url", "#")
+        download_links = f'<a href="{url}" class="cta-button">🎵 Download Audio</a>'
     
     return f"""
     <!DOCTYPE html>
-    <html lang="en">
+    <html>
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{job_title} Completed - ClearVocals</title>
+        <title>{job_title} Ready - ClearVocals</title>
+    </head>
+    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px;">
+        <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
+            <tr>
+                <td style="background: {color["gradient"]}; padding: 50px 40px; text-align: center;">
+                    <div style="font-size: 48px; margin-bottom: 16px;">{emoji}</div>
+                    <h1 style="color: #ffffff; font-size: 32px; font-weight: 700; margin: 0 0 12px 0; text-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+                        Your {job_title} is Ready!
+                    </h1>
+                    <p style="color: rgba(255,255,255,0.95); font-size: 16px; margin: 0;">Processing Complete ✨</p>
+                </td>
+            </tr>
+            
+            <tr>
+                <td style="padding: 45px 40px;">
+                    <div style="text-align: center; margin-bottom: 35px;">
+                        <div style="display: inline-block; background: {color["light"]}; border-radius: 50%; width: 80px; height: 80px; line-height: 80px; margin-bottom: 20px;">
+                            <span style="font-size: 40px;">✓</span>
+                        </div>
+                        <h2 style="color: #1a1a1a; font-size: 24px; font-weight: 600; margin: 0 0 12px 0;">Hi {name}! 👋</h2>
+                        <p style="color: #666666; font-size: 16px; line-height: 1.6; margin: 0;">
+                            Great news! Your {job_title.lower()} has been processed successfully and is ready to download.
+                        </p>
+                    </div>
+                    
+                    <div style="text-align: center; margin: 35px 0;">
+                        {download_links}
+                    </div>
+                    
+                    <div style="background: linear-gradient(135deg, {color["light"]} 0%, #ffffff 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 2px solid {color["accent"]}20;">
+                        <table width="100%" cellpadding="8" cellspacing="0">
+                            <tr>
+                                <td style="color: #666666; font-size: 14px; font-weight: 500;">📋 Job ID:</td>
+                                <td style="color: #1a1a1a; font-size: 14px; font-weight: 600; text-align: right;">{job_id[:12]}...</td>
+                            </tr>
+                            <tr>
+                                <td style="color: #666666; font-size: 14px; font-weight: 500;">🎯 Type:</td>
+                                <td style="color: #1a1a1a; font-size: 14px; font-weight: 600; text-align: right;">{job_title}</td>
+                            </tr>
+                            <tr>
+                                <td style="color: #666666; font-size: 14px; font-weight: 500;">✅ Status:</td>
+                                <td style="color: #10b981; font-size: 14px; font-weight: 700; text-align: right;">COMPLETED</td>
+                            </tr>
+                        </table>
+                    </div>
+                    
+                    <div style="background: #f8f9fa; border-radius: 10px; padding: 20px; margin-top: 25px; text-align: center;">
+                        <p style="color: #666666; font-size: 14px; margin: 0 0 12px 0;">
+                            💡 <strong>Pro Tip:</strong> Download your files within 7 days for guaranteed availability.
+                        </p>
+                    </div>
+                </td>
+            </tr>
+            
+            <tr>
+                <td style="background: #f8f9fa; padding: 30px 40px; border-top: 1px solid #e5e7eb;">
+                    <table width="100%" cellpadding="0" cellspacing="0">
+                        <tr>
+                            <td style="text-align: center;">
+                                <p style="color: #1a1a1a; font-size: 15px; font-weight: 600; margin: 0 0 8px 0;">🎤 ClearVocals</p>
+                                <p style="color: #666666; font-size: 13px; margin: 0 0 15px 0;">AI-Powered Audio & Video Processing</p>
+                                <p style="color: #666666; font-size: 13px; margin: 0;">
+                                    Questions? <a href="mailto:support@clearvocals.io" style="color: {color["accent"]}; text-decoration: none; font-weight: 600;">Contact Support</a>
+                                </p>
+                                <p style="color: #999999; font-size: 12px; margin: 15px 0 0 0;">© 2024 ClearVocals. All rights reserved.</p>
+                            </td>
+                        </tr>
+                    </table>
+                </td>
+            </tr>
+        </table>
+        
         <style>
-            * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f9fafb; }}
-            .email-container {{ max-width: 600px; margin: 20px auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; }}
-            .header {{ background: {color_scheme["gradient"]}; padding: 32px 20px; text-align: center; }}
-            .logo {{ color: #ffffff; font-size: 24px; font-weight: 600; }}
-            .content {{ padding: 32px 30px; }}
-            .greeting {{ font-size: 22px; color: #111827; margin-bottom: 16px; font-weight: 600; }}
-            .message {{ font-size: 15px; color: #6b7280; line-height: 1.5; margin-bottom: 24px; }}
-            .download-button {{ display: inline-block; background: {color_scheme["gradient"]}; 
-                               color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; 
-                               font-size: 15px; font-weight: 600; margin: 8px 0; }}
-            .job-info {{ background-color: {color_scheme["light_bg"]}; border-left: 3px solid {color_scheme["link"]}; 
-                        padding: 16px; border-radius: 4px; margin: 20px 0; }}
-            .job-info-text {{ font-size: 13px; color: {color_scheme["text"]}; line-height: 1.6; }}
-            .footer {{ background-color: #f9fafb; padding: 24px; text-align: center; border-top: 1px solid #e5e7eb; }}
-            .footer-text {{ font-size: 13px; color: #6b7280; margin-bottom: 8px; }}
+            .cta-button {{
+                display: inline-block;
+                background: {color["gradient"]};
+                color: #ffffff !important;
+                text-decoration: none;
+                padding: 16px 40px;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: 700;
+                letter-spacing: 0.3px;
+                box-shadow: 0 8px 20px {color["accent"]}40;
+                transition: transform 0.2s;
+            }}
+            .cta-button:hover {{
+                transform: translateY(-2px);
+                box-shadow: 0 12px 28px {color["accent"]}60;
+            }}
             @media only screen and (max-width: 600px) {{
-                .content {{ padding: 24px 20px; }}
-                .header {{ padding: 24px 20px; }}
-                .greeting {{ font-size: 20px; }}
+                body {{ padding: 20px 10px !important; }}
+                table {{ border-radius: 12px !important; }}
+                td {{ padding: 30px 20px !important; }}
+                h1 {{ font-size: 26px !important; }}
+                h2 {{ font-size: 22px !important; }}
             }}
         </style>
-    </head>
-    <body>
-        <div class="email-container">
-            <div class="header">
-                <div class="logo">{emoji} ClearVocals</div>
-            </div>
-            
-            <div class="content">
-                <h1 class="greeting">Hi {name},</h1>
-                
-                <p class="message">
-                    Your {job_title.lower()} has been completed successfully.
-                </p>
-                
-                <div style="text-align: center;">
-                    {download_links_html}
-                </div>
-                
-                <div class="job-info">
-                    <p class="job-info-text">
-                        <strong>Job ID:</strong> {job_id}<br>
-                        <strong>Type:</strong> {job_title}<br>
-                        <strong>Status:</strong> Completed
-                    </p>
-                </div>
-            </div>
-            
-            <div class="footer">
-                <p class="footer-text">
-                    <strong>ClearVocals Team</strong>
-                </p>
-                <p class="footer-text">
-                    Need help? <a href="mailto:support@clearvocals.io" style="color: {color_scheme["link"]}; text-decoration: none;">support@clearvocals.io</a>
-                </p>
-                <p style="font-size: 12px; color: #9ca3af; margin-top: 12px;">
-                    © 2024 ClearVocals. All rights reserved.
-                </p>
-            </div>
-        </div>
     </body>
     </html>
     """

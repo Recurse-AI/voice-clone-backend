@@ -309,24 +309,27 @@ class FishSpeechService:
                             import soundfile as sf
                             import io
                             audio_buffer = io.BytesIO()
-                            sf.write(audio_buffer, audio_chunk, sample_rate, format='WAV')
+                            sf.write(audio_buffer, audio_chunk, sample_rate, format='WAV', subtype='PCM_16')
                             audio_data += audio_buffer.getvalue()
                     elif result.code == "error":
                         return {"success": False, "error": str(result.error)}
                 
                 return {"success": True, "audio_data": audio_data, "sample_rate": sample_rate}
             
-            # Execute with timeout (120 seconds max per segment for better reliability)
+            # Execute with timeout (300s for first generation with compilation, 180s for subsequent)
+            timeout_seconds = 300 if not hasattr(self, '_first_generation_done') else 180
+            
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(_generate_audio)
                 try:
-                    result = future.result(timeout=120)
+                    result = future.result(timeout=timeout_seconds)
                     elapsed = time.time() - start_time
+                    self._first_generation_done = True
                     logger.info(f"Voice generation completed in {elapsed:.2f}s for text: {text}")
                     return result
                 except concurrent.futures.TimeoutError:
-                    logger.error(f"Voice generation timeout (120s) for text: {text}")
-                    return {"success": False, "error": "Generation timeout after 120 seconds"}
+                    logger.error(f"Voice generation timeout ({timeout_seconds}s) for text: {text}")
+                    return {"success": False, "error": f"Generation timeout after {timeout_seconds} seconds"}
                 
         except Exception as e:
             elapsed = time.time() - start_time
