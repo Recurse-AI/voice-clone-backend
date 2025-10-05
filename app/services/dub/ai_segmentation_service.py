@@ -334,11 +334,11 @@ OUTPUT JSON:
         chunks = [segments[i:i + chunk_size] for i in range(0, len(segments), chunk_size)]
         total_chunks = len(chunks)
         
-        logger.info(f"🚀 Translating {len(segments)} segments in {total_chunks} chunks with 5 parallel workers (GPT-5-mini)")
+        logger.info(f"🚀 Translating {len(segments)} segments in {total_chunks} chunks with {settings.OPENAI_PARALLEL_WORKERS} parallel workers (GPT-5-mini)")
         
         chunk_results = [None] * total_chunks
         
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=settings.OPENAI_PARALLEL_WORKERS) as executor:
             futures = {
                 executor.submit(self._translate_chunk_worker, (i, chunk, target_language_code)): i
                 for i, chunk in enumerate(chunks)
