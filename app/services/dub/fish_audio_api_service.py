@@ -2,6 +2,7 @@ import logging
 import os
 import uuid
 import time
+import random
 import soundfile as sf
 from typing import Dict, Any
 
@@ -46,6 +47,9 @@ class FishAudioAPIService:
             
             # Text already contains language tag from orchestration layer
             tagged_text = text
+            
+            # Rate limit protection: Add random delay (0.3-0.7s) to avoid concurrent request spikes
+            time.sleep(random.uniform(0.3, 0.7))
             
             # Build request payload: use reference_id for AI voice, otherwise inline references
             if reference_id:
