@@ -939,7 +939,7 @@ class SimpleDubbedAPI:
             
             cmd = ["ffmpeg", "-y"]
             if settings.FFMPEG_USE_GPU:
-                cmd.extend(["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"])
+                cmd.extend(["-hwaccel", "cuda"])
             
             cmd.extend(["-i", str(downloaded_video_path), "-i", audio_path])
             

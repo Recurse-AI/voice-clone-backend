@@ -205,6 +205,10 @@ def _create_animation_for_word(anim_type: str, word_params: dict, effect_config:
 
 def _ass_header(resolution: Tuple[int, int], font_name: str, font_size: int, letter_spacing: float) -> str:
     x, y = resolution
+    margin_h = int(x * 0.08)
+    margin_v = int(y * 0.073)
+    margin_v_box = int(y * 0.083)
+    
     return (
         "[Script Info]\n"
         "ScriptType: v4.00+\n"
@@ -215,9 +219,9 @@ def _ass_header(resolution: Tuple[int, int], font_name: str, font_size: int, let
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, "
         "Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
-        f"Style: Simple,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,{letter_spacing},0,1,6,3,2,60,60,140,1\n"
-        f"Style: Karaoke,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,{letter_spacing},0,1,7,3,2,60,60,140,1\n"
-        f"Style: KaraokeBox,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,0,0,0,0,100,100,{letter_spacing},0,3,0,0,2,60,60,160,1\n\n"
+        f"Style: Simple,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,{letter_spacing},0,1,6,3,2,{margin_h},{margin_h},{margin_v},1\n"
+        f"Style: Karaoke,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H64000000,0,0,0,0,100,100,{letter_spacing},0,1,7,3,2,{margin_h},{margin_h},{margin_v},1\n"
+        f"Style: KaraokeBox,{font_name},{font_size},&H00FFFFFF,&H00FFFFFF,&H00000000,&H40000000,0,0,0,0,100,100,{letter_spacing},0,3,0,0,2,{margin_h},{margin_h},{margin_v_box},1\n\n"
         "[Events]\n"
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
     )
