@@ -259,6 +259,7 @@ OUTPUT JSON:
         return self._translate_segments_preserve_timing(segments, target_language_code)
     
     def _translate_chunk_worker(self, args) -> tuple:
+        import time
         i, chunk, target_language_code = args
         chunk_number = i + 1
         
@@ -274,9 +275,11 @@ OUTPUT JSON:
         
         prompt = self._build_translation_only_prompt(segments_for_translation, target_language_code)
         
+        time.sleep(0.5)
+        
         try:
             response = self._get_openai_client().chat.completions.create(
-                model="gpt-4o",
+                model="gpt-5-mini",
                 messages=[
                     {"role": "system", "content": f"You are an expert translator. MANDATORY: 1) ALL translations in {self._get_language_name(target_language_code)} ONLY. 2) CORRUPTION DETECTION: Clean repetitive patterns. 3) EXTRACT meaningful speech only. 4) Ensure natural {self._get_language_name(target_language_code)} output."},
                     {"role": "user", "content": prompt}
@@ -331,11 +334,11 @@ OUTPUT JSON:
         chunks = [segments[i:i + chunk_size] for i in range(0, len(segments), chunk_size)]
         total_chunks = len(chunks)
         
-        logger.info(f"🚀 Translating {len(segments)} segments in {total_chunks} chunks with 2 parallel workers")
+        logger.info(f"🚀 Translating {len(segments)} segments in {total_chunks} chunks with 5 parallel workers (GPT-5-mini)")
         
         chunk_results = [None] * total_chunks
         
-        with ThreadPoolExecutor(max_workers=2) as executor:
+        with ThreadPoolExecutor(max_workers=5) as executor:
             futures = {
                 executor.submit(self._translate_chunk_worker, (i, chunk, target_language_code)): i
                 for i, chunk in enumerate(chunks)
@@ -408,6 +411,7 @@ VALIDATION CHECKLIST:
         return self._openai_client
     
     def _process_in_chunks(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False) -> List[Dict[str, Any]]:
+        import time
         chunk_size = 10
         all_results = []
         
@@ -448,11 +452,11 @@ FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
             target_lang_name = self._get_language_name(target_lang_code)
             prompt = chunk_context + self._build_segmentation_and_dubbing_prompt(chunk, target_lang_name, is_same_language, preserve_segments)
             
-            model = "gpt-4o"
+            time.sleep(0.5)
             
             try:
                 response = self._get_openai_client().chat.completions.create(
-                    model=model,
+                    model="gpt-5-mini",
                     messages=[
                         {"role": "system", "content": f"You are an expert audio dubbing AI with ADVANCED CORRUPTION DETECTION and LANGUAGE CONSISTENCY ENFORCEMENT. MODE: {'REDUB - Preserve exact timing/structure, 1:1 mapping, translate dubbed_text only' if preserve_segments else 'FRESH - Intelligent segmentation, merge short segments, split long ones, target 3-8s for optimal voice cloning'}. CRITICAL RULES: 1) All segments must be ≤15 seconds. 2) TARGET LANGUAGE: {target_lang_name} - ALL dubbed_text must be in {target_lang_name} EXCLUSIVELY, NEVER mix with Spanish/German/French/Italian/etc. 3) CORRUPTION AUTO-DETECTION: Identify and clean these patterns automatically: • Repetitive numbers (40,000,000,000...) • Repeated characters (aaaaaaa...) • Repeated words/phrases (juice juice juice...) • Meaningless symbol sequences • Corrupted transcription artifacts • Placeholder text patterns. 4) EXTRACT meaningful speech from corrupted input, ignore artifacts. 5) LANGUAGE PURITY: Each segment must be 100% {target_lang_name}, no mixing. 6) FALLBACK: For purely corrupted segments, use '[unclear audio]' in {target_lang_name}. 7) ANTI-LOOP: Never repeat phrases within/across segments."},
                         {"role": "user", "content": prompt}

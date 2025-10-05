@@ -119,6 +119,7 @@ class ClipService:
         return 0.0
 
     def segment_openai(self, transcript: str, expected_duration: float, video_duration: float) -> Dict[str, Any]:
+        import time
         max_clips = 2 if video_duration <= 180 else 3
         
         prompt = {
@@ -147,7 +148,10 @@ class ClipService:
 
         user_content = f"Analyze and extract {max_clips} BEST complete segments (natural boundaries, varying lengths 20-75s):\n\n{safe_transcript}"
         user = {"role": "user", "content": user_content}
-        body = {"model": "gpt-4o-mini", "messages": [prompt, user], "response_format": {"type": "json_object"}, "temperature": 0.3}
+        
+        time.sleep(0.5)
+        
+        body = {"model": "gpt-5-mini", "messages": [prompt, user], "response_format": {"type": "json_object"}, "temperature": 0.3}
         r = requests.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}, data=json.dumps(body))
         r.raise_for_status()
         content = r.json()["choices"][0]["message"]["content"]
