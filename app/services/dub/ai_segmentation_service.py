@@ -101,7 +101,8 @@ class AISegmentationService:
 - Copy cleaned meaningful text to dubbed_text 
 - If purely corrupted, use '[unclear audio]' in {target_lang_name}
 - NEVER output repetitive patterns like "000,000..." or "aaa..."
-- Extract only meaningful speech content"""
+- Extract only meaningful speech content
+- ADD SPEECH MARKERS: Enhance with OpenAudio S1 markers when context requires: (laughing) (excited) (whispering) (angry) (sad) (hesitating) etc."""
         else:
             translation_instructions = f"""PROFESSIONAL TRANSLATION TO {target_lang_name.upper()} - ZERO TOLERANCE FOR MIXING:
 - ABSOLUTE RULE: 100% {target_lang_name} ONLY - NO Spanish/German/French/Italian mixing
@@ -115,7 +116,8 @@ class AISegmentationService:
 - CLEAN TRANSLATION: Translate only the meaningful parts to natural {target_lang_name}
 - LANGUAGE PURITY: Every single word must be proper {target_lang_name} vocabulary
 - FALLBACK PROTOCOL: Purely corrupted segments → '[unclear audio]' in {target_lang_name}
-- PRESERVE INTENT: Keep original meaning/tone of actual speech content"""
+- PRESERVE INTENT: Keep original meaning/tone of actual speech content
+- SPEECH CONTROL: Add OpenAudio S1 markers ONLY when truly needed: (laughing) (excited) (angry) (sad) (whispering) (shouting) (hesitating) (scared) (surprised) etc."""
         
         if preserve_segments:
             if is_same_language:
@@ -379,6 +381,7 @@ TRANSLATION PROTOCOL:
 - QUALITY: Natural, professional {target_lang_name} with proper grammar
 - CONSISTENCY: Every dubbed_text must be pure {target_lang_name}
 - MAPPING: EXACTLY {len(segments)} output segments (1:1 with input)
+- SPEECH MARKERS: Add emotion/tone markers when context demands: (laughing) (excited) (angry) (whispering) (shouting) (sad) (hesitating) etc.
 
 OUTPUT SPECIFICATION (JSON):
 {{
