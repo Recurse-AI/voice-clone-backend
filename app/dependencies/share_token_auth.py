@@ -129,3 +129,4 @@ def create_share_token_auth(job_id_param: str = "job_id"):
     return auth_dependency
 
 get_video_dub_user = create_share_token_auth("job_id")
+get_clip_user = create_share_token_auth("job_id")

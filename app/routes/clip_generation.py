@@ -4,9 +4,11 @@ import uuid
 import os
 import tempfile
 import logging
+from datetime import datetime, timezone, timedelta
 from app.services.r2_service import R2Service
 from app.repositories.clip_repository import ClipRepository
 from app.dependencies.auth import get_current_user
+from app.dependencies.share_token_auth import get_clip_user
 from app.queue.queue_manager import QueueManager
 from app.models import ClipJob
 from app.schemas import (
@@ -15,6 +17,8 @@ from app.schemas import (
     GenerateClipsRequest
 )
 from app.config.constants import DEFAULT_QUERY_LIMIT
+from app.utils.token_helper import generate_url_safe_token
+from app.config.database import db
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -179,7 +183,7 @@ async def get_user_clips(
 @router.get("/clip/{job_id}", response_model=ClipJobDetailResponse)
 async def get_clip_job_detail(
     job_id: str,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_clip_user)
 ):
     """Get detailed clip job information"""
     try:
@@ -190,7 +194,8 @@ async def get_clip_job_detail(
         if not job:
             raise HTTPException(status_code=404, detail="Clip job not found")
         
-        if job["user_id"] != user_id:
+        # For JWT auth, check ownership. For share token auth, access is already validated
+        if hasattr(current_user, 'email') and job["user_id"] != user_id:
             raise HTTPException(status_code=403, detail="Access denied")
         
         clip_job = ClipJob(**job)
@@ -224,3 +229,47 @@ async def delete_clip_job(
     except Exception as e:
         logger.error(f"Failed to delete clip job: {e}")
         raise HTTPException(status_code=500, detail="Failed to delete clip job")
+
+@router.post("/{job_id}/share")
+async def generate_share_link(
+    job_id: str,
+    expires_in_hours: int = 24,
+    current_user = Depends(get_current_user)
+):
+    """Generate a shareable link for clip review access"""
+    
+    # Verify job exists and user owns it
+    repo = ClipRepository()
+    job = await repo.get_by_id(job_id)
+    if not job or job["user_id"] != str(current_user.id):
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Only allow sharing for completed jobs
+    if job["status"] != "completed":
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Job must be in 'completed' status to share. Current status: {job['status']}"
+        )
+    
+    # Generate share token
+    share_token = generate_url_safe_token(32)  # 32-byte token
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+    
+    # Store token in database
+    share_tokens_collection = db["share_tokens"]
+    await share_tokens_collection.insert_one({
+        "token": share_token,
+        "job_id": job_id,
+        "user_id": str(current_user.id),
+        "expires_at": expires_at,
+        "created_at": datetime.now(timezone.utc)
+    })
+    
+    return {
+        "success": True,
+        "token": share_token,
+        "expires_at": expires_at.isoformat(),
+        "expires_in_hours": expires_in_hours
+    }
+
+
