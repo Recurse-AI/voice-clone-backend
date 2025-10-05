@@ -6,6 +6,7 @@ import threading
 import re
 import numpy as np
 from typing import Optional, Dict, Any, List
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from app.config.settings import settings
 from app.services.language_service import language_service
@@ -112,342 +113,311 @@ class SimpleDubbedAPI:
 
 
 
-    def process_dubbed_audio(self, job_id: str, target_language: str,
-                           source_video_language: str = None,
-                           output_dir: str = None, review_mode: bool = False,
-                           manifest_override: Optional[Dict[str, Any]] = None,
-                           separation_urls: Optional[Dict[str, str]] = None,
-                           video_subtitle: bool = False, voice_premium_model: bool = False,
-                           voice_type: Optional[str] = None, reference_id: Optional[str] = None) -> dict:
-        """
-        Complete dubbed audio processing with clean, modular approach.
-        Always generates SRT file. No audio mixing or conditional processing.
-        """
-        # 1. Validate and normalize language
+    def _validate_target_language(self, target_language: str) -> tuple:
         if not language_service.is_dubbing_supported(target_language):
-            supported_langs = language_service.get_supported_dubbing_languages()
-            error_msg = f"Unsupported target language: {target_language}. Supported languages: {', '.join(sorted(supported_langs))}"
-            logger.error(error_msg)
-            return {"success": False, "error": error_msg}
+            supported = language_service.get_supported_dubbing_languages()
+            error = f"Unsupported target language: {target_language}. Supported: {', '.join(sorted(supported))}"
+            return False, error, None
         
-        target_language_code = language_service.normalize_language_input(target_language)
-        logger.info(f"Processing with target language: {target_language} -> {target_language_code}")
-
+        code = language_service.normalize_language_input(target_language)
+        logger.info(f"Processing with target language: {target_language} -> {code}")
+        return True, None, code
+    
+    def _setup_voice_config(self, manifest_override: dict, voice_premium_model: bool, voice_type: str, reference_id: str) -> dict:
+        manifest_premium = manifest_override.get("voice_premium_model") if manifest_override else None
+        
+        if manifest_override:
+            voice_type = voice_type or manifest_override.get("voice_type")
+            reference_id = reference_id or manifest_override.get("reference_id")
+        
+        final_premium = manifest_premium if manifest_premium is not None else voice_premium_model
+        
+        self.voice_premium_model = final_premium
+        self.voice_type = voice_type
+        self.reference_id = reference_id
+        
+        return {"premium": final_premium, "type": voice_type, "ref_id": reference_id}
+    
+    def _get_audio_urls(self, manifest_override: dict, separation_urls: dict) -> tuple:
+        if manifest_override:
+            vocal_url = manifest_override.get("vocal_audio_url")
+            instrument_url = manifest_override.get("instrument_audio_url")
+        elif separation_urls:
+            vocal_url = separation_urls.get("vocal_audio")
+            instrument_url = separation_urls.get("instrument_audio")
+        else:
+            vocal_url = None
+            instrument_url = None
+        
+        if not vocal_url:
+            logger.warning("No vocal audio URL available - resume/redub may fail")
+        
+        return vocal_url, instrument_url
+    
+    def _handle_review_mode(self, job_id: str, dubbed_segments: list, transcript_id: str, 
+                           manifest_override: dict, process_temp_dir: str, target_language: str,
+                           vocal_url: str, instrument_url: str, voice_config: dict) -> dict:
+        self._update_phase_progress(job_id, "review_prep", 0.5, "Preparing segments for review")
+        
+        if manifest_override:
+            manifest = manifest_override.copy()
+            manifest["segments"] = dubbed_segments
+            manifest["target_language"] = target_language
+            manifest["voice_premium_model"] = voice_config["premium"]
+        else:
+            manifest = build_manifest(
+                job_id, transcript_id, target_language, dubbed_segments,
+                vocal_url, instrument_url, voice_config["premium"],
+                voice_config["type"], voice_config["ref_id"]
+            )
+        
+        save_manifest_to_dir(manifest, process_temp_dir, job_id)
+        
+        exclude_files = []
+        if vocal_url:
+            exclude_files.append(f"vocal_{job_id}.wav")
+        if instrument_url:
+            exclude_files.append(f"instrument_{job_id}.wav")
+        
+        folder_upload, manifest_url, manifest_key = upload_process_dir_to_r2(
+            job_id, process_temp_dir, self.r2_storage, exclude_files=exclude_files
+        )
+        
+        if not manifest_url:
+            return {"success": False, "error": "Failed to generate manifest URL"}
+        
+        self._charge_review_credits(job_id)
+        
+        self._update_status(
+            job_id, JobStatus.AWAITING_REVIEW, 80, {
+                "message": "Awaiting human review",
+                "segments_manifest_url": manifest_url,
+                "segments_manifest_key": manifest_key,
+                "segments_count": len(dubbed_segments),
+                "transcript_id": transcript_id
+            }
+        )
+        
         try:
-            manifest_voice_premium = None
-            if manifest_override:
-                manifest_voice_premium = manifest_override.get("voice_premium_model")
-                # Prefer manifest voice config if present
-                if voice_type is None:
-                    voice_type = manifest_override.get("voice_type")
-                if reference_id is None:
-                    reference_id = manifest_override.get("reference_id")
+            from app.utils.cleanup_utils import cleanup_utils
+            cleanup_utils.schedule_auto_cleanup(job_id, delay_minutes=60)
+        except Exception:
+            pass
+        
+        return {
+            "success": True,
+            "job_id": job_id,
+            "review": {
+                "segments_manifest_url": manifest_url,
+                "segments_manifest_key": manifest_key,
+                "segments_count": len(dubbed_segments),
+                "transcript_id": transcript_id
+            },
+            "folder_upload": folder_upload
+        }
+    
+    def process_dubbed_audio(self, job_id: str, target_language: str,
+                           source_video_language: str = None, output_dir: str = None,
+                           review_mode: bool = False, manifest_override: Optional[Dict[str, Any]] = None,
+                           separation_urls: Optional[Dict[str, str]] = None, video_subtitle: bool = False,
+                           voice_premium_model: bool = False, voice_type: Optional[str] = None,
+                           reference_id: Optional[str] = None) -> dict:
+        valid, error, target_code = self._validate_target_language(target_language)
+        if not valid:
+            logger.error(error)
+            return {"success": False, "error": error}
+        
+        try:
+            voice_config = self._setup_voice_config(manifest_override, voice_premium_model, voice_type, reference_id)
             
-            final_voice_premium_model = manifest_voice_premium if manifest_voice_premium is not None else voice_premium_model
+            self._update_status(job_id, JobStatus.PROCESSING, 60, {"message": "Starting dubbing", "phase": "dubbing"})
             
-            self.voice_premium_model = final_voice_premium_model
-            self.voice_type = voice_type
-            self.reference_id = reference_id
-            
-            # 2. Use provided output directory (already created by caller)
-            process_temp_dir = output_dir
-
-            # Initialize vocal and instrument audio URLs
-            vocal_audio_url = None
-            instrument_audio_url = None
-            
-            self._update_status(
-                job_id,
-                JobStatus.PROCESSING,
-                60,
-                {"message": "Transcription complete - starting dubbing", "phase": "dubbing"}
-            )
-            # Get transcription and process with AI for optimal segmentation and dubbing
             ai_segments, transcript_id, transcription_result = self._get_transcription_and_process_with_ai(
-                job_id, manifest_override, process_temp_dir, source_video_language, 
-                target_language, target_language_code, video_subtitle
+                job_id, manifest_override, output_dir, source_video_language,
+                target_language, target_code, video_subtitle
             )
             
-            
-
-            # Process voice cloning with AI segments
             if review_mode:
-                self._update_phase_progress(job_id, "review_prep", 0.5, "Preparing segments for human review")
                 dubbed_segments = ai_segments
             else:
-                self._update_status(
-                    job_id,
-                    JobStatus.PROCESSING,
-                    65,
-                    {"message": "AI processing complete - starting voice cloning", "phase": "voice_cloning"}
-                )
-                # Get source language from transcription
-                transcription_source_lang = transcription_result.get("language", "auto_detect") if transcription_result else "auto_detect"
-                source_language_code = language_service.normalize_language_input(transcription_source_lang)
+                self._update_status(job_id, JobStatus.PROCESSING, 65, {"message": "Starting voice cloning", "phase": "voice_cloning"})
+                
+                source_lang = transcription_result.get("language", "auto_detect") if transcription_result else "auto_detect"
+                source_code = language_service.normalize_language_input(source_lang)
                 
                 dubbed_segments = self._process_voice_cloning_with_ai_segments(
-                    job_id, ai_segments, manifest_override, review_mode, process_temp_dir, target_language_code, source_language_code
+                    job_id, ai_segments, manifest_override, review_mode, output_dir, target_code, source_code
                 )
             
-            # Handle URLs based on whether this is redub or original dub (before review mode check)
-            if manifest_override:
-                # For redub: use existing manifest which already has URLs
-                # URLs already preserved from original manifest
-                vocal_audio_url = manifest_override.get("vocal_audio_url")
-                instrument_audio_url = manifest_override.get("instrument_audio_url")
-            else:
-                # For original dub: get URLs from separation results
-                if separation_urls:
-                    vocal_audio_url = separation_urls.get("vocal_audio")
-                    instrument_audio_url = separation_urls.get("instrument_audio")
-
-            # Validate that we have vocal URL (critical for resume/redub)
-            if not vocal_audio_url:
-                logger.error(f"No vocal audio URL available for {job_id} - resume/redub will fail")
-
+            vocal_url, instrument_url = self._get_audio_urls(manifest_override, separation_urls)
+            
             if review_mode:
-                self._update_phase_progress(job_id, "review_prep", 0.5, "Preparing segments for human review")
-
-                # Build manifest for review mode
-                if manifest_override:
-                    manifest = manifest_override.copy()
-                    manifest["segments"] = dubbed_segments
-                    manifest["target_language"] = target_language
-                    manifest["voice_premium_model"] = final_voice_premium_model
-                else:
-                    manifest = build_manifest(job_id, transcript_id, target_language, dubbed_segments,
-                                            vocal_audio_url, instrument_audio_url, final_voice_premium_model,
-                                            self.voice_type, self.reference_id)
-
-                # Save manifest to disk (both redub and original dub cases)
-                manifest_path = save_manifest_to_dir(manifest, process_temp_dir, job_id)
-
-                # For review mode, exclude vocal/instrument files since they already have URLs
-                exclude_files = []
-                if vocal_audio_url:
-                    exclude_files.append(f"vocal_{job_id}.wav")
-                if instrument_audio_url:
-                    exclude_files.append(f"instrument_{job_id}.wav")
-
-                folder_upload_result, manifest_url, manifest_key = upload_process_dir_to_r2(
-                    job_id, process_temp_dir, self.r2_storage, exclude_files=exclude_files
+                return self._handle_review_mode(
+                    job_id, dubbed_segments, transcript_id, manifest_override, output_dir,
+                    target_language, vocal_url, instrument_url, voice_config
                 )
-
-
-                # Ensure manifest_url is available before setting awaiting_review status
-                if not manifest_url:
-                    logger.error(f"Failed to get manifest URL for review mode job {job_id}")
-                    return {"success": False, "error": "Failed to generate manifest URL for review"}
-                
-                # Charge 75% credits when ready for review
-                self._charge_review_credits(job_id)
-
-                # Now set awaiting_review status with manifest details using phase system
-                self._update_status(
-                    job_id,
-                    JobStatus.AWAITING_REVIEW,
-                    80,
-                    {
-                        "message": "Awaiting human review - Please review dubbed text",
-                        "segments_manifest_url": manifest_url,
-                        "segments_manifest_key": manifest_key,
-                        "segments_count": len(dubbed_segments),
-                        "transcript_id": transcript_id
-                    })
-
-                # Schedule auto cleanup after review window (1h)
-                try:
-                    from app.utils.cleanup_utils import cleanup_utils
-                    cleanup_utils.schedule_auto_cleanup(job_id, delay_minutes=60)
-                except Exception:
-                    pass
-                logger.info(f"Review mode: preserving temp directory for segments access: {process_temp_dir}")
-                return {
-                    "success": True,
-                    "job_id": job_id,
-                    "review": {
-                        "segments_manifest_url": manifest_url,
-                        "segments_manifest_key": manifest_key,
-                        "segments_count": len(dubbed_segments),
-                        "transcript_id": transcript_id
-                    },
-                    "folder_upload": folder_upload_result
-                }
-
             
-            # Generate final audio and files
             return self._generate_final_output(
-                job_id, dubbed_segments, process_temp_dir,
-                target_language, transcript_id, vocal_audio_url, instrument_audio_url
+                job_id, dubbed_segments, output_dir, target_language, transcript_id, vocal_url, instrument_url
             )
+            
         except Exception as e:
             logger.error(f"Dubbed processing failed: {str(e)}")
-            # Clean up temp directory on exception
-            if locals().get("process_temp_dir"):
-                AudioUtils.remove_temp_dir(folder_path=locals().get("process_temp_dir"))
+            if locals().get("output_dir"):
+                AudioUtils.remove_temp_dir(folder_path=locals().get("output_dir"))
             return {"success": False, "error": str(e)}
     
-    def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, original_text: str = "", job_id: str = None, process_temp_dir: str = None, target_language_code: str = "en", source_language_code: str = "en") -> Optional[Dict[str, Any]]:
-        """Voice clone dubbed text using AI voice cloning service with reference audio and transcript_id in filename"""
+    def _get_ai_voice_reference(self, reference_id: str, source_language_code: str) -> tuple:
+        from app.config.settings import settings as _settings
+        from app.services.dub.fish_audio_sample_helper import fetch_sample_audio_wav_bytes
+        
+        cached = self._ai_voice_reference_cache.get(reference_id)
+        if cached:
+            return cached
+        
+        audio_bytes, sample_text = fetch_sample_audio_wav_bytes(reference_id, _settings.FISH_AUDIO_API_KEY)
+        if audio_bytes:
+            self._ai_voice_reference_cache[reference_id] = (audio_bytes, sample_text)
+        
+        return audio_bytes, sample_text
+    
+    def _load_reference_audio(self, audio_path: str) -> Optional[bytes]:
+        import soundfile as sf
+        import io
+        
+        if not audio_path or not os.path.exists(audio_path):
+            return None
+        
         try:
-            no_reference = False
-            if not reference_audio_path:
-                logger.warning(f"No reference audio path provided for {segment_id}")
-                no_reference = True
-            elif not os.path.exists(reference_audio_path):
-                logger.warning(f"Reference audio file not found: {reference_audio_path} for {segment_id}")
-                no_reference = True
-            import time
-            segment_start_time = time.time()
+            audio_data, sample_rate = sf.read(audio_path)
+            if len(audio_data.shape) > 1:
+                audio_data = audio_data[:, 0]
+            
+            buffer = io.BytesIO()
+            sf.write(buffer, audio_data, sample_rate, format='WAV')
+            return buffer.getvalue()
+        except Exception as e:
+            logger.error(f"Failed to load reference audio from {audio_path}: {e}")
+            return None
+    
+    def _generate_with_premium_api(self, tagged_text: str, reference_audio_bytes: bytes, tagged_reference_text: str, 
+                                   job_id: str, target_language_code: str, voice_type: str, ai_voice_reference_id: str) -> dict:
+        from app.services.dub.fish_audio_api_service import FishAudioAPIService
+        
+        fish_api = FishAudioAPIService()
+        if not fish_api.api_key or not fish_api.api_key.strip():
+            return {"success": False}
+        
+        logger.info("🎯 Using Premium Fish Audio API")
+        
+        if voice_type == 'ai_voice' and ai_voice_reference_id:
+            return fish_api.generate_voice_clone(
+                text=tagged_text,
+                reference_audio_bytes=None,
+                reference_text=None,
+                job_id=job_id,
+                target_language_code=target_language_code,
+                reference_id=ai_voice_reference_id
+            )
+        
+        return fish_api.generate_voice_clone(
+            text=tagged_text,
+            reference_audio_bytes=reference_audio_bytes,
+            reference_text=tagged_reference_text,
+            job_id=job_id,
+            target_language_code=target_language_code
+        )
+    
+    def _generate_with_local_model(self, tagged_text: str, reference_audio_bytes: bytes, 
+                                   tagged_reference_text: str, job_id: str, target_language_code: str) -> dict:
+        return self.fish_speech.generate_with_reference_audio(
+            text=tagged_text,
+            reference_audio_bytes=reference_audio_bytes,
+            reference_text=tagged_reference_text,
+            max_new_tokens=1024,
+            top_p=0.9,
+            repetition_penalty=1.07,
+            temperature=0.75,
+            job_id=job_id,
+            target_language_code=target_language_code
+        )
+    
+    def _save_cloned_audio(self, output_path: str, cloned_path: str, segment_id: str) -> Optional[Dict[str, Any]]:
+        import soundfile as sf
+        
+        if not output_path or not os.path.exists(output_path):
+            return None
+        
+        try:
+            audio_data, sample_rate = sf.read(output_path)
+            if len(audio_data.shape) > 1:
+                audio_data = audio_data[:, 0]
+            
+            sf.write(cloned_path, audio_data.astype(np.float32), sample_rate)
+            os.remove(output_path)
+            
+            duration_ms = int(len(audio_data) / sample_rate * 1000)
+            return {"path": cloned_path, "duration_ms": duration_ms}
+        except Exception as e:
+            logger.error(f"Failed to process audio for {segment_id}: {e}")
+            if os.path.exists(output_path):
+                os.remove(output_path)
+            return None
+    
+    def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, 
+                            original_text: str = "", job_id: str = None, process_temp_dir: str = None, 
+                            target_language_code: str = "en", source_language_code: str = "en") -> Optional[Dict[str, Any]]:
+        try:
+            start_time = time.time()
             
             tagged_text = _add_language_tag(dubbed_text, target_language_code)
             tagged_reference_text = _add_language_tag(original_text or "Reference audio", source_language_code)
             
-            logger.info(f"🎯 Voice cloning {segment_id} starting at {time.strftime('%H:%M:%S')} using reference: {reference_audio_path}")
-            logger.info(f"🔍 DEBUG - Target text: '{dubbed_text}' (target_lang: {target_language_code})")
-            logger.info(f"🔍 DEBUG - Reference text: '{original_text}' (source_lang: {source_language_code})")
-            import soundfile as sf
-            import io
-            # Initialize voice config early to avoid unbound local errors
-            premium_check = getattr(self, 'voice_premium_model', False)
+            logger.info(f"🎯 Voice cloning {segment_id}")
+            
+            is_premium = getattr(self, 'voice_premium_model', False)
             voice_type = getattr(self, 'voice_type', None)
-            ai_voice_reference_id = getattr(self, 'reference_id', None)
+            ai_voice_id = getattr(self, 'reference_id', None)
+            
             reference_audio_bytes = None
-            # If using AI voice without premium, try pulling sample audio by reference_id from Fish API via helper
-            if voice_type == 'ai_voice' and ai_voice_reference_id and not premium_check:
-                from app.config.settings import settings as _settings
-                from app.services.dub.fish_audio_sample_helper import fetch_sample_audio_wav_bytes
-                # Use cached sample if available; fetch once per job
-                cached = self._ai_voice_reference_cache.get(ai_voice_reference_id)
-                if cached:
-                    reference_audio_bytes, sample_text = cached
-                    if sample_text:
-                        tagged_reference_text = _add_language_tag(sample_text, source_language_code)
-                else:
-                    reference_audio_bytes, sample_text = fetch_sample_audio_wav_bytes(ai_voice_reference_id, _settings.FISH_AUDIO_API_KEY)
-                    if reference_audio_bytes:
-                        self._ai_voice_reference_cache[ai_voice_reference_id] = (reference_audio_bytes, sample_text)
-                        if sample_text:
-                            tagged_reference_text = _add_language_tag(sample_text, source_language_code)
-
-            # If not set by sample pull, load from local reference file
-            if reference_audio_bytes is None and not no_reference:
-                audio_data, sample_rate = sf.read(reference_audio_path)
-                if len(audio_data.shape) > 1:
-                    audio_data = audio_data[:, 0]
-                buffer = io.BytesIO()
-                sf.write(buffer, audio_data, sample_rate, format='WAV')
-                reference_audio_bytes = buffer.getvalue()
-                if not reference_audio_bytes:
-                    logger.error(f"Failed to load reference audio: {reference_audio_path}")
-                    no_reference = True
-
-            # Extract segment index from segment_id (seg_001 -> 0)
+            
+            if voice_type == 'ai_voice' and ai_voice_id and not is_premium:
+                audio_bytes, sample_text = self._get_ai_voice_reference(ai_voice_id, source_language_code)
+                reference_audio_bytes = audio_bytes
+                if sample_text:
+                    tagged_reference_text = _add_language_tag(sample_text, source_language_code)
+            
+            if reference_audio_bytes is None:
+                reference_audio_bytes = self._load_reference_audio(reference_audio_path)
+            
             segment_index = int(segment_id.split('_')[1]) - 1
-            cloned_filename = f"cloned_{job_id}_{segment_index:03d}.wav"
-            cloned_path = os.path.join(process_temp_dir, cloned_filename).replace('\\', '/')
+            cloned_path = os.path.join(process_temp_dir, f"cloned_{job_id}_{segment_index:03d}.wav").replace('\\', '/')
             
-            # Process entire segment as one unit (no chunking)
-            
-            # premium_check, voice_type, ai_voice_reference_id already initialized above
-            
-            if premium_check:
-                from app.services.dub.fish_audio_api_service import FishAudioAPIService
-                fish_api = FishAudioAPIService()
+            if is_premium:
+                result = self._generate_with_premium_api(
+                    tagged_text, reference_audio_bytes, tagged_reference_text,
+                    job_id, target_language_code, voice_type, ai_voice_id
+                )
                 
-                if fish_api.api_key and fish_api.api_key.strip():
-                    logger.info("🎯 Using Premium Fish Audio API")
-                    # If AI voice is selected and reference_id is provided, use it
-                    if voice_type == 'ai_voice' and ai_voice_reference_id:
-                        result = fish_api.generate_voice_clone(
-                            text=tagged_text,
-                            reference_audio_bytes=None,
-                            reference_text=None,
-                            job_id=job_id,
-                            target_language_code=target_language_code,
-                            reference_id=ai_voice_reference_id
-                        )
-                    else:
-                        result = fish_api.generate_voice_clone(
-                            text=tagged_text,
-                            reference_audio_bytes=reference_audio_bytes,
-                            reference_text=tagged_reference_text,
-                            job_id=job_id,
-                            target_language_code=target_language_code
-                        )
-                    # If premium API succeeds, skip local model completely
-                    if result.get("success"):
-                        logger.info(f"✅ Fish API success for {segment_id}")
-                    else:
-                        error_msg = result.get('error', 'Unknown error')
-                        if "empty audio" in error_msg or "silent" in error_msg:
-                            logger.warning(f"🔧 Fish API service issue for {segment_id} - using local model as backup")
-                        else:
-                            logger.warning(f"❌ Fish API failed for {segment_id}: {error_msg}, falling back to local model")
-                        result = self.fish_speech.generate_with_reference_audio(
-                            text=tagged_text,
-                            reference_audio_bytes=reference_audio_bytes,
-                            reference_text=tagged_reference_text,
-                            max_new_tokens=1024,
-                            top_p=0.9,
-                            repetition_penalty=1.07,
-                            temperature=0.75,
-                            job_id=job_id,
-                            target_language_code=target_language_code
-                        )
-                else:
-                    result = self.fish_speech.generate_with_reference_audio(
-                        text=tagged_text,
-                        reference_audio_bytes=reference_audio_bytes,
-                        reference_text=tagged_reference_text,
-                        max_new_tokens=1024,
-                        top_p=0.9,
-                        repetition_penalty=1.07,
-                        temperature=0.75,
-                        job_id=job_id,
-                        target_language_code=target_language_code
+                if not result.get("success"):
+                    logger.warning(f"❌ Fish API failed for {segment_id}, using local model")
+                    result = self._generate_with_local_model(
+                        tagged_text, reference_audio_bytes, tagged_reference_text,
+                        job_id, target_language_code
                     )
             else:
-                # Default: Local Fish Speech mini model
-                result = self.fish_speech.generate_with_reference_audio(
-                    text=tagged_text,
-                    reference_audio_bytes=reference_audio_bytes,
-                    reference_text=original_text or "Reference audio",
-                    max_new_tokens=1024,
-                    top_p=0.9,
-                    repetition_penalty=1.07,
-                    temperature=0.75,
-                    job_id=job_id,
-                    target_language_code=target_language_code
+                result = self._generate_with_local_model(
+                    tagged_text, reference_audio_bytes, tagged_reference_text,
+                    job_id, target_language_code
                 )
-
-            total_time = time.time() - segment_start_time
-            logger.info(f"Segment generation took {total_time:.2f}s for text: {tagged_text}")
-
+            
+            elapsed = time.time() - start_time
+            
             if result.get("success"):
-                # Handle both Fish API and local model output paths
-                output_path = result.get("output_path")
-                if output_path and os.path.exists(output_path):
-                    try:
-                        audio_data, sample_rate = sf.read(output_path)
-                        if len(audio_data.shape) > 1:
-                            audio_data = audio_data[:, 0]
-                        
-                        # Save directly to final path
-                        sf.write(cloned_path, audio_data.astype(np.float32), sample_rate)
-                        
-                        # Clean up the temporary file
-                        os.remove(output_path)
-                        
-                        duration_ms = int(len(audio_data) / sample_rate * 1000)
-                        logger.info(f"✅ Voice cloning {segment_id} completed in {total_time:.2f}s at {time.strftime('%H:%M:%S')}")
-                        return {"path": cloned_path, "duration_ms": duration_ms}
-                    except Exception as e:
-                        logger.error(f"Failed to process audio from {output_path}: {e}")
-                        if os.path.exists(output_path):
-                            os.remove(output_path)
-                else:
-                    logger.warning(f"No valid output path in result for {segment_id}")
+                output = self._save_cloned_audio(result.get("output_path"), cloned_path, segment_id)
+                if output:
+                    logger.info(f"✅ Voice cloning {segment_id} completed in {elapsed:.2f}s")
+                    return output
             
             logger.error(f"Voice cloning failed for {segment_id}")
             return None
@@ -456,64 +426,67 @@ class SimpleDubbedAPI:
             logger.error(f"Voice cloning error for {segment_id}: {str(e)}")
             return None
     
+    def _clone_segment_worker(self, data: dict, actual_index: int, total_segments: int, job_id: str, process_temp_dir: str) -> tuple:
+        try:
+            start_time = time.time()
+            result = self._voice_clone_segment(
+                data["dubbed_text"], 
+                data["original_audio_path"], 
+                data["seg_id"], 
+                data["original_text"], 
+                job_id=job_id, 
+                process_temp_dir=process_temp_dir,
+                target_language_code=getattr(self, '_target_language_code', 'en'),
+                source_language_code=getattr(self, '_source_language_code', 'en')
+            )
+            elapsed = time.time() - start_time
+            logger.info(f"✅ Segment {data['seg_id']} ({actual_index+1}/{total_segments}) completed in {elapsed:.2f}s")
+            return (actual_index, result, True)
+        except Exception as e:
+            logger.error(f"❌ Segment {data.get('seg_id', 'unknown')} failed: {e}")
+            return (actual_index, None, False)
+    
     def _process_voice_cloning_sequential(self, segments_data: list, job_id: str, process_temp_dir: str) -> list:
-        """Process voice cloning in configurable batches for better GPU/CPU load balancing"""
-        import time
-        from app.config.settings import settings
-        
         total_segments = len(segments_data)
         batch_size = settings.VOICE_CLONING_BATCH_SIZE
-        results = []
         
-        logger.info(f"🎯 Processing {total_segments} segments in batches of {batch_size} for load balancing")
+        is_premium_api = getattr(self, 'voice_premium_model', False)
+        max_workers = settings.VOICE_CLONING_PARALLEL_WORKERS if is_premium_api else 1
         
-        # Process segments in batches
+        mode = "API (parallel)" if is_premium_api else "local s1-mini (sequential)"
+        logger.info(f"🚀 Processing {total_segments} segments using {mode} with {max_workers} worker(s)")
+        
+        results = [None] * total_segments
+        
         for batch_start in range(0, total_segments, batch_size):
             batch_end = min(batch_start + batch_size, total_segments)
             batch_data = segments_data[batch_start:batch_end]
             
-            logger.info(f"📦 Processing batch {batch_start//batch_size + 1}: segments {batch_start+1}-{batch_end}")
+            logger.info(f"📦 Batch {batch_start//batch_size + 1}: segments {batch_start+1}-{batch_end}")
             
-            # Process batch segments
-            for i, data in enumerate(batch_data):
-                try:
-                    segment_start = time.time()
-                    actual_index = batch_start + i
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {
+                    executor.submit(self._clone_segment_worker, data, batch_start + i, total_segments, job_id, process_temp_dir): i
+                    for i, data in enumerate(batch_data)
+                }
+                
+                for future in as_completed(futures):
+                    actual_index, result, success = future.result()
+                    results[actual_index] = result
                     
-                    result = self._voice_clone_segment(
-                        data["dubbed_text"], 
-                        data["original_audio_path"], 
-                        data["seg_id"], 
-                        data["original_text"], 
-                        job_id=job_id, 
-                        process_temp_dir=process_temp_dir,
-                        target_language_code=getattr(self, '_target_language_code', 'en'),
-                        source_language_code=getattr(self, '_source_language_code', 'en')
-                    )
-                    
-                    segment_time = time.time() - segment_start
-                    results.append(result)
-                    logger.info(f"✅ Segment {data['seg_id']} ({actual_index+1}/{total_segments}) completed in {segment_time:.2f}s")
-                    
-                    # Update progress
-                    completed_segments = actual_index + 1
-                    progress_percent = (completed_segments / total_segments) * 0.9 + 0.1
-                    message = f"Voice cloning: {completed_segments}/{total_segments} segments completed"
+                    completed = sum(1 for r in results if r is not None)
+                    progress = (completed / total_segments) * 0.9 + 0.1
                     
                     try:
-                        self._update_phase_progress(job_id, "voice_cloning", progress_percent, message)
-                    except Exception as progress_error:
-                        logger.warning(f"Failed to update progress: {progress_error}")
-                    
-                except Exception as e:
-                    logger.error(f"❌ Segment {data.get('seg_id', 'unknown')} failed: {e}")
-                    results.append(None)
+                        self._update_phase_progress(job_id, "voice_cloning", progress, f"Voice cloning: {completed}/{total_segments}")
+                    except Exception:
+                        pass
         
         successful = sum(1 for r in results if r is not None)
-        logger.info(f"🎯 Completed: {successful}/{total_segments} segments successful")
+        logger.info(f"🎯 Completed: {successful}/{total_segments} successful")
         
         try:
-            self._update_phase_progress(job_id, "voice_cloning", 1.0, f"Voice cloning complete: {successful}/{total_segments} successful")
+            self._update_phase_progress(job_id, "voice_cloning", 1.0, f"Voice cloning complete: {successful}/{total_segments}")
         except Exception:
             pass
         

@@ -2,6 +2,7 @@ import logging
 import json
 import re
 from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.services.language_service import language_service
 from app.config.settings import settings
 
@@ -166,7 +167,8 @@ RULES:
 3. Merge very short segments if total ≤ 15.0s
 4. Fix corrupted/repetitive text by extracting meaningful content
 5. Use all input content exactly once
-6. Output segment count can be different from input count
+6. If possible, split segments by speaker changes
+7. Output segment count can be different from input count
 
 {translation_instructions}
 
@@ -254,85 +256,101 @@ OUTPUT JSON:
         
         return self._translate_segments_preserve_timing(segments, target_language_code)
     
-    def _translate_segments_preserve_timing(self, segments: List[Dict], target_language_code: str) -> List[Dict[str, Any]]:
-        chunk_size = 10
-        all_results = []
+    def _translate_chunk_worker(self, args) -> tuple:
+        i, chunk, target_language_code = args
+        chunk_number = i + 1
         
-        for i in range(0, len(segments), chunk_size):
-            chunk = segments[i:i + chunk_size]
-            chunk_number = i//chunk_size + 1
-            total_chunks = (len(segments) + chunk_size - 1)//chunk_size
+        segments_for_translation = []
+        for idx, seg in enumerate(chunk):
+            original_text = seg.get("original_text", seg.get("text", "")).strip()
+            segments_for_translation.append({
+                "id": seg.get("id", f"seg_{idx+1:03d}"),
+                "start": int(seg.get("start", 0)),
+                "end": int(seg.get("end", 0)),
+                "original_text": original_text
+            })
+        
+        prompt = self._build_translation_only_prompt(segments_for_translation, target_language_code)
+        
+        try:
+            response = self._get_openai_client().chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": f"You are an expert translator. MANDATORY: 1) ALL translations in {self._get_language_name(target_language_code)} ONLY. 2) CORRUPTION DETECTION: Clean repetitive patterns. 3) EXTRACT meaningful speech only. 4) Ensure natural {self._get_language_name(target_language_code)} output."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=8192,
+                temperature=0.1,
+                response_format={"type": "json_object"}
+            )
             
-            logger.info(f"Translating chunk {chunk_number}/{total_chunks} ({len(chunk)} segments)")
+            ai_response = response.choices[0].message.content.strip()
+            result = json.loads(ai_response)
             
-            segments_for_translation = []
-            for idx, seg in enumerate(chunk):
-                original_text = seg.get("original_text", seg.get("text", "")).strip()
-                start_ms = int(seg.get("start", 0))
-                end_ms = int(seg.get("end", 0))
-                
-                segments_for_translation.append({
-                    "id": seg.get("id", f"seg_{i+idx+1:03d}"),
-                    "start": start_ms,
-                    "end": end_ms,
-                    "original_text": original_text
-                })
-            
-            prompt = self._build_translation_only_prompt(segments_for_translation, target_language_code)
-            
-            try:
-                response = self._get_openai_client().chat.completions.create(
-                    model="gpt-4o",
-                    messages=[
-                        {"role": "system", "content": f"You are an expert translator with advanced corruption detection capabilities. MANDATORY RULES: 1) ALL translations must be in {self._get_language_name(target_language_code)} ONLY - never mix with Spanish/German/French/etc. 2) CORRUPTION DETECTION: Automatically detect and clean these patterns: repetitive numbers (40,000,000...), repeated characters (aaa...), repeated words (juice juice juice), meaningless symbols, corrupted transcriptions. 3) EXTRACT only meaningful speech content from corrupted input. 4) If text is purely corrupted/meaningless, use '[unclear audio]' in {self._get_language_name(target_language_code)}. 5) NEVER output corrupted patterns in your translations. 6) Ensure natural, professional {self._get_language_name(target_language_code)} output."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    max_tokens=8192,
-                    temperature=0.1,
-                    response_format={"type": "json_object"}
-                )
-                
-                ai_response = response.choices[0].message.content.strip()
-                result = json.loads(ai_response)
-                
-                for seg_result in result.get("segments", []):
-                    original_seg = next((s for s in chunk if s.get("id") == seg_result.get("id")), None)
-                    if original_seg:
-                        dubbed_text = seg_result.get("dubbed_text", "").strip()
-                        
-                        all_results.append({
-                            "id": seg_result.get("id"),
-                            "segment_index": len(all_results),
-                            "start": int(original_seg.get("start", 0)),
-                            "end": int(original_seg.get("end", 0)),
-                            "duration_ms": int(original_seg.get("end", 0)) - int(original_seg.get("start", 0)),
-                            "original_text": seg_result.get("original_text", ""),
-                            "dubbed_text": dubbed_text,
-                            "voice_cloned": False,
-                            "original_audio_file": None,
-                            "cloned_audio_file": None
-                        })
-                
-                logger.info(f"Translated chunk {chunk_number}: {len(result.get('segments', []))} segments")
-                
-            except Exception as e:
-                logger.error(f"Translation chunk failed: {str(e)}")
-                for idx, seg in enumerate(chunk):
-                    original_text = seg.get("original_text", seg.get("text", "")).strip()
-                    all_results.append({
-                        "id": seg.get("id", f"seg_{i+idx+1:03d}"),
-                        "segment_index": len(all_results),
-                        "start": int(seg.get("start", 0)),
-                        "end": int(seg.get("end", 0)),
-                        "duration_ms": int(seg.get("end", 0)) - int(seg.get("start", 0)),
-                        "original_text": original_text,
-                        "dubbed_text": original_text,
+            chunk_results = []
+            for seg_result in result.get("segments", []):
+                original_seg = next((s for s in chunk if s.get("id") == seg_result.get("id")), None)
+                if original_seg:
+                    chunk_results.append({
+                        "id": seg_result.get("id"),
+                        "start": int(original_seg.get("start", 0)),
+                        "end": int(original_seg.get("end", 0)),
+                        "duration_ms": int(original_seg.get("end", 0)) - int(original_seg.get("start", 0)),
+                        "original_text": seg_result.get("original_text", ""),
+                        "dubbed_text": seg_result.get("dubbed_text", "").strip(),
                         "voice_cloned": False,
                         "original_audio_file": None,
                         "cloned_audio_file": None
                     })
+            
+            logger.info(f"✅ Translated chunk {chunk_number}: {len(chunk_results)} segments")
+            return (i, chunk_results, True)
+            
+        except Exception as e:
+            logger.error(f"❌ Translation chunk {chunk_number} failed: {str(e)}")
+            fallback_results = []
+            for seg in chunk:
+                original_text = seg.get("original_text", seg.get("text", "")).strip()
+                fallback_results.append({
+                    "id": seg.get("id"),
+                    "start": int(seg.get("start", 0)),
+                    "end": int(seg.get("end", 0)),
+                    "duration_ms": int(seg.get("end", 0)) - int(seg.get("start", 0)),
+                    "original_text": original_text,
+                    "dubbed_text": original_text,
+                    "voice_cloned": False,
+                    "original_audio_file": None,
+                    "cloned_audio_file": None
+                })
+            return (i, fallback_results, False)
+    
+    def _translate_segments_preserve_timing(self, segments: List[Dict], target_language_code: str) -> List[Dict[str, Any]]:
+        chunk_size = 10
+        chunks = [segments[i:i + chunk_size] for i in range(0, len(segments), chunk_size)]
+        total_chunks = len(chunks)
         
-        logger.info(f"REDUB translation complete: {len(all_results)} segments translated")
+        logger.info(f"🚀 Translating {len(segments)} segments in {total_chunks} chunks with 5 parallel workers")
+        
+        chunk_results = [None] * total_chunks
+        
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {
+                executor.submit(self._translate_chunk_worker, (i, chunk, target_language_code)): i
+                for i, chunk in enumerate(chunks)
+            }
+            
+            for future in as_completed(futures):
+                chunk_idx, results, success = future.result()
+                chunk_results[chunk_idx] = results
+        
+        all_results = []
+        for chunk_result in chunk_results:
+            if chunk_result:
+                for seg in chunk_result:
+                    seg["segment_index"] = len(all_results)
+                    all_results.append(seg)
+        
+        logger.info(f"🎯 REDUB: Translated {len(all_results)} segments")
         return all_results
     
     def _build_translation_only_prompt(self, segments: List[Dict], target_language_code: str) -> str:

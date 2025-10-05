@@ -109,8 +109,10 @@ class Settings(BaseSettings):
     FISH_SPEECH_MIN_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_MIN_CHUNK_SIZE", "270"))  # Minimum chunk size for text processing
     
     # Batch Processing Configuration
-    VOICE_CLONING_BATCH_SIZE: int = int(os.getenv("VOICE_CLONING_BATCH_SIZE", "10"))  # Segments per batch
-    WHISPERX_BATCH_SIZE: int = int(os.getenv("WHISPERX_BATCH_SIZE", "16"))  # WhisperX transcription batch size
+    VOICE_CLONING_BATCH_SIZE: int = int(os.getenv("VOICE_CLONING_BATCH_SIZE", "10"))
+    VOICE_CLONING_PARALLEL_WORKERS: int = int(os.getenv("VOICE_CLONING_PARALLEL_WORKERS", "5"))
+    OPENAI_PARALLEL_WORKERS: int = int(os.getenv("OPENAI_PARALLEL_WORKERS", "5"))
+    WHISPERX_BATCH_SIZE: int = int(os.getenv("WHISPERX_BATCH_SIZE", "16"))
 
     # CPU Worker Configuration
     ENABLE_CPU_WORKERS: bool = os.getenv("ENABLE_CPU_WORKERS", "false").lower() == "true"
@@ -133,6 +135,7 @@ class Settings(BaseSettings):
 
     # FFmpeg Configuration
     FFMPEG_USE_GPU: bool = bool(int(os.getenv('FFMPEG_USE_GPU', '1')))  # 1 to enable GPU (NVENC)
+    SUBTITLE_PARALLEL_WORKERS: int = int(os.getenv('SUBTITLE_PARALLEL_WORKERS', '5'))  # Max parallel subtitle rendering (increased for high-spec systems)
     
     # Redis Configuration
     REDIS_HOST: str = os.getenv("REDIS_HOST", "127.0.0.1")

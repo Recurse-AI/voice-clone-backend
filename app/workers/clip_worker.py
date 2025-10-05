@@ -3,10 +3,66 @@ import tempfile
 import asyncio
 import logging
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.services.clip_service import ClipService
 from app.repositories.clip_repository import ClipRepository
+from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+def _process_single_segment(args):
+    """Process a single segment with subtitle rendering (parallel worker)"""
+    i, seg, base_clip, words, temp_dir, video_duration, job, service, user_id, job_id = args
+    
+    try:
+        seg_start = max(0.0, float(seg["start"]))
+        seg_end = min(video_duration, max(seg_start, float(seg["end"])))
+        
+        seg_clip = os.path.join(temp_dir, f"seg_{i+1}.mp4")
+        service.cut_segment(base_clip, seg_start, seg_end, seg_clip)
+        
+        seg_words = [w for w in words if seg_start * 1000 <= w["start"] <= seg_end * 1000]
+        seg_words_copy = []
+        for w in seg_words:
+            word_copy = w.copy()
+            word_copy["start"] = max(0, w["start"] - int(seg_start * 1000))
+            word_copy["end"] = max(0, w["end"] - int(seg_start * 1000))
+            seg_words_copy.append(word_copy)
+        
+        seg_text = " ".join(w["text"] for w in seg_words)
+        seg["text"] = seg_text
+        seg["words"] = seg_words_copy
+        
+        subtitle_style = job.get("subtitle_style")
+        preset = job.get("subtitle_preset", "reels")
+        
+        if seg_words_copy and subtitle_style and subtitle_style.lower() not in ["none", ""]:
+            final_clip = os.path.join(temp_dir, f"final_{i+1}.mp4")
+            service.render_subtitles(
+                seg_clip, seg_words_copy, final_clip,
+                style=subtitle_style,
+                preset=preset,
+                font=job.get("subtitle_font"),
+                font_size=job.get("subtitle_font_size"),
+                wpl=job.get("subtitle_wpl")
+            )
+            upload_path = final_clip
+        else:
+            resized_clip = os.path.join(temp_dir, f"resized_{i+1}.mp4")
+            service.resize_video(seg_clip, resized_clip, preset=preset)
+            upload_path = resized_clip
+        
+        r2_key = f"clips/{user_id}/{job_id}/seg_{i+1}.mp4"
+        result = service.r2.upload_file(upload_path, r2_key, "video/mp4")
+        if not result["success"]:
+            raise RuntimeError(f"Upload failed: {result.get('error')}")
+        
+        seg["clip_url"] = result["url"]
+        return (i, seg, True, None)
+    
+    except Exception as e:
+        logger.error(f"Segment {i+1} processing failed: {e}")
+        return (i, seg, False, str(e))
 
 def _send_clip_completion_email(job_id: str, user_id: str):
     """Send completion email notification for clip jobs"""
@@ -154,55 +210,38 @@ async def _process_clip_job_async(job_id: str, user_id: str):
         await repo.update_status(job_id, "rendering", 50)
         
         total_segs = len(segments)
-        for i, seg in enumerate(segments):
-            seg_start = max(0.0, float(seg["start"]))
-            seg_end = min(video_duration, max(seg_start, float(seg["end"])))
+        max_workers = settings.SUBTITLE_PARALLEL_WORKERS
+        logger.info(f"🚀 Processing {total_segs} segments in parallel (max {max_workers} at a time)")
+        
+        # Prepare arguments for parallel processing
+        tasks = [
+            (i, seg, base_clip, words, temp_dir, video_duration, job, service, user_id, job_id)
+            for i, seg in enumerate(segments)
+        ]
+        
+        # Process segments in parallel
+        completed_count = 0
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_seg = {executor.submit(_process_single_segment, task): task[0] for task in tasks}
             
-            seg_clip = os.path.join(temp_dir, f"seg_{i+1}.mp4")
-            service.cut_segment(base_clip, seg_start, seg_end, seg_clip)
-            
-            seg_words = [w for w in words if seg_start * 1000 <= w["start"] <= seg_end * 1000]
-            seg_words_copy = []
-            for w in seg_words:
-                word_copy = w.copy()
-                word_copy["start"] = max(0, w["start"] - int(seg_start * 1000))
-                word_copy["end"] = max(0, w["end"] - int(seg_start * 1000))
-                seg_words_copy.append(word_copy)
-            
-            seg_text = " ".join(w["text"] for w in seg_words)
-            
-            seg["text"] = seg_text
-            seg["words"] = seg_words_copy
-            
-            subtitle_style = job.get("subtitle_style")
-            preset = job.get("subtitle_preset", "reels")
-            
-            if seg_words_copy and subtitle_style and subtitle_style.lower() not in ["none", ""]:
-                final_clip = os.path.join(temp_dir, f"final_{i+1}.mp4")
-                service.render_subtitles(
-                    seg_clip, seg_words_copy, final_clip,
-                    style=subtitle_style,
-                    preset=preset,
-                    font=job.get("subtitle_font"),
-                    font_size=job.get("subtitle_font_size"),
-                    wpl=job.get("subtitle_wpl")
-                )
-                upload_path = final_clip
-            else:
-                resized_clip = os.path.join(temp_dir, f"resized_{i+1}.mp4")
-                service.resize_video(seg_clip, resized_clip, preset=preset)
-                upload_path = resized_clip
-            
-            r2_key = f"clips/{user_id}/{job_id}/seg_{i+1}.mp4"
-            result = service.r2.upload_file(upload_path, r2_key, "video/mp4")
-            if not result["success"]:
-                raise RuntimeError(f"Upload failed: {result.get('error')}")
-            
-            seg["clip_url"] = result["url"]
-            await repo.add_segment(job_id, seg)
-            
-            progress = 50 + int((i + 1) / total_segs * 45)
-            await repo.update_status(job_id, "rendering", progress)
+            for future in as_completed(future_to_seg):
+                seg_idx = future_to_seg[future]
+                try:
+                    i, seg, success, error = future.result()
+                    
+                    if not success:
+                        raise RuntimeError(f"Segment {i+1} failed: {error}")
+                    
+                    await repo.add_segment(job_id, seg)
+                    completed_count += 1
+                    
+                    progress = 50 + int(completed_count / total_segs * 45)
+                    await repo.update_status(job_id, "rendering", progress)
+                    logger.info(f"✅ Segment {i+1}/{total_segs} completed")
+                    
+                except Exception as e:
+                    logger.error(f"❌ Segment {seg_idx+1} failed: {e}")
+                    raise
         
         await repo.update(job_id, {"status": "completed", "progress": 100, "completed_at": datetime.now(timezone.utc)})
         
