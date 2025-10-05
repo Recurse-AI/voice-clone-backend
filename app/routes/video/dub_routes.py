@@ -603,3 +603,47 @@ async def generate_share_link(
         "expires_at": expires_at.isoformat(),
         "expires_in_hours": expires_in_hours
     }
+
+@router.post("/video-dub/{job_id}/download-share")
+async def generate_share_link(
+    job_id: str,
+    expires_in_hours: int = 24,
+    current_user = Depends(get_current_user)
+):
+    """Generate a shareable link for review access"""
+    
+    # Verify job exists and user owns it
+    job = await dub_job_service.get_job(job_id)
+    if not job or job.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Only allow sharing for completed jobs
+    if job.status != "completed":
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Job must be in 'completed' status to share. Current status: {job.status}"
+        )
+    
+    # Generate share token
+
+    
+    share_token = generate_url_safe_token(32)  # 32-byte token
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)
+    
+    # Store token in database
+    share_tokens_collection = db["share_tokens"]
+    await share_tokens_collection.insert_one({
+        "token": share_token,
+        "job_id": job_id,
+        "user_id": current_user.id,
+        "expires_at": expires_at,
+        "created_at": datetime.now(timezone.utc)
+    })
+    
+    return {
+        "success": True,
+        "token": share_token,
+        "expires_at": expires_at.isoformat(),
+        "expires_in_hours": expires_in_hours
+    }
+
