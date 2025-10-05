@@ -209,11 +209,35 @@ class ClipService:
         
         time.sleep(0.5)
         
-        body = {"model": "gpt-5-mini", "messages": [prompt, user], "response_format": {"type": "json_object"}, "temperature": 0.2}
-        r = requests.post("https://api.openai.com/v1/chat/completions", headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"}, data=json.dumps(body))
+        input_messages = [
+            {"role": "system", "content": [{"type": "text", "text": prompt["content"]}]},
+            {"role": "user", "content": [{"type": "text", "text": user_content}]}
+        ]
+        
+        body = {
+            "model": "gpt-5-mini",
+            "input": input_messages,
+            "text": {"verbosity": "medium"},
+            "reasoning": {"effort": "low"},
+            "temperature": 0.2,
+            "max_tokens": 2000,
+            "response_format": {"type": "json_object"}
+        }
+        
+        r = requests.post(
+            "https://api.openai.com/v1/responses",
+            headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json=body,
+            timeout=60
+        )
         r.raise_for_status()
-        content = r.json()["choices"][0]["message"]["content"]
-        return json.loads(content)
+        
+        resp = r.json()
+        text = resp.get("output_text") or resp.get("output", [{}])[0].get("content", [{}])[0].get("text", "")
+        if not text and "choices" in resp:
+            text = resp["choices"][0]["message"]["content"]
+        
+        return json.loads(text)
     
     def cut_segment(self, base_clip: str, ss: float, to: float, out_path: str):
         cmd = [self._ffmpeg(), "-y", "-ss", f"{ss:.3f}", "-to", f"{to:.3f}", "-i", base_clip, "-c", "copy", out_path]

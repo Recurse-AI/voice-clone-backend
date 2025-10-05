@@ -278,18 +278,21 @@ OUTPUT JSON:
         time.sleep(0.5)
         
         try:
-            response = self._get_openai_client().chat.completions.create(
+            response = self._get_openai_client().responses.create(
                 model="gpt-5-mini",
-                messages=[
-                    {"role": "system", "content": f"You are an expert translator. MANDATORY: 1) ALL translations in {self._get_language_name(target_language_code)} ONLY. 2) CORRUPTION DETECTION: Clean repetitive patterns. 3) EXTRACT meaningful speech only. 4) Ensure natural {self._get_language_name(target_language_code)} output."},
-                    {"role": "user", "content": prompt}
+                input=[
+                    {"role": "system", "content": [{"type": "text", "text": f"You are an expert translator. MANDATORY: 1) ALL translations in {self._get_language_name(target_language_code)} ONLY. 2) CORRUPTION DETECTION: Clean repetitive patterns. 3) EXTRACT meaningful speech only. 4) Ensure natural {self._get_language_name(target_language_code)} output."}]},
+                    {"role": "user", "content": [{"type": "text", "text": prompt}]}
                 ],
+                text={"verbosity": "low"},
+                reasoning={"effort": "minimal"},
                 max_tokens=8192,
                 temperature=0.1,
                 response_format={"type": "json_object"}
             )
             
-            ai_response = response.choices[0].message.content.strip()
+            ai_response = response.output_text or response.output[0].content[0].text if hasattr(response, 'output') else response.choices[0].message.content
+            ai_response = ai_response.strip()
             result = json.loads(ai_response)
             
             chunk_results = []
@@ -455,18 +458,21 @@ FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
             time.sleep(0.5)
             
             try:
-                response = self._get_openai_client().chat.completions.create(
+                response = self._get_openai_client().responses.create(
                     model="gpt-5-mini",
-                    messages=[
-                        {"role": "system", "content": f"You are an expert audio dubbing AI with ADVANCED CORRUPTION DETECTION and LANGUAGE CONSISTENCY ENFORCEMENT. MODE: {'REDUB - Preserve exact timing/structure, 1:1 mapping, translate dubbed_text only' if preserve_segments else 'FRESH - Intelligent segmentation, merge short segments, split long ones, target 3-8s for optimal voice cloning'}. CRITICAL RULES: 1) All segments must be ≤15 seconds. 2) TARGET LANGUAGE: {target_lang_name} - ALL dubbed_text must be in {target_lang_name} EXCLUSIVELY, NEVER mix with Spanish/German/French/Italian/etc. 3) CORRUPTION AUTO-DETECTION: Identify and clean these patterns automatically: • Repetitive numbers (40,000,000,000...) • Repeated characters (aaaaaaa...) • Repeated words/phrases (juice juice juice...) • Meaningless symbol sequences • Corrupted transcription artifacts • Placeholder text patterns. 4) EXTRACT meaningful speech from corrupted input, ignore artifacts. 5) LANGUAGE PURITY: Each segment must be 100% {target_lang_name}, no mixing. 6) FALLBACK: For purely corrupted segments, use '[unclear audio]' in {target_lang_name}. 7) ANTI-LOOP: Never repeat phrases within/across segments."},
-                        {"role": "user", "content": prompt}
+                    input=[
+                        {"role": "system", "content": [{"type": "text", "text": f"You are an expert audio dubbing AI with ADVANCED CORRUPTION DETECTION and LANGUAGE CONSISTENCY ENFORCEMENT. MODE: {'REDUB - Preserve exact timing/structure, 1:1 mapping, translate dubbed_text only' if preserve_segments else 'FRESH - Intelligent segmentation, merge short segments, split long ones, target 3-8s for optimal voice cloning'}. CRITICAL RULES: 1) All segments must be ≤15 seconds. 2) TARGET LANGUAGE: {target_lang_name} - ALL dubbed_text must be in {target_lang_name} EXCLUSIVELY, NEVER mix with Spanish/German/French/Italian/etc. 3) CORRUPTION AUTO-DETECTION: Identify and clean these patterns automatically: • Repetitive numbers (40,000,000,000...) • Repeated characters (aaaaaaa...) • Repeated words/phrases (juice juice juice...) • Meaningless symbol sequences • Corrupted transcription artifacts • Placeholder text patterns. 4) EXTRACT meaningful speech from corrupted input, ignore artifacts. 5) LANGUAGE PURITY: Each segment must be 100% {target_lang_name}, no mixing. 6) FALLBACK: For purely corrupted segments, use '[unclear audio]' in {target_lang_name}. 7) ANTI-LOOP: Never repeat phrases within/across segments."}]},
+                        {"role": "user", "content": [{"type": "text", "text": prompt}]}
                     ],
+                    text={"verbosity": "low"},
+                    reasoning={"effort": "minimal"},
                     max_tokens=self.max_tokens,
                     temperature=0.1,
                     response_format={"type": "json_object"}
                 )
                 
-                ai_response = response.choices[0].message.content.strip()
+                ai_response = response.output_text or response.output[0].content[0].text if hasattr(response, 'output') else response.choices[0].message.content
+                ai_response = ai_response.strip()
                 result = json.loads(ai_response)
                 
                 ai_segments = result.get("segments", [])
