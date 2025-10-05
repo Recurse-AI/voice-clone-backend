@@ -171,21 +171,19 @@ class R2Service:
 
     def _calculate_optimal_workers(self, file_count: int, avg_file_size_mb: float = None) -> int:
         """Smart worker calculation based on file count and size"""
-        # Base calculation on file count
+        # Base calculation on file count (capped at 8 workers)
         if file_count <= 3:
             base_workers = 2
         elif file_count <= 10:
             base_workers = 3
         elif file_count <= 25:
-            base_workers = 4
+            base_workers = 5
         elif file_count <= 50:
             base_workers = 6
         elif file_count <= 100:
-            base_workers = 8
-        elif file_count <= 200:
-            base_workers = 10
+            base_workers = 7
         else:
-            base_workers = 12
+            base_workers = 8
 
         # Adjust for file size (if provided)
         if avg_file_size_mb:
@@ -194,7 +192,7 @@ class R2Service:
             elif avg_file_size_mb < 1:  # Very small files (<1MB)
                 base_workers = min(8, base_workers + 1)  # Can use more workers
 
-        return min(base_workers, 16)  # Cap at 16
+        return min(base_workers, 8)  # Cap at 8 for dubbing uploads
 
     def upload_directory(self, job_id: str, local_dir: str, exclude_files: List[str] = None, max_workers: int = None) -> Dict[str, Any]:
         """
@@ -249,7 +247,7 @@ class R2Service:
             max_workers = self._calculate_optimal_workers(total_files, avg_file_size_mb)
         else:
             # Respect manual override but cap at reasonable limit
-            max_workers = min(max_workers, 16)
+            max_workers = min(max_workers, 8)
 
         logger.info(f"📊 Auto-selected {max_workers} workers for {total_files} files ({avg_file_size_mb:.1f}MB avg)")
 
