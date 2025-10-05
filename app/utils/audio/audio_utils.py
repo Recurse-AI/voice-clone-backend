@@ -222,8 +222,10 @@ class AudioUtils:
     
     def split_audio_by_timestamps(self, input_audio_path: str, output_dir: str, 
                                  segments: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Split audio file into segments based on timestamps using ffmpeg"""
+        """Split audio file into segments based on timestamps using ffmpeg (parallel)"""
         try:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            
             # Get FFmpeg executable path
             ffmpeg_path = self._get_ffmpeg_path()
             if not ffmpeg_path:
@@ -232,51 +234,65 @@ class AudioUtils:
             # Create output directory
             os.makedirs(output_dir, exist_ok=True)
             
-            split_files = []
-            
-            for i, segment in enumerate(segments):
+            def split_segment(i, segment):
+                """Split single segment"""
                 start_ms = segment.get('start', 0)
                 end_ms = segment.get('end', 0)
                 text = segment.get('text', f'segment_{i}')
                 
-                # Convert milliseconds to seconds
                 start_sec = start_ms / 1000.0
                 duration_sec = (end_ms - start_ms) / 1000.0
                 
-                # Create simple English filename - no text content
                 output_filename = f"segment_{i:03d}.wav"
                 output_path = os.path.join(output_dir, output_filename)
                 
-                # FFmpeg command to extract segment
                 cmd = [
                     ffmpeg_path, '-y',
                     '-i', input_audio_path,
                     '-ss', str(start_sec),
                     '-t', str(duration_sec),
-                    '-ac', '2',  # Stereo
-                    '-ar', '44100',  # Sample rate
-                    '-acodec', 'pcm_s16le',  # Audio codec
+                    '-ac', '2',
+                    '-ar', '44100',
+                    '-acodec', 'pcm_s16le',
                     output_path
                 ]
                 
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    
+                    if result.returncode == 0:
+                        return (i, {
+                            "index": i,
+                            "text": text,
+                            "start_ms": start_ms,
+                            "end_ms": end_ms,
+                            "duration_ms": end_ms - start_ms,
+                            "output_path": output_path
+                        }, None)
+                    else:
+                        return (i, None, f"FFmpeg error for segment {i}: {result.stderr}")
+                except subprocess.TimeoutExpired:
+                    return (i, None, f"FFmpeg timeout (30s) for segment {i}")
+                except Exception as e:
+                    return (i, None, f"Segment {i} error: {str(e)}")
+            
+            # Process segments in parallel
+            max_workers = min(10, len(segments))
+            results = [None] * len(segments)
+            
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {executor.submit(split_segment, i, seg): i for i, seg in enumerate(segments)}
                 
-                if result.returncode == 0:
-                    split_files.append({
-                        "index": i,
-                        "text": text,
-                        "start_ms": start_ms,
-                        "end_ms": end_ms,
-                        "duration_ms": end_ms - start_ms,
-                        "output_path": output_path
-                    })
-                else:
-                    return {"success": False, "error": f"FFmpeg error for segment {i}: {result.stderr}"}
+                for future in as_completed(futures):
+                    idx, result, error = future.result()
+                    if error:
+                        return {"success": False, "error": error}
+                    results[idx] = result
             
             return {
                 "success": True,
-                "segments_count": len(split_files),
-                "split_files": split_files,
+                "segments_count": len(results),
+                "split_files": results,
                 "output_directory": output_dir
             }
                 

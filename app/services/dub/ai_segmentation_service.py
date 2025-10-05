@@ -331,11 +331,11 @@ OUTPUT JSON:
         chunks = [segments[i:i + chunk_size] for i in range(0, len(segments), chunk_size)]
         total_chunks = len(chunks)
         
-        logger.info(f"🚀 Translating {len(segments)} segments in {total_chunks} chunks with 5 parallel workers")
+        logger.info(f"🚀 Translating {len(segments)} segments in {total_chunks} chunks with 2 parallel workers")
         
         chunk_results = [None] * total_chunks
         
-        with ThreadPoolExecutor(max_workers=5) as executor:
+        with ThreadPoolExecutor(max_workers=2) as executor:
             futures = {
                 executor.submit(self._translate_chunk_worker, (i, chunk, target_language_code)): i
                 for i, chunk in enumerate(chunks)

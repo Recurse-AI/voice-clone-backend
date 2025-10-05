@@ -541,10 +541,12 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     
     # Enqueue redub job
     from app.queue.dub_tasks import process_redub_task
+    from app.config.pipeline_settings import pipeline_settings
     dub_queue = get_dub_queue()
     dub_queue.enqueue(process_redub_task, redub_job_id, request_body.target_language, 
                      parent_job.source_video_language, redub_job_dir, manifest, 
-                     bool(getattr(request_body, "humanReview", False)))
+                     bool(getattr(request_body, "humanReview", False)),
+                     job_timeout=pipeline_settings.JOB_TIMEOUT)
 
     logger.info(f"Started redub job {redub_job_id} from parent {parent_job_id} for user {user_id}")
     
