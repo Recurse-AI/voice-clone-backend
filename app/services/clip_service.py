@@ -219,14 +219,12 @@ class ClipService:
         response = self._get_openai_client().responses.create(
             model="gpt-5-mini",
             input=[
-                {"role": "system", "content": [{"type": "text", "text": prompt["content"]}]},
-                {"role": "user", "content": [{"type": "text", "text": user_content}]}
+                {"role": "system", "content": [{"type": "input_text", "text": prompt["content"]}]},
+                {"role": "user", "content": [{"type": "input_text", "text": user_content}]}
             ],
             text={"verbosity": "medium"},
             reasoning={"effort": "low"},
-            temperature=0.2,
-            max_output_tokens=2000,
-            response_format={"type": "json_object"}
+            max_output_tokens=2000
         )
         
         return json.loads(response.output_text.strip())
