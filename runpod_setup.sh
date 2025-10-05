@@ -119,8 +119,6 @@ done
 nohup ./venv/bin/python workers_starter.py whisperx_service_queue whisperx_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 nohup ./venv/bin/python workers_starter.py fish_speech_service_queue fish_speech_service_worker_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
-WHISPER_DEVICE=cpu WHISPER_COMPUTE_TYPE=float32 nohup ./venv/bin/python workers_starter.py cpu_whisperx_service_queue cpu_whisperx_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
-FISH_SPEECH_DEVICE=cpu FISH_SPEECH_PRECISION=float32 nohup ./venv/bin/python workers_starter.py cpu_fish_speech_service_queue cpu_fish_speech_1 redis://127.0.0.1:6379 >> "$COMMON_LOG" 2>&1 &
 
 VIDEO_WORKERS=${MAX_VIDEO_PROCESSING_WORKERS:-2}
 for i in $(seq 1 $VIDEO_WORKERS); do

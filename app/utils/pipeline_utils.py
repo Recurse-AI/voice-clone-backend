@@ -302,10 +302,6 @@ def mark_service_worker_active(service_type: str, worker_id: str) -> bool:
             active_key = pipeline_settings.REDIS_WHISPERX_ACTIVE
         elif service_type == "fish_speech":
             active_key = pipeline_settings.REDIS_FISH_SPEECH_ACTIVE
-        elif service_type == "cpu_whisperx":
-            active_key = pipeline_settings.REDIS_CPU_WHISPERX_ACTIVE
-        elif service_type == "cpu_fish_speech":
-            active_key = pipeline_settings.REDIS_CPU_FISH_SPEECH_ACTIVE
         else:
             return False
         
@@ -331,10 +327,6 @@ def mark_service_worker_inactive(service_type: str, worker_id: str) -> bool:
             active_key = pipeline_settings.REDIS_WHISPERX_ACTIVE
         elif service_type == "fish_speech":
             active_key = pipeline_settings.REDIS_FISH_SPEECH_ACTIVE
-        elif service_type == "cpu_whisperx":
-            active_key = pipeline_settings.REDIS_CPU_WHISPERX_ACTIVE
-        elif service_type == "cpu_fish_speech":
-            active_key = pipeline_settings.REDIS_CPU_FISH_SPEECH_ACTIVE
         else:
             return False
 
@@ -429,10 +421,6 @@ def cleanup_service_result(service_type: str, request_id: str) -> bool:
             results_key = f"{pipeline_settings.REDIS_WHISPERX_RESULTS}:{request_id}"
         elif service_type == "fish_speech":
             results_key = f"{pipeline_settings.REDIS_FISH_SPEECH_RESULTS}:{request_id}"
-        elif service_type == "cpu_whisperx":
-            results_key = f"{pipeline_settings.REDIS_CPU_WHISPERX_RESULTS}:{request_id}"
-        elif service_type == "cpu_fish_speech":
-            results_key = f"{pipeline_settings.REDIS_CPU_FISH_SPEECH_RESULTS}:{request_id}"
         else:
             return False
 

@@ -113,11 +113,6 @@ class Settings(BaseSettings):
     VOICE_CLONING_PARALLEL_WORKERS: int = int(os.getenv("VOICE_CLONING_PARALLEL_WORKERS", "3"))  # Reduced to 3 for Fish Audio Starter tier (5 concurrent limit)
     OPENAI_PARALLEL_WORKERS: int = int(os.getenv("OPENAI_PARALLEL_WORKERS", "5"))
     WHISPERX_BATCH_SIZE: int = int(os.getenv("WHISPERX_BATCH_SIZE", "16"))
-
-    # CPU Worker Configuration
-    ENABLE_CPU_WORKERS: bool = os.getenv("ENABLE_CPU_WORKERS", "false").lower() == "true"
-    FISH_SPEECH_CPU_DEVICE: str = os.getenv("FISH_SPEECH_CPU_DEVICE", "cpu")
-    WHISPER_CPU_COMPUTE_TYPE: str = os.getenv("WHISPER_CPU_COMPUTE_TYPE", "float32")
     
     
     # NOTE: Models auto-load in dedicated workers automatically for optimal performance
