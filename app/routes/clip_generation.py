@@ -23,30 +23,6 @@ from app.config.database import db
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-@router.post("/upload-clip-video")
-async def upload_clip_video(video_file: UploadFile = File(...), user=Depends(get_current_user)):
-    try:
-        r2_service = R2Service()
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-            content = await video_file.read()
-            tmp.write(content)
-            tmp_path = tmp.name
-        
-        try:
-            r2_key = f"clips/{user.id}/uploads/{uuid.uuid4()}.mp4"
-            result = r2_service.upload_file(tmp_path, r2_key, "video/mp4")
-            
-            if not result["success"]:
-                raise HTTPException(status_code=500, detail=result.get("error"))
-            
-            return {"success": True, "video_url": result["url"]}
-        finally:
-            os.unlink(tmp_path)
-    
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
 @router.post("/upload-clip-srt")
 async def upload_clip_srt(srt_file: UploadFile = File(...), user=Depends(get_current_user)):
     try:
