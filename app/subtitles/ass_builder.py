@@ -323,8 +323,8 @@ def _auto_select_font(text: str, default_font: str) -> str:
 def _get_char_limit(text: str) -> int:
     """Get optimal character limit based on language"""
     lang_type = _detect_language_type(text)
-    limits = {"cjk": 18, "arabic": 30, "indic": 24, "latin": 40}
-    return limits.get(lang_type, 40)
+    limits = {"cjk": 15, "arabic": 25, "indic": 20, "latin": 30}
+    return limits.get(lang_type, 30)
 
 def _group_words_into_pages(
     words: List[Dict], gap_ms: int, words_per_line: int, max_lines: int

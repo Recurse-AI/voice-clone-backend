@@ -143,10 +143,10 @@ class ClipService:
                 "🔥 QUALITY-FIRST RULES (NO COMPROMISE):\n"
                 "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
                 "1. MINIMUM QUALITY THRESHOLD:\n"
-                "   ✓ PREFER clips scoring ≥80/100\n"
+                "   ✓ PREFER clips scoring ≥75/100\n"
                 "   ✓ ALWAYS return at least 1 clip (pick the best available)\n"
-                "   ✓ If multiple clips score ≥80, include them (up to 5 max)\n"
-                "   ✓ If nothing scores ≥80, return the single BEST moment you can find\n"
+                "   ✓ If multiple clips score ≥75, include them (up to 5 max)\n"
+                "   ✓ If nothing scores ≥75, return the single BEST moment you can find\n"
                 "   ✓ Better to return 1 amazing clip than 5 mediocre ones\n\n"
                 "2. SCORING CRITERIA (Each 0-100):\n"
                 "   • hook: Instant attention grab (first 3s impact)\n"
@@ -267,11 +267,15 @@ class ClipService:
         resolution = size_map.get(preset, (1080, 1920))
         auto_fs = int(min(resolution) * 0.15)
         
+        if wpl is None and words:
+            avg_word_len = sum(len(w.get("text", "")) for w in words) / len(words)
+            wpl = 3 if avg_word_len < 6 else (2 if avg_word_len < 9 else 1)
+        
         kwargs = {
             "style": style or "karaoke",
             "resolution": resolution,
             "font_size": font_size or auto_fs,
-            "max_words_per_line": wpl or 3,
+            "max_words_per_line": wpl or 2,
         }
         if font:
             kwargs["font_name"] = font
