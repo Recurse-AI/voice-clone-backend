@@ -36,7 +36,7 @@ class SpeakerDetectionService:
         )
         self.pipeline.to(self.device)
         
-    def detect_speakers(self, audio_path: str, job_id: str = None) -> List[Dict[str, Any]]:
+    def detect_speakers(self, audio_path: str, job_id: str = None, num_speakers: int = None) -> List[Dict[str, Any]]:
         try:
             self._initialize_pipeline()
             
@@ -46,10 +46,13 @@ class SpeakerDetectionService:
             if waveform.shape[0] > 1:
                 waveform = torch.mean(waveform, dim=0, keepdim=True)
             
-            logger.info("Running GPU speaker diarization")
+            logger.info(f"Running GPU speaker diarization (num_speakers: {num_speakers or 'auto'})")
             audio_dict = {"waveform": waveform, "sample_rate": sample_rate}
             
-            diarization = self.pipeline(audio_dict)
+            if num_speakers:
+                diarization = self.pipeline(audio_dict, num_speakers=num_speakers)
+            else:
+                diarization = self.pipeline(audio_dict, min_speakers=1, max_speakers=5)
             
             results = []
             if hasattr(diarization, 'itertracks'):

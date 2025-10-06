@@ -616,8 +616,9 @@ class SimpleDubbedAPI:
                 
                 vocal_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
                 if os.path.exists(vocal_path):
-                    logger.info("Running speaker detection before AI segmentation")
-                    speaker_timeline = speaker_detection_service.detect_speakers(vocal_path, job_id)
+                    num_speakers = len(self.reference_ids) if self.reference_ids else None
+                    logger.info(f"Running speaker detection before AI segmentation (expected speakers: {num_speakers or 'auto'})")
+                    speaker_timeline = speaker_detection_service.detect_speakers(vocal_path, job_id, num_speakers)
                     transcription_result["speaker_timeline"] = speaker_timeline
                     
                     for seg in transcription_result.get("segments", []):
