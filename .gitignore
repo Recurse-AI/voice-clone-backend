@@ -240,4 +240,12 @@ logs/
 .env.staging
 
 
-dub
+dub/*.mp4
+dub/*.wav
+dub/*.json
+dub/*.srt
+dub/*.vtt
+dub/*.txt
+dub/*.csv
+dub/*.tsv
+dub/*.txt
