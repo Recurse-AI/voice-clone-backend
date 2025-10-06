@@ -381,7 +381,12 @@ class CreditService:
         """Complete pay-as-you-go job with simple threshold billing"""
         try:
             # Update job as completed
-            collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
+            collection_map = {
+                JobType.DUB: "dub_jobs",
+                JobType.SEPARATION: "separation_jobs",
+                JobType.CLIP: "clip_jobs"
+            }
+            collection_name = collection_map.get(job_type, "dub_jobs")
             loop_db = get_async_db()
             collection = loop_db.get_collection(collection_name)
             
@@ -417,7 +422,12 @@ class CreditService:
         """Complete credit pack job - credits already deducted"""
         try:
             # Update job status - credits were already deducted during reservation
-            collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
+            collection_map = {
+                JobType.DUB: "dub_jobs",
+                JobType.SEPARATION: "separation_jobs",
+                JobType.CLIP: "clip_jobs"
+            }
+            collection_name = collection_map.get(job_type, "dub_jobs")
             loop_db = get_async_db()
             collection = loop_db.get_collection(collection_name)
             
@@ -446,7 +456,12 @@ class CreditService:
     
     async def _refund_payg_job(self, job_id: str, job_type: JobType, reason: str) -> Dict[str, Any]:
         """Refund pay-as-you-go job (virtual cancellation)"""
-        collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
+        collection_map = {
+            JobType.DUB: "dub_jobs",
+            JobType.SEPARATION: "separation_jobs",
+            JobType.CLIP: "clip_jobs"
+        }
+        collection_name = collection_map.get(job_type, "dub_jobs")
         
         loop_db = get_async_db()
         await loop_db[collection_name].update_one(
@@ -470,7 +485,12 @@ class CreditService:
     
     async def _refund_credit_pack_job(self, job_id: str, job_type: JobType, reason: str) -> Dict[str, Any]:
         """Refund credit pack job (actual credit restoration)"""
-        collection_name = "dub_jobs" if job_type == JobType.DUB else "separation_jobs"
+        collection_map = {
+            JobType.DUB: "dub_jobs",
+            JobType.SEPARATION: "separation_jobs",
+            JobType.CLIP: "clip_jobs"
+        }
+        collection_name = collection_map.get(job_type, "dub_jobs")
         
         # Get job details
         loop_db = get_async_db()
