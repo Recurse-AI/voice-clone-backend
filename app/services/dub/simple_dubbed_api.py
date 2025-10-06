@@ -649,7 +649,8 @@ class SimpleDubbedAPI:
             ai_segments = ai_service.create_optimal_segments_and_dub(
                 transcription_result,
                 target_language_code,
-                preserve_segments=preserve_segments
+                preserve_segments=preserve_segments,
+                num_speakers=len(self.reference_ids) if self.reference_ids else None
             )
             
             if preserve_segments:

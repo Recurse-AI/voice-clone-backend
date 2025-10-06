@@ -18,7 +18,8 @@ class AISegmentationService:
         self,
         transcription_data: Dict[str, Any],
         target_language: str,
-        preserve_segments: bool = False
+        preserve_segments: bool = False,
+        num_speakers: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         try:
             if transcription_data.get("segments"):
@@ -81,7 +82,7 @@ class AISegmentationService:
             
             logger.info(f"Processing {len(combined_text)} segments in chunks")
             logger.info(f"✅ TIMING STANDARD: All inputs converted to milliseconds, AI gets seconds for better understanding")
-            return self._process_in_chunks(combined_text, target_language, is_same_language, preserve_segments=False)
+            return self._process_in_chunks(combined_text, target_language, is_same_language, preserve_segments=False, num_speakers=num_speakers)
         except Exception as e:
             logger.error(f"CRITICAL ERROR in create_optimal_segments_and_dub: {str(e)}")
             logger.error(f"Transcription data structure: {transcription_data}")
@@ -458,7 +459,7 @@ VALIDATION CHECKLIST:
             self._openai_client = OpenAI(api_key=self.settings.OPENAI_API_KEY)
         return self._openai_client
     
-    def _process_in_chunks(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False) -> List[Dict[str, Any]]:
+    def _process_in_chunks(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False, num_speakers: Optional[int] = None) -> List[Dict[str, Any]]:
         import time
         chunk_size = 10
         all_results = []
@@ -491,6 +492,7 @@ MANDATORY:
                 chunk_context = f"""
 FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
 - Input: {len(chunk)} segments for intelligent optimization
+- Expected speakers: {num_speakers if num_speakers else 'auto-detect'}
 - Start segment IDs from seg_{len(all_results)+1:03d}  
 - Time range: {chunk[0].get('start', 0):.3f}s to {chunk[-1].get('end', 0):.3f}s
 
@@ -513,6 +515,14 @@ QUALITY RULES:
 - CLEAN all corruption patterns automatically
 - PRESERVE emotional flow and conversation context
 - Keep single speaker's continuous thought together when possible
+
+CONTENT PRESERVATION (CRITICAL):
+- MUST cover ALL input text exactly once - no gaps, no missing content
+- EVERY segment MUST have both original_text and dubbed_text filled
+- NO empty segments allowed - if unclear, use "[unclear audio]" in target language
+- If {num_speakers if num_speakers else 'auto'} speakers detected, preserve speaker distinction across segments
+- Split/merge intelligently but NEVER drop content
+- Validate output: all input content must appear in output segments
 """
             
             target_lang_name = self._get_language_name(target_lang_code)
@@ -528,11 +538,13 @@ QUALITY RULES:
 
 MODE: {'REDUB - Preserve exact timing and structure (1:1 mapping)' if preserve_segments else 'FRESH - Intelligent segmentation for optimal voice cloning'}
 
-CORE RULES:
+CRITICAL RULES:
 1. Duration: All segments ≤15 seconds maximum
 2. Language: {target_lang_name} ONLY - no mixing with other languages
-3. Emotion: Preserve speaker's tone, emphasis, and emotional intent
-4. Natural: Output must sound natural in {target_lang_name}, not word-for-word translation
+3. Content Coverage: ALL input text must appear in output - NO empty segments
+4. Speaker Count: {num_speakers if num_speakers else 'auto'} speakers expected - maintain distinction
+5. Emotion: Preserve speaker's tone, emphasis, and emotional intent
+6. Natural: Output must sound natural in {target_lang_name}, not word-for-word translation
 
 CORRUPTION AUTO-CLEAN:
 • Repetitive patterns (40,000,000... or juice juice juice...) → Extract once or mark unclear
