@@ -747,7 +747,9 @@ class SimpleDubbedAPI:
                 "dubbed_text": dubbed_text,
                 "voice_cloned": seg.get("voice_cloned", False),
                 "original_audio_file": seg.get("original_audio_file"),
-                "cloned_audio_file": seg.get("cloned_audio_file")
+                "cloned_audio_file": seg.get("cloned_audio_file"),
+                "speaker": seg.get("speaker"),
+                "reference_id": seg.get("reference_id")
             })
         
         logger.info(f"RESUME: Prepared {len(formatted_segments)} segments for voice cloning")
@@ -797,7 +799,9 @@ class SimpleDubbedAPI:
                     "end_ms": seg["end"],
                     "original_text": seg["original_text"],
                     "dubbed_text": seg["dubbed_text"],
-                    "original_audio_path": split_file["output_path"]
+                    "original_audio_path": split_file["output_path"],
+                    "speaker": seg.get("speaker"),
+                    "reference_id": seg.get("reference_id")
                 })
         
         results = self._process_voice_cloning_sequential(segments_data, job_id, process_temp_dir)
@@ -811,7 +815,7 @@ class SimpleDubbedAPI:
             segment_json = self._create_segment_data(
                 data["seg_id"], data["global_idx"], data["start_ms"], cloned_duration_ms,
                 data["original_text"], data["dubbed_text"], data["original_audio_path"],
-                cloned_audio_path, job_id
+                cloned_audio_path, job_id, data.get("speaker"), data.get("reference_id")
             )
             final_segments.append(segment_json)
         
@@ -819,7 +823,7 @@ class SimpleDubbedAPI:
     
     def _create_segment_data(self, seg_id: str, segment_index: int, start_ms: int, cloned_duration_ms: int,
                            original_text: str, dubbed_text: str, original_audio_path: str, 
-                           cloned_audio_path: str, job_id: str) -> dict:
+                           cloned_audio_path: str, job_id: str, speaker: str = None, reference_id: str = None) -> dict:
         start_ms = int(start_ms) if isinstance(start_ms, (float, int)) else start_ms
         end_ms = int(start_ms + cloned_duration_ms)
         duration_ms = int(cloned_duration_ms) if isinstance(cloned_duration_ms, (float, int)) else cloned_duration_ms
@@ -837,6 +841,8 @@ class SimpleDubbedAPI:
             "voice_cloned": bool(cloned_audio_path),
             "original_audio_path": original_audio_path,
             "cloned_audio_path": cloned_audio_path,
+            "speaker": speaker,
+            "reference_id": reference_id
         }
 
 
