@@ -62,6 +62,8 @@ class SegmentItem(BaseModel):
     original_text: str
     dubbed_text: str
     original_audio_file: Optional[str] = None
+    speaker: Optional[str] = None
+    reference_id: Optional[str] = None
 
 class SegmentsResponse(BaseModel):
     job_id: str

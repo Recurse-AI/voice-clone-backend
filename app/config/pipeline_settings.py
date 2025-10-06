@@ -13,7 +13,7 @@ class PipelineSettings:
     # Reduced for 16GB VRAM - prevent OOM errors
     MAX_WHISPERX_SERVICE_WORKERS: int = int(os.getenv("MAX_WHISPERX_SERVICE_WORKERS", "1"))  # 1 worker for 16GB
     MAX_FISH_SPEECH_SERVICE_WORKERS: int = int(os.getenv("MAX_FISH_SPEECH_SERVICE_WORKERS", "1"))
-    WHISPERX_QUEUE_THRESHOLD: int = int(os.getenv("WHISPERX_QUEUE_THRESHOLD", "1"))  # Use AssemblyAI if load >= threshold (queued + active)
+    WHISPERX_QUEUE_THRESHOLD: int = int(os.getenv("WHISPERX_QUEUE_THRESHOLD", "2"))  # Use AssemblyAI if load >= threshold (queued + active)
     
     # === LEGACY SETTINGS (Deprecated) ===
     MAX_TRANSCRIPTION_JOBS: int = 1      # Use MAX_WHISPERX_SERVICE_WORKERS instead
