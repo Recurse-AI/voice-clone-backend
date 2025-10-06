@@ -169,9 +169,10 @@ OUTPUT JSON FORMAT:
   ]
 }}
 
-SPEAKER HANDLING:
-- If input has "speaker" field, preserve it in output
-- Speaker tags help with voice consistency
+🚨 MANDATORY SPEAKER PRESERVATION:
+- MUST preserve "speaker" field from input to output EXACTLY
+- If input segment has "speaker": "SPEAKER_00", output MUST include "speaker": "SPEAKER_00"
+- Speaker tags are CRITICAL for voice consistency - NEVER drop them
 
 CORRUPTION HANDLING:
 - Clean repetitive patterns before translating
@@ -221,8 +222,11 @@ OUTPUT JSON:
   ]
 }}
 
-SPEAKER AWARENESS:
-- If input has "speaker" tags, preserve them in output
+🚨 MANDATORY SPEAKER PRESERVATION:
+- MUST preserve "speaker" field from input to output EXACTLY
+- If input segment has "speaker": "SPEAKER_00", output MUST include "speaker": "SPEAKER_00"
+- If input has no speaker, output can omit or set null
+- Speaker tags are CRITICAL for voice consistency - NEVER drop them
 - Consider speaker changes when creating segments
 - Keep same-speaker dialogue together when natural
 
@@ -267,7 +271,8 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓"""
                 "dubbed_text": dubbed_text,
                 "voice_cloned": False,
                 "original_audio_file": None,
-                "cloned_audio_file": None
+                "cloned_audio_file": None,
+                "speaker": seg.get("speaker")
             })
         
         return formatted_segments
@@ -290,7 +295,8 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓"""
                     "dubbed_text": original_text,
                     "voice_cloned": False,
                     "original_audio_file": None,
-                    "cloned_audio_file": None
+                    "cloned_audio_file": None,
+                    "speaker": seg.get("speaker")
                 })
             return formatted_segments
         
@@ -343,7 +349,8 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓"""
                         "dubbed_text": seg_result.get("dubbed_text", "").strip(),
                         "voice_cloned": False,
                         "original_audio_file": None,
-                        "cloned_audio_file": None
+                        "cloned_audio_file": None,
+                        "speaker": original_seg.get("speaker")
                     })
             
             logger.info(f"✅ Translated chunk {chunk_number}: {len(chunk_results)} segments")
@@ -363,7 +370,8 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓"""
                     "dubbed_text": original_text,
                     "voice_cloned": False,
                     "original_audio_file": None,
-                    "cloned_audio_file": None
+                    "cloned_audio_file": None,
+                    "speaker": seg.get("speaker")
                 })
             return (i, fallback_results, False)
     
