@@ -3,6 +3,7 @@ import json
 import re
 from typing import List, Dict, Any, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from app.services.language_service import language_service
 from app.config.settings import settings
 
@@ -320,10 +321,8 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓"""
         
         prompt = self._build_translation_only_prompt(segments_for_translation, target_language_code)
         
-        time.sleep(0.5)
-        
         try:
-            response = self._get_openai_client().responses.create(
+            response = self._call_openai_with_retry(
                 model="gpt-5-mini",
                 input=[
                     {"role": "system", "content": [{"type": "input_text", "text": f"You are an expert translator. MANDATORY: 1) ALL translations in {self._get_language_name(target_language_code)} ONLY. 2) CORRUPTION DETECTION: Clean repetitive patterns. 3) EXTRACT meaningful speech only. 4) Ensure natural {self._get_language_name(target_language_code)} output. OUTPUT FORMAT: Return ONLY valid JSON with 'segments' array."}]},
@@ -377,15 +376,15 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓"""
             return (i, fallback_results, False)
     
     def _translate_segments_preserve_timing(self, segments: List[Dict], target_language_code: str) -> List[Dict[str, Any]]:
-        chunk_size = 10
+        chunk_size = self.settings.AI_SEGMENTATION_CHUNK_SIZE
         chunks = [segments[i:i + chunk_size] for i in range(0, len(segments), chunk_size)]
         total_chunks = len(chunks)
         
-        logger.info(f"🚀 Translating {len(segments)} segments in {total_chunks} chunks with {settings.OPENAI_PARALLEL_WORKERS} parallel workers (GPT-5-mini)")
+        logger.info(f"🚀 Translating {len(segments)} segments in {total_chunks} chunks (size={chunk_size}) with {self.settings.OPENAI_PARALLEL_WORKERS} parallel workers (GPT-5-mini)")
         
         chunk_results = [None] * total_chunks
         
-        with ThreadPoolExecutor(max_workers=settings.OPENAI_PARALLEL_WORKERS) as executor:
+        with ThreadPoolExecutor(max_workers=self.settings.OPENAI_PARALLEL_WORKERS) as executor:
             futures = {
                 executor.submit(self._translate_chunk_worker, (i, chunk, target_language_code)): i
                 for i, chunk in enumerate(chunks)
@@ -459,9 +458,26 @@ VALIDATION CHECKLIST:
             self._openai_client = OpenAI(api_key=self.settings.OPENAI_API_KEY)
         return self._openai_client
     
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        stop=stop_after_attempt(6),
+        retry=retry_if_exception_type((Exception,)),
+        reraise=True
+    )
+    def _call_openai_with_retry(self, **kwargs):
+        """OpenAI API call with exponential backoff retry logic"""
+        try:
+            return self._get_openai_client().responses.create(**kwargs)
+        except Exception as e:
+            error_msg = str(e)
+            if "rate_limit" in error_msg.lower() or "429" in error_msg:
+                logger.warning(f"⚠️ Rate limit hit, retrying with exponential backoff...")
+            else:
+                logger.error(f"OpenAI API error: {error_msg}")
+            raise
+    
     def _process_in_chunks(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False, num_speakers: Optional[int] = None) -> List[Dict[str, Any]]:
-        import time
-        chunk_size = 10
+        chunk_size = self.settings.AI_SEGMENTATION_CHUNK_SIZE
         all_results = []
         
         for i in range(0, len(segments), chunk_size):
@@ -528,10 +544,8 @@ CONTENT PRESERVATION (CRITICAL):
             target_lang_name = self._get_language_name(target_lang_code)
             prompt = chunk_context + self._build_segmentation_and_dubbing_prompt(chunk, target_lang_name, is_same_language, preserve_segments)
             
-            time.sleep(0.5)
-            
             try:
-                response = self._get_openai_client().responses.create(
+                response = self._call_openai_with_retry(
                     model="gpt-5-mini",
                     input=[
                         {"role": "system", "content": [{"type": "input_text", "text": f"""ROLE: Expert dubbing AI specializing in natural speech adaptation and corruption detection

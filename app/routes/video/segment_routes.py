@@ -200,6 +200,10 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     if (request_body.start is not None) or (request_body.end is not None):
         seg["duration_ms"] = max(0, seg["end"] - seg["start"])
     
+    # Update reference_id if provided
+    if request_body.reference_id is not None:
+        seg["reference_id"] = request_body.reference_id
+    
     # Store prompt and tone separately for future reference
     if request_body.prompt:
         seg["custom_prompt"] = request_body.prompt

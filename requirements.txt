@@ -110,6 +110,7 @@ typing-extensions
 requests
 tqdm
 aiofiles
+tenacity
 
 # Video downloading
 yt-dlp

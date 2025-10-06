@@ -115,6 +115,7 @@ class RegenerateSegmentRequest(BaseModel):
     prompt: Optional[str] = Field(None, description="Optional custom prompt for text regeneration using OpenAI")
     start: Optional[int] = None
     end: Optional[int] = None
+    reference_id: Optional[str] = Field(None, description="Optional reference_id to change voice model")
 
     @field_validator('start')
     @classmethod

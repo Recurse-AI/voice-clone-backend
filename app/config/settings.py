@@ -110,8 +110,9 @@ class Settings(BaseSettings):
     
     # Batch Processing Configuration
     VOICE_CLONING_BATCH_SIZE: int = int(os.getenv("VOICE_CLONING_BATCH_SIZE", "10"))
-    VOICE_CLONING_PARALLEL_WORKERS: int = int(os.getenv("VOICE_CLONING_PARALLEL_WORKERS", "5"))  # 5 workers with rate limit protection (random delay 0.3-0.7s)
-    OPENAI_PARALLEL_WORKERS: int = int(os.getenv("OPENAI_PARALLEL_WORKERS", "5"))
+    VOICE_CLONING_PARALLEL_WORKERS: int = int(os.getenv("VOICE_CLONING_PARALLEL_WORKERS", "5"))
+    AI_SEGMENTATION_CHUNK_SIZE: int = int(os.getenv("AI_SEGMENTATION_CHUNK_SIZE", "16"))
+    OPENAI_PARALLEL_WORKERS: int = int(os.getenv("OPENAI_PARALLEL_WORKERS", "8"))
     WHISPERX_BATCH_SIZE: int = int(os.getenv("WHISPERX_BATCH_SIZE", "16"))
     
     
