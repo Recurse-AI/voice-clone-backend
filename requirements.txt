@@ -119,6 +119,6 @@ playwright
 # YouTube transcript API
 youtube-transcript-api
 
-# Development
+# Development.
 pytest
 pytest-asyncio
