@@ -227,7 +227,41 @@ class ClipService:
             max_output_tokens=2000
         )
         
-        return json.loads(response.output_text.strip())
+        return self._extract_json_from_response(response.output_text)
+    
+    def _extract_json_from_response(self, text: str) -> Dict[str, Any]:
+        """Extract and parse JSON from OpenAI response with robust error handling"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        text = text.strip()
+        
+        # Try direct parse first
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        
+        # Extract JSON from markdown code blocks
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                pass
+        
+        # Find first { and last } to extract JSON object
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            try:
+                json_str = text[start:end+1]
+                return json.loads(json_str)
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error at position {e.pos}: {e.msg}")
+                logger.error(f"Problematic JSON substring: {json_str[max(0, e.pos-50):min(len(json_str), e.pos+50)]}")
+        
+        raise ValueError(f"Could not extract valid JSON from response: {text[:200]}...")
     
     def cut_segment(self, base_clip: str, ss: float, to: float, out_path: str):
         cmd = [self._ffmpeg(), "-y", "-ss", f"{ss:.3f}", "-to", f"{to:.3f}", "-i", base_clip, "-c", "copy", out_path]
