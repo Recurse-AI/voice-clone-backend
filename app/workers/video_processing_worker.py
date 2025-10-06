@@ -370,10 +370,16 @@ def _process_video_with_audio(video_path: Path, audio_path: Optional[Path], subt
         else:
             cmd.extend(["-c:a", "copy"])
         
-        if options.quality == "high":
-            cmd.extend(["-c:v", video_codec, "-crf", "20", "-preset", preset])
+        # Smart codec selection: only re-encode if video filters are applied
+        if filters:
+            # Video needs re-encoding (subtitles or resolution change)
+            if options.quality == "high":
+                cmd.extend(["-c:v", video_codec, "-crf", "20", "-preset", preset])
+            else:
+                cmd.extend(["-c:v", video_codec, "-crf", "23", "-preset", preset])
         else:
-            cmd.extend(["-c:v", video_codec, "-crf", "23", "-preset", preset])
+            # No video filters, preserve original quality
+            cmd.extend(["-c:v", "copy"])
         
         if options.format == "webm":
             # For WebM, use VP9 codec

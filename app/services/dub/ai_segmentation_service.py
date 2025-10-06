@@ -129,12 +129,20 @@ class AISegmentationService:
             
             return f"""REDUB MODE - EXACT PRESERVATION:
 
-MANDATORY RULES:
-1. Output EXACTLY {len(segments)} segments (1:1 mapping)
-2. Keep start/end timing exactly as input
-3. Keep original_text exactly as input  
+MANDATORY 1:1 MAPPING:
+1. Output EXACTLY {len(segments)} segments (one output per input)
+2. PRESERVE exact start/end timing from input
+3. PRESERVE exact original_text from input
 4. {processing_instruction}
-5. No merging, no splitting, no changes to structure
+5. NO merging, NO splitting, NO structure changes
+
+TRANSLATION QUALITY:
+- Make dubbed_text sound natural in target language
+- Preserve emotional tone and speaker emphasis
+- Adapt punctuation for target language conventions
+- Convert idioms/expressions to cultural equivalents
+- Maintain conversation flow and context
+- Clean corruption while keeping meaningful content
 
 {translation_instructions}
 
@@ -148,29 +156,41 @@ OUTPUT JSON FORMAT:
       "id": "seg_001",
       "start": 0.080,
       "end": 4.560,
-      "original_text": "exact text from input",
-      "dubbed_text": "{example_dubbed}"
+      "original_text": "exact text from input (preserved)",
+      "dubbed_text": "{example_dubbed} (natural translation)"
     }}
   ]
 }}
 
-CRITICAL: Must output exactly {len(segments)} segments as valid JSON. {processing_instruction}. Remove corruption but keep meaningful content."""
+CORRUPTION HANDLING:
+- Clean repetitive patterns before translating
+- Extract meaningful content from corrupted input
+- Use "[unclear audio]" only for completely unrecoverable segments
+- Leverage context from surrounding segments when possible
+
+CRITICAL: Must output exactly {len(segments)} segments as valid JSON. {processing_instruction}."""
         else:
             return f"""FRESH DUBBING MODE:
 
 🚨 ABSOLUTE RULE: Every output segment MUST be ≤15.0 seconds duration. NO EXCEPTIONS.
 
-If any input segment is >15s, you MUST split it into multiple shorter segments.
-Calculate: (end_time - start_time) MUST be ≤15.0 for every output segment.
+SEGMENTATION STRATEGY:
+1. Calculate each segment: (end - start) MUST be ≤15.0 seconds
+2. SPLIT long segments at:
+   • Sentence endings (period, question mark, exclamation)
+   • Clause boundaries (commas, semicolons)
+   • Natural pauses in speech flow
+   • Speaker transitions
+3. MERGE short segments (< 2s) if combined ≤15.0s
+4. IDEAL target: 3-8 seconds per segment for best voice quality
+5. Output segment count can differ from input count
 
-RULES:
-1. Check each segment duration: (end - start) ≤ 15.0 seconds
-2. Split long segments at natural speech breaks
-3. Merge very short segments if total ≤ 15.0s
-4. Fix corrupted/repetitive text by extracting meaningful content
-5. Use all input content exactly once
-6. If possible, split segments by speaker changes
-7. Output segment count can be different from input count
+QUALITY REQUIREMENTS:
+- Use ALL input content exactly once (no gaps, no duplicates)
+- Preserve emotional tone and speaker intent
+- Adapt cultural idioms/expressions naturally
+- Maintain conversation flow and context
+- Fix corrupted text by extracting meaningful parts
 
 {translation_instructions}
 
@@ -183,24 +203,25 @@ OUTPUT JSON:
       "id": "seg_001", 
       "start": 0.080,
       "end": 4.560,
-      "original_text": "meaningful text",
-      "dubbed_text": "{target_lang_name} translation"
+      "original_text": "meaningful clean text",
+      "dubbed_text": "natural {target_lang_name} translation"
     }}
   ]
 }}
 
-🚨 CORRUPTION EXAMPLES TO DETECT & CLEAN:
-- "40,000,000,000,000,000..." → Extract meaningful part or use "[unclear audio]"
-- "juice juice juice juice..." → "juice" (single occurrence) 
-- "aaaaaaaaaaaaaaa..." → Remove entirely or extract meaningful content
+🚨 CORRUPTION AUTO-CLEAN EXAMPLES:
+- "40,000,000,000..." → Extract meaningful part or "[unclear audio]"
+- "juice juice juice..." → "juice" (deduplicate)
+- "aaaaaaaaa..." → Remove entirely
 - "कर दो कर दो कर दो" → "कर दो" (clean repetition)
+- Partial corruption → Use context from nearby segments to infer meaning
 
-🚨 LANGUAGE MIXING PREVENTION:
-- Target: English → ALL dubbed_text in English (never Spanish/German/French)
-- Target: French → ALL dubbed_text in French (never English/Spanish/German) 
-- NEVER output mixed languages in the same response
+🚨 LANGUAGE PURITY:
+- Target: {target_lang_name} → 100% {target_lang_name} in ALL dubbed_text
+- NEVER mix languages (no English in French, no Spanish in English, etc.)
+- Cultural adaptation: Convert idioms to target culture equivalents
 
-🚨 FINAL VERIFICATION: Every segment duration (end-start) ≤ 15.0 seconds. ZERO corruption patterns."""
+FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓"""
     
     def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0) -> List[Dict[str, Any]]:
         formatted_segments = []
@@ -360,31 +381,33 @@ OUTPUT JSON:
     
     def _build_translation_only_prompt(self, segments: List[Dict], target_language_code: str) -> str:
         target_lang_name = self._get_language_name(target_language_code)
-        return f"""ADVANCED TRANSLATION WITH CORRUPTION HANDLING - ZERO TOLERANCE POLICY
+        return f"""PROFESSIONAL TRANSLATION WITH CORRUPTION HANDLING
 
-TARGET LANGUAGE: {target_lang_name} (EXCLUSIVE - NO OTHER LANGUAGES ALLOWED)
+TARGET LANGUAGE: {target_lang_name} (100% exclusive - no language mixing)
 
 INPUT SEGMENTS:
 {json.dumps(segments, ensure_ascii=False, indent=2)}
 
-CORRUPTION AUTO-DETECTION & ELIMINATION:
-- SCAN for these corruption patterns and REMOVE automatically:
-  * Repetitive number sequences (40,000,000,000,000... or similar)
-  * Character spam (aaaaaaa, xxxxx, +++++)
-  * Word/phrase loops (juice juice juice, do it do it do it)
-  * Symbol artifacts (@#$%, [[[, ----, corrupted transcription marks)
-  * Meaningless placeholder text or garbled content
-- EXTRACT ONLY the actual meaningful speech content
-- CLEAN before processing - never translate corrupted patterns
-- FALLBACK: If segment is purely corrupted → "[unclear audio]" in {target_lang_name}
+CORRUPTION AUTO-CLEAN:
+Detect and remove these patterns automatically:
+• Repetitive sequences (40,000,000... or juice juice juice...)
+• Character spam (aaaaaaa, xxxxx, +++++)
+• Symbol artifacts (@#$%, [[[, ----)
+• Meaningless/garbled content
+• Transcription errors
 
-TRANSLATION PROTOCOL:
-- LANGUAGE PURITY: 100% {target_lang_name} vocabulary - NEVER mix Spanish/German/French/etc
-- STRUCTURE: Maintain exact timing, segment count, and IDs from input  
-- QUALITY: Natural, professional {target_lang_name} with proper grammar
-- CONSISTENCY: Every dubbed_text must be pure {target_lang_name}
-- MAPPING: EXACTLY {len(segments)} output segments (1:1 with input)
-- SPEECH MARKERS: Add emotion/tone markers when context demands: (laughing) (excited) (angry) (whispering) (shouting) (sad) (hesitating) etc.
+ACTION: Extract meaningful speech only, ignore corruption artifacts
+FALLBACK: Use "[unclear audio]" for completely corrupted segments
+
+TRANSLATION REQUIREMENTS:
+1. LANGUAGE PURITY: 100% {target_lang_name} - never mix other languages
+2. STRUCTURE: Preserve exact timing, segment count, and IDs (1:1 mapping)
+3. QUALITY: Natural, professional speech that sounds native
+4. EMOTION: Preserve speaker's tone and emphasis
+5. CULTURAL: Adapt idioms/expressions to target culture
+6. CONTEXT: Use surrounding segments to infer unclear parts
+7. CONSISTENCY: Keep terminology consistent across all segments
+8. OUTPUT: EXACTLY {len(segments)} segments
 
 OUTPUT SPECIFICATION (JSON):
 {{
@@ -427,13 +450,17 @@ VALIDATION CHECKLIST:
             if preserve_segments:
                 chunk_context = f"""
 REDUB CHUNK {chunk_number}/{total_chunks}:
-- Input: {len(chunk)} segments → Required output: EXACTLY {len(chunk)} segments  
+- Input: {len(chunk)} segments → Output: EXACTLY {len(chunk)} segments (1:1 mapping)
 - Start segment IDs from seg_{len(all_results)+1:03d}
 - Time range: {chunk[0].get('start', 0):.3f}s to {chunk[-1].get('end', 0):.3f}s
-- MANDATORY: Process each input segment as exactly one output segment
-- PRESERVE exact timing and original_text from input
-- TRANSLATE only the dubbed_text field
-- CORRUPTION: Clean any corrupted patterns in original_text before copying/translating
+
+MANDATORY:
+- Process each input segment as exactly one output segment
+- PRESERVE exact timing (start/end) and original_text from input
+- TRANSLATE only the dubbed_text field to sound natural
+- Maintain emotional tone and emphasis from original speech
+- Adapt punctuation and phrasing for target language conventions
+- Clean corruption patterns while preserving meaningful content
 """
             else:
                 chunk_context = f"""
@@ -441,12 +468,26 @@ FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
 - Input: {len(chunk)} segments for intelligent optimization
 - Start segment IDs from seg_{len(all_results)+1:03d}  
 - Time range: {chunk[0].get('start', 0):.3f}s to {chunk[-1].get('end', 0):.3f}s
-- OPTIMIZE: Merge/split segments for better voice cloning (3-8s ideal)
-- MANDATORY: All segments ≤ 15.0 seconds duration
-- COVER ALL content exactly once - no gaps, no repetitions
+
+OPTIMIZATION GOALS:
+- IDEAL segment length: 3-8 seconds (optimal for voice cloning quality)
+- MAXIMUM segment length: 15.0 seconds (strict limit)
+- Merge very short segments if combined duration ≤15s
+- Split long segments intelligently at natural breaks
+
+SPLIT PRIORITY (when breaking long segments):
+1. Sentence boundaries (highest priority)
+2. Clause boundaries (commas, conjunctions)
+3. Natural pauses in speech
+4. Speaker changes (if applicable)
+5. Breathing points for voice actors
+
+QUALITY RULES:
+- COVER ALL content exactly once - no gaps, no overlaps, no repetitions
 - DO NOT repeat content from previous chunks
-- CORRUPTION: Clean repetitive/corrupted patterns automatically
-- ANTI-LOOP: Never output the same phrase multiple times in this chunk
+- CLEAN all corruption patterns automatically
+- PRESERVE emotional flow and conversation context
+- Keep single speaker's continuous thought together when possible
 """
             
             target_lang_name = self._get_language_name(target_lang_code)
@@ -458,7 +499,29 @@ FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
                 response = self._get_openai_client().responses.create(
                     model="gpt-5-mini",
                     input=[
-                        {"role": "system", "content": [{"type": "input_text", "text": f"You are an expert audio dubbing AI with ADVANCED CORRUPTION DETECTION and LANGUAGE CONSISTENCY ENFORCEMENT. MODE: {'REDUB - Preserve exact timing/structure, 1:1 mapping, translate dubbed_text only' if preserve_segments else 'FRESH - Intelligent segmentation, merge short segments, split long ones, target 3-8s for optimal voice cloning'}. CRITICAL RULES: 1) All segments must be ≤15 seconds. 2) TARGET LANGUAGE: {target_lang_name} - ALL dubbed_text must be in {target_lang_name} EXCLUSIVELY, NEVER mix with Spanish/German/French/Italian/etc. 3) CORRUPTION AUTO-DETECTION: Identify and clean these patterns automatically: • Repetitive numbers (40,000,000,000...) • Repeated characters (aaaaaaa...) • Repeated words/phrases (juice juice juice...) • Meaningless symbol sequences • Corrupted transcription artifacts • Placeholder text patterns. 4) EXTRACT meaningful speech from corrupted input, ignore artifacts. 5) LANGUAGE PURITY: Each segment must be 100% {target_lang_name}, no mixing. 6) FALLBACK: For purely corrupted segments, use '[unclear audio]' in {target_lang_name}. 7) ANTI-LOOP: Never repeat phrases within/across segments. OUTPUT FORMAT: Return ONLY valid JSON with 'segments' array."}]},
+                        {"role": "system", "content": [{"type": "input_text", "text": f"""ROLE: Expert dubbing AI specializing in natural speech adaptation and corruption detection
+
+MODE: {'REDUB - Preserve exact timing and structure (1:1 mapping)' if preserve_segments else 'FRESH - Intelligent segmentation for optimal voice cloning'}
+
+CORE RULES:
+1. Duration: All segments ≤15 seconds maximum
+2. Language: {target_lang_name} ONLY - no mixing with other languages
+3. Emotion: Preserve speaker's tone, emphasis, and emotional intent
+4. Natural: Output must sound natural in {target_lang_name}, not word-for-word translation
+
+CORRUPTION AUTO-CLEAN:
+• Repetitive patterns (40,000,000... or juice juice juice...) → Extract once or mark unclear
+• Repeated characters (aaaaaaa...) → Remove entirely
+• Meaningless sequences → Use '[unclear audio]' in {target_lang_name}
+• Partial corruption → Extract meaningful parts using context clues
+
+QUALITY GUIDELINES:
+• Cultural adaptation: Convert idioms/expressions naturally for target culture
+• Consistency: Keep terminology consistent across segments
+• Punctuation: Adapt to {target_lang_name} conventions
+• Context: Use surrounding segments to infer unclear audio when possible
+
+OUTPUT: Valid JSON with 'segments' array only"""}]},
                         {"role": "user", "content": [{"type": "input_text", "text": prompt}]}
                     ],
                     text={"verbosity": "low"},

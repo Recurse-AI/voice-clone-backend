@@ -65,39 +65,21 @@ class VideoProcessor:
                 video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
                 preset = 'fast' if settings.FFMPEG_USE_GPU else 'veryfast'
                 
+                # When subtitles needed, match original quality without forcing high bitrate
                 base_cmd = [
                     '-vf', f"subtitles='{subtitle_path_str}':force_style='Fontname=Arial-Bold,Fontsize={self.subtitle_font_size},Bold=1,PrimaryColour=&H00ffffff,OutlineColour=&H00000000,Outline=3,Alignment=2,MarginV={self.subtitle_margin_bottom}'",
                     '-c:v', video_codec,
                     '-preset', preset,
-                    '-crf', '20',
-                    '-maxrate', '6000k',
-                    '-bufsize', '12000k',
-                    '-profile:v', 'high',
-                    '-level', '4.1',
-                ]
-                
-                if not settings.FFMPEG_USE_GPU:
-                    base_cmd.extend(['-threads', '0', '-tune', 'fastdecode'])
-                
-                cmd.extend(base_cmd)
-            else:
-                video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
-                preset = 'fast' if settings.FFMPEG_USE_GPU else 'veryfast'
-                
-                base_cmd = [
-                    '-c:v', video_codec,
-                    '-preset', preset,
-                    '-crf', '20',
-                    '-maxrate', '6000k',
-                    '-bufsize', '12000k',
-                    '-profile:v', 'high',
-                    '-level', '4.1',
+                    '-crf', '23',  # Balanced quality matching typical source videos
                 ]
                 
                 if not settings.FFMPEG_USE_GPU:
                     base_cmd.extend(['-threads', '0'])
                 
                 cmd.extend(base_cmd)
+            else:
+                # No subtitles, preserve original video quality
+                cmd.extend(['-c:v', 'copy'])
             
             cmd.extend([
                 '-c:a', 'aac',

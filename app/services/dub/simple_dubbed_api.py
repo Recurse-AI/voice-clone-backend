@@ -952,10 +952,6 @@ class SimpleDubbedAPI:
             
             final_video_path = output_dir_path / f"final_video_{job_id}.mp4"
             
-            # GPU-accelerated video encoding
-            video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
-            preset = 'p4' if settings.FFMPEG_USE_GPU else 'veryfast'
-            
             cmd = ["ffmpeg", "-y"]
             if settings.FFMPEG_USE_GPU:
                 cmd.extend(["-hwaccel", "cuda"])
@@ -980,9 +976,8 @@ class SimpleDubbedAPI:
                 cmd.extend(["-map", "0:v", "-map", "1:a", "-filter:a", "volume=2.0"])
             
             cmd.extend([
-                "-c:v", video_codec, "-preset", preset, 
-                "-b:v", "5M", "-maxrate", "6M", "-bufsize", "12M",
-                "-c:a", "aac", "-b:a", "192k",
+                "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "128k",
                 "-movflags", "+faststart",
                 str(final_video_path)
             ])
