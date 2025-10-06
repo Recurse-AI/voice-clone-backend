@@ -136,7 +136,7 @@ class SimpleDubbedAPI:
         self.voice_type = voice_type
         self.reference_ids = reference_ids or []
         
-        return {"premium": final_premium, "type": voice_type, "ref_ids": reference_ids}
+        return {"premium": final_premium, "voice_type": voice_type, "reference_ids": reference_ids}
     
     def _get_audio_urls(self, manifest_override: dict, separation_urls: dict) -> tuple:
         if manifest_override:
@@ -168,7 +168,7 @@ class SimpleDubbedAPI:
             manifest = build_manifest(
                 job_id, transcript_id, target_language, dubbed_segments,
                 vocal_url, instrument_url, voice_config["premium"],
-                voice_config["type"], voice_config["ref_id"]
+                voice_config["voice_type"], voice_config["reference_ids"]
             )
         
         save_manifest_to_dir(manifest, process_temp_dir, job_id)
