@@ -22,7 +22,7 @@ def process_dub_task(request_dict: dict, user_id: str):
     video_subtitle = request_dict.get("video_subtitle", False)
     voice_premium_model = request_dict.get("voice_premium_model", False)
     voice_type = request_dict.get("voice_type")
-    reference_id = request_dict.get("reference_id")
+    reference_ids = request_dict.get("reference_ids", [])
     
     from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, update_dub_job_stage
     
@@ -65,7 +65,7 @@ def process_dub_task(request_dict: dict, user_id: str):
         success = _process_dubbing_pipeline(
             job_id, target_language, source_video_language, 
             job_dir, human_review, separation_result["runpod_urls"], video_subtitle, voice_premium_model,
-            voice_type, reference_id
+            voice_type, reference_ids
         )
         
         if not success:
@@ -158,7 +158,7 @@ def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> dict
 def _process_dubbing_pipeline(job_id: str, target_language: str, 
                             source_video_language: str, job_dir: str,
                             human_review: bool, runpod_urls: dict = None, video_subtitle: bool = False, voice_premium_model: bool = False,
-                            voice_type: str = None, reference_id: str = None) -> bool:
+                            voice_type: str = None, reference_ids: list = None) -> bool:
     try:
         from app.utils.pipeline_utils import update_dub_job_stage
         
@@ -183,7 +183,7 @@ def _process_dubbing_pipeline(job_id: str, target_language: str,
             video_subtitle=video_subtitle,
             voice_premium_model=voice_premium_model,
             voice_type=voice_type,
-            reference_id=reference_id
+            reference_ids=reference_ids
         )
         
         if not pipeline_result["success"]:
@@ -303,7 +303,7 @@ def process_redub_task(redub_job_id: str, target_language: str,
                 video_subtitle=False,  # Redubs use existing transcription
                 voice_premium_model=manifest.get('voice_premium_model', False),
                 voice_type=manifest.get('voice_type'),
-                reference_id=manifest.get('reference_id')
+                reference_ids=manifest.get('reference_ids', [])
             )
         finally:
             mark_dub_job_inactive(redub_job_id)

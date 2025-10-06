@@ -133,6 +133,27 @@ class WhisperXTranscriptionService:
             normalized_language = language_service.get_language_code_for_transcription(language_code)
             logger.info(f"Service worker transcription: {audio_path} (language: {language_code} -> {normalized_language})")
 
+            whisperx_load = self._get_whisperx_queue_length()
+            from app.config.pipeline_settings import pipeline_settings
+            threshold = pipeline_settings.WHISPERX_QUEUE_THRESHOLD
+            
+            if whisperx_load >= threshold:
+                logger.info(f"WhisperX load high (load={whisperx_load}, threshold={threshold}) - trying AssemblyAI")
+                try:
+                    from .assemblyai_transcription import get_assemblyai_service
+                    assemblyai = get_assemblyai_service()
+                    result = assemblyai.transcribe_audio_file(audio_path, normalized_language, job_id)
+                    
+                    if result.get("success"):
+                        logger.info(f"✅ AssemblyAI transcription successful for {job_id}")
+                        return result
+                    else:
+                        logger.warning(f"AssemblyAI failed: {result.get('error')} - falling back to WhisperX")
+                except Exception as e:
+                    logger.warning(f"AssemblyAI error: {e} - falling back to WhisperX")
+            else:
+                logger.info(f"WhisperX available (load={whisperx_load}, threshold={threshold}) - using WhisperX")
+
             request_id = f"whisperx_{job_id}_{uuid.uuid4().hex[:8]}"
             request_data = {
                 "request_id": request_id,
@@ -290,6 +311,26 @@ class WhisperXTranscriptionService:
         except Exception as e:
             logger.warning(f"Failed to load alignment model for {language_code}: {e}")
             return None, None
+    
+    def _get_whisperx_queue_length(self) -> int:
+        try:
+            from app.queue.queue_manager import queue_manager
+            from rq import Worker
+            
+            queue = queue_manager.get_whisperx_service_queue()
+            if not queue:
+                return 0
+            
+            queued_jobs = len(queue)
+            active_workers = Worker.count(queue=queue)
+            
+            total_load = queued_jobs + active_workers
+            logger.debug(f"WhisperX load: {queued_jobs} queued + {active_workers} active = {total_load}")
+            
+            return total_load
+        except Exception as e:
+            logger.warning(f"Failed to get WhisperX queue length: {e}")
+            return 0
 
 _whisperx_service = None
 _service_lock = threading.Lock()

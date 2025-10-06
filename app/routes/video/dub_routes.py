@@ -179,7 +179,7 @@ async def start_video_dub(
             "video_subtitle": request_obj.video_subtitle,
             "voice_premium_model": request_obj.voice_premium_model,
             "voice_type": getattr(request_obj, "voice_type", None),
-            "reference_id": getattr(request_obj, "reference_id", None)
+            "reference_ids": getattr(request_obj, "reference_ids", [])
         }
         
         if video_url:
@@ -536,7 +536,7 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
         manifest, redub_job_id, request_body.target_language, parent_job_id, 
         getattr(request_body, "voice_premium_model", False),
         getattr(request_body, "voice_type", None),
-        getattr(request_body, "reference_id", None)
+        getattr(request_body, "reference_ids", [])
     )
     
     # Enqueue redub job

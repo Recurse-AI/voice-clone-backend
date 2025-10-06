@@ -129,6 +129,41 @@ class LanguageService:
             raise ValueError(f"Language '{language}' not supported for transcription")
         
         return normalized
+    
+    @classmethod
+    def get_assemblyai_language_code(cls, language: str):
+        """
+        Get AssemblyAI-compatible language code.
+        AssemblyAI uses similar ISO codes but we map for compatibility.
+        Returns None for auto_detect (AssemblyAI will auto-detect).
+        """
+        normalized = cls.normalize_language_input(language)
+        
+        if normalized == "auto_detect":
+            return None
+        
+        assemblyai_mapping = {
+            "en": "en",
+            "zh": "zh",
+            "nl": "nl",
+            "fi": "fi",
+            "fr": "fr",
+            "de": "de",
+            "hi": "hi",
+            "it": "it",
+            "ja": "ja",
+            "ko": "ko",
+            "pl": "pl",
+            "pt": "pt",
+            "ru": "ru",
+            "es": "es",
+            "tr": "tr",
+            "uk": "uk",
+            "vi": "vi",
+            "ar": "ar"
+        }
+        
+        return assemblyai_mapping.get(normalized, "en")
 
 
 # Global service instance

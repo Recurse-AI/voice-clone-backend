@@ -52,6 +52,10 @@ lightning>=2.1.0
 # WhisperX for transcription
 whisperx
 
+# Speaker diarization
+speechbrain
+pyannote.audio
+
 # Storage
 boto3
 botocore

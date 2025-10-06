@@ -61,14 +61,20 @@ class AISegmentationService:
                     start_s = start_ms / 1000.0
                     end_s = end_ms / 1000.0
                     
-                    combined_text.append({
+                    segment_data = {
                         "text": text,
                         "start": round(start_s, 3),
                         "end": round(end_s, 3),
                         "duration": round(end_s - start_s, 3),
                         "start_ms": start_ms,
                         "end_ms": end_ms
-                    })
+                    }
+                    
+                    # Include speaker tag if available
+                    if "speaker" in seg and seg["speaker"]:
+                        segment_data["speaker"] = seg["speaker"]
+                    
+                    combined_text.append(segment_data)
             
             if not combined_text:
                 return []
@@ -156,11 +162,16 @@ OUTPUT JSON FORMAT:
       "id": "seg_001",
       "start": 0.080,
       "end": 4.560,
+      "speaker": "SPEAKER_00",
       "original_text": "exact text from input (preserved)",
       "dubbed_text": "{example_dubbed} (natural translation)"
     }}
   ]
 }}
+
+SPEAKER HANDLING:
+- If input has "speaker" field, preserve it in output
+- Speaker tags help with voice consistency
 
 CORRUPTION HANDLING:
 - Clean repetitive patterns before translating
@@ -203,11 +214,17 @@ OUTPUT JSON:
       "id": "seg_001", 
       "start": 0.080,
       "end": 4.560,
+      "speaker": "SPEAKER_00",
       "original_text": "meaningful clean text",
       "dubbed_text": "natural {target_lang_name} translation"
     }}
   ]
 }}
+
+SPEAKER AWARENESS:
+- If input has "speaker" tags, preserve them in output
+- Consider speaker changes when creating segments
+- Keep same-speaker dialogue together when natural
 
 🚨 CORRUPTION AUTO-CLEAN EXAMPLES:
 - "40,000,000,000..." → Extract meaningful part or "[unclear audio]"

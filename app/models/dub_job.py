@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Literal, Dict, Any, List
 from datetime import datetime, timezone
 
 class DubJob(BaseModel):
@@ -35,6 +35,8 @@ class DubJob(BaseModel):
     details: Optional[Dict[str, Any]] = Field(None, description="Additional processing details")
     review_required: bool = Field(False, description="Whether human review is required before final processing")
     voice_premium_model: bool = Field(False, description="Whether to use premium Fish Audio API for voice cloning")
+    voice_type: Optional[str] = Field(None, description="Voice mode: 'voice_clone' or 'ai_voice'")
+    reference_ids: Optional[List[str]] = Field(None, description="List of reference IDs for multi-speaker support")
     review_status: Optional[Literal['awaiting', 'in_progress', 'approved', 'rejected', 'completed', 'failed']] = None
     segments_manifest_url: Optional[str] = Field(None, description="R2 URL to the segments manifest JSON for human review")
     segments_manifest_key: Optional[str] = Field(None, description="R2 object key for the segments manifest JSON")

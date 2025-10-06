@@ -123,20 +123,20 @@ class SimpleDubbedAPI:
         logger.info(f"Processing with target language: {target_language} -> {code}")
         return True, None, code
     
-    def _setup_voice_config(self, manifest_override: dict, voice_premium_model: bool, voice_type: str, reference_id: str) -> dict:
+    def _setup_voice_config(self, manifest_override: dict, voice_premium_model: bool, voice_type: str, reference_ids: List[str]) -> dict:
         manifest_premium = manifest_override.get("voice_premium_model") if manifest_override else None
         
         if manifest_override:
             voice_type = voice_type or manifest_override.get("voice_type")
-            reference_id = reference_id or manifest_override.get("reference_id")
+            reference_ids = reference_ids or manifest_override.get("reference_ids", [])
         
         final_premium = manifest_premium if manifest_premium is not None else voice_premium_model
         
         self.voice_premium_model = final_premium
         self.voice_type = voice_type
-        self.reference_id = reference_id
+        self.reference_ids = reference_ids or []
         
-        return {"premium": final_premium, "type": voice_type, "ref_id": reference_id}
+        return {"premium": final_premium, "type": voice_type, "ref_ids": reference_ids}
     
     def _get_audio_urls(self, manifest_override: dict, separation_urls: dict) -> tuple:
         if manifest_override:
@@ -221,14 +221,14 @@ class SimpleDubbedAPI:
                            review_mode: bool = False, manifest_override: Optional[Dict[str, Any]] = None,
                            separation_urls: Optional[Dict[str, str]] = None, video_subtitle: bool = False,
                            voice_premium_model: bool = False, voice_type: Optional[str] = None,
-                           reference_id: Optional[str] = None) -> dict:
+                           reference_ids: Optional[List[str]] = None) -> dict:
         valid, error, target_code = self._validate_target_language(target_language)
         if not valid:
             logger.error(error)
             return {"success": False, "error": error}
         
         try:
-            voice_config = self._setup_voice_config(manifest_override, voice_premium_model, voice_type, reference_id)
+            voice_config = self._setup_voice_config(manifest_override, voice_premium_model, voice_type, reference_ids)
             
             self._update_status(job_id, JobStatus.PROCESSING, 60, {"message": "Starting dubbing", "phase": "dubbing"})
             
@@ -266,6 +266,28 @@ class SimpleDubbedAPI:
             if locals().get("output_dir"):
                 AudioUtils.remove_temp_dir(folder_path=locals().get("output_dir"))
             return {"success": False, "error": str(e)}
+    
+    def _get_segment_speaker(self, seg_start_ms: int, seg_end_ms: int, speaker_timeline: List[Dict]) -> str:
+        seg_start_s = seg_start_ms / 1000.0
+        seg_end_s = seg_end_ms / 1000.0
+        
+        for speaker_seg in speaker_timeline:
+            overlap_start = max(seg_start_s, speaker_seg["start"])
+            overlap_end = min(seg_end_s, speaker_seg["end"])
+            if overlap_start < overlap_end:
+                return speaker_seg["speaker"]
+        return None
+    
+    def _assign_reference_id(self, speaker: str) -> str:
+        if not speaker or not self.reference_ids:
+            return None
+        try:
+            speaker_index = int(speaker.split("_")[-1])
+            if speaker_index < len(self.reference_ids):
+                return self.reference_ids[speaker_index]
+        except (ValueError, IndexError):
+            pass
+        return None
     
     def _get_ai_voice_reference(self, reference_id: str, source_language_code: str) -> tuple:
         from app.config.settings import settings as _settings
@@ -308,25 +330,49 @@ class SimpleDubbedAPI:
         if not fish_api.api_key or not fish_api.api_key.strip():
             return {"success": False}
         
-        logger.info("🎯 Using Premium Fish Audio API")
+        max_retries = 3
+        retry_delay = 1.0
         
-        if voice_type == 'ai_voice' and ai_voice_reference_id:
-            return fish_api.generate_voice_clone(
-                text=tagged_text,
-                reference_audio_bytes=None,
-                reference_text=None,
-                job_id=job_id,
-                target_language_code=target_language_code,
-                reference_id=ai_voice_reference_id
-            )
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"🎯 Premium API attempt {attempt}/{max_retries}")
+                
+                if voice_type == 'ai_voice' and ai_voice_reference_id:
+                    result = fish_api.generate_voice_clone(
+                        text=tagged_text,
+                        reference_audio_bytes=None,
+                        reference_text=None,
+                        job_id=job_id,
+                        target_language_code=target_language_code,
+                        reference_id=ai_voice_reference_id
+                    )
+                else:
+                    result = fish_api.generate_voice_clone(
+                        text=tagged_text,
+                        reference_audio_bytes=reference_audio_bytes,
+                        reference_text=tagged_reference_text,
+                        job_id=job_id,
+                        target_language_code=target_language_code
+                    )
+                
+                if result.get("success"):
+                    logger.info(f"✅ Premium API success on attempt {attempt}")
+                    return result
+                
+                logger.warning(f"⚠️ Premium API attempt {attempt} failed: {result.get('error', 'Unknown')}")
+                
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                    
+            except Exception as e:
+                logger.error(f"❌ Premium API attempt {attempt} error: {e}")
+                if attempt < max_retries:
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
         
-        return fish_api.generate_voice_clone(
-            text=tagged_text,
-            reference_audio_bytes=reference_audio_bytes,
-            reference_text=tagged_reference_text,
-            job_id=job_id,
-            target_language_code=target_language_code
-        )
+        logger.error(f"❌ Premium API failed after {max_retries} attempts")
+        return {"success": False, "error": f"Failed after {max_retries} retries"}
     
     def _generate_with_local_model(self, tagged_text: str, reference_audio_bytes: bytes, 
                                    tagged_reference_text: str, job_id: str, target_language_code: str) -> dict:
@@ -366,7 +412,8 @@ class SimpleDubbedAPI:
     
     def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, 
                             original_text: str = "", job_id: str = None, process_temp_dir: str = None, 
-                            target_language_code: str = "en", source_language_code: str = "en") -> Optional[Dict[str, Any]]:
+                            target_language_code: str = "en", source_language_code: str = "en",
+                            segment_reference_id: str = None) -> Optional[Dict[str, Any]]:
         try:
             start_time = time.time()
             
@@ -377,7 +424,7 @@ class SimpleDubbedAPI:
             
             is_premium = getattr(self, 'voice_premium_model', False)
             voice_type = getattr(self, 'voice_type', None)
-            ai_voice_id = getattr(self, 'reference_id', None)
+            ai_voice_id = segment_reference_id if segment_reference_id else (getattr(self, 'reference_ids', [None])[0] if hasattr(self, 'reference_ids') and self.reference_ids else None)
             
             reference_audio_bytes = None
             
@@ -443,7 +490,8 @@ class SimpleDubbedAPI:
                 job_id=job_id, 
                 process_temp_dir=process_temp_dir,
                 target_language_code=getattr(self, '_target_language_code', 'en'),
-                source_language_code=getattr(self, '_source_language_code', 'en')
+                source_language_code=getattr(self, '_source_language_code', 'en'),
+                segment_reference_id=data.get("reference_id")
             )
             elapsed = time.time() - start_time
             logger.info(f"✅ Segment {data['seg_id']} ({actual_index+1}/{total_segments}) completed in {elapsed:.2f}s")
@@ -562,6 +610,26 @@ class SimpleDubbedAPI:
                 transcript_id = f"whisperx_{int(time.time())}"
                 self._update_phase_progress(job_id, "transcription", 1.0, "Transcription completed")
         
+        if not manifest_override:
+            try:
+                from app.services.dub.speaker_detection_service import speaker_detection_service
+                
+                vocal_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
+                if os.path.exists(vocal_path):
+                    logger.info("Running speaker detection before AI segmentation")
+                    speaker_timeline = speaker_detection_service.detect_speakers(vocal_path, job_id)
+                    
+                    for seg in transcription_result.get("segments", []):
+                        seg_start_ms = seg.get("start", 0)
+                        seg_end_ms = seg.get("end", 0)
+                        seg["speaker"] = self._get_segment_speaker(seg_start_ms, seg_end_ms, speaker_timeline)
+                    
+                    logger.info(f"Tagged {len(transcription_result.get('segments', []))} segments with speakers")
+            except Exception as e:
+                logger.error(f"Speaker detection failed: {e}, continuing without speaker tags")
+        else:
+            logger.info("Redub: using manifest speaker info")
+        
         self._update_phase_progress(job_id, "dubbing", 0.0, "AI creating segments and dubbing")
         
         # Check if we have manifest with already dubbed texts (resume after review)
@@ -588,6 +656,12 @@ class SimpleDubbedAPI:
             else:
                 logger.info(f"AI created {len(ai_segments)} optimal segments with S1 dubbing")
                 self._update_phase_progress(job_id, "dubbing", 1.0, f"AI completed {len(ai_segments)} segments with S1 dubbing")
+        
+        for segment in ai_segments:
+            speaker = segment.get("speaker")
+            segment["reference_id"] = self._assign_reference_id(speaker) if speaker and self.reference_ids else None
+        
+        logger.info(f"Assigned reference_ids to {len(ai_segments)} segments")
         
         return ai_segments, transcript_id, transcription_result
 

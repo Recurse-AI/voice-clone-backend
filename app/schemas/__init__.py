@@ -27,7 +27,7 @@ class VideoDubRequest(BaseModel):
     voice_premium_model: bool = Field(False, description="If true, use premium Fish Audio API for voice cloning (costs double)")
     # Voice config
     voice_type: Optional[str] = Field(None, description="Voice mode: 'voice_clone' or 'ai_voice'")
-    reference_id: Optional[str] = Field(None, description="Reference ID for AI voice when type is 'ai_voice'")
+    reference_ids: Optional[List[str]] = Field(default_factory=list, max_length=10, description="List of reference IDs for different speakers")
     
     @field_validator('file_url')
     @classmethod
@@ -86,9 +86,8 @@ class RedubRequest(BaseModel):
     target_language: str = Field(..., description="New target language for re-dub")
     humanReview: Optional[bool] = False
     voice_premium_model: bool = Field(False, description="If true, use premium Fish Audio API for voice cloning (costs double)")
-    # Voice config
     voice_type: Optional[str] = Field(None, description="Voice mode: 'voice_clone' or 'ai_voice'")
-    reference_id: Optional[str] = Field(None, description="Reference ID for AI voice when type is 'ai_voice'")
+    reference_ids: Optional[List[str]] = Field(default_factory=list, max_length=10, description="List of reference IDs for different speakers")
     
     @field_validator('target_language')
     @classmethod

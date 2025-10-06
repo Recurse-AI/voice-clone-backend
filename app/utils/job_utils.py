@@ -89,7 +89,7 @@ class JobUtils:
             raise Exception(f"Failed to setup job directory: {str(e)}")
     
     @staticmethod
-    def prepare_manifest_for_redub(manifest: Dict[str, Any], redub_job_id: str, target_language: str, parent_job_id: str, voice_premium_model: bool = False, voice_type: str = None, reference_id: str = None) -> Dict[str, Any]:
+    def prepare_manifest_for_redub(manifest: Dict[str, Any], redub_job_id: str, target_language: str, parent_job_id: str, voice_premium_model: bool = False, voice_type: str = None, reference_ids: list = None) -> Dict[str, Any]:
         """
         Prepare manifest for redub with updated metadata
         Returns: updated manifest
@@ -110,8 +110,8 @@ class JobUtils:
         # Optionally override voice config
         if voice_type is not None:
             updated_manifest["voice_type"] = voice_type
-        if reference_id is not None:
-            updated_manifest["reference_id"] = reference_id
+        if reference_ids is not None:
+            updated_manifest["reference_ids"] = reference_ids
         return updated_manifest
     
 
