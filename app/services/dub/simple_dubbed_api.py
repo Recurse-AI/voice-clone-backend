@@ -659,13 +659,7 @@ class SimpleDubbedAPI:
                 logger.info(f"AI created {len(ai_segments)} optimal segments with S1 dubbing")
                 self._update_phase_progress(job_id, "dubbing", 1.0, f"AI completed {len(ai_segments)} segments with S1 dubbing")
         
-        speaker_timeline = transcription_result.get("speaker_timeline", []) if transcription_result else []
         for segment in ai_segments:
-            if not segment.get("speaker") and speaker_timeline:
-                seg_start_ms = segment.get("start", 0)
-                seg_end_ms = segment.get("end", 0)
-                segment["speaker"] = self._get_segment_speaker(seg_start_ms, seg_end_ms, speaker_timeline)
-            
             speaker = segment.get("speaker")
             segment["reference_id"] = self._assign_reference_id(speaker) if speaker and self.reference_ids else None
         
