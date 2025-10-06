@@ -75,6 +75,7 @@ class SegmentEdit(BaseModel):
     dubbed_text: str
     start: Optional[int] = None
     end: Optional[int] = None
+    reference_id: Optional[str] = None
 
 class SaveEditsRequest(BaseModel):
     segments: list[SegmentEdit]

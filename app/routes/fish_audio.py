@@ -60,6 +60,25 @@ async def list_fish_models(
     return resp.json()
 
 
+@router.get("/models/{reference_id}")
+async def get_fish_model_details(reference_id: str):
+    if not settings.FISH_AUDIO_API_KEY:
+        raise HTTPException(status_code=500, detail="Fish Audio API key not configured")
+
+    headers = {"Authorization": f"Bearer {settings.FISH_AUDIO_API_KEY}"}
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        try:
+            resp = await client.get(f"https://api.fish.audio/model/{reference_id}", headers=headers)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=f"Upstream request failed: {str(exc)}")
+
+    return resp.json()
+
+
 @router.post("/models")
 async def create_fish_model(
     visibility: str = Form(...),

@@ -116,6 +116,8 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
                 seg["start"] = edit.start
             if edit.end is not None:
                 seg["end"] = edit.end
+            if edit.reference_id is not None:
+                seg["reference_id"] = edit.reference_id
             seg["duration_ms"] = max(0, seg["end"] - seg["start"])
     manifest["version"] = int(manifest.get("version", 1)) + 1
 

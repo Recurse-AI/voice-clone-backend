@@ -51,6 +51,11 @@ def initialize_ai_models(queue_name: str):
         initialize_fish_speech()
         logger.info("✅ GPU FishSpeech loaded")
 
+    elif queue_name == "dub_queue":
+        from app.services.dub.speaker_detection_service import speaker_detection_service
+        speaker_detection_service.preload_model()
+        logger.info("✅ GPU Speaker Detection loaded")
+
     else:
         logger.info("⏭️ No specific models needed")
 
