@@ -71,6 +71,7 @@ class SegmentsResponse(BaseModel):
     manifestUrl: Optional[str] = None
     version: Optional[int] = None
     target_language: Optional[str] = None
+    reference_ids: Optional[List[str]] = None
 
 class SegmentEdit(BaseModel):
     id: str

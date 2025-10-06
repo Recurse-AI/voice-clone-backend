@@ -90,7 +90,8 @@ async def get_segments(job_id: str, current_user = Depends(get_video_dub_user)):
             segments=normalized_manifest.get("segments", []), 
             manifestUrl=manifest_url, 
             version=normalized_manifest.get("version"),
-            target_language=normalized_manifest.get("target_language")
+            target_language=normalized_manifest.get("target_language"),
+            reference_ids=normalized_manifest.get("reference_ids", [])
         )
     except Exception as e:
         logger.error(f"Failed to load manifest from {manifest_url}: {str(e)}")
