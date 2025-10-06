@@ -8,6 +8,10 @@ import time
 
 logger = logging.getLogger(__name__) 
 
+def get_logo_url():
+    """Get the official ClearVocals logo URL"""
+    return "https://pub-e668f82c3ede4548869ac0a3acad4e7f.r2.dev/dub-uploads/test_acb34834/main_transparent_backgrund.png"
+
 # Function to send HTML email using smtplib
 def send_email(sender_email: str, receiver_email: str, subject: str, body: str, password: str, is_html: bool = False, raise_on_error: bool = True):
     try:
@@ -65,6 +69,7 @@ def send_email(sender_email: str, receiver_email: str, subject: str, body: str, 
 
 def create_email_verification_template(name: str, verification_link: str) -> str:
     """Create beautiful HTML email template for email verification"""
+    logo_url = get_logo_url()
     return f"""
     <!DOCTYPE html>
     <html lang="en">
@@ -109,6 +114,11 @@ def create_email_verification_template(name: str, verification_link: str) -> str
         <div class="email-container">
             <!-- Header -->
             <div class="header">
+                <a href="https://clearvocals.ai" target="_blank" style="text-decoration: none;">
+                    <div style="display: inline-block; background-color: #ffffff; border-radius: 20px; padding: 20px; margin-bottom: 20px; box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15); border: 2px solid rgba(255, 255, 255, 0.3);">
+                        <img src="{logo_url}" alt="ClearVocals Logo" style="height: 70px; display: block;">
+                    </div>
+                </a>
                 <div class="logo">🎤 ClearVocals</div>
                 <div class="header-subtitle">AI-Powered Voice & Audio Platform</div>
             </div>
@@ -201,6 +211,7 @@ def send_verification_email_background_task(background_tasks: BackgroundTasks, e
 
 def create_password_reset_template(name: str, reset_link: str) -> str:
     """Create beautiful HTML email template for password reset"""
+    logo_url = get_logo_url()
     return f"""
     <!DOCTYPE html>
     <html lang="en">
@@ -243,6 +254,11 @@ def create_password_reset_template(name: str, reset_link: str) -> str:
         <div class="email-container">
             <!-- Header -->
             <div class="header">
+                <a href="https://clearvocals.ai" target="_blank" style="text-decoration: none;">
+                    <div style="display: inline-block; background-color: #ffffff; border-radius: 20px; padding: 20px; margin-bottom: 20px; box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15); border: 2px solid rgba(255, 255, 255, 0.3);">
+                        <img src="{logo_url}" alt="ClearVocals Logo" style="height: 70px; display: block;">
+                    </div>
+                </a>
                 <div class="logo">🔒 ClearVocals</div>
                 <div class="header-subtitle">Password Reset Request</div>
             </div>
@@ -327,11 +343,12 @@ def send_reset_email_background_task(background_tasks: BackgroundTasks, email: s
 
 def create_job_completion_template(name: str, job_type: str, job_id: str, download_urls: dict) -> str:
     """Enhanced job completion email template with modern design"""
+    logo_url = get_logo_url()
     job_titles = {"dub": "Video Dubbing", "separation": "Audio Separation", "clip": "Video Clips"}
     job_title = job_titles.get(job_type, "Job")
     
-    emojis = {"dub": "🎬", "separation": "🎵", "clip": "✂️"}
-    emoji = emojis.get(job_type, "✅")
+    # emojis = {"dub": "🎬", "separation": "🎵", "clip": "✂️"}
+    # emoji = emojis.get(job_type, "✅")
     
     colors = {
         "dub": {"gradient": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)", "accent": "#667eea", "light": "#f3f4ff"},
@@ -358,11 +375,16 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>{job_title} Ready - ClearVocals</title>
     </head>
-    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px;">
+    <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; padding: 40px 20px;">
         <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
             <tr>
                 <td style="background: {color["gradient"]}; padding: 50px 40px; text-align: center;">
-                    <div style="font-size: 48px; margin-bottom: 16px;">{emoji}</div>
+                    <a href="https://clearvocals.ai" target="_blank" style="text-decoration: none;">
+                        <div style="display: inline-block; background-color: #ffffff; border-radius: 24px; padding: 24px; margin-bottom: 25px; box-shadow: 0 12px 35px rgba(0, 0, 0, 0.2); border: 3px solid rgba(255, 255, 255, 0.4);">
+                            <img src="{logo_url}" alt="ClearVocals Logo" style="height: 80px; display: block;">
+                        </div>
+                    </a>
+                    
                     <h1 style="color: #ffffff; font-size: 32px; font-weight: 700; margin: 0 0 12px 0; text-shadow: 0 2px 4px rgba(0,0,0,0.1);">
                         Your {job_title} is Ready!
                     </h1>
@@ -371,7 +393,7 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
             </tr>
             
             <tr>
-                <td style="padding: 45px 40px;">
+                <td style="padding: 45px 40px; background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);">
                     <div style="text-align: center; margin-bottom: 35px;">
                         <div style="display: inline-block; background: {color["light"]}; border-radius: 50%; width: 80px; height: 80px; line-height: 80px; margin-bottom: 20px;">
                             <span style="font-size: 40px;">✓</span>
