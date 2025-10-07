@@ -4,7 +4,7 @@ from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
-def parse_srt_to_whisperx_format(srt_file_path: str) -> Dict[str, Any]:
+def parse_srt_to_whisperx_format(srt_file_path: str, max_duration_seconds: float = None) -> Dict[str, Any]:
     """Parse SRT file and convert to WhisperX format"""
     try:
         content = _read_file_with_encoding(srt_file_path)
@@ -18,6 +18,13 @@ def parse_srt_to_whisperx_format(srt_file_path: str) -> Dict[str, Any]:
             return {"success": False, "error": "No valid subtitle segments found"}
         
         logger.info(f"Parsed {len(segments)} raw segments from SRT file")
+        
+        if max_duration_seconds:
+            max_duration_ms = max_duration_seconds * 1000
+            original_count = len(segments)
+            segments = [seg for seg in segments if seg["start"] < max_duration_ms]
+            if len(segments) < original_count:
+                logger.info(f"Filtered {original_count - len(segments)} segments exceeding duration {max_duration_seconds}s")
         
         return {
             "success": True,

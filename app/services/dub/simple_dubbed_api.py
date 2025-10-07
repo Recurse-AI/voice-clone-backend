@@ -285,6 +285,8 @@ class SimpleDubbedAPI:
             speaker_index = int(speaker.split("_")[-1])
             if speaker_index < len(self.reference_ids):
                 return self.reference_ids[speaker_index]
+            else:
+                return self.reference_ids[-1]
         except (ValueError, IndexError):
             pass
         return None
@@ -584,7 +586,12 @@ class SimpleDubbedAPI:
                     raise Exception(f"SRT file not found at {srt_file_path}")
                 
                 from app.utils.srt_parser import parse_srt_to_whisperx_format
-                transcription_result = parse_srt_to_whisperx_format(srt_file_path)
+                from app.utils.db_sync_operations import get_dub_job_sync
+                
+                job_data = get_dub_job_sync(job_id)
+                duration = job_data.get("duration") if job_data else None
+                
+                transcription_result = parse_srt_to_whisperx_format(srt_file_path, duration)
                 
                 if not transcription_result["success"]:
                     raise Exception(transcription_result.get("error", "SRT parsing failed"))
