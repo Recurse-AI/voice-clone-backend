@@ -112,7 +112,7 @@ class AISegmentationService:
 - Extract only meaningful speech content
 - ADD SPEECH MARKERS: Enhance with OpenAudio S1 markers when context requires: (laughing) (excited) (whispering) (angry) (sad) (hesitating) etc."""
         else:
-            translation_instructions = f"""PROFESSIONAL TRANSLATION TO {target_lang_name.upper()} - ZERO TOLERANCE FOR MIXING:
+            translation_instructions = f"""PROFESSIONAL TRANSLATION TO {target_lang_name.upper()} - NATURAL NATIVE SPEECH:
 - ABSOLUTE RULE: 100% {target_lang_name} ONLY - NO Spanish/German/French/Italian mixing
 - CORRUPTION AUTO-CLEAN: Before translating, automatically detect and remove:
   * Long repetitive numbers (40,000,000,000,000...)
@@ -121,7 +121,17 @@ class AISegmentationService:
   * Symbol spam or transcription artifacts (@#$%, [[[, +++...)
   * Placeholder text or corrupted patterns
 - MEANINGFUL EXTRACTION: Find the actual speech content within corrupted input
-- CLEAN TRANSLATION: Translate only the meaningful parts to natural {target_lang_name}
+- NATURAL SPEECH STYLE: Sound like native speakers in everyday conversation
+  * Use COLLOQUIAL/INFORMAL language (how people actually talk)
+  * Use STANDARD DIALECT (neutral form understood by all)
+  * Prefer COMMON/POPULAR words over formal vocabulary
+  * NO literal/word-for-word translation - adapt naturally
+  * Make it sound AUTHENTIC, not textbook translation
+- FULL CULTURAL LOCALIZATION:
+  * Convert ALL cultural references to {target_lang_name} equivalents
+  * Adapt idioms/metaphors/expressions to target culture
+  * Replace foreign examples with local familiar ones
+  * Use expressions popular in {target_lang_name} speaking regions
 - LANGUAGE PURITY: Every single word must be proper {target_lang_name} vocabulary
 - FALLBACK PROTOCOL: Purely corrupted segments → '[unclear audio]' in {target_lang_name}
 - PRESERVE INTENT: Keep original meaning/tone of actual speech content
@@ -325,7 +335,7 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓"""
             response = self._call_openai_with_retry(
                 model="gpt-5-mini",
                 input=[
-                    {"role": "system", "content": [{"type": "input_text", "text": f"You are an expert translator. MANDATORY: 1) ALL translations in {self._get_language_name(target_language_code)} ONLY. 2) CORRUPTION DETECTION: Clean repetitive patterns. 3) EXTRACT meaningful speech only. 4) Ensure natural {self._get_language_name(target_language_code)} output. OUTPUT FORMAT: Return ONLY valid JSON with 'segments' array."}]},
+                    {"role": "system", "content": [{"type": "input_text", "text": f"You are an expert translator. MANDATORY: 1) ALL translations in {self._get_language_name(target_language_code)} ONLY. 2) Use COLLOQUIAL/INFORMAL language (everyday conversation style). 3) Use STANDARD DIALECT and COMMON/POPULAR words. 4) FULLY LOCALIZE all cultural references. 5) CORRUPTION DETECTION: Clean repetitive patterns. 6) EXTRACT meaningful speech only. 7) Sound AUTHENTIC like native speakers, NOT textbook translation. OUTPUT FORMAT: Return ONLY valid JSON with 'segments' array."}]},
                     {"role": "user", "content": [{"type": "input_text", "text": prompt}]}
                 ],
                 text={"verbosity": "low"},
@@ -427,9 +437,18 @@ FALLBACK: Use "[unclear audio]" for completely corrupted segments
 TRANSLATION REQUIREMENTS:
 1. LANGUAGE PURITY: 100% {target_lang_name} - never mix other languages
 2. STRUCTURE: Preserve exact timing, segment count, and IDs (1:1 mapping)
-3. QUALITY: Natural, professional speech that sounds native
+3. NATURAL NATIVE SPEECH: Sound like everyday conversation by native speakers
+   - Use COLLOQUIAL/INFORMAL language (how people talk in daily life)
+   - Use STANDARD DIALECT (neutral, understood by all speakers)
+   - Prefer COMMON/POPULAR vocabulary over formal words
+   - Avoid literal translation - adapt meaning naturally
+   - Make it AUTHENTIC, not textbook style
 4. EMOTION: Preserve speaker's tone and emphasis
-5. CULTURAL: Adapt idioms/expressions to target culture
+5. FULL CULTURAL LOCALIZATION:
+   - Convert ALL cultural references to {target_lang_name} culture equivalents
+   - Adapt idioms/metaphors to expressions familiar in target culture
+   - Replace foreign examples/names with local alternatives when relevant
+   - Use popular expressions native to {target_lang_name} speakers
 6. CONTEXT: Use surrounding segments to infer unclear parts
 7. CONSISTENCY: Keep terminology consistent across all segments
 8. OUTPUT: EXACTLY {len(segments)} segments
@@ -558,7 +577,12 @@ CRITICAL RULES:
 3. Content Coverage: ALL input text must appear in output - NO empty segments
 4. Speaker Count: {num_speakers if num_speakers else 'auto'} speakers expected - maintain distinction
 5. Emotion: Preserve speaker's tone, emphasis, and emotional intent
-6. Natural: Output must sound natural in {target_lang_name}, not word-for-word translation
+6. NATURAL NATIVE SPEECH: Sound like everyday native speakers
+   - Use COLLOQUIAL/INFORMAL expressions (daily conversation style)
+   - Use STANDARD DIALECT (neutral, widely understood)
+   - Prefer COMMON/POPULAR words over formal vocabulary
+   - Adapt naturally, NOT word-for-word literal translation
+   - Make output AUTHENTIC like real {target_lang_name} speakers
 
 CORRUPTION AUTO-CLEAN:
 • Repetitive patterns (40,000,000... or juice juice juice...) → Extract once or mark unclear
@@ -567,7 +591,7 @@ CORRUPTION AUTO-CLEAN:
 • Partial corruption → Extract meaningful parts using context clues
 
 QUALITY GUIDELINES:
-• Cultural adaptation: Convert idioms/expressions naturally for target culture
+• FULL Cultural Localization: Convert ALL cultural references to {target_lang_name} equivalents
 • Consistency: Keep terminology consistent across segments
 • Punctuation: Adapt to {target_lang_name} conventions
 • Context: Use surrounding segments to infer unclear audio when possible
