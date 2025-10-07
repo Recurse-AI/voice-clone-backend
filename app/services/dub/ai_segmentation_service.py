@@ -198,14 +198,26 @@ CRITICAL: Must output exactly {len(segments)} segments as valid JSON. {processin
 
 🚨 ABSOLUTE RULE: Every output segment MUST be ≤15.0 seconds duration. NO EXCEPTIONS.
 
+🚨 CRITICAL SPEAKER PRESERVATION RULES (HIGHEST PRIORITY):
+1. EVERY input segment has a "speaker" field (SPEAKER_00, SPEAKER_01, etc.)
+2. When you SPLIT a segment → ALL output segments MUST keep the SAME speaker as the input
+3. When you MERGE segments → Check speakers FIRST:
+   - If SAME speaker → use that speaker in merged output
+   - If DIFFERENT speakers → DO NOT MERGE (keep separate to maintain speaker distinction)
+4. NEVER change a speaker assignment - only copy from input
+5. NEVER default to SPEAKER_00 - use the actual speaker from input segment
+6. Speaker boundaries are SACRED - never merge across different speakers
+
 SEGMENTATION STRATEGY:
 1. Calculate each segment: (end - start) MUST be ≤15.0 seconds
 2. SPLIT long segments at:
    • Sentence endings (period, question mark, exclamation)
    • Clause boundaries (commas, semicolons)
    • Natural pauses in speech flow
-   • Speaker transitions
-3. MERGE short segments (< 2s) if combined ≤15.0s
+   • Speaker transitions (NEVER merge different speakers)
+3. MERGE short segments (< 2s) ONLY if:
+   • Combined duration ≤15.0s AND
+   • SAME SPEAKER (never merge different speakers)
 4. IDEAL target: 3-8 seconds per segment for best voice quality
 5. Output segment count can differ from input count
 
@@ -215,12 +227,13 @@ QUALITY REQUIREMENTS:
 - Adapt cultural idioms/expressions naturally
 - Maintain conversation flow and context
 - Fix corrupted text by extracting meaningful parts
+- NEVER merge segments from different speakers
 
 {translation_instructions}
 
 INPUT: {json.dumps(segments, ensure_ascii=False, indent=2)}
 
-OUTPUT JSON:
+OUTPUT JSON EXAMPLE:
 {{
   "segments": [
     {{
@@ -230,17 +243,24 @@ OUTPUT JSON:
       "speaker": "SPEAKER_00",
       "original_text": "meaningful clean text",
       "dubbed_text": "natural {target_lang_name} translation"
+    }},
+    {{
+      "id": "seg_002", 
+      "start": 4.560,
+      "end": 7.200,
+      "speaker": "SPEAKER_01",
+      "original_text": "meaningful clean text",
+      "dubbed_text": "natural {target_lang_name} translation"
     }}
   ]
 }}
 
-🚨 MANDATORY SPEAKER PRESERVATION:
-- MUST preserve "speaker" field from input to output EXACTLY
-- If input segment has "speaker": "SPEAKER_00", output MUST include "speaker": "SPEAKER_00"
-- If input has no speaker, output can omit or set null
-- Speaker tags are CRITICAL for voice consistency - NEVER drop them
-- Consider speaker changes when creating segments
-- Keep same-speaker dialogue together when natural
+🚨 SPEAKER ASSIGNMENT ALGORITHM:
+Step 1: Read input segment → Note its speaker (e.g., "SPEAKER_01")
+Step 2: If splitting → Copy "SPEAKER_01" to ALL resulting segments
+Step 3: If merging → Check speakers match first, then merge and use that speaker
+Step 4: Write output → Include exact speaker from input (e.g., "speaker": "SPEAKER_01")
+NEVER write "speaker": "SPEAKER_00" unless input was actually SPEAKER_00!
 
 🚨 CORRUPTION AUTO-CLEAN EXAMPLES:
 - "40,000,000,000..." → Extract meaningful part or "[unclear audio]"
@@ -254,7 +274,7 @@ OUTPUT JSON:
 - NEVER mix languages (no English in French, no Spanish in English, etc.)
 - Cultural adaptation: Convert idioms to target culture equivalents
 
-FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓"""
+FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓ Speaker preserved correctly ✓"""
     
     def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0) -> List[Dict[str, Any]]:
         formatted_segments = []
@@ -531,17 +551,24 @@ FRESH DUBBING CHUNK {chunk_number}/{total_chunks}:
 - Start segment IDs from seg_{len(all_results)+1:03d}  
 - Time range: {chunk[0].get('start', 0):.3f}s to {chunk[-1].get('end', 0):.3f}s
 
+🚨 SPEAKER PRESERVATION (MANDATORY):
+- Each input segment has a "speaker" field (e.g., SPEAKER_00, SPEAKER_01)
+- COPY the exact speaker value from input to output - NEVER change it
+- When splitting: ALL resulting segments keep the SAME speaker as source
+- When merging: ONLY merge if SAME speaker (NEVER merge different speakers)
+- Keep speaker boundaries distinct - this is critical for voice consistency
+
 OPTIMIZATION GOALS:
 - IDEAL segment length: 3-8 seconds (optimal for voice cloning quality)
 - MAXIMUM segment length: 15.0 seconds (strict limit)
-- Merge very short segments if combined duration ≤15s
+- Merge very short segments if SAME speaker and combined duration ≤15s
 - Split long segments intelligently at natural breaks
 
 SPLIT PRIORITY (when breaking long segments):
 1. Sentence boundaries (highest priority)
 2. Clause boundaries (commas, conjunctions)
 3. Natural pauses in speech
-4. Speaker changes (if applicable)
+4. Speaker changes (NEVER merge across different speakers)
 5. Breathing points for voice actors
 
 QUALITY RULES:
@@ -550,14 +577,15 @@ QUALITY RULES:
 - CLEAN all corruption patterns automatically
 - PRESERVE emotional flow and conversation context
 - Keep single speaker's continuous thought together when possible
+- NEVER merge segments with different speakers
 
 CONTENT PRESERVATION (CRITICAL):
 - MUST cover ALL input text exactly once - no gaps, no missing content
-- EVERY segment MUST have both original_text and dubbed_text filled
+- EVERY segment MUST have both original_text, dubbed_text AND speaker filled
 - NO empty segments allowed - if unclear, use "[unclear audio]" in target language
 - If {num_speakers if num_speakers else 'auto'} speakers detected, preserve speaker distinction across segments
-- Split/merge intelligently but NEVER drop content
-- Validate output: all input content must appear in output segments
+- Split/merge intelligently but NEVER drop content or speaker info
+- Validate output: all input content AND speaker tags must appear in output segments
 """
             
             target_lang_name = self._get_language_name(target_lang_code)
@@ -571,11 +599,19 @@ CONTENT PRESERVATION (CRITICAL):
 
 MODE: {'REDUB - Preserve exact timing and structure (1:1 mapping)' if preserve_segments else 'FRESH - Intelligent segmentation for optimal voice cloning'}
 
+🚨 TOP PRIORITY - SPEAKER PRESERVATION:
+- EVERY input segment has a speaker field (SPEAKER_00, SPEAKER_01, etc.)
+- YOU MUST COPY the exact speaker from input to output - NEVER change it
+- When splitting: ALL output segments inherit the speaker from original input
+- When merging: ONLY merge segments with SAME speaker, never different speakers
+- NEVER default to SPEAKER_00 - use the actual speaker value from input
+- Multiple speakers detected: {num_speakers if num_speakers else 'auto'} - keep them distinct
+
 CRITICAL RULES:
-1. Duration: All segments ≤15 seconds maximum
-2. Language: {target_lang_name} ONLY - no mixing with other languages
-3. Content Coverage: ALL input text must appear in output - NO empty segments
-4. Speaker Count: {num_speakers if num_speakers else 'auto'} speakers expected - maintain distinction
+1. Speaker: PRESERVE exact speaker from input (highest priority)
+2. Duration: All segments ≤15 seconds maximum
+3. Language: {target_lang_name} ONLY - no mixing with other languages
+4. Content Coverage: ALL input text must appear in output - NO empty segments
 5. Emotion: Preserve speaker's tone, emphasis, and emotional intent
 6. NATURAL NATIVE SPEECH: Sound like everyday native speakers
    - Use COLLOQUIAL/INFORMAL expressions (daily conversation style)
@@ -596,7 +632,7 @@ QUALITY GUIDELINES:
 • Punctuation: Adapt to {target_lang_name} conventions
 • Context: Use surrounding segments to infer unclear audio when possible
 
-OUTPUT: Valid JSON with 'segments' array only"""}]},
+OUTPUT: Valid JSON with 'segments' array only (each segment MUST include exact speaker from input)"""}]},
                         {"role": "user", "content": [{"type": "input_text", "text": prompt}]}
                     ],
                     text={"verbosity": "low"},
