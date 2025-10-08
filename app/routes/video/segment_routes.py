@@ -108,10 +108,17 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
     if not manifest_url:
         raise HTTPException(status_code=400, detail="No manifest available for this job")
     manifest = manifest_manager.load_manifest(manifest_url)
-    id_to_edit = {e.id: e for e in request_body.segments}
+    
+    # Create mapping of request segments by ID
+    request_segments_by_id = {e.id: e for e in request_body.segments}
+    request_segment_ids = set(request_segments_by_id.keys())
+    
+    # Process segments: keep only those in request, update their data
+    updated_segments = []
     for seg in manifest.get("segments", []):
-        if seg["id"] in id_to_edit:
-            edit = id_to_edit[seg["id"]]
+        if seg["id"] in request_segment_ids:
+            # Segment exists in request - update it
+            edit = request_segments_by_id[seg["id"]]
             if edit.dubbed_text is not None:
                 seg["dubbed_text"] = edit.dubbed_text
             if edit.start is not None:
@@ -120,9 +127,18 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
                 seg["end"] = edit.end
             if edit.reference_id is not None:
                 seg["reference_id"] = edit.reference_id
+            if edit.original_text is not None:
+                logger.info(f"Updating original_text for segment {seg['id']}: '{edit.original_text}'")
+                seg["original_text"] = edit.original_text
             seg["duration_ms"] = max(0, seg["end"] - seg["start"])
+            updated_segments.append(seg)
+        # Segments not in request_segment_ids are effectively deleted
+    
+    # Replace manifest segments with updated ones
+    manifest["segments"] = updated_segments
     manifest["version"] = int(manifest.get("version", 1)) + 1
-
+    logger.info(f"Saving manifest with {len(updated_segments)} segments")
+    logger.info(f"Manifest: {manifest}")
     # Write and upload manifest back to R2
     job_dir = _ensure_job_dir(job_id)
     manifest_path = os.path.join(job_dir, f"manifest_{job_id}.json")

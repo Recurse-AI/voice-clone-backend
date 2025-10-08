@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import os
 import logging
 import torch
@@ -173,6 +174,9 @@ app.include_router(user_jobs_router, prefix="/api/jobs", tags=["user-jobs"])
 app.include_router(youtube_transcript_router, prefix="/api", tags=["youtube-transcript"])
 app.include_router(fish_audio_router)
 app.include_router(clip_generation_router, prefix="/api/clips", tags=["clip-generation"])
+
+# Mount static files for serving assets like logos
+app.mount("/static", StaticFiles(directory="assets"), name="static")
 
 
 @app.get("/", response_model=StatusResponse)
