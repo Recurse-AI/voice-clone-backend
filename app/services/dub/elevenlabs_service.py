@@ -60,7 +60,6 @@ class ElevenLabsService:
     def generate_speech(self, text: str, voice_id: str, target_language: str = None, job_id: str = None, segment_index: int = 0, target_duration_ms: int = None) -> Dict[str, Any]:
         try:
             from app.config.settings import settings
-            import soundfile as sf
             
             if not voice_id:
                 return {"success": False, "error": "voice_id is required"}
@@ -69,42 +68,11 @@ class ElevenLabsService:
             os.makedirs(temp_dir, exist_ok=True)
             output_path = os.path.join(temp_dir, f"cloned_elevenlabs_{job_id}_{segment_index:03d}.mp3")
             
-            if target_duration_ms:
-                words = len(text.split())
-                chars = len(text)
-                
-                estimated_duration_ms = max(words * 400, chars * 80)
-                
-                if estimated_duration_ms > target_duration_ms:
-                    speed = min(1.2, max(0.8, estimated_duration_ms / target_duration_ms))
-                else:
-                    speed = 1.1
-            else:
-                speed = 1.1
-            
-            audio = self._generate_with_retry(text, voice_id, speed)
+            audio = self._generate_with_retry(text, voice_id, speed=1.0)
             audio_bytes = b"".join(chunk for chunk in audio)
             
             with open(output_path, "wb") as f:
                 f.write(audio_bytes)
-            
-            if target_duration_ms:
-                try:
-                    audio_data, sample_rate = sf.read(output_path)
-                    actual_duration_ms = int(len(audio_data) / sample_rate * 1000)
-                    
-                    if actual_duration_ms > target_duration_ms * 1.1:
-                        speed_ratio = actual_duration_ms / target_duration_ms
-                        new_speed = min(1.2, max(0.8, speed * speed_ratio))
-                        
-                        if abs(new_speed - speed) >= 0.1:
-                            audio = self._generate_with_retry(text, voice_id, new_speed)
-                            audio_bytes = b"".join(chunk for chunk in audio)
-                            
-                            with open(output_path, "wb") as f:
-                                f.write(audio_bytes)
-                except Exception:
-                    pass
             
             return {"success": True, "output_path": output_path}
         except Exception as e:

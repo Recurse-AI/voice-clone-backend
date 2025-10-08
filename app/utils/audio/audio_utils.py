@@ -369,9 +369,29 @@ class AudioUtils:
                 expected_samples = end_sample - start_sample
 
                 if len(cloned_audio) != expected_samples:
-                    import librosa
-                    stretch_rate = len(cloned_audio) / expected_samples
-                    cloned_audio = librosa.effects.time_stretch(cloned_audio, rate=stretch_rate)
+                    expected_duration = expected_samples / target_sample_rate
+                    current_duration = len(cloned_audio) / target_sample_rate
+                    
+                    if abs(current_duration - expected_duration) > 0.01:
+                        temp_input = os.path.join(process_temp_dir, f"stretch_input_{segment.get('index', 0)}.wav")
+                        temp_output = os.path.join(process_temp_dir, f"stretch_output_{segment.get('index', 0)}.wav")
+                        
+                        sf.write(temp_input, cloned_audio, target_sample_rate)
+                        
+                        atempo = current_duration / expected_duration
+                        atempo = max(0.5, min(2.0, atempo))
+                        
+                        ffmpeg_path = AudioUtils()._get_ffmpeg_path()
+                        result = subprocess.run([
+                            ffmpeg_path, '-y', '-i', temp_input,
+                            '-filter:a', f'atempo={atempo}',
+                            temp_output
+                        ], capture_output=True)
+                        
+                        if result.returncode == 0 and os.path.exists(temp_output):
+                            cloned_audio, _ = sf.read(temp_output)
+                            os.remove(temp_input)
+                            os.remove(temp_output)
                     
                     if len(cloned_audio) != expected_samples:
                         if len(cloned_audio) > expected_samples:
