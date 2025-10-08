@@ -10,23 +10,7 @@ logger = logging.getLogger(__name__)
 
 def get_logo_url():
     """Get the official ClearVocals logo URL"""
-    try:
-        import base64
-        import os
-        
-        # Try to load logo from assets folder
-        logo_path = os.path.join(os.path.dirname(__file__), '..', '..', 'assets', 'main_white_background.png')
-        if os.path.exists(logo_path):
-            with open(logo_path, 'rb') as f:
-                logo_data = base64.b64encode(f.read()).decode()
-                return f"data:image/png;base64,{logo_data}"
-        
-        # Fallback to R2 public URL
-        return "https://pub-e668f82c3ede4548869ac0a3acad4e7f.r2.dev/dub-uploads/test_acb34834/main_white_background.png"
-    except Exception as e:
-        logger.warning(f"Failed to load logo as base64: {e}")
-        # Fallback to R2 public URL
-        return "https://pub-e668f82c3ede4548869ac0a3acad4e7f.r2.dev/dub-uploads/test_acb34834/main_white_background.png"
+    return "https://pub-e668f82c3ede4548869ac0a3acad4e7f.r2.dev/dub-uploads/test_acb34834/main_white_background.png"
 
 # Function to send HTML email using smtplib
 def send_email(sender_email: str, receiver_email: str, subject: str, body: str, password: str, is_html: bool = False, raise_on_error: bool = True):
