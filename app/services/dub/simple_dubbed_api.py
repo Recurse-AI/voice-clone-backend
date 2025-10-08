@@ -1050,7 +1050,6 @@ class SimpleDubbedAPI:
         return self._upload_and_finalize(job_id, process_temp_dir, final_audio_path, video_result)
     
     def _generate_srt_file(self, job_id: str, dubbed_segments: list, process_temp_dir: str) -> str:
-        logger.info("Generating subtitle file...")
         processor = VideoProcessor(temp_dir=process_temp_dir)
         subtitle_data = []
         
@@ -1060,9 +1059,13 @@ class SimpleDubbedAPI:
             end = seg["end"] / 1000.0
             subtitle_data.append({"start": start, "end": end, "text": text})
         
-        subtitle_path = os.path.join(process_temp_dir, f"subtitles_{job_id}.srt")
-        processor.create_srt_file(subtitle_data, subtitle_path)
-        return subtitle_path
+        srt_path = os.path.join(process_temp_dir, f"subtitles_{job_id}.srt")
+        processor.create_srt_file(subtitle_data, srt_path)
+        
+        ass_path = os.path.join(process_temp_dir, f"subtitles_{job_id}.ass")
+        processor.create_ass_file(subtitle_data, ass_path)
+        
+        return ass_path
     
     def _create_process_summary(self, job_id: str, dubbed_segments: list, final_audio_path: str,
                                subtitle_path: str, process_temp_dir: str, target_language: str,
@@ -1187,13 +1190,10 @@ class SimpleDubbedAPI:
             add_subtitles = getattr(self, 'add_subtitle_to_video', False)
             subtitle_path = None
             if add_subtitles:
-                subtitle_file = f"subtitles_{job_id}.srt"
+                subtitle_file = f"subtitles_{job_id}.ass"
                 potential_subtitle_path = output_dir_path / subtitle_file
                 if potential_subtitle_path.exists():
                     subtitle_path = str(potential_subtitle_path)
-                    logger.info(f"Adding subtitles: {subtitle_path}")
-                else:
-                    logger.warning(f"Subtitle file not found: {subtitle_file}")
             
             cmd = ["ffmpeg", "-y"]
             if settings.FFMPEG_USE_GPU:
@@ -1222,7 +1222,7 @@ class SimpleDubbedAPI:
                 video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
                 preset = 'fast' if settings.FFMPEG_USE_GPU else 'veryfast'
                 escaped_path = subtitle_path.replace(chr(92), '/').replace(':', r'\:')
-                subtitle_filter = f"subtitles='{escaped_path}':force_style='FontSize=24,Bold=1'"
+                subtitle_filter = f"ass='{escaped_path}'"
                 cmd.extend(["-vf", subtitle_filter, "-c:v", video_codec, "-preset", preset, "-crf", "23"])
             else:
                 cmd.extend(["-c:v", "copy"])
