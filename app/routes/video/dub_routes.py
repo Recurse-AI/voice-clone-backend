@@ -325,7 +325,6 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
             })
             return
 
-        # Download missing files before processing
         logger.info(f"Checking for missing files in job directory: {job_dir}")
         try:
             api._download_missing_files(job_id, manifest, job_dir)
@@ -539,12 +538,12 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Prepare manifest for redub using utility function
+    reference_ids_for_redub = request_body.reference_ids if request_body.reference_ids else None
     manifest = job_utils.prepare_manifest_for_redub(
         manifest, redub_job_id, request_body.target_language, parent_job_id, 
         request_body.model_type,
         getattr(request_body, "voice_type", None),
-        getattr(request_body, "reference_ids", []),
+        reference_ids_for_redub,
         request_body.add_subtitle_to_video
     )
     

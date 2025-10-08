@@ -430,6 +430,62 @@ class SimpleDubbedAPI:
             logger.error(f"Failed to create speaker voice clones: {e}")
             return []
     
+    def _run_speaker_detection(self, transcription_result: dict, process_temp_dir: str, job_id: str, tag_segments: bool = True) -> bool:
+        """Run speaker detection and optionally tag segments. Returns True if successful."""
+        try:
+            from app.services.dub.speaker_detection_service import speaker_detection_service
+            
+            vocal_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
+            if not os.path.exists(vocal_path):
+                logger.warning(f"Vocal file not found at {vocal_path}")
+                return False
+            
+            num_speakers = self.num_of_speakers if hasattr(self, 'num_of_speakers') and self.num_of_speakers else None
+            logger.info(f"Running speaker detection (expected speakers: {num_speakers or 'auto'})")
+            
+            speaker_timeline = speaker_detection_service.detect_speakers(vocal_path, job_id, num_speakers)
+            transcription_result["speaker_timeline"] = speaker_timeline
+            
+            if tag_segments:
+                for seg in transcription_result.get("segments", []):
+                    seg_start_ms = seg.get("start", 0)
+                    seg_end_ms = seg.get("end", 0)
+                    seg["speaker"] = self._get_segment_speaker(seg_start_ms, seg_end_ms, speaker_timeline)
+                logger.info(f"Tagged {len(transcription_result.get('segments', []))} segments with speakers")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Speaker detection failed: {e}")
+            return False
+    
+    def _detect_and_create_voice_clones(self, transcription_result: dict, process_temp_dir: str, job_id: str) -> bool:
+        """Detect speakers and create voice clones for best/medium models. Returns True if successful."""
+        try:
+            if not transcription_result.get("speaker_timeline"):
+                self._run_speaker_detection(transcription_result, process_temp_dir, job_id, tag_segments=False)
+            
+            speaker_timeline = transcription_result.get("speaker_timeline", [])
+            if not speaker_timeline:
+                logger.warning("No speaker timeline available for voice clone generation")
+                return False
+            
+            unique_speakers = sorted(set(item["speaker"] for item in speaker_timeline))
+            logger.info(f"Creating voice clones for {len(unique_speakers)} speakers")
+            
+            self.reference_ids = self._create_speaker_voice_clones(
+                speaker_timeline, unique_speakers, process_temp_dir, job_id
+            )
+            
+            if self.reference_ids:
+                logger.info(f"Created {len(self.reference_ids)} voice clones")
+                return True
+            else:
+                model_name = "ElevenLabs" if self.model_type == "best" else "Fish Audio API"
+                raise ValueError(f"{model_name} voice clone creation failed. Please check API credits or try again.")
+        except Exception as e:
+            logger.error(f"Voice clone generation failed: {e}")
+            raise
+    
     def _get_ai_voice_reference(self, reference_id: str, source_language_code: str) -> tuple:
         from app.config.settings import settings as _settings
         from app.services.dub.fish_audio_sample_helper import fetch_sample_audio_wav_bytes
@@ -745,57 +801,24 @@ class SimpleDubbedAPI:
                 self._update_phase_progress(job_id, "transcription", 1.0, "Transcription completed")
         
         if not manifest_override:
-            try:
-                from app.services.dub.speaker_detection_service import speaker_detection_service
-                
-                vocal_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
-                if os.path.exists(vocal_path):
-                    num_speakers = self.num_of_speakers if hasattr(self, 'num_of_speakers') and self.num_of_speakers else None
-                    logger.info(f"Running speaker detection before AI segmentation (expected speakers: {num_speakers or 'auto'})")
-                    speaker_timeline = speaker_detection_service.detect_speakers(vocal_path, job_id, num_speakers)
-                    transcription_result["speaker_timeline"] = speaker_timeline
-                    
-                    for seg in transcription_result.get("segments", []):
-                        seg_start_ms = seg.get("start", 0)
-                        seg_end_ms = seg.get("end", 0)
-                        seg["speaker"] = self._get_segment_speaker(seg_start_ms, seg_end_ms, speaker_timeline)
-                    
-                    logger.info(f"Tagged {len(transcription_result.get('segments', []))} segments with speakers")
-            except Exception as e:
-                logger.error(f"Speaker detection failed: {e}, continuing without speaker tags")
+            self._run_speaker_detection(transcription_result, process_temp_dir, job_id, tag_segments=True)
         else:
-            logger.info("Redub: using manifest speaker info")
+            logger.info("Resume/Redub: using manifest speaker info")
         
-        if not self.reference_ids and self.model_type in ["best", "medium"]:
-            speaker_timeline = transcription_result.get("speaker_timeline", [])
-            if speaker_timeline:
-                unique_speakers = sorted(set(item["speaker"] for item in speaker_timeline))
-                logger.info(f"Creating voice clones for {len(unique_speakers)} speakers")
-                
-                self.reference_ids = self._create_speaker_voice_clones(
-                    speaker_timeline, unique_speakers, process_temp_dir, job_id
-                )
-                
-                if self.reference_ids:
-                    logger.info(f"Created {len(self.reference_ids)} voice clones")
-                else:
-                    model_name = "ElevenLabs" if self.model_type == "best" else "Fish Audio API"
-                    raise ValueError(f"{model_name} voice clone creation failed. Please check API credits or try again.")
+        if not self.reference_ids and self.model_type in ["best", "medium"] and not self.is_review_mode:
+            self._detect_and_create_voice_clones(transcription_result, process_temp_dir, job_id)
         
         self._update_phase_progress(job_id, "dubbing", 0.0, "AI creating segments and dubbing")
         
-        # Check if we have manifest with already dubbed texts (resume after review)
         edited_map = self._get_edited_text_map(manifest_override, target_language) if manifest_override else {}
         
         if edited_map:
-            # RESUME: Use manifest segments directly, no AI needed
             logger.info(f"RESUME MODE: Using existing segments and translations ({len(edited_map)} segments)")
             ai_segments = self._use_manifest_segments_for_resume(transcription_result, edited_map)
             self._update_phase_progress(job_id, "dubbing", 1.0, "Using reviewed segments and dubbing")
         else:
-            # Fresh job or redub - use AI service
             ai_service = get_ai_segmentation_service()
-            preserve_segments = bool(manifest_override)  # True for redub, False for fresh
+            preserve_segments = bool(manifest_override)
             ai_segments = ai_service.create_optimal_segments_and_dub(
                 transcription_result,
                 target_language_code,
