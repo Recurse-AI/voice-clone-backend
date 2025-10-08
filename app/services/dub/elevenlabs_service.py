@@ -2,6 +2,7 @@ import logging
 import os
 from typing import Dict, Any, List, Optional
 from io import BytesIO
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
 
@@ -40,40 +41,42 @@ class ElevenLabsService:
             logger.error(f"Failed to create voice clone: {e}")
             return {"success": False, "error": str(e)}
     
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=4, max=30),
+        retry=retry_if_exception_type((TimeoutError, ConnectionError, Exception)),
+        reraise=True
+    )
+    def _generate_with_retry(self, text: str, voice_id: str):
+        return self.client.text_to_speech.convert(
+            text=text,
+            voice_id=voice_id,
+            model_id="eleven_v3"
+        )
+    
     def generate_speech(self, text: str, voice_id: str, target_language: str = None, job_id: str = None, segment_index: int = 0) -> Dict[str, Any]:
         try:
             from app.config.settings import settings
-            import tempfile
             
             if not voice_id:
                 return {"success": False, "error": "voice_id is required"}
             
             logger.info(f"Generating speech with ElevenLabs (voice: {voice_id[:8]}...)")
             
-            audio = self.client.text_to_speech.convert(
-                text=text,
-                voice_id=voice_id,
-                model_id="eleven_v3"
-            )
-            
+            audio = self._generate_with_retry(text, voice_id)
             audio_bytes = b"".join(chunk for chunk in audio)
             
             temp_dir = os.path.join(settings.TEMP_DIR, job_id or "temp")
             os.makedirs(temp_dir, exist_ok=True)
             
-            # Use same naming pattern as Fish API and local model: cloned_{job_id}_{segment_index:03d}.wav
             output_path = os.path.join(temp_dir, f"cloned_elevenlabs_{job_id}_{segment_index:03d}.mp3")
             with open(output_path, "wb") as f:
                 f.write(audio_bytes)
             
-            logger.info(f"Speech generated successfully: {output_path}")
-            
-            return {
-                "success": True,
-                "output_path": output_path
-            }
+            logger.info(f"✅ Speech generated: {output_path}")
+            return {"success": True, "output_path": output_path}
         except Exception as e:
-            logger.error(f"ElevenLabs generation failed: {e}")
+            logger.error(f"❌ ElevenLabs failed after retries: {e}")
             return {"success": False, "error": str(e)}
     
     def get_all_voices(self) -> Dict[str, Any]:
