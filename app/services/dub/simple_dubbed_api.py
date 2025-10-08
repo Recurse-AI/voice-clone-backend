@@ -809,8 +809,9 @@ class SimpleDubbedAPI:
                 self._update_phase_progress(job_id, "dubbing", 1.0, f"AI completed {len(ai_segments)} segments")
         
         for segment in ai_segments:
-            speaker = segment.get("speaker")
-            segment["reference_id"] = self._assign_reference_id(speaker) if speaker and self.reference_ids else None
+            if not segment.get("reference_id"):
+                speaker = segment.get("speaker")
+                segment["reference_id"] = self._assign_reference_id(speaker) if speaker and self.reference_ids else None
         
         logger.info(f"Assigned reference_ids to {len(ai_segments)} segments")
         
