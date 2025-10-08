@@ -228,20 +228,16 @@ class VideoProcessor:
         }
 
     def create_ass_file(self, subtitle_data: List[Dict], output_path: Path) -> None:
-        """Create ASS subtitle file with proper Unicode support for Indic languages"""
         with open(output_path, 'w', encoding='utf-8-sig') as f:
-            # ASS header
             f.write("[Script Info]\n")
             f.write("ScriptType: v4.00+\n")
             f.write("PlayResX: 1920\n")
             f.write("PlayResY: 1080\n\n")
             
-            # Style definition (minimal, clean)
             f.write("[V4+ Styles]\n")
             f.write("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
-            f.write("Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,20,1\n\n")
+            f.write("Style: Default,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2,1,2,20,20,30,1\n\n")
             
-            # Events
             f.write("[Events]\n")
             f.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
             
@@ -272,34 +268,14 @@ class VideoProcessor:
                 if not text:
                     continue
                 
-                # Chunk text for optimal single-line display
-                chunks = self._chunk_subtitle_text(text)
+                start_time_str = self._seconds_to_srt_time(subtitle['start'])
+                end_time_str = self._seconds_to_srt_time(subtitle['end'])
                 
-                if not chunks:
-                    continue
+                f.write(f"{subtitle_index}\n")
+                f.write(f"{start_time_str} --> {end_time_str}\n")
+                f.write(f"{text}\n\n")
                 
-                # Calculate timing for each chunk
-                start_time = subtitle['start']
-                end_time = subtitle['end']
-                duration = end_time - start_time
-                chunk_duration = duration / len(chunks)
-                
-                for i, chunk in enumerate(chunks):
-                    chunk_start = start_time + (i * chunk_duration)
-                    chunk_end = start_time + ((i + 1) * chunk_duration)
-                    
-                    # Ensure last chunk ends exactly at original end time
-                    if i == len(chunks) - 1:
-                        chunk_end = end_time
-                    
-                    start_time_str = self._seconds_to_srt_time(chunk_start)
-                    end_time_str = self._seconds_to_srt_time(chunk_end)
-                    
-                    f.write(f"{subtitle_index}\n")
-                    f.write(f"{start_time_str} --> {end_time_str}\n")
-                    f.write(f"{chunk}\n\n")
-                    
-                    subtitle_index += 1
+                subtitle_index += 1
     
     def _seconds_to_srt_time(self, seconds: float) -> str:
         hours = int(seconds // 3600)

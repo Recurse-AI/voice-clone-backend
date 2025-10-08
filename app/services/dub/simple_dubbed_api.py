@@ -235,6 +235,8 @@ class SimpleDubbedAPI:
             logger.error(error)
             return {"success": False, "error": error}
         
+        self.created_voice_ids = []  # Track voices for cleanup
+        
         try:
             voice_config = self._setup_voice_config(manifest_override, model_type, voice_type, reference_ids, add_subtitle_to_video, num_of_speakers)
             
@@ -274,6 +276,34 @@ class SimpleDubbedAPI:
             if locals().get("output_dir"):
                 AudioUtils.remove_temp_dir(folder_path=locals().get("output_dir"))
             return {"success": False, "error": str(e)}
+        
+        finally:
+            # Cleanup own voices (success or error)
+            self._cleanup_created_voices()
+    
+    def _cleanup_created_voices(self):
+        if not hasattr(self, 'created_voice_ids') or not self.created_voice_ids:
+            return
+        
+        try:
+            if self.model_type == "best":
+                from app.services.dub.elevenlabs_service import get_elevenlabs_service
+                service = get_elevenlabs_service()
+            elif self.model_type == "medium":
+                from app.services.dub.fish_audio_api_service import get_fish_audio_api_service
+                service = get_fish_audio_api_service()
+            else:
+                return
+            
+            for voice_id in self.created_voice_ids:
+                try:
+                    service.delete_voice(voice_id)
+                except Exception:
+                    pass
+            
+            self.created_voice_ids.clear()
+        except Exception:
+            pass
     
     def _get_segment_speaker(self, seg_start_ms: int, seg_end_ms: int, speaker_timeline: List[Dict]) -> str:
         seg_start_s = seg_start_ms / 1000.0
@@ -322,11 +352,6 @@ class SimpleDubbedAPI:
             from app.services.dub.fish_audio_api_service import get_fish_audio_api_service
             from app.services.dub.reference_audio_optimizer import get_reference_audio_optimizer
             from app.utils.audio import AudioUtils
-            
-            # Auto-cleanup old voices
-            if self.model_type in ["best", "medium"]:
-                service = get_elevenlabs_service() if self.model_type == "best" else get_fish_audio_api_service()
-                service.cleanup_old_voices()
             
             audio_utils = AudioUtils()
             vocal_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
@@ -393,6 +418,7 @@ class SimpleDubbedAPI:
                 if result.get("success"):
                     voice_id = result.get("voice_id") or result.get("reference_id")
                     reference_ids.append(voice_id)
+                    self.created_voice_ids.append(voice_id)  # Track for cleanup
                     logger.info(f"Created voice clone for {speaker}: {voice_id}")
                 else:
                     logger.error(f"Failed to create voice clone for {speaker}: {result.get('error')}")
@@ -437,12 +463,12 @@ class SimpleDubbedAPI:
             logger.error(f"Failed to load reference audio from {audio_path}: {e}")
             return None
     
-    def _generate_with_elevenlabs(self, text: str, voice_id: str, job_id: str, target_language_code: str, segment_index: int = 0) -> dict:
+    def _generate_with_elevenlabs(self, text: str, voice_id: str, job_id: str, target_language_code: str, segment_index: int = 0, target_duration_ms: int = None) -> dict:
         from app.services.dub.elevenlabs_service import get_elevenlabs_service
         
         try:
             elevenlabs_service = get_elevenlabs_service()
-            return elevenlabs_service.generate_speech(text, voice_id, target_language_code, job_id, segment_index)
+            return elevenlabs_service.generate_speech(text, voice_id, target_language_code, job_id, segment_index, target_duration_ms)
         except Exception as e:
             logger.error(f"ElevenLabs generation error: {e}")
             return {"success": False, "error": str(e)}
@@ -504,7 +530,7 @@ class SimpleDubbedAPI:
     def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, 
                             original_text: str = "", job_id: str = None, process_temp_dir: str = None, 
                             target_language_code: str = "en", source_language_code: str = "en",
-                            segment_reference_id: str = None) -> Optional[Dict[str, Any]]:
+                            segment_reference_id: str = None, target_duration_ms: int = None) -> Optional[Dict[str, Any]]:
         try:
             start_time = time.time()
             
@@ -543,7 +569,7 @@ class SimpleDubbedAPI:
                     result = {"success": False, "error": "voice_id required for ElevenLabs"}
                 else:
                     result = self._generate_with_elevenlabs(
-                        tagged_text, ai_voice_id, job_id, target_language_code, segment_index
+                        tagged_text, ai_voice_id, job_id, target_language_code, segment_index, target_duration_ms
                     )
             elif model_type == 'medium':
                 if not ai_voice_id:
@@ -592,7 +618,8 @@ class SimpleDubbedAPI:
                 process_temp_dir=process_temp_dir,
                 target_language_code=getattr(self, '_target_language_code', 'en'),
                 source_language_code=getattr(self, '_source_language_code', 'en'),
-                segment_reference_id=data.get("reference_id")
+                segment_reference_id=data.get("reference_id"),
+                target_duration_ms=data.get("duration_ms")
             )
             elapsed = time.time() - start_time
             logger.info(f"✅ Segment {data['seg_id']} ({actual_index+1}/{total_segments}) completed in {elapsed:.2f}s")
@@ -917,11 +944,13 @@ class SimpleDubbedAPI:
         segments_data = []
         for seg, split_file in zip(ai_segments, split_result.get("split_files", [])):
             if seg.get("original_text", "").strip():
+                duration_ms = seg["end"] - seg["start"]
                 segments_data.append({
                     "seg_id": seg["id"],
                     "global_idx": seg["segment_index"],
                     "start_ms": seg["start"],
                     "end_ms": seg["end"],
+                    "duration_ms": duration_ms,
                     "original_text": seg["original_text"],
                     "dubbed_text": seg["dubbed_text"],
                     "original_audio_path": split_file["output_path"],
@@ -1021,9 +1050,7 @@ class SimpleDubbedAPI:
         return self._upload_and_finalize(job_id, process_temp_dir, final_audio_path, video_result)
     
     def _generate_srt_file(self, job_id: str, dubbed_segments: list, process_temp_dir: str) -> str:
-        """Generate ASS subtitle file for proper Unicode support"""
         logger.info("Generating subtitle file...")
-
         processor = VideoProcessor(temp_dir=process_temp_dir)
         subtitle_data = []
         
@@ -1033,9 +1060,8 @@ class SimpleDubbedAPI:
             end = seg["end"] / 1000.0
             subtitle_data.append({"start": start, "end": end, "text": text})
         
-        subtitle_path = os.path.join(process_temp_dir, f"subtitles_{job_id}.ass")
-        processor.create_ass_file(subtitle_data, subtitle_path)
-        logger.info(f"ASS subtitle file saved: {subtitle_path}")
+        subtitle_path = os.path.join(process_temp_dir, f"subtitles_{job_id}.srt")
+        processor.create_srt_file(subtitle_data, subtitle_path)
         return subtitle_path
     
     def _create_process_summary(self, job_id: str, dubbed_segments: list, final_audio_path: str,
@@ -1161,15 +1187,13 @@ class SimpleDubbedAPI:
             add_subtitles = getattr(self, 'add_subtitle_to_video', False)
             subtitle_path = None
             if add_subtitles:
-                subtitle_file = f"subtitles_{job_id}.ass"
+                subtitle_file = f"subtitles_{job_id}.srt"
                 potential_subtitle_path = output_dir_path / subtitle_file
                 if potential_subtitle_path.exists():
                     subtitle_path = str(potential_subtitle_path)
-                    logger.info(f"✅ Adding subtitles to video: {subtitle_path}")
+                    logger.info(f"Adding subtitles: {subtitle_path}")
                 else:
-                    logger.warning(f"⚠️ add_subtitle_to_video is True but subtitle file not found: {subtitle_file}")
-            else:
-                logger.info(f"ℹ️ Subtitles not requested (add_subtitle_to_video={add_subtitles})")
+                    logger.warning(f"Subtitle file not found: {subtitle_file}")
             
             cmd = ["ffmpeg", "-y"]
             if settings.FFMPEG_USE_GPU:
@@ -1194,15 +1218,11 @@ class SimpleDubbedAPI:
             else:
                 cmd.extend(["-map", "0:v", "-map", "1:a", "-filter:a", "volume=2.0"])
             
-            # Add subtitle filter if subtitles are enabled
             if subtitle_path:
                 video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
                 preset = 'fast' if settings.FFMPEG_USE_GPU else 'veryfast'
-                
-                # Use ASS filter for proper Unicode/Indic language support
                 escaped_path = subtitle_path.replace(chr(92), '/').replace(':', r'\:')
-                subtitle_filter = f"ass='{escaped_path}'"
-                
+                subtitle_filter = f"subtitles='{escaped_path}':force_style='FontSize=24,Bold=1'"
                 cmd.extend(["-vf", subtitle_filter, "-c:v", video_codec, "-preset", preset, "-crf", "23"])
             else:
                 cmd.extend(["-c:v", "copy"])
@@ -1213,7 +1233,6 @@ class SimpleDubbedAPI:
                 str(final_video_path)
             ])
             
-            logger.info(f"🎬 FFmpeg command: {' '.join(cmd[:5])}... (subtitle_burn_in={bool(subtitle_path)})")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
             if result.returncode != 0:
                 logger.error(f"FFmpeg failed: {result.stderr}")
@@ -1224,8 +1243,6 @@ class SimpleDubbedAPI:
             upload_result = self.r2_storage.upload_file(str(final_video_path), video_r2_key, "video/mp4")
             
             if upload_result["success"]:
-                subtitle_status = "WITH subtitles" if subtitle_path else "WITHOUT subtitles"
-                logger.info(f"✅ Video processed and uploaded for job {job_id} ({subtitle_status})")
                 return {
                     "success": True,
                     "video_url": upload_result["url"],

@@ -47,36 +47,77 @@ class ElevenLabsService:
         retry=retry_if_exception_type((TimeoutError, ConnectionError, Exception)),
         reraise=True
     )
-    def _generate_with_retry(self, text: str, voice_id: str):
+    def _generate_with_retry(self, text: str, voice_id: str, speed: float = 1.0):
+        voice_settings = {"stability": 0.5, "similarity_boost": 0.75}
+        if speed != 1.0:
+            voice_settings["speed"] = speed
+        
         return self.client.text_to_speech.convert(
             text=text,
             voice_id=voice_id,
-            model_id="eleven_v3"
+            model_id="eleven_v3",
+            voice_settings=voice_settings
         )
     
-    def generate_speech(self, text: str, voice_id: str, target_language: str = None, job_id: str = None, segment_index: int = 0) -> Dict[str, Any]:
+    def generate_speech(self, text: str, voice_id: str, target_language: str = None, job_id: str = None, segment_index: int = 0, target_duration_ms: int = None) -> Dict[str, Any]:
         try:
             from app.config.settings import settings
+            import soundfile as sf
             
             if not voice_id:
                 return {"success": False, "error": "voice_id is required"}
             
-            logger.info(f"Generating speech with ElevenLabs (voice: {voice_id[:8]}...)")
-            
-            audio = self._generate_with_retry(text, voice_id)
-            audio_bytes = b"".join(chunk for chunk in audio)
-            
             temp_dir = os.path.join(settings.TEMP_DIR, job_id or "temp")
             os.makedirs(temp_dir, exist_ok=True)
-            
             output_path = os.path.join(temp_dir, f"cloned_elevenlabs_{job_id}_{segment_index:03d}.mp3")
-            with open(output_path, "wb") as f:
-                f.write(audio_bytes)
             
-            logger.info(f"✅ Speech generated: {output_path}")
+            if target_duration_ms:
+                words = len(text.split())
+                chars = len(text)
+                
+                estimated_duration_ms = max(words * 400, chars * 80)
+                
+                if estimated_duration_ms > target_duration_ms:
+                    speed = min(1.2, max(0.8, estimated_duration_ms / target_duration_ms))
+                else:
+                    speed = 1.0
+            else:
+                speed = 1.0
+            
+            max_attempts = 3
+            
+            for attempt in range(max_attempts):
+                audio = self._generate_with_retry(text, voice_id, speed)
+                audio_bytes = b"".join(chunk for chunk in audio)
+                
+                with open(output_path, "wb") as f:
+                    f.write(audio_bytes)
+                
+                if not target_duration_ms:
+                    break
+                
+                try:
+                    audio_data, sample_rate = sf.read(output_path)
+                    actual_duration_ms = int(len(audio_data) / sample_rate * 1000)
+                    
+                    if actual_duration_ms <= target_duration_ms * 1.05:
+                        break
+                    
+                    if attempt < max_attempts - 1:
+                        speed_ratio = actual_duration_ms / target_duration_ms
+                        new_speed = min(1.2, max(0.8, speed * speed_ratio))
+                        
+                        if abs(new_speed - speed) < 0.05:
+                            break
+                        
+                        speed = new_speed
+                        logger.info(f"Retry {attempt + 1}: speed={speed:.2f}, target={target_duration_ms}ms, actual={actual_duration_ms}ms")
+                except Exception:
+                    break
+            
             return {"success": True, "output_path": output_path}
         except Exception as e:
-            logger.error(f"❌ ElevenLabs failed after retries: {e}")
+            logger.error(f"ElevenLabs failed: {e}")
             return {"success": False, "error": str(e)}
     
     def get_all_voices(self) -> Dict[str, Any]:
@@ -129,12 +170,18 @@ class ElevenLabsService:
             logger.error(f"ElevenLabs cleanup failed: {e}")
             return {"success": False, "error": str(e)}
     
-    def _delete_voice(self, voice_id: str) -> bool:
+    def delete_voice(self, voice_id: str) -> bool:
+        """Delete a specific voice by ID"""
         try:
             self.client.voices.delete(voice_id)
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to delete voice {voice_id}: {e}")
             return False
+    
+    def _delete_voice(self, voice_id: str) -> bool:
+        """Internal delete method for cleanup_old_voices"""
+        return self.delete_voice(voice_id)
     
     def _normalize_voice_to_fish_format(self, voice) -> Dict[str, Any]:
         tags = []

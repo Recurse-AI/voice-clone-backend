@@ -185,7 +185,23 @@ class FishAudioAPIService:
             logger.error(f"Fish Audio cleanup failed: {e}")
             return {"success": False, "error": str(e)}
     
+    def delete_voice(self, voice_id: str) -> bool:
+        """Delete a specific voice model by ID"""
+        try:
+            if not self.api_key:
+                return False
+            
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            with httpx.Client(timeout=30.0) as client:
+                response = client.delete(f"https://api.fish.audio/model/{voice_id}", headers=headers)
+                response.raise_for_status()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to delete voice {voice_id}: {e}")
+            return False
+    
     def _delete_model(self, model_id: str, headers: dict, client: httpx.Client) -> bool:
+        """Internal delete method for cleanup_old_voices"""
         try:
             client.delete(f"https://api.fish.audio/model/{model_id}", headers=headers).raise_for_status()
             return True
