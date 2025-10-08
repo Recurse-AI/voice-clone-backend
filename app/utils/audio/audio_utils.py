@@ -373,31 +373,46 @@ class AudioUtils:
                     current_duration = len(cloned_audio) / target_sample_rate
                     
                     if abs(current_duration - expected_duration) > 0.01:
-                        temp_input = os.path.join(process_temp_dir, f"stretch_input_{segment.get('index', 0)}.wav")
-                        temp_output = os.path.join(process_temp_dir, f"stretch_output_{segment.get('index', 0)}.wav")
+                        seg_index = segment.get('index', 0) if 'index' in segment else int(segment.get('seg_id', 'seg_0').split('_')[-1])
+                        temp_input = os.path.join(process_temp_dir, f"stretch_in_{seg_index}.wav")
+                        temp_output = os.path.join(process_temp_dir, f"stretch_out_{seg_index}.wav")
                         
-                        sf.write(temp_input, cloned_audio, target_sample_rate)
-                        
-                        atempo = current_duration / expected_duration
-                        atempo = max(0.5, min(2.0, atempo))
-                        
-                        ffmpeg_path = AudioUtils()._get_ffmpeg_path()
-                        result = subprocess.run([
-                            ffmpeg_path, '-y', '-i', temp_input,
-                            '-filter:a', f'atempo={atempo}',
-                            temp_output
-                        ], capture_output=True)
-                        
-                        if result.returncode == 0 and os.path.exists(temp_output):
-                            cloned_audio, _ = sf.read(temp_output)
-                            os.remove(temp_input)
-                            os.remove(temp_output)
+                        try:
+                            sf.write(temp_input, cloned_audio, target_sample_rate)
+                            
+                            atempo = current_duration / expected_duration
+                            atempo = max(0.5, min(2.0, atempo))
+                            
+                            from app.utils.ffmpeg_helper import get_ffmpeg_path
+                            ffmpeg_path = get_ffmpeg_path()
+                            
+                            result = subprocess.run([
+                                ffmpeg_path, '-y', '-i', temp_input,
+                                '-filter:a', f'atempo={atempo}',
+                                '-ac', '1',
+                                temp_output
+                            ], capture_output=True, text=True)
+                            
+                            if result.returncode == 0 and os.path.exists(temp_output):
+                                cloned_audio, _ = sf.read(temp_output)
+                                logger.info(f"✅ FFmpeg stretched segment {seg_index}: {current_duration:.2f}s → {expected_duration:.2f}s (atempo={atempo:.3f})")
+                            else:
+                                logger.warning(f"⚠️ FFmpeg stretch failed for segment {seg_index}: {result.stderr}")
+                            
+                            if os.path.exists(temp_input):
+                                os.remove(temp_input)
+                            if os.path.exists(temp_output):
+                                os.remove(temp_output)
+                        except Exception as e:
+                            logger.warning(f"⚠️ Time-stretch error for segment {seg_index}: {e}")
                     
                     if len(cloned_audio) != expected_samples:
                         if len(cloned_audio) > expected_samples:
                             cloned_audio = cloned_audio[:expected_samples]
+                            logger.warning(f"⚠️ Truncated segment from {len(cloned_audio)/target_sample_rate:.2f}s to {expected_samples/target_sample_rate:.2f}s")
                         else:
                             cloned_audio = np.pad(cloned_audio, (0, expected_samples - len(cloned_audio)), mode="constant")
+                            logger.warning(f"⚠️ Padded segment from {len(cloned_audio)/target_sample_rate:.2f}s to {expected_samples/target_sample_rate:.2f}s")
 
                 cloned_audio = AudioUtils.fade_in_out(cloned_audio.astype(np.float32), 
                                                     fade_duration=0.003, sample_rate=target_sample_rate)

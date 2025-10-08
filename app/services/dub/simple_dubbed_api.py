@@ -586,7 +586,7 @@ class SimpleDubbedAPI:
     def _voice_clone_segment(self, dubbed_text: str, reference_audio_path: str, segment_id: str, 
                             original_text: str = "", job_id: str = None, process_temp_dir: str = None, 
                             target_language_code: str = "en", source_language_code: str = "en",
-                            segment_reference_id: str = None, target_duration_ms: int = None) -> Optional[Dict[str, Any]]:
+                            target_duration_ms: int = None) -> Optional[Dict[str, Any]]:
         try:
             start_time = time.time()
             
@@ -597,15 +597,17 @@ class SimpleDubbedAPI:
             
             model_type = getattr(self, 'model_type', 'normal')
             voice_type = getattr(self, 'voice_type', None)
-            ai_voice_id = segment_reference_id if segment_reference_id else (getattr(self, 'reference_ids', [None])[0] if hasattr(self, 'reference_ids') and self.reference_ids else None)
+            
+            ai_voice_id = None
+            if voice_type == 'ai_voice':
+                user_reference_ids = getattr(self, 'reference_ids', None)
+                if user_reference_ids and len(user_reference_ids) > 0:
+                    ai_voice_id = user_reference_ids[0]
+                    logger.info(f"🎙️ Using user-provided reference_id: {ai_voice_id}")
+                else:
+                    logger.warning(f"⚠️ ai_voice mode but no reference_ids provided for {segment_id}")
             
             reference_audio_bytes = None
-            
-            if voice_type == 'ai_voice' and ai_voice_id:
-                if model_type in ['best', 'medium']:
-                    logger.info(f"🎙️ Using AI voice reference_id directly with API ({model_type}): {ai_voice_id}")
-                else:
-                    logger.info(f"🎙️ Fetching AI voice sample for local model: {ai_voice_id}")
             
             if voice_type == 'ai_voice' and ai_voice_id and model_type == 'normal':
                 audio_bytes, sample_text = self._get_ai_voice_reference(ai_voice_id, source_language_code)
@@ -674,7 +676,6 @@ class SimpleDubbedAPI:
                 process_temp_dir=process_temp_dir,
                 target_language_code=getattr(self, '_target_language_code', 'en'),
                 source_language_code=getattr(self, '_source_language_code', 'en'),
-                segment_reference_id=data.get("reference_id"),
                 target_duration_ms=data.get("duration_ms")
             )
             elapsed = time.time() - start_time
