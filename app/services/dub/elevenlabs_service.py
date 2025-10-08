@@ -48,9 +48,7 @@ class ElevenLabsService:
         reraise=True
     )
     def _generate_with_retry(self, text: str, voice_id: str, speed: float = 1.0):
-        voice_settings = {"stability": 0.5, "similarity_boost": 0.75}
-        if speed != 1.0:
-            voice_settings["speed"] = speed
+        voice_settings = {"speed": speed} if speed != 1.0 else None
         
         return self.client.text_to_speech.convert(
             text=text,
@@ -84,36 +82,29 @@ class ElevenLabsService:
             else:
                 speed = 1.0
             
-            max_attempts = 3
+            audio = self._generate_with_retry(text, voice_id, speed)
+            audio_bytes = b"".join(chunk for chunk in audio)
             
-            for attempt in range(max_attempts):
-                audio = self._generate_with_retry(text, voice_id, speed)
-                audio_bytes = b"".join(chunk for chunk in audio)
-                
-                with open(output_path, "wb") as f:
-                    f.write(audio_bytes)
-                
-                if not target_duration_ms:
-                    break
-                
+            with open(output_path, "wb") as f:
+                f.write(audio_bytes)
+            
+            if target_duration_ms:
                 try:
                     audio_data, sample_rate = sf.read(output_path)
                     actual_duration_ms = int(len(audio_data) / sample_rate * 1000)
                     
-                    if actual_duration_ms <= target_duration_ms * 1.05:
-                        break
-                    
-                    if attempt < max_attempts - 1:
+                    if actual_duration_ms > target_duration_ms * 1.1:
                         speed_ratio = actual_duration_ms / target_duration_ms
                         new_speed = min(1.2, max(0.8, speed * speed_ratio))
                         
-                        if abs(new_speed - speed) < 0.05:
-                            break
-                        
-                        speed = new_speed
-                        logger.info(f"Retry {attempt + 1}: speed={speed:.2f}, target={target_duration_ms}ms, actual={actual_duration_ms}ms")
+                        if abs(new_speed - speed) >= 0.1:
+                            audio = self._generate_with_retry(text, voice_id, new_speed)
+                            audio_bytes = b"".join(chunk for chunk in audio)
+                            
+                            with open(output_path, "wb") as f:
+                                f.write(audio_bytes)
                 except Exception:
-                    break
+                    pass
             
             return {"success": True, "output_path": output_path}
         except Exception as e:
