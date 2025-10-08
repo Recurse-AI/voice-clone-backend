@@ -103,8 +103,11 @@ class JobUtils:
         
         if voice_type is not None:
             updated_manifest["voice_type"] = voice_type
+        
         if reference_ids is not None:
             updated_manifest["reference_ids"] = reference_ids
+        else:
+            updated_manifest.pop("reference_ids", None)
         
         for segment in updated_manifest.get("segments", []):
             segment["reference_id"] = None
