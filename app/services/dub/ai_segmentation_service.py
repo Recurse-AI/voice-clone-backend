@@ -93,48 +93,18 @@ class AISegmentationService:
         target_lang_name = language_service.get_language_name(target_language)
         
         if is_same_language:
-            translation_instructions = f"""SAME LANGUAGE PROCESSING ({target_lang_name}):
-- Source and target are IDENTICAL - NO translation needed
-- PRESERVE original_text EXACTLY as input (no changes, keep all errors)
-- FIX errors in dubbed_text: Correct grammar, spelling, mistakes
-  * Example Input: "I no what your saying"
-  * original_text: "I no what your saying" (preserved as-is)
-  * dubbed_text: "I know what you're saying" (corrected)
-- CLEAN corrupted/repetitive patterns in dubbed_text
-- If purely corrupted, use '[unclear audio]' in {target_lang_name}
-- NEVER output repetitive patterns like "000,000..." or "aaa..."
-- Extract only meaningful speech content for dubbed_text"""
+            translation_instructions = f"""SAME LANGUAGE ({target_lang_name}):
+- NO translation (source = target)
+- PRESERVE original_text exactly as-is
+- FIX errors in dubbed_text only
+- Clean corrupted patterns"""
         else:
-            translation_instructions = f"""PROFESSIONAL TRANSLATION TO {target_lang_name.upper()} - NATURAL NATIVE SPEECH:
-- ABSOLUTE RULE: 100% {target_lang_name} ONLY - NO Spanish/German/French/Italian mixing
-- TRANSCRIPTION ERROR CORRECTION (FRESH DUBBING ONLY): Fix minor mistakes in original_text:
-  * Grammar errors → Correct grammar
-  * Spelling mistakes → Correct spelling
-  * Homophones → Fix based on context
-  * Example: "I no what your saying" → "I know what you're saying"
-  * CRITICAL: NEVER change sentence meaning or structure - only fix obvious errors
-  * If unsure, keep original text as-is
-- CORRUPTION AUTO-CLEAN: Automatically detect and remove:
-  * Long repetitive numbers (40,000,000,000,000...)
-  * Repeated character sequences (aaaaaaa, xxxxx...)
-  * Looping words/phrases (juice juice juice, do it do it...)
-  * Symbol spam or transcription artifacts (@#$%, [[[, +++...)
-  * Placeholder text or corrupted patterns
-- MEANINGFUL EXTRACTION: Find the actual speech content within corrupted input
-- NATURAL SPEECH STYLE: Sound like native speakers in everyday conversation
-  * Use COLLOQUIAL/INFORMAL language (how people actually talk)
-  * Use STANDARD DIALECT (neutral form understood by all)
-  * Prefer COMMON/POPULAR words over formal vocabulary
-  * NO literal/word-for-word translation - adapt naturally
-  * Make it sound AUTHENTIC, not textbook translation
-- FULL CULTURAL LOCALIZATION:
-  * Convert ALL cultural references to {target_lang_name} equivalents
-  * Adapt idioms/metaphors/expressions to target culture
-  * Replace foreign examples with local familiar ones
-  * Use expressions popular in {target_lang_name} speaking regions
-- LANGUAGE PURITY: Every single word must be proper {target_lang_name} vocabulary
-- FALLBACK PROTOCOL: Purely corrupted segments → '[unclear audio]' in {target_lang_name}
-- PRESERVE INTENT: Keep original meaning/tone of actual speech content"""
+            translation_instructions = f"""TRANSLATION TO {target_lang_name}:
+- 100% {target_lang_name} only
+- Natural conversational style
+- Fix typos in original_text (keep meaning)
+- Clean corrupted text
+- Adapt idioms naturally"""
         
         if preserve_segments:
             if is_same_language:
@@ -144,189 +114,78 @@ class AISegmentationService:
                 processing_instruction = f"TRANSLATION REDUB - Clean corruption then translate to {target_lang_name}"
                 example_dubbed = f"professional {target_lang_name} translation of cleaned text"
             
-            return f"""REDUB MODE - EXACT PRESERVATION:
+            return f"""REDUB MODE: Edit existing segments
 
-MANDATORY 1:1 MAPPING:
-1. Output EXACTLY {len(segments)} segments (one output per input)
-2. PRESERVE exact start/end timing from input
-3. PRESERVE original_text EXACTLY as-is from input (NO changes, NO fixes)
+RULES:
+1. Output EXACTLY {len(segments)} segments (1 input = 1 output)
+2. PRESERVE timing (start/end) from input
+3. PRESERVE original_text from input (no changes)
 4. {processing_instruction}
-5. NO merging, NO splitting, NO structure changes
+5. NO merging, NO splitting
+6. PRESERVE speaker field exactly
 
-🚨 TIMING VALIDATION (APPLIES TO REDUB TOO):
-- Check input timestamps: segment[i].start MUST be ≥ segment[i-1].end
-- If input has overlaps, FIX them in output (adjust boundaries)
-- Gaps between segments are natural and allowed
-- NO overlaps in output timestamps (critical for audio sync)
+{translation_instructions}
 
-TRANSLATION QUALITY:
-- Make dubbed_text sound natural in target language
-- Preserve emotional tone and speaker emphasis
-- Adapt punctuation for target language conventions
-- Convert idioms/expressions to cultural equivalents
-- Maintain conversation flow and context
-- Clean corruption while keeping meaningful content
+INPUT:
+{json.dumps(segments, ensure_ascii=False, indent=2)}
+
+OUTPUT:
+{{
+  "segments": [
+    {{
+      "id": "<from_input>",
+      "start": <from_input>,
+      "end": <from_input>,
+      "speaker": "<from_input>",
+      "original_text": "<from_input_no_changes>",
+      "dubbed_text": "{example_dubbed}"
+    }}
+  ]
+}}
+
+✓ Exactly {len(segments)} segments
+✓ Same timing as input
+✓ {processing_instruction}"""
+        else:
+            return f"""DUBBING TASK: Translate audio transcription to {target_lang_name}
+
+🚨 CRITICAL RULES:
+1. USE ALL INPUT: Every word from input MUST appear in output (no content loss)
+2. PRESERVE TIMING: Keep input start/end times (only split if segment >15s)
+3. MAX DURATION: Each output segment ≤15.0 seconds
+4. NO OVERLAPS: segment[i].start ≥ segment[i-1].end
+5. PRESERVE SPEAKER: Copy exact speaker field from input to output
+
+SEGMENTATION:
+- If input segment ≤15s → Keep as-is (1 input = 1 output)
+- If input segment >15s → Split at sentence/clause boundaries
+- MERGE only if segments are very short (<2s) AND same speaker
+- When splitting: All parts get same speaker as input
+- When merging: Only merge if same speaker
 
 {translation_instructions}
 
 INPUT SEGMENTS:
 {json.dumps(segments, ensure_ascii=False, indent=2)}
 
-OUTPUT JSON FORMAT (preserve timing AND original_text exactly):
+OUTPUT FORMAT:
 {{
   "segments": [
     {{
       "id": "seg_001",
-      "start": 0.080,
-      "end": 4.560,
-      "speaker": "SPEAKER_00",
-      "original_text": "exact input text (preserved with any errors)",
-      "dubbed_text": "{example_dubbed} (natural translation)"
-    }},
-    {{
-      "id": "seg_002",
-      "start": 5.200,
-      "end": 8.500,
-      "speaker": "SPEAKER_00",
-      "original_text": "another input text (kept exactly as-is)",
-      "dubbed_text": "{example_dubbed}"
+      "start": <input_start>,
+      "end": <input_end or split_point>,
+      "speaker": "<exact_speaker_from_input>",
+      "original_text": "<corrected_input_text>",
+      "dubbed_text": "{target_lang_name} translation"
     }}
   ]
 }}
 
-🚨 MANDATORY SPEAKER PRESERVATION:
-- MUST preserve "speaker" field from input to output EXACTLY
-- If input segment has "speaker": "SPEAKER_00", output MUST include "speaker": "SPEAKER_00"
-- Speaker tags are CRITICAL for voice consistency - NEVER drop them
-
-CORRUPTION HANDLING:
-- Clean repetitive patterns before translating
-- Extract meaningful content from corrupted input
-- Use "[unclear audio]" only for completely unrecoverable segments
-- Leverage context from surrounding segments when possible
-
-EMPTY SEGMENT PREVENTION:
-- NEVER create segments with empty dubbed_text
-- Every segment MUST have meaningful text content
-- If original is unclear, use "[unclear audio]" as fallback
-
-CRITICAL: Must output exactly {len(segments)} segments as valid JSON. {processing_instruction}."""
-        else:
-            return f"""FRESH DUBBING MODE:
-
-🚨 ABSOLUTE RULE: Every output segment MUST be ≤15.0 seconds duration. NO EXCEPTIONS.
-
-🚨 CRITICAL SPEAKER PRESERVATION RULES (HIGHEST PRIORITY):
-1. EVERY input segment has a "speaker" field (SPEAKER_00, SPEAKER_01, etc.)
-2. When you SPLIT a segment → ALL output segments MUST keep the SAME speaker as the input
-3. When you MERGE segments → Check speakers FIRST:
-   - If SAME speaker → use that speaker in merged output
-   - If DIFFERENT speakers → DO NOT MERGE (keep separate to maintain speaker distinction)
-4. NEVER change a speaker assignment - only copy from input
-5. NEVER default to SPEAKER_00 - use the actual speaker from input segment
-6. Speaker boundaries are SACRED - never merge across different speakers
-
-SEGMENTATION STRATEGY:
-1. Calculate each segment: (end - start) MUST be ≤15.0 seconds
-2. SPLIT long segments at:
-   • Sentence endings (period, question mark, exclamation)
-   • Clause boundaries (commas, semicolons)
-   • Natural pauses in speech flow
-   • Speaker transitions (NEVER merge different speakers)
-3. MERGE short segments (< 2s) ONLY if:
-   • Combined duration ≤15.0s AND
-   • SAME SPEAKER (never merge different speakers)
-4. IDEAL target: 3-8 seconds per segment for best voice quality
-5. Output segment count can differ from input count
-
-QUALITY REQUIREMENTS:
-- Use ALL input content exactly once (no gaps, no duplicates)
-- FIX minor transcription errors: Correct obvious grammar, spelling, typos in original_text
-  * ONLY fix clear mistakes (homophones, typos)
-  * NEVER change meaning or sentence structure
-  * If unsure about a correction, keep original as-is
-- Preserve emotional tone and speaker intent
-- Adapt cultural idioms/expressions naturally
-- Maintain conversation flow and context
-- Fix corrupted text by extracting meaningful parts
-- NEVER merge segments from different speakers
-
-🚨 CRITICAL TIMING RULES - ZERO TOLERANCE FOR OVERLAPS:
-1. NO OVERLAPS ALLOWED: segment[i].start MUST be ≥ segment[i-1].end
-   ❌ WRONG: seg1(0→6.3), seg2(5.0→11.7) - OVERLAP! (5.0 < 6.3)
-   ✅ CORRECT: seg1(0→5.0), seg2(5.0→11.7) - No overlap (5.0 = 5.0)
-   ✅ ALSO OK: seg1(0→5.0), seg2(5.5→11.7) - Natural gap (5.5 > 5.0)
-2. GAPS ARE NATURAL: Silence/pauses between speech → segments can have gaps (totally fine!)
-3. When SPLITTING continuous speech: New boundaries touch (no gaps between parts)
-   Example split 0→10s: First(0→5.5), Second(5.5→10)
-4. When MERGING: Use first start + last end
-5. VALIDATION FORMULA: segment[i].start ≥ segment[i-1].end for ALL i > 0
-
-EMPTY SEGMENT PREVENTION:
-- Every segment MUST have non-empty dubbed_text
-- Minimum viable segment: "[unclear audio]" if content is truly unrecoverable
-- Prefer merging very short segments over creating empty ones
-
-{translation_instructions}
-
-INPUT: {json.dumps(segments, ensure_ascii=False, indent=2)}
-
-OUTPUT JSON EXAMPLE (NO OVERLAPS - gaps natural, errors corrected):
-{{
-  "segments": [
-    {{
-      "id": "seg_001", 
-      "start": 0.080,
-      "end": 4.560,
-      "speaker": "SPEAKER_00",
-      "original_text": "I know what you are saying",
-      "dubbed_text": "natural {target_lang_name} translation"
-    }},
-    {{
-      "id": "seg_002", 
-      "start": 4.560,
-      "end": 7.200,
-      "speaker": "SPEAKER_01",
-      "original_text": "The weather is really nice today",
-      "dubbed_text": "natural {target_lang_name} translation"
-    }},
-    {{
-      "id": "seg_003", 
-      "start": 8.100,
-      "end": 12.400,
-      "speaker": "SPEAKER_00",
-      "original_text": "I don't think that's correct",
-      "dubbed_text": "natural {target_lang_name} translation"
-    }}
-  ]
-}}
-
-🚨 SPEAKER ASSIGNMENT ALGORITHM:
-Step 1: Read input segment → Note its speaker (e.g., "SPEAKER_01")
-Step 2: If splitting → Copy "SPEAKER_01" to ALL resulting segments
-Step 3: If merging → Check speakers match first, then merge and use that speaker
-Step 4: Write output → Include exact speaker from input (e.g., "speaker": "SPEAKER_01")
-NEVER write "speaker": "SPEAKER_00" unless input was actually SPEAKER_00!
-
-🚨 CORRUPTION AUTO-CLEAN EXAMPLES:
-- "40,000,000,000..." → Extract meaningful part or "[unclear audio]"
-- "juice juice juice..." → "juice" (deduplicate)
-- "aaaaaaaaa..." → Remove entirely
-- "कर दो कर दो कर दो" → "कर दो" (clean repetition)
-- Partial corruption → Use context from nearby segments to infer meaning
-
-🚨 LANGUAGE PURITY:
-- Target: {target_lang_name} → 100% {target_lang_name} in ALL dubbed_text
-- NEVER mix languages (no English in French, no Spanish in English, etc.)
-- Cultural adaptation: Convert idioms to target culture equivalents
-
-🚨 FINAL VALIDATION CHECKLIST:
-✓ Every segment ≤15.0s duration
-✓ NO OVERLAPS: segment[i].start ≥ segment[i-1].end for ALL segments
-✓ No corruption in text
-✓ Natural speech translation
-✓ Speaker preserved correctly from input
-✓ Sequential timestamps (no time-travel!)"""
+✓ Use ALL input content
+✓ Preserve timing unless splitting >15s segments
+✓ No overlaps in timestamps
+✓ Keep speaker tags exact"""
     
     def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0) -> List[Dict[str, Any]]:
         formatted_segments = []
@@ -353,10 +212,9 @@ NEVER write "speaker": "SPEAKER_00" unless input was actually SPEAKER_00!
             dubbed_text = re.sub(r'\[\w+:\s*([^\]]+)\]', r'\1', dubbed_text)
             dubbed_text = re.sub(r'\[[^\]]+\]', '', dubbed_text).strip()
             
-            if not original_text and not dubbed_text:
+            if not original_text or not dubbed_text:
                 seg_id = seg.get("id", f"seg_{idx}")
-                logger.warning(f"AI created empty segment {seg_id} at {start_ms}-{end_ms}ms - using fallback")
-                original_text = dubbed_text = "[unclear audio]"
+                raise ValueError(f"AI failed: segment {seg_id} has empty text (original: '{original_text}', dubbed: '{dubbed_text}')")
             
             global_segment_index = global_segment_index_start + len(formatted_segments)
             
@@ -383,13 +241,25 @@ NEVER write "speaker": "SPEAKER_00" unless input was actually SPEAKER_00!
             logger.info(f"Same language redub - preserving original text")
             formatted_segments = []
             for idx, seg in enumerate(segments):
+                start_ms = int(seg.get("start", 0))
+                end_ms = int(seg.get("end", 0))
+                
+                if formatted_segments:
+                    prev_end_ms = formatted_segments[-1]["end"]
+                    if start_ms < prev_end_ms:
+                        gap = (prev_end_ms - start_ms) // 2
+                        formatted_segments[-1]["end"] = prev_end_ms - gap
+                        formatted_segments[-1]["duration_ms"] = formatted_segments[-1]["end"] - formatted_segments[-1]["start"]
+                        start_ms = prev_end_ms - gap
+                        logger.warning(f"REDUB: Fixed overlap - adjusted boundaries by {gap}ms")
+                
                 original_text = seg.get("original_text", seg.get("text", "")).strip()
                 formatted_segments.append({
                     "id": seg.get("id", f"seg_{idx+1:03d}"),
                     "segment_index": idx,
-                    "start": int(seg.get("start", 0)),
-                    "end": int(seg.get("end", 0)),
-                    "duration_ms": int(seg.get("end", 0)) - int(seg.get("start", 0)),
+                    "start": start_ms,
+                    "end": end_ms,
+                    "duration_ms": end_ms - start_ms,
                     "original_text": original_text,
                     "dubbed_text": original_text,
                     "voice_cloned": False,
@@ -454,26 +324,11 @@ NEVER write "speaker": "SPEAKER_00" unless input was actually SPEAKER_00!
                     })
             
             logger.info(f"✅ Translated chunk {chunk_number}: {len(chunk_results)} segments")
-            return (i, chunk_results, True)
+            return (i, chunk_results)
             
         except Exception as e:
             logger.error(f"❌ Translation chunk {chunk_number} failed: {str(e)}")
-            fallback_results = []
-            for seg in chunk:
-                original_text = seg.get("original_text", seg.get("text", "")).strip()
-                fallback_results.append({
-                    "id": seg.get("id"),
-                    "start": int(seg.get("start", 0)),
-                    "end": int(seg.get("end", 0)),
-                    "duration_ms": int(seg.get("end", 0)) - int(seg.get("start", 0)),
-                    "original_text": original_text,
-                    "dubbed_text": original_text,
-                    "voice_cloned": False,
-                    "original_audio_file": None,
-                    "cloned_audio_file": None,
-                    "speaker": seg.get("speaker")
-                })
-            return (i, fallback_results, False)
+            raise ValueError(f"AI translation failed for chunk {chunk_number}: {str(e)}")
     
     def _translate_segments_preserve_timing(self, segments: List[Dict], target_language_code: str) -> List[Dict[str, Any]]:
         chunk_size = self.settings.AI_SEGMENTATION_CHUNK_SIZE
@@ -491,7 +346,7 @@ NEVER write "speaker": "SPEAKER_00" unless input was actually SPEAKER_00!
             }
             
             for future in as_completed(futures):
-                chunk_idx, results, success = future.result()
+                chunk_idx, results = future.result()
                 chunk_results[chunk_idx] = results
         
         all_results = []
@@ -500,6 +355,15 @@ NEVER write "speaker": "SPEAKER_00" unless input was actually SPEAKER_00!
                 for seg in chunk_result:
                     seg["segment_index"] = len(all_results)
                     all_results.append(seg)
+        
+        for i in range(1, len(all_results)):
+            if all_results[i]["start"] < all_results[i-1]["end"]:
+                gap = (all_results[i-1]["end"] - all_results[i]["start"]) // 2
+                all_results[i-1]["end"] -= gap
+                all_results[i-1]["duration_ms"] = all_results[i-1]["end"] - all_results[i-1]["start"]
+                all_results[i]["start"] = all_results[i-1]["end"]
+                all_results[i]["duration_ms"] = all_results[i]["end"] - all_results[i]["start"]
+                logger.warning(f"REDUB TRANSLATE: Fixed overlap between segments - adjusted by {gap}ms")
         
         logger.info(f"🎯 REDUB: Translated {len(all_results)} segments")
         return all_results
@@ -521,8 +385,7 @@ Detect and remove these patterns automatically:
 • Meaningless/garbled content
 • Transcription errors
 
-ACTION: Extract meaningful speech only, ignore corruption artifacts
-FALLBACK: Use "[unclear audio]" for completely corrupted segments
+ACTION: Extract meaningful speech only, clean corruption artifacts
 
 TRANSLATION REQUIREMENTS:
 1. LANGUAGE PURITY: 100% {target_lang_name} - never mix other languages
@@ -652,7 +515,7 @@ QUALITY RULES:
 CONTENT PRESERVATION (CRITICAL):
 - MUST cover ALL input text exactly once - no gaps, no missing content
 - EVERY segment MUST have both original_text, dubbed_text AND speaker filled
-- NO empty segments allowed - if unclear, use "[unclear audio]" in target language
+- NO empty segments allowed - all text must be meaningful
 - If {num_speakers if num_speakers else 'auto'} speakers detected, preserve speaker distinction across segments
 - Split/merge intelligently but NEVER drop content or speaker info
 - Validate output: all input content AND speaker tags must appear in output segments
@@ -691,16 +554,15 @@ CRITICAL RULES:
    - Make output AUTHENTIC like real {target_lang_name} speakers
 
 CORRUPTION AUTO-CLEAN:
-• Repetitive patterns (40,000,000... or juice juice juice...) → Extract once or mark unclear
+• Repetitive patterns (40,000,000... or juice juice juice...) → Extract once
 • Repeated characters (aaaaaaa...) → Remove entirely
-• Meaningless sequences → Use '[unclear audio]' in {target_lang_name}
-• Partial corruption → Extract meaningful parts using context clues
+• Partial corruption → Extract meaningful parts using context
 
 QUALITY GUIDELINES:
-• FULL Cultural Localization: Convert ALL cultural references to {target_lang_name} equivalents
+• Cultural Localization: Convert cultural references to {target_lang_name} equivalents
 • Consistency: Keep terminology consistent across segments
 • Punctuation: Adapt to {target_lang_name} conventions
-• Context: Use surrounding segments to infer unclear audio when possible
+• Context: Use surrounding segments to infer meaning
 
 OUTPUT: Valid JSON with 'segments' array only (each segment MUST include exact speaker from input)"""}]},
                         {"role": "user", "content": [{"type": "input_text", "text": prompt}]}

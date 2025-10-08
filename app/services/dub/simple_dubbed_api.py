@@ -878,12 +878,21 @@ class SimpleDubbedAPI:
             seg_id = seg.get("id", f"seg_{idx+1:03d}")
             start_ms = int(seg.get("start", 0))
             end_ms = int(seg.get("end", 0))
-            duration_ms = seg.get("duration_ms", end_ms - start_ms)
+            
+            if formatted_segments:
+                prev_end_ms = formatted_segments[-1]["end"]
+                if start_ms < prev_end_ms:
+                    gap = (prev_end_ms - start_ms) // 2
+                    formatted_segments[-1]["end"] = prev_end_ms - gap
+                    formatted_segments[-1]["duration_ms"] = formatted_segments[-1]["end"] - formatted_segments[-1]["start"]
+                    start_ms = prev_end_ms - gap
+                    logger.warning(f"RESUME: Fixed overlap in {seg_id} - adjusted boundaries by {gap}ms")
+            
+            duration_ms = end_ms - start_ms
             
             original_text = seg.get("original_text", seg.get("text", "")).strip()
             dubbed_text = seg.get("dubbed_text", "").strip()
             
-            # Use edited text from review
             if seg_id in edited_map:
                 dubbed_text = edited_map[seg_id]
             elif not dubbed_text:
