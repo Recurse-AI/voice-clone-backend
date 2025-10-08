@@ -90,17 +90,7 @@ class AISegmentationService:
             raise e
 
     def _build_segmentation_and_dubbing_prompt(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False) -> str:
-        
-        def get_language_name(code):
-            lang_names = {
-                'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German', 'it': 'Italian',
-                'pt': 'Portuguese', 'ru': 'Russian', 'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean',
-                'ar': 'Arabic', 'hi': 'Hindi', 'bn': 'Bengali', 'ur': 'Urdu', 'tr': 'Turkish',
-                'pl': 'Polish', 'nl': 'Dutch', 'sv': 'Swedish', 'da': 'Danish', 'no': 'Norwegian'
-            }
-            return lang_names.get(code, code.title())
-        
-        target_lang_name = get_language_name(target_language)
+        target_lang_name = language_service.get_language_name(target_language)
         
         if is_same_language:
             translation_instructions = f"""SAME LANGUAGE PROCESSING ({target_lang_name}):
@@ -109,8 +99,7 @@ class AISegmentationService:
 - Copy cleaned meaningful text to dubbed_text 
 - If purely corrupted, use '[unclear audio]' in {target_lang_name}
 - NEVER output repetitive patterns like "000,000..." or "aaa..."
-- Extract only meaningful speech content
-- ADD SPEECH MARKERS: Enhance with OpenAudio S1 markers when context requires: (laughing) (excited) (whispering) (angry) (sad) (hesitating) etc."""
+- Extract only meaningful speech content"""
         else:
             translation_instructions = f"""PROFESSIONAL TRANSLATION TO {target_lang_name.upper()} - NATURAL NATIVE SPEECH:
 - ABSOLUTE RULE: 100% {target_lang_name} ONLY - NO Spanish/German/French/Italian mixing
@@ -134,8 +123,7 @@ class AISegmentationService:
   * Use expressions popular in {target_lang_name} speaking regions
 - LANGUAGE PURITY: Every single word must be proper {target_lang_name} vocabulary
 - FALLBACK PROTOCOL: Purely corrupted segments → '[unclear audio]' in {target_lang_name}
-- PRESERVE INTENT: Keep original meaning/tone of actual speech content
-- SPEECH CONTROL: Add OpenAudio S1 markers ONLY when truly needed: (laughing) (excited) (angry) (sad) (whispering) (shouting) (hesitating) (scared) (surprised) etc."""
+- PRESERVE INTENT: Keep original meaning/tone of actual speech content"""
         
         if preserve_segments:
             if is_same_language:
@@ -192,6 +180,11 @@ CORRUPTION HANDLING:
 - Use "[unclear audio]" only for completely unrecoverable segments
 - Leverage context from surrounding segments when possible
 
+EMPTY SEGMENT PREVENTION:
+- NEVER create segments with empty dubbed_text
+- Every segment MUST have meaningful text content
+- If original is unclear, use "[unclear audio]" as fallback
+
 CRITICAL: Must output exactly {len(segments)} segments as valid JSON. {processing_instruction}."""
         else:
             return f"""FRESH DUBBING MODE:
@@ -228,6 +221,17 @@ QUALITY REQUIREMENTS:
 - Maintain conversation flow and context
 - Fix corrupted text by extracting meaningful parts
 - NEVER merge segments from different speakers
+
+TIMING RULES FOR SPLITS/MERGES:
+- When SPLITTING: Calculate new end/start times that sum to original duration
+- When MERGING: Use first segment's start time and last segment's end time
+- Ensure no timing overlaps or gaps between segments
+- NEVER create segments with empty dubbed_text - merge tiny segments if needed
+
+EMPTY SEGMENT PREVENTION:
+- Every segment MUST have non-empty dubbed_text
+- Minimum viable segment: "[unclear audio]" if content is truly unrecoverable
+- Prefer merging very short segments over creating empty ones
 
 {translation_instructions}
 
@@ -671,13 +675,7 @@ OUTPUT: Valid JSON with 'segments' array only (each segment MUST include exact s
         return all_results
 
     def _get_language_name(self, code):
-        lang_names = {
-            'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German', 'it': 'Italian',
-            'pt': 'Portuguese', 'ru': 'Russian', 'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean',
-            'ar': 'Arabic', 'hi': 'Hindi', 'bn': 'Bengali', 'ur': 'Urdu', 'tr': 'Turkish',
-            'pl': 'Polish', 'nl': 'Dutch', 'sv': 'Swedish', 'da': 'Danish', 'no': 'Norwegian'
-        }
-        return lang_names.get(code, code.title())
+        return language_service.get_language_name(code)
 
 
 def get_ai_segmentation_service() -> AISegmentationService:

@@ -24,8 +24,8 @@ class VideoDubRequest(BaseModel):
     source_video_language: Optional[str] = Field(None, description="Source video language (default: None, auto-detect)")
     humanReview: bool = Field(False, description="If true, pause after transcription+translation for human review")
     video_subtitle: bool = Field(False, description="If true, use provided SRT file instead of WhisperX transcription")
-    voice_premium_model: bool = Field(False, description="If true, use premium Fish Audio API for voice cloning (costs double)")
-    # Voice config
+    model_type: str = Field("normal", pattern="^(best|medium|normal)$", description="Voice model: 'best' (ElevenLabs), 'medium' (Fish API), 'normal' (local)")
+    add_subtitle_to_video: bool = Field(False, description="If true, add subtitles to final video output")
     voice_type: Optional[str] = Field(None, description="Voice mode: 'voice_clone' or 'ai_voice'")
     reference_ids: Optional[List[str]] = Field(default_factory=list, max_length=10, description="List of reference IDs for different speakers")
     
@@ -72,6 +72,7 @@ class SegmentsResponse(BaseModel):
     version: Optional[int] = None
     target_language: Optional[str] = None
     reference_ids: Optional[List[str]] = None
+    model_type: Optional[str] = None
 
 class SegmentEdit(BaseModel):
     id: str
@@ -89,7 +90,8 @@ class ApproveReviewRequest(BaseModel):
 class RedubRequest(BaseModel):
     target_language: str = Field(..., description="New target language for re-dub")
     humanReview: Optional[bool] = False
-    voice_premium_model: bool = Field(False, description="If true, use premium Fish Audio API for voice cloning (costs double)")
+    model_type: str = Field("normal", pattern="^(best|medium|normal)$", description="Voice model: 'best' (ElevenLabs), 'medium' (Fish API), 'normal' (local)")
+    add_subtitle_to_video: bool = Field(False, description="If true, add subtitles to final video output")
     voice_type: Optional[str] = Field(None, description="Voice mode: 'voice_clone' or 'ai_voice'")
     reference_ids: Optional[List[str]] = Field(default_factory=list, max_length=10, description="List of reference IDs for different speakers")
     
@@ -316,27 +318,6 @@ class FileDeleteResponse(BaseModel):
     error: Optional[str] = None
 
 
-
-# Voice Clone Segment Schemas
-class VoiceCloneRequest(BaseModel):
-    referenceAudioUrl: str = Field(..., min_length=1, description="URL to the reference audio segment")
-    referenceText: str = Field(..., min_length=1, max_length=5000, description="Text spoken in the reference audio")
-    text: str = Field(..., min_length=1, max_length=5000, description="Text to synthesize with cloned voice")
-    
-    @field_validator('referenceAudioUrl')
-    @classmethod
-    def validate_reference_url(cls, v):
-        if not v.startswith(('http://', 'https://')):
-            raise ValueError("Reference audio URL must start with http:// or https://")
-        return v
-
-class VoiceCloneResponse(BaseModel):
-    success: bool
-    message: str
-    jobId: str
-    audioUrl: Optional[str] = None
-    duration: Optional[float] = None
-    error: Optional[str] = None
 
 # User Job List Schemas
 class UserSeparationJob(BaseModel):

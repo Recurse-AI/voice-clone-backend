@@ -141,6 +141,9 @@ class Settings(BaseSettings):
     
     # Fish Audio API Configuration
     FISH_AUDIO_API_KEY: str = os.getenv("FISH_AUDIO_API_KEY", "")
+    
+    # ElevenLabs API Configuration
+    ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
 
 
     # YouTube Cookie Configuration

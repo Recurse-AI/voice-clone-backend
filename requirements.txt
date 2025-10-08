@@ -119,6 +119,9 @@ playwright
 # YouTube transcript API
 youtube-transcript-api
 
+# Voice Services
+elevenlabs
+
 # Development.
 pytest
 pytest-asyncio

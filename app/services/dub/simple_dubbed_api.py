@@ -113,30 +113,34 @@ class SimpleDubbedAPI:
 
 
 
-    def _validate_target_language(self, target_language: str) -> tuple:
-        if not language_service.is_dubbing_supported(target_language):
-            supported = language_service.get_supported_dubbing_languages()
-            error = f"Unsupported target language: {target_language}. Supported: {', '.join(sorted(supported))}"
+    def _validate_target_language(self, target_language: str, model_type: str = "normal") -> tuple:
+        if not language_service.is_dubbing_supported(target_language, model_type):
+            supported = language_service.get_supported_dubbing_languages(model_type)
+            model_names = {'best': 'ElevenLabs', 'medium': 'Fish API', 'normal': 'Local'}
+            error = f"Unsupported target language '{target_language}' for {model_names.get(model_type, model_type)} model. Supported: {len(supported)} languages"
             return False, error, None
         
         code = language_service.normalize_language_input(target_language)
-        logger.info(f"Processing with target language: {target_language} -> {code}")
+        logger.info(f"Processing with target language: {target_language} -> {code} (model: {model_type})")
         return True, None, code
     
-    def _setup_voice_config(self, manifest_override: dict, voice_premium_model: bool, voice_type: str, reference_ids: List[str]) -> dict:
-        manifest_premium = manifest_override.get("voice_premium_model") if manifest_override else None
+    def _setup_voice_config(self, manifest_override: dict, model_type: str, voice_type: str, reference_ids: List[str], add_subtitle_to_video: bool) -> dict:
+        manifest_model_type = manifest_override.get("model_type") if manifest_override else None
+        manifest_subtitle = manifest_override.get("add_subtitle_to_video") if manifest_override else None
         
         if manifest_override:
             voice_type = voice_type or manifest_override.get("voice_type")
             reference_ids = reference_ids or manifest_override.get("reference_ids", [])
         
-        final_premium = manifest_premium if manifest_premium is not None else voice_premium_model
+        final_model_type = manifest_model_type if manifest_model_type is not None else model_type
+        final_subtitle = manifest_subtitle if manifest_subtitle is not None else add_subtitle_to_video
         
-        self.voice_premium_model = final_premium
+        self.model_type = final_model_type
+        self.add_subtitle_to_video = final_subtitle
         self.voice_type = voice_type
         self.reference_ids = reference_ids or []
         
-        return {"premium": final_premium, "voice_type": voice_type, "reference_ids": reference_ids}
+        return {"model_type": final_model_type, "voice_type": voice_type, "reference_ids": reference_ids, "add_subtitle_to_video": final_subtitle}
     
     def _get_audio_urls(self, manifest_override: dict, separation_urls: dict) -> tuple:
         if manifest_override:
@@ -163,11 +167,11 @@ class SimpleDubbedAPI:
             manifest = manifest_override.copy()
             manifest["segments"] = dubbed_segments
             manifest["target_language"] = target_language
-            manifest["voice_premium_model"] = voice_config["premium"]
+            manifest["model_type"] = voice_config["model_type"]
         else:
             manifest = build_manifest(
                 job_id, transcript_id, target_language, dubbed_segments,
-                vocal_url, instrument_url, voice_config["premium"],
+                vocal_url, instrument_url, voice_config["model_type"],
                 voice_config["voice_type"], voice_config["reference_ids"]
             )
         
@@ -220,15 +224,15 @@ class SimpleDubbedAPI:
                            source_video_language: str = None, output_dir: str = None,
                            review_mode: bool = False, manifest_override: Optional[Dict[str, Any]] = None,
                            separation_urls: Optional[Dict[str, str]] = None, video_subtitle: bool = False,
-                           voice_premium_model: bool = False, voice_type: Optional[str] = None,
-                           reference_ids: Optional[List[str]] = None) -> dict:
-        valid, error, target_code = self._validate_target_language(target_language)
+                           model_type: str = "normal", voice_type: Optional[str] = None,
+                           reference_ids: Optional[List[str]] = None, add_subtitle_to_video: bool = False) -> dict:
+        valid, error, target_code = self._validate_target_language(target_language, model_type)
         if not valid:
             logger.error(error)
             return {"success": False, "error": error}
         
         try:
-            voice_config = self._setup_voice_config(manifest_override, voice_premium_model, voice_type, reference_ids)
+            voice_config = self._setup_voice_config(manifest_override, model_type, voice_type, reference_ids, add_subtitle_to_video)
             
             self._update_status(job_id, JobStatus.PROCESSING, 60, {"message": "Starting dubbing", "phase": "dubbing"})
             
@@ -270,13 +274,29 @@ class SimpleDubbedAPI:
     def _get_segment_speaker(self, seg_start_ms: int, seg_end_ms: int, speaker_timeline: List[Dict]) -> str:
         seg_start_s = seg_start_ms / 1000.0
         seg_end_s = seg_end_ms / 1000.0
-        
-        for speaker_seg in speaker_timeline:
-            overlap_start = max(seg_start_s, speaker_seg["start"])
-            overlap_end = min(seg_end_s, speaker_seg["end"])
-            if overlap_start < overlap_end:
-                return speaker_seg["speaker"]
-        return None
+
+        if not speaker_timeline:
+            return None
+
+        timeline = sorted(speaker_timeline, key=lambda s: (s["start"], s["end"]))
+        overlap_by_speaker = {}
+
+        for t in timeline:
+            if t["end"] <= seg_start_s:
+                continue
+            if t["start"] >= seg_end_s:
+                break
+            overlap = min(seg_end_s, t["end"]) - max(seg_start_s, t["start"])
+            if overlap > 0:
+                spk = t["speaker"]
+                overlap_by_speaker[spk] = overlap_by_speaker.get(spk, 0.0) + overlap
+
+        if overlap_by_speaker:
+            return max(overlap_by_speaker.items(), key=lambda kv: kv[1])[0]
+
+        seg_mid = (seg_start_s + seg_end_s) / 2.0
+        nearest = min(timeline, key=lambda t: 0 if (t["start"] <= seg_mid <= t["end"]) else min(abs(seg_mid - t["start"]), abs(seg_mid - t["end"])) )
+        return nearest["speaker"] if nearest else None
     
     def _assign_reference_id(self, speaker: str) -> str:
         if not speaker or not self.reference_ids:
@@ -323,6 +343,16 @@ class SimpleDubbedAPI:
         except Exception as e:
             logger.error(f"Failed to load reference audio from {audio_path}: {e}")
             return None
+    
+    def _generate_with_elevenlabs(self, text: str, voice_id: str, job_id: str, target_language_code: str, segment_index: int = 0) -> dict:
+        from app.services.dub.elevenlabs_service import get_elevenlabs_service
+        
+        try:
+            elevenlabs_service = get_elevenlabs_service()
+            return elevenlabs_service.generate_speech(text, voice_id, target_language_code, job_id, segment_index)
+        except Exception as e:
+            logger.error(f"ElevenLabs generation error: {e}")
+            return {"success": False, "error": str(e)}
     
     def _generate_with_premium_api(self, tagged_text: str, reference_audio_bytes: bytes, tagged_reference_text: str, 
                                    job_id: str, target_language_code: str, voice_type: str, ai_voice_reference_id: str) -> dict:
@@ -424,19 +454,19 @@ class SimpleDubbedAPI:
             
             logger.info(f"🎯 Voice cloning {segment_id}")
             
-            is_premium = getattr(self, 'voice_premium_model', False)
+            model_type = getattr(self, 'model_type', 'normal')
             voice_type = getattr(self, 'voice_type', None)
             ai_voice_id = segment_reference_id if segment_reference_id else (getattr(self, 'reference_ids', [None])[0] if hasattr(self, 'reference_ids') and self.reference_ids else None)
             
             reference_audio_bytes = None
             
             if voice_type == 'ai_voice' and ai_voice_id:
-                if is_premium:
-                    logger.info(f"🎙️ Using AI voice reference_id directly with premium API: {ai_voice_id}")
+                if model_type in ['best', 'medium']:
+                    logger.info(f"🎙️ Using AI voice reference_id directly with API ({model_type}): {ai_voice_id}")
                 else:
                     logger.info(f"🎙️ Fetching AI voice sample for local model: {ai_voice_id}")
             
-            if voice_type == 'ai_voice' and ai_voice_id and not is_premium:
+            if voice_type == 'ai_voice' and ai_voice_id and model_type == 'normal':
                 audio_bytes, sample_text = self._get_ai_voice_reference(ai_voice_id, source_language_code)
                 reference_audio_bytes = audio_bytes
                 if sample_text:
@@ -448,12 +478,21 @@ class SimpleDubbedAPI:
             segment_index = int(segment_id.split('_')[1]) - 1
             cloned_path = os.path.join(process_temp_dir, f"cloned_{job_id}_{segment_index:03d}.wav").replace('\\', '/')
             
-            if is_premium:
+            if model_type == 'best':
+                result = self._generate_with_elevenlabs(
+                    tagged_text, ai_voice_id, job_id, target_language_code, segment_index
+                )
+                if not result.get("success"):
+                    logger.warning(f"❌ ElevenLabs failed for {segment_id}, using Fish API fallback")
+                    result = self._generate_with_premium_api(
+                        tagged_text, reference_audio_bytes, tagged_reference_text,
+                        job_id, target_language_code, voice_type, ai_voice_id
+                    )
+            elif model_type == 'medium':
                 result = self._generate_with_premium_api(
                     tagged_text, reference_audio_bytes, tagged_reference_text,
                     job_id, target_language_code, voice_type, ai_voice_id
                 )
-                
                 if not result.get("success"):
                     logger.warning(f"❌ Fish API failed for {segment_id}, using local model")
                     result = self._generate_with_local_model(
@@ -506,10 +545,11 @@ class SimpleDubbedAPI:
         total_segments = len(segments_data)
         batch_size = settings.VOICE_CLONING_BATCH_SIZE
         
-        is_premium_api = getattr(self, 'voice_premium_model', False)
-        max_workers = settings.VOICE_CLONING_PARALLEL_WORKERS if is_premium_api else 1
+        model_type = getattr(self, 'model_type', 'normal')
+        max_workers = settings.VOICE_CLONING_PARALLEL_WORKERS if model_type in ['best', 'medium'] else 1
         
-        mode = "API (parallel)" if is_premium_api else "local s1-mini (sequential)"
+        mode_map = {'best': 'ElevenLabs (parallel)', 'medium': 'Fish API (parallel)', 'normal': 'local s1-mini (sequential)'}
+        mode = mode_map.get(model_type, 'local s1-mini (sequential)')
         logger.info(f"🚀 Processing {total_segments} segments using {mode} with {max_workers} worker(s)")
         
         results = [None] * total_segments
@@ -886,9 +926,9 @@ class SimpleDubbedAPI:
             manifest = build_manifest(
                 job_id, transcript_id, target_language, dubbed_segments,
                 vocal_audio_url, instrument_audio_url,
-                getattr(self, 'voice_premium_model', False),
+                getattr(self, 'model_type', 'normal'),
                 getattr(self, 'voice_type', None),
-                getattr(self, 'reference_id', None)
+                getattr(self, 'reference_ids', None)
             )
             save_manifest_to_dir(manifest, process_temp_dir, job_id)
         except Exception as e:
@@ -1042,6 +1082,16 @@ class SimpleDubbedAPI:
             
             final_video_path = output_dir_path / f"final_video_{job_id}.mp4"
             
+            # Check if subtitles should be added
+            add_subtitles = getattr(self, 'add_subtitle_to_video', False)
+            subtitle_path = None
+            if add_subtitles:
+                subtitle_file = f"subtitles_{job_id}.srt"
+                potential_subtitle_path = output_dir_path / subtitle_file
+                if potential_subtitle_path.exists():
+                    subtitle_path = str(potential_subtitle_path)
+                    logger.info(f"Adding subtitles to video: {subtitle_path}")
+            
             cmd = ["ffmpeg", "-y"]
             if settings.FFMPEG_USE_GPU:
                 cmd.extend(["-hwaccel", "cuda"])
@@ -1065,8 +1115,17 @@ class SimpleDubbedAPI:
             else:
                 cmd.extend(["-map", "0:v", "-map", "1:a", "-filter:a", "volume=2.0"])
             
+            # Add subtitle filter if subtitles are enabled
+            if subtitle_path:
+                video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
+                preset = 'fast' if settings.FFMPEG_USE_GPU else 'veryfast'
+                # Replace copy codec with encoding + subtitle burn-in
+                subtitle_filter = f"subtitles='{subtitle_path.replace(chr(92), '/')}'"
+                cmd.extend(["-vf", subtitle_filter, "-c:v", video_codec, "-preset", preset, "-crf", "23"])
+            else:
+                cmd.extend(["-c:v", "copy"])
+            
             cmd.extend([
-                "-c:v", "copy",
                 "-c:a", "aac", "-b:a", "128k",
                 "-movflags", "+faststart",
                 str(final_video_path)
@@ -1100,17 +1159,19 @@ class SimpleDubbedAPI:
         """Upload files to R2 and return final results"""
         self._update_phase_progress(job_id, "upload", 0.0, "Uploading and finalizing...")
         
-        # Skip all video uploads during folder upload since video is already processed and associated
+        # Skip video and reference segment uploads during folder upload
         exclude_files = []
         import os
         for filename in os.listdir(process_temp_dir):
             if filename.lower().endswith(('.mp4', '.avi', '.mov', '.webm', '.mkv')):
                 exclude_files.append(filename)
+            elif filename.startswith('segment_') and filename.endswith('.wav'):
+                exclude_files.append(filename)
         
         if exclude_files:
-            logger.info(f"📎 Skipping video files during folder upload: {exclude_files}")
+            logger.info(f"📎 Skipping files during folder upload: {exclude_files}")
         
-        # Upload directory to R2, excluding all video files
+        # Upload directory to R2, excluding video and reference segment files
         folder_upload_result, manifest_url, manifest_key = upload_process_dir_to_r2(
             job_id, process_temp_dir, self.r2_storage, exclude_files=exclude_files
         )

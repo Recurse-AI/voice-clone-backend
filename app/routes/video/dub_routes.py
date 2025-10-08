@@ -177,7 +177,8 @@ async def start_video_dub(
             "status": "pending",
             "progress": 0,
             "video_subtitle": request_obj.video_subtitle,
-            "voice_premium_model": request_obj.voice_premium_model,
+            "model_type": request_obj.model_type,
+            "add_subtitle_to_video": request_obj.add_subtitle_to_video,
             "voice_type": getattr(request_obj, "voice_type", None),
             "reference_ids": getattr(request_obj, "reference_ids", [])
         }
@@ -497,7 +498,8 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
         "progress": 0,
         "parent_job_id": parent_job_id,
         "redub_from": parent_job.target_language,
-        "voice_premium_model": getattr(request_body, "voice_premium_model", False)
+        "model_type": request_body.model_type,
+        "add_subtitle_to_video": request_body.add_subtitle_to_video
     }
     
     # Inherit video_url from parent job for final video generation
@@ -534,9 +536,10 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     # Prepare manifest for redub using utility function
     manifest = job_utils.prepare_manifest_for_redub(
         manifest, redub_job_id, request_body.target_language, parent_job_id, 
-        getattr(request_body, "voice_premium_model", False),
+        request_body.model_type,
         getattr(request_body, "voice_type", None),
-        getattr(request_body, "reference_ids", [])
+        getattr(request_body, "reference_ids", []),
+        request_body.add_subtitle_to_video
     )
     
     # Enqueue redub job

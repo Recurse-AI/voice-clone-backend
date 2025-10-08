@@ -369,16 +369,13 @@ class AudioUtils:
                 expected_samples = end_sample - start_sample
 
                 if len(cloned_audio) > expected_samples:
-                    cloned_audio = cloned_audio[:expected_samples]
+                    import librosa
+                    stretch_rate = len(cloned_audio) / expected_samples
+                    cloned_audio = librosa.effects.time_stretch(cloned_audio, rate=stretch_rate)
+                    if len(cloned_audio) > expected_samples:
+                        cloned_audio = cloned_audio[:expected_samples]
                 elif len(cloned_audio) < expected_samples:
-                    shortfall = expected_samples - len(cloned_audio)
-                    if shortfall < len(cloned_audio) * 0.1:
-                        cloned_audio = np.pad(cloned_audio, (0, shortfall), mode="constant")
-                    else:
-                        end_samples = min(len(cloned_audio) // 4, shortfall)
-                        tail_repeat = cloned_audio[-end_samples:] if end_samples > 0 else np.zeros(shortfall)
-                        extension = np.tile(tail_repeat, (shortfall // len(tail_repeat)) + 1)[:shortfall] * 0.3
-                        cloned_audio = np.concatenate([cloned_audio, extension])
+                    cloned_audio = np.pad(cloned_audio, (0, expected_samples - len(cloned_audio)), mode="constant")
 
                 cloned_audio = AudioUtils.fade_in_out(cloned_audio.astype(np.float32), 
                                                     fade_duration=0.003, sample_rate=target_sample_rate)

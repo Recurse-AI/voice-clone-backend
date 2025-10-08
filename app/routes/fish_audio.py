@@ -11,7 +11,8 @@ router = APIRouter(prefix="/api/fish", tags=["fish-audio"])
 
 
 @router.get("/models")
-async def list_fish_models(
+async def list_models(
+    model_type: str = Query("fish_speech", regex="^(fish_speech|elevenlabs)$"),
     page_size: int = Query(20, ge=1, le=100),
     page_number: int = Query(1, ge=1),
     title: Optional[str] = None,
@@ -21,6 +22,38 @@ async def list_fish_models(
     language: Optional[List[str]] = Query(None),
     title_language: Optional[str] = None,
 ):
+    if model_type == "elevenlabs":
+        if not settings.ELEVENLABS_API_KEY:
+            raise HTTPException(status_code=500, detail="ElevenLabs API key not configured")
+        
+        from app.services.dub.elevenlabs_service import get_elevenlabs_service
+        elevenlabs_service = get_elevenlabs_service()
+        result = elevenlabs_service.get_all_voices()
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to fetch voices"))
+        
+        voices = result["items"]
+        
+        # Apply filters
+        if title:
+            voices = [v for v in voices if title.lower() in v.get("title", "").lower()]
+        if self_only:
+            voices = [v for v in voices if v.get("type") in ["cloned", "generated"]]
+        
+        # Pagination
+        start = (page_number - 1) * page_size
+        end = start + page_size
+        paginated = voices[start:end]
+        
+        return {
+            "items": paginated,
+            "total": len(voices),
+            "page_size": page_size,
+            "page_number": page_number
+        }
+    
+    # Fish Audio (default)
     if not settings.FISH_AUDIO_API_KEY:
         raise HTTPException(status_code=500, detail="Fish Audio API key not configured")
 
@@ -61,7 +94,24 @@ async def list_fish_models(
 
 
 @router.get("/models/{reference_id}")
-async def get_fish_model_details(reference_id: str):
+async def get_model_details(
+    reference_id: str,
+    model_type: str = Query("fish_speech", regex="^(fish_speech|elevenlabs)$")
+):
+    if model_type == "elevenlabs":
+        if not settings.ELEVENLABS_API_KEY:
+            raise HTTPException(status_code=500, detail="ElevenLabs API key not configured")
+        
+        from app.services.dub.elevenlabs_service import get_elevenlabs_service
+        elevenlabs_service = get_elevenlabs_service()
+        result = elevenlabs_service.get_voice_details(reference_id)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=404, detail=result.get("error", "Voice not found"))
+        
+        return result["data"]
+    
+    # Fish Audio (default)
     if not settings.FISH_AUDIO_API_KEY:
         raise HTTPException(status_code=500, detail="Fish Audio API key not configured")
 
@@ -80,9 +130,10 @@ async def get_fish_model_details(reference_id: str):
 
 
 @router.post("/models")
-async def create_fish_model(
-    visibility: str = Form(...),
-    type: str = Form(...),
+async def create_model(
+    model_type: str = Form("fish_speech", regex="^(fish_speech|elevenlabs)$"),
+    visibility: str = Form("private"),
+    type: str = Form("tts"),
     title: str = Form(...),
     description: Optional[str] = Form(None),
     train_mode: str = Form("fast"),
@@ -93,6 +144,46 @@ async def create_fish_model(
     cover_image: Optional[UploadFile] = File(None),
     x_fish_audio_key: Optional[str] = Header(None, convert_underscores=False),
 ):
+    if model_type == "elevenlabs":
+        if not settings.ELEVENLABS_API_KEY:
+            raise HTTPException(status_code=500, detail="ElevenLabs API key not configured")
+        
+        if not voices or len(voices) == 0:
+            raise HTTPException(status_code=422, detail="At least one voice file is required")
+        
+        from app.services.dub.elevenlabs_service import get_elevenlabs_service
+        elevenlabs_service = get_elevenlabs_service()
+        
+        # ElevenLabs IVC only supports single audio file
+        voice_file = voices[0]
+        audio_bytes = await voice_file.read()
+        
+        result = elevenlabs_service.create_voice_reference(audio_bytes, title)
+        
+        if not result.get("success"):
+            raise HTTPException(status_code=500, detail=result.get("error", "Failed to create voice"))
+        
+        # Return in Fish Audio format
+        return {
+            "_id": result["voice_id"],
+            "title": title,
+            "cover_image": None,
+            "languages": ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'zh', 'ja', 'ko', 
+                         'ar', 'hi', 'tr', 'pl', 'nl', 'sv', 'uk', 'vi'],
+            "tags": tags or ["cloned", "custom"],
+            "samples": [],
+            "description": description or "",
+            "like_count": 0,
+            "task_count": 0,
+            "author": {
+                "nickname": "You"
+            },
+            "visibility": "private",
+            "train_mode": "instant",
+            "model_type": "elevenlabs"
+        }
+    
+    # Fish Audio (default)
     api_key = x_fish_audio_key or settings.FISH_AUDIO_API_KEY
     if not api_key:
         raise HTTPException(status_code=500, detail="Fish Audio API key not configured")

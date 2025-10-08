@@ -66,6 +66,7 @@ class SpeakerDetectionService:
             
             num_speakers = len(set([r["speaker"] for r in results]))
             logger.info(f"Detected {num_speakers} speakers, {len(results)} segments")
+            results.sort(key=lambda r: (r["start"], r["end"]))
             
             return results
             

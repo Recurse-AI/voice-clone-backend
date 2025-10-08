@@ -13,12 +13,11 @@ from pymongo import MongoClient
 from pathlib import Path
 
 import logging
-from app.schemas import AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse, VoiceCloneRequest, VoiceCloneResponse
+from app.schemas import AudioSeparationRequest, AudioSeparationResponse, SeparationStatusResponse
 from app.dependencies.auth import get_current_user
 from app.services.separation_job_service import separation_job_service
 from app.services.credit_service import credit_service
 from app.utils.audio import AudioUtils
-from app.services.dub.fish_speech_service import get_fish_speech_service
 from app.services.r2_service import R2Service
 from app.services.simple_status_service import status_service, JobStatus
 from app.utils.runpod_service import runpod_service
@@ -135,87 +134,4 @@ async def start_audio_separation(
         raise HTTPException(status_code=500, detail=f"Failed to start separation: {str(e)}")
 
 
-
-# Voice Clone Endpoint
-@router.post("/voice-clone-segment", response_model=VoiceCloneResponse)
-async def voice_clone_segment(request: VoiceCloneRequest):
-    """
-    Voice clone a single text segment using reference audio.
-    1. Downloads reference audio from URL.
-    2. Generates cloned voice using AI voice cloning.
-    3. Uploads generated audio to R2 bucket.
-    4. Returns public URL of cloned audio.
-    """
-    job_dir = None  # Initialize to ensure cleanup works
-    try:
-
-
-        
-        r2_service = R2Service()
-        job_id = r2_service.generate_job_id()
-        # Voice cloning job directory (consistent with other services)
-        job_dir = os.path.join(settings.TEMP_DIR, f"voice_clone_job_{job_id}")
-        os.makedirs(job_dir, exist_ok=True)
-
-        # Download reference audio
-
-        audio_utils = AudioUtils()
-        reference_path = os.path.join(job_dir, "reference.wav")
-        download_res = audio_utils.download_audio_file(request.referenceAudioUrl, reference_path)
-        if not download_res["success"]:
-            raise HTTPException(status_code=400, detail=f"Reference audio download failed: {download_res.get('error')}")
-
-        # Read reference audio bytes
-        with open(reference_path, "rb") as f:
-            reference_bytes = f.read()
-
-        # Generate cloned audio
-
-        fish_service = get_fish_speech_service()
-
-        result = fish_service.generate_with_reference_audio(
-            text=request.text,
-            reference_audio_bytes=reference_bytes,
-            reference_text=request.referenceText,
-            seed=int(random.randint(0, 2**32 - 1))
-        )
-
-        if not result.get("success"):
-            raise HTTPException(status_code=500, detail=result.get("error", "Voice generation failed"))
-
-        cloned_path = os.path.join(job_dir, f"{job_id}.wav")
-        with open(cloned_path, "wb") as f:
-            f.write(result["audio_data"])
-
-        # Upload to R2
-        r2_key = r2_service.generate_file_path(job_id, "", f"{job_id}.wav")
-        upload_res = r2_service.upload_file(cloned_path, r2_key, content_type="audio/wav")
-
-        if not upload_res.get("success"):
-            raise HTTPException(status_code=500, detail=upload_res.get("error", "Upload failed"))
-
-        duration_seconds = None
-        if result.get("sample_rate"):
-            duration_seconds = round(len(result["audio_data"]) / (result["sample_rate"] * 2), 2)
-
-        return VoiceCloneResponse(
-            success=True,
-            message="Voice cloned successfully",
-            jobId=job_id,
-            audioUrl=upload_res["url"],
-            duration=duration_seconds
-        )
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        # Cleanup temp directory properly
-        if job_dir and os.path.exists(job_dir):
-            try:
-        
-                AudioUtils.remove_temp_dir(folder_path=job_dir)
-                logger.info(f"🧹 Cleaned up voice clone temp directory: {job_dir}")
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup voice clone directory {job_dir}: {cleanup_error}")
 
