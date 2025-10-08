@@ -78,9 +78,9 @@ class ElevenLabsService:
                 if estimated_duration_ms > target_duration_ms:
                     speed = min(1.2, max(0.8, estimated_duration_ms / target_duration_ms))
                 else:
-                    speed = 1.0
+                    speed = 1.1
             else:
-                speed = 1.0
+                speed = 1.1
             
             audio = self._generate_with_retry(text, voice_id, speed)
             audio_bytes = b"".join(chunk for chunk in audio)
