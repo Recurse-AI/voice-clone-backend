@@ -12,7 +12,7 @@ class ReferenceAudioOptimizer:
     @staticmethod
     def optimize_for_elevenlabs(segments: List[Dict[str, Any]], speaker: str, process_temp_dir: str) -> Optional[bytes]:
         return ReferenceAudioOptimizer._optimize_reference(
-            segments, speaker, process_temp_dir, max_duration_seconds=90, model_name="ElevenLabs"
+            segments, speaker, process_temp_dir, max_duration_seconds=30, model_name="ElevenLabs"
         )
     
     @staticmethod

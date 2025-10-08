@@ -496,8 +496,27 @@ OPTIMIZATION GOALS:
 - MAXIMUM segment length: 15.0 seconds (strict limit)
 - Merge very short segments if SAME speaker and combined duration ≤15s
 - Split long segments intelligently at natural breaks
+- When merging: Combine BOTH original_text AND dubbed_text
+- When splitting: Divide BOTH original_text AND dubbed_text proportionally
 
-SPLIT PRIORITY (when breaking long segments):
+SPLIT RULES (when breaking long segments):
+- BOTH original_text AND dubbed_text must be split proportionally
+- Each split segment must have corresponding portions of BOTH texts
+- Split at natural boundaries to maintain meaning in BOTH languages
+
+SPLIT EXAMPLE:
+Input: start=0.0s, end=12.5s (12.5s duration - too long)
+       original_text: "Hello everyone, welcome to the show. Today we'll discuss AI."
+       dubbed_text: "সবাইকে স্বাগতম, আমাদের শোতে। আজ আমরা AI নিয়ে আলোচনা করব।"
+       
+Split → Segment 1: start=0.0s, end=6.2s
+                    original_text: "Hello everyone, welcome to the show."
+                    dubbed_text: "সবাইকে স্বাগতম, আমাদের শোতে।"
+        Segment 2: start=6.2s, end=12.5s
+                    original_text: "Today we'll discuss AI."
+                    dubbed_text: "আজ আমরা AI নিয়ে আলোচনা করব।"
+
+SPLIT PRIORITY:
 1. Sentence boundaries (highest priority)
 2. Clause boundaries (commas, conjunctions)
 3. Natural pauses in speech
