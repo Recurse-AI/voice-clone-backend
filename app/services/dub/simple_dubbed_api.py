@@ -447,57 +447,23 @@ class SimpleDubbedAPI:
             logger.error(f"ElevenLabs generation error: {e}")
             return {"success": False, "error": str(e)}
     
-    def _generate_with_premium_api(self, tagged_text: str, reference_audio_bytes: bytes, tagged_reference_text: str, 
-                                   job_id: str, target_language_code: str, voice_type: str, ai_voice_reference_id: str) -> dict:
-        from app.services.dub.fish_audio_api_service import FishAudioAPIService
+    def _generate_with_premium_api(self, tagged_text: str, reference_id: str, job_id: str, target_language_code: str) -> dict:
+        from app.services.dub.fish_audio_api_service import get_fish_audio_api_service
         
-        fish_api = FishAudioAPIService()
-        if not fish_api.api_key or not fish_api.api_key.strip():
-            return {"success": False}
+        if not reference_id:
+            return {"success": False, "error": "reference_id is required"}
         
-        max_retries = 3
-        retry_delay = 1.0
-        
-        for attempt in range(1, max_retries + 1):
-            try:
-                logger.info(f"🎯 Premium API attempt {attempt}/{max_retries}")
-                
-                if voice_type == 'ai_voice' and ai_voice_reference_id:
-                    result = fish_api.generate_voice_clone(
-                        text=tagged_text,
-                        reference_audio_bytes=None,
-                        reference_text=None,
-                        job_id=job_id,
-                        target_language_code=target_language_code,
-                        reference_id=ai_voice_reference_id
-                    )
-                else:
-                    result = fish_api.generate_voice_clone(
-                        text=tagged_text,
-                        reference_audio_bytes=reference_audio_bytes,
-                        reference_text=tagged_reference_text,
-                        job_id=job_id,
-                        target_language_code=target_language_code
-                    )
-                
-                if result.get("success"):
-                    logger.info(f"✅ Premium API success on attempt {attempt}")
-                    return result
-                
-                logger.warning(f"⚠️ Premium API attempt {attempt} failed: {result.get('error', 'Unknown')}")
-                
-                if attempt < max_retries:
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-                    
-            except Exception as e:
-                logger.error(f"❌ Premium API attempt {attempt} error: {e}")
-                if attempt < max_retries:
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
-        
-        logger.error(f"❌ Premium API failed after {max_retries} attempts")
-        return {"success": False, "error": f"Failed after {max_retries} retries"}
+        try:
+            fish_api = get_fish_audio_api_service()
+            return fish_api.generate_voice_clone(
+                text=tagged_text,
+                reference_id=reference_id,
+                job_id=job_id,
+                target_language_code=target_language_code
+            )
+        except Exception as e:
+            logger.error(f"❌ Fish API error: {e}")
+            return {"success": False, "error": str(e)}
     
     def _generate_with_local_model(self, tagged_text: str, reference_audio_bytes: bytes, 
                                    tagged_reference_text: str, job_id: str, target_language_code: str) -> dict:
@@ -580,16 +546,19 @@ class SimpleDubbedAPI:
                         tagged_text, ai_voice_id, job_id, target_language_code, segment_index
                     )
             elif model_type == 'medium':
-                result = self._generate_with_premium_api(
-                    tagged_text, reference_audio_bytes, tagged_reference_text,
-                    job_id, target_language_code, voice_type, ai_voice_id
-                )
-                if not result.get("success"):
-                    logger.warning(f"❌ Fish API failed for {segment_id}, using local model")
-                    result = self._generate_with_local_model(
-                        tagged_text, reference_audio_bytes, tagged_reference_text,
-                        job_id, target_language_code
+                if not ai_voice_id:
+                    logger.error(f"❌ No reference_id for {segment_id}, cannot use Fish API")
+                    result = {"success": False, "error": "reference_id required for Fish API"}
+                else:
+                    result = self._generate_with_premium_api(
+                        tagged_text, ai_voice_id, job_id, target_language_code
                     )
+                    if not result.get("success"):
+                        logger.warning(f"❌ Fish API failed for {segment_id}, using local model")
+                        result = self._generate_with_local_model(
+                            tagged_text, reference_audio_bytes, tagged_reference_text,
+                            job_id, target_language_code
+                        )
             else:
                 result = self._generate_with_local_model(
                     tagged_text, reference_audio_bytes, tagged_reference_text,
@@ -783,7 +752,8 @@ class SimpleDubbedAPI:
                 if self.reference_ids:
                     logger.info(f"Created {len(self.reference_ids)} voice clones")
                 else:
-                    logger.warning("Failed to create voice clones")
+                    model_name = "ElevenLabs" if self.model_type == "best" else "Fish Audio API"
+                    raise ValueError(f"{model_name} voice clone creation failed. Please check API credits or try again.")
         
         self._update_phase_progress(job_id, "dubbing", 0.0, "AI creating segments and dubbing")
         
@@ -1051,9 +1021,8 @@ class SimpleDubbedAPI:
         return self._upload_and_finalize(job_id, process_temp_dir, final_audio_path, video_result)
     
     def _generate_srt_file(self, job_id: str, dubbed_segments: list, process_temp_dir: str) -> str:
-        """Generate SRT subtitle file"""
-        logger.info("Generating SRT file...")
-        
+        """Generate ASS subtitle file for proper Unicode support"""
+        logger.info("Generating subtitle file...")
 
         processor = VideoProcessor(temp_dir=process_temp_dir)
         subtitle_data = []
@@ -1062,13 +1031,11 @@ class SimpleDubbedAPI:
             text = seg["dubbed_text"]
             start = seg["start"] / 1000.0
             end = seg["end"] / 1000.0
-
-            # Use text as single subtitle line (segments are already optimally sized)
             subtitle_data.append({"start": start, "end": end, "text": text})
         
-        subtitle_path = os.path.join(process_temp_dir, f"subtitles_{job_id}.srt")
-        processor.create_srt_file(subtitle_data, subtitle_path)
-        logger.info(f"Subtitle file saved: {subtitle_path}")
+        subtitle_path = os.path.join(process_temp_dir, f"subtitles_{job_id}.ass")
+        processor.create_ass_file(subtitle_data, subtitle_path)
+        logger.info(f"ASS subtitle file saved: {subtitle_path}")
         return subtitle_path
     
     def _create_process_summary(self, job_id: str, dubbed_segments: list, final_audio_path: str,
@@ -1194,11 +1161,15 @@ class SimpleDubbedAPI:
             add_subtitles = getattr(self, 'add_subtitle_to_video', False)
             subtitle_path = None
             if add_subtitles:
-                subtitle_file = f"subtitles_{job_id}.srt"
+                subtitle_file = f"subtitles_{job_id}.ass"
                 potential_subtitle_path = output_dir_path / subtitle_file
                 if potential_subtitle_path.exists():
                     subtitle_path = str(potential_subtitle_path)
-                    logger.info(f"Adding subtitles to video: {subtitle_path}")
+                    logger.info(f"✅ Adding subtitles to video: {subtitle_path}")
+                else:
+                    logger.warning(f"⚠️ add_subtitle_to_video is True but subtitle file not found: {subtitle_file}")
+            else:
+                logger.info(f"ℹ️ Subtitles not requested (add_subtitle_to_video={add_subtitles})")
             
             cmd = ["ffmpeg", "-y"]
             if settings.FFMPEG_USE_GPU:
@@ -1227,8 +1198,11 @@ class SimpleDubbedAPI:
             if subtitle_path:
                 video_codec = 'h264_nvenc' if settings.FFMPEG_USE_GPU else 'libx264'
                 preset = 'fast' if settings.FFMPEG_USE_GPU else 'veryfast'
-                # Replace copy codec with encoding + subtitle burn-in
-                subtitle_filter = f"subtitles='{subtitle_path.replace(chr(92), '/')}'"
+                
+                # Use ASS filter for proper Unicode/Indic language support
+                escaped_path = subtitle_path.replace(chr(92), '/').replace(':', r'\:')
+                subtitle_filter = f"ass='{escaped_path}'"
+                
                 cmd.extend(["-vf", subtitle_filter, "-c:v", video_codec, "-preset", preset, "-crf", "23"])
             else:
                 cmd.extend(["-c:v", "copy"])
@@ -1239,6 +1213,7 @@ class SimpleDubbedAPI:
                 str(final_video_path)
             ])
             
+            logger.info(f"🎬 FFmpeg command: {' '.join(cmd[:5])}... (subtitle_burn_in={bool(subtitle_path)})")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
             if result.returncode != 0:
                 logger.error(f"FFmpeg failed: {result.stderr}")
@@ -1249,12 +1224,14 @@ class SimpleDubbedAPI:
             upload_result = self.r2_storage.upload_file(str(final_video_path), video_r2_key, "video/mp4")
             
             if upload_result["success"]:
-                logger.info(f"✅ Video processed and uploaded for job {job_id}")
+                subtitle_status = "WITH subtitles" if subtitle_path else "WITHOUT subtitles"
+                logger.info(f"✅ Video processed and uploaded for job {job_id} ({subtitle_status})")
                 return {
                     "success": True,
                     "video_url": upload_result["url"],
                     "video_filename": f"final_video_{job_id}.mp4",
-                    "local_path": str(final_video_path)
+                    "local_path": str(final_video_path),
+                    "subtitles_added": bool(subtitle_path)
                 }
             else:
                 return {"success": False, "error": "Failed to upload video to R2"}

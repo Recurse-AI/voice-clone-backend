@@ -227,6 +227,42 @@ class VideoProcessor:
             "all_chunks_single_line": all(len(chunk) <= char_limit for chunk in chunks)
         }
 
+    def create_ass_file(self, subtitle_data: List[Dict], output_path: Path) -> None:
+        """Create ASS subtitle file with proper Unicode support for Indic languages"""
+        with open(output_path, 'w', encoding='utf-8-sig') as f:
+            # ASS header
+            f.write("[Script Info]\n")
+            f.write("ScriptType: v4.00+\n")
+            f.write("PlayResX: 1920\n")
+            f.write("PlayResY: 1080\n\n")
+            
+            # Style definition (minimal, clean)
+            f.write("[V4+ Styles]\n")
+            f.write("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
+            f.write("Style: Default,Arial,20,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,20,1\n\n")
+            
+            # Events
+            f.write("[Events]\n")
+            f.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+            
+            for subtitle in subtitle_data:
+                text = subtitle['text'].strip()
+                if not text:
+                    continue
+                
+                start = self._seconds_to_ass_time(subtitle['start'])
+                end = self._seconds_to_ass_time(subtitle['end'])
+                
+                f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n")
+    
+    def _seconds_to_ass_time(self, seconds: float) -> str:
+        """Convert seconds to ASS time format (h:mm:ss.cc)"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        centisecs = int((seconds % 1) * 100)
+        return f"{hours}:{minutes:02d}:{secs:02d}.{centisecs:02d}"
+    
     def create_srt_file(self, subtitle_data: List[Dict], output_path: Path) -> None:
         subtitle_index = 1
         
