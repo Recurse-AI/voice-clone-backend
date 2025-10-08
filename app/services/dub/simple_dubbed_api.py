@@ -323,6 +323,11 @@ class SimpleDubbedAPI:
             from app.services.dub.reference_audio_optimizer import get_reference_audio_optimizer
             from app.utils.audio import AudioUtils
             
+            # Auto-cleanup old voices
+            if self.model_type in ["best", "medium"]:
+                service = get_elevenlabs_service() if self.model_type == "best" else get_fish_audio_api_service()
+                service.cleanup_old_voices()
+            
             audio_utils = AudioUtils()
             vocal_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
             

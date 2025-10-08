@@ -109,6 +109,30 @@ class ElevenLabsService:
             logger.error(f"Failed to get voice details: {e}")
             return {"success": False, "error": str(e)}
     
+    def cleanup_old_voices(self, keep_count: int = 0) -> Dict[str, Any]:
+        try:
+            voices = self.client.voices.get_all().voices
+            custom_voices = [v for v in voices if hasattr(v, 'category') and v.category == 'cloned']
+            
+            if not custom_voices:
+                return {"success": True, "deleted": 0}
+            
+            to_delete = custom_voices[:-keep_count] if keep_count > 0 else custom_voices
+            deleted = sum(1 for v in to_delete if self._delete_voice(v.voice_id))
+            
+            logger.info(f"🧹 Cleaned {deleted}/{len(to_delete)} ElevenLabs voices")
+            return {"success": True, "deleted": deleted}
+        except Exception as e:
+            logger.error(f"ElevenLabs cleanup failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _delete_voice(self, voice_id: str) -> bool:
+        try:
+            self.client.voices.delete(voice_id)
+            return True
+        except Exception:
+            return False
+    
     def _normalize_voice_to_fish_format(self, voice) -> Dict[str, Any]:
         tags = []
         if hasattr(voice, 'labels') and voice.labels:

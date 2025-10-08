@@ -170,6 +170,38 @@ class FishAudioAPIService:
         except Exception as e:
             logger.error(f"Fish Audio API failed: {e}")
             return {"success": False, "error": str(e)}
+    
+    def cleanup_old_voices(self, keep_count: int = 0) -> Dict[str, Any]:
+        try:
+            if not self.api_key:
+                return {"success": False, "error": "API key not configured"}
+            
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            
+            with httpx.Client(timeout=30.0) as client:
+                response = client.get("https://api.fish.audio/model", headers=headers)
+                response.raise_for_status()
+                
+                custom_models = [m for m in response.json().get("items", []) if m.get("visibility") == "private"]
+                
+                if not custom_models:
+                    return {"success": True, "deleted": 0}
+                
+                to_delete = custom_models[:-keep_count] if keep_count > 0 else custom_models
+                deleted = sum(1 for m in to_delete if self._delete_model(m.get("_id"), headers, client))
+                
+                logger.info(f"🧹 Cleaned {deleted}/{len(to_delete)} Fish Audio models")
+                return {"success": True, "deleted": deleted}
+        except Exception as e:
+            logger.error(f"Fish Audio cleanup failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def _delete_model(self, model_id: str, headers: dict, client: httpx.Client) -> bool:
+        try:
+            client.delete(f"https://api.fish.audio/model/{model_id}", headers=headers).raise_for_status()
+            return True
+        except Exception:
+            return False
 
 
 _fish_api_service_instance = None
