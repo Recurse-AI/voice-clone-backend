@@ -90,31 +90,25 @@ class JobUtils:
     
     @staticmethod
     def prepare_manifest_for_redub(manifest: Dict[str, Any], redub_job_id: str, target_language: str, parent_job_id: str, model_type: str = "normal", voice_type: str = None, reference_ids: list = None, add_subtitle_to_video: bool = False) -> Dict[str, Any]:
-        """
-        Prepare manifest for redub with updated metadata
-        Returns: updated manifest
-        
-        Note: We preserve the original target_language for proper override comparison.
-        The new target language is passed via the API call parameters.
-        num_of_speakers is always preserved from the original manifest (not overridable in redub).
-        """
         updated_manifest = manifest.copy()
         updated_manifest.update({
             "job_id": redub_job_id,
-            # Don't update target_language - preserve original for override comparison
-            "redub_target_language": target_language,  # Store new target language separately
+            "redub_target_language": target_language,
             "parent_job_id": parent_job_id,
-            "version": 1,  # Reset version for new job
+            "version": 1,
             "redub_timestamp": datetime.now().isoformat(),
-            "model_type": model_type,  # Use new redub setting, not original
+            "model_type": model_type,
             "add_subtitle_to_video": add_subtitle_to_video
         })
-        # Optionally override voice config
+        
         if voice_type is not None:
             updated_manifest["voice_type"] = voice_type
         if reference_ids is not None:
             updated_manifest["reference_ids"] = reference_ids
-        # num_of_speakers is preserved from original manifest, not overridable
+        
+        for segment in updated_manifest.get("segments", []):
+            segment["reference_id"] = None
+        
         return updated_manifest
     
 

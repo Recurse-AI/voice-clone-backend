@@ -836,9 +836,6 @@ class SimpleDubbedAPI:
         is_redub = manifest_override and manifest_override.get("parent_job_id")
         
         for segment in ai_segments:
-            if is_redub and self.model_type in ["best", "medium"]:
-                segment["reference_id"] = None
-            
             if not segment.get("reference_id"):
                 speaker = segment.get("speaker")
                 segment["reference_id"] = self._assign_reference_id(speaker) if speaker and self.reference_ids else None
