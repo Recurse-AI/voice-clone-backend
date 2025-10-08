@@ -567,14 +567,12 @@ class SimpleDubbedAPI:
             cloned_path = os.path.join(process_temp_dir, f"cloned_{job_id}_{segment_index:03d}.wav").replace('\\', '/')
             
             if model_type == 'best':
-                result = self._generate_with_elevenlabs(
-                    tagged_text, ai_voice_id, job_id, target_language_code, segment_index
-                )
-                if not result.get("success"):
-                    logger.warning(f"❌ ElevenLabs failed for {segment_id}, using Fish API fallback")
-                    result = self._generate_with_premium_api(
-                        tagged_text, reference_audio_bytes, tagged_reference_text,
-                        job_id, target_language_code, voice_type, ai_voice_id
+                if not ai_voice_id:
+                    logger.error(f"❌ No voice_id for {segment_id}, cannot use ElevenLabs")
+                    result = {"success": False, "error": "voice_id required for ElevenLabs"}
+                else:
+                    result = self._generate_with_elevenlabs(
+                        tagged_text, ai_voice_id, job_id, target_language_code, segment_index
                     )
             elif model_type == 'medium':
                 result = self._generate_with_premium_api(

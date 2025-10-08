@@ -45,6 +45,9 @@ class ElevenLabsService:
             from app.config.settings import settings
             import tempfile
             
+            if not voice_id:
+                return {"success": False, "error": "voice_id is required"}
+            
             logger.info(f"Generating speech with ElevenLabs (voice: {voice_id[:8]}...)")
             
             audio = self.client.text_to_speech.convert(
