@@ -170,3 +170,12 @@ class FishAudioAPIService:
         except Exception as e:
             logger.error(f"Fish Audio API failed: {e}")
             return {"success": False, "error": str(e)}
+
+
+_fish_api_service_instance = None
+
+def get_fish_audio_api_service() -> FishAudioAPIService:
+    global _fish_api_service_instance
+    if _fish_api_service_instance is None:
+        _fish_api_service_instance = FishAudioAPIService()
+    return _fish_api_service_instance
