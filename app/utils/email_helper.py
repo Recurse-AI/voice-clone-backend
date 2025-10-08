@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 def get_logo_url():
     """Get the official ClearVocals logo URL"""
-    return "https://pub-e668f82c3ede4548869ac0a3acad4e7f.r2.dev/dub-uploads/test_acb34834/main_transparent_backgrund.png"
+    return f"{settings.BACKEND_URL}/static/main_white_background.png"
 
 # Function to send HTML email using smtplib
 def send_email(sender_email: str, receiver_email: str, subject: str, body: str, password: str, is_html: bool = False, raise_on_error: bool = True):
@@ -374,6 +374,32 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>{job_title} Ready - ClearVocals</title>
+        <style>
+            .cta-button {{
+                display: inline-block;
+                background: {color["gradient"]};
+                color: #ffffff !important;
+                text-decoration: none;
+                padding: 16px 40px;
+                border-radius: 10px;
+                font-size: 16px;
+                font-weight: 700;
+                letter-spacing: 0.3px;
+                box-shadow: 0 8px 20px {color["accent"]}40;
+                transition: transform 0.2s;
+            }}
+            .cta-button:hover {{
+                transform: translateY(-2px);
+                box-shadow: 0 12px 28px {color["accent"]}60;
+            }}
+            @media only screen and (max-width: 600px) {{
+                body {{ padding: 20px 10px !important; }}
+                table {{ border-radius: 12px !important; }}
+                td {{ padding: 30px 20px !important; }}
+                h1 {{ font-size: 26px !important; }}
+                h2 {{ font-size: 22px !important; }}
+            }}
+        </style>
     </head>
     <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; padding: 40px 20px;">
         <table width="100%" cellpadding="0" cellspacing="0" style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.3);">
@@ -408,23 +434,6 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
                         {download_links}
                     </div>
                     
-                    <div style="background: linear-gradient(135deg, {color["light"]} 0%, #ffffff 100%); border-radius: 12px; padding: 25px; margin: 30px 0; border: 2px solid {color["accent"]}20;">
-                        <table width="100%" cellpadding="8" cellspacing="0">
-                            <tr>
-                                <td style="color: #666666; font-size: 14px; font-weight: 500;">📋 Job ID:</td>
-                                <td style="color: #1a1a1a; font-size: 14px; font-weight: 600; text-align: right;">{job_id[:12]}...</td>
-                            </tr>
-                            <tr>
-                                <td style="color: #666666; font-size: 14px; font-weight: 500;">🎯 Type:</td>
-                                <td style="color: #1a1a1a; font-size: 14px; font-weight: 600; text-align: right;">{job_title}</td>
-                            </tr>
-                            <tr>
-                                <td style="color: #666666; font-size: 14px; font-weight: 500;">✅ Status:</td>
-                                <td style="color: #10b981; font-size: 14px; font-weight: 700; text-align: right;">COMPLETED</td>
-                            </tr>
-                        </table>
-                    </div>
-                    
                     <div style="background: #f8f9fa; border-radius: 10px; padding: 20px; margin-top: 25px; text-align: center;">
                         <p style="color: #666666; font-size: 14px; margin: 0 0 12px 0;">
                             💡 <strong>Pro Tip:</strong> Download your files within 7 days for guaranteed availability.
@@ -450,33 +459,6 @@ def create_job_completion_template(name: str, job_type: str, job_id: str, downlo
                 </td>
             </tr>
         </table>
-        
-        <style>
-            .cta-button {{
-                display: inline-block;
-                background: {color["gradient"]};
-                color: #ffffff !important;
-                text-decoration: none;
-                padding: 16px 40px;
-                border-radius: 10px;
-                font-size: 16px;
-                font-weight: 700;
-                letter-spacing: 0.3px;
-                box-shadow: 0 8px 20px {color["accent"]}40;
-                transition: transform 0.2s;
-            }}
-            .cta-button:hover {{
-                transform: translateY(-2px);
-                box-shadow: 0 12px 28px {color["accent"]}60;
-            }}
-            @media only screen and (max-width: 600px) {{
-                body {{ padding: 20px 10px !important; }}
-                table {{ border-radius: 12px !important; }}
-                td {{ padding: 30px 20px !important; }}
-                h1 {{ font-size: 26px !important; }}
-                h2 {{ font-size: 22px !important; }}
-            }}
-        </style>
     </body>
     </html>
     """
