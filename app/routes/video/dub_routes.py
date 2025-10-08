@@ -340,6 +340,11 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
             output_dir=job_dir,
             review_mode=False,
             manifest_override=manifest,
+            model_type=manifest.get("model_type", "normal"),
+            voice_type=manifest.get("voice_type"),
+            reference_ids=manifest.get("reference_ids", []),
+            add_subtitle_to_video=manifest.get("add_subtitle_to_video", False),
+            num_of_speakers=manifest.get("num_of_speakers", 1)
         )
         if not result.get("success"):
             status_service.update_status(job_id, "dub", JobStatus.FAILED, 0, {
