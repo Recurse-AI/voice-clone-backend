@@ -235,7 +235,8 @@ class SimpleDubbedAPI:
             logger.error(error)
             return {"success": False, "error": error}
         
-        self.created_voice_ids = []  # Track voices for cleanup
+        self.created_voice_ids = []
+        self.is_review_mode = review_mode
         
         try:
             voice_config = self._setup_voice_config(manifest_override, model_type, voice_type, reference_ids, add_subtitle_to_video, num_of_speakers)
@@ -267,19 +268,18 @@ class SimpleDubbedAPI:
                     target_language, vocal_url, instrument_url, voice_config
                 )
             
-            return self._generate_final_output(
+            result = self._generate_final_output(
                 job_id, dubbed_segments, output_dir, target_language, transcript_id, vocal_url, instrument_url
             )
+            self._cleanup_created_voices()
+            return result
             
         except Exception as e:
             logger.error(f"Dubbed processing failed: {str(e)}")
             if locals().get("output_dir"):
                 AudioUtils.remove_temp_dir(folder_path=locals().get("output_dir"))
-            return {"success": False, "error": str(e)}
-        
-        finally:
-            # Cleanup own voices (success or error)
             self._cleanup_created_voices()
+            return {"success": False, "error": str(e)}
     
     def _cleanup_created_voices(self):
         if not hasattr(self, 'created_voice_ids') or not self.created_voice_ids:
