@@ -810,12 +810,17 @@ class SimpleDubbedAPI:
                 logger.info(f"AI created {len(ai_segments)} optimal segments")
                 self._update_phase_progress(job_id, "dubbing", 1.0, f"AI completed {len(ai_segments)} segments")
         
+        is_redub = manifest_override and manifest_override.get("parent_job_id")
+        
         for segment in ai_segments:
+            if is_redub and self.model_type in ["best", "medium"]:
+                segment["reference_id"] = None
+            
             if not segment.get("reference_id"):
                 speaker = segment.get("speaker")
                 segment["reference_id"] = self._assign_reference_id(speaker) if speaker and self.reference_ids else None
         
-        logger.info(f"Assigned reference_ids to {len(ai_segments)} segments")
+        logger.info(f"Assigned reference_ids to {len(ai_segments)} segments (redub: {is_redub})")
         
         return ai_segments, transcript_id, transcription_result
 
