@@ -35,6 +35,7 @@ class LanguageService:
         "ukrainian": "uk",
         "vietnamese": "vi",
         "arabic": "ar",  # Fish Speech dubbing only
+        "bengali": "bn",
     }
     
     # Languages supported for dubbing (Fish Speech) - matches frontend target languages exactly

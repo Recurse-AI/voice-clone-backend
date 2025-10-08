@@ -180,7 +180,8 @@ async def start_video_dub(
             "model_type": request_obj.model_type,
             "add_subtitle_to_video": request_obj.add_subtitle_to_video,
             "voice_type": getattr(request_obj, "voice_type", None),
-            "reference_ids": getattr(request_obj, "reference_ids", [])
+            "reference_ids": getattr(request_obj, "reference_ids", []),
+            "num_of_speakers": request_obj.num_of_speakers
         }
         
         if video_url:

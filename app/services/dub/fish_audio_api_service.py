@@ -27,6 +27,41 @@ class FishAudioAPIService:
         else:
             self.session = None
     
+    def create_voice_reference(self, audio_bytes: bytes, name: str) -> Dict[str, Any]:
+        if not self.api_key:
+            return {"success": False, "error": "Fish Audio API key not configured"}
+        
+        try:
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            
+            multipart_data = [
+                ("visibility", (None, "private")),
+                ("type", (None, "tts")),
+                ("title", (None, name)),
+                ("train_mode", (None, "fast")),
+                ("enhance_audio_quality", (None, "false")),
+                ("voices", ("audio.wav", audio_bytes, "audio/wav"))
+            ]
+            
+            with httpx.Client(timeout=120.0) as client:
+                response = client.post(
+                    "https://api.fish.audio/model",
+                    headers=headers,
+                    files=multipart_data
+                )
+                response.raise_for_status()
+                result = response.json()
+                
+                return {
+                    "success": True,
+                    "reference_id": result.get("_id"),
+                    "voice_id": result.get("_id"),
+                    "name": name
+                }
+        except Exception as e:
+            logger.error(f"Failed to create Fish Audio voice: {e}")
+            return {"success": False, "error": str(e)}
+    
     def generate_voice_clone(self, text: str, reference_audio_bytes: bytes = None, reference_text: str = None, job_id: str = None, target_language_code: str = None, reference_id: str = None) -> Dict[str, Any]:
         if not FISH_SDK_AVAILABLE:
             return {"success": False, "error": "Fish Audio SDK not installed. Run: pip install fish-audio-sdk"}

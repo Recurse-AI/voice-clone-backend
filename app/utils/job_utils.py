@@ -96,6 +96,7 @@ class JobUtils:
         
         Note: We preserve the original target_language for proper override comparison.
         The new target language is passed via the API call parameters.
+        num_of_speakers is always preserved from the original manifest (not overridable in redub).
         """
         updated_manifest = manifest.copy()
         updated_manifest.update({
@@ -113,6 +114,7 @@ class JobUtils:
             updated_manifest["voice_type"] = voice_type
         if reference_ids is not None:
             updated_manifest["reference_ids"] = reference_ids
+        # num_of_speakers is preserved from original manifest, not overridable
         return updated_manifest
     
 

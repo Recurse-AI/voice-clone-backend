@@ -28,6 +28,7 @@ class VideoDubRequest(BaseModel):
     add_subtitle_to_video: bool = Field(False, description="If true, add subtitles to final video output")
     voice_type: Optional[str] = Field(None, description="Voice mode: 'voice_clone' or 'ai_voice'")
     reference_ids: Optional[List[str]] = Field(default_factory=list, max_length=10, description="List of reference IDs for different speakers")
+    num_of_speakers: int = Field(1, ge=1, le=10, description="Number of speakers to detect (hint for speaker detection)")
     
     @field_validator('file_url')
     @classmethod

@@ -124,9 +124,10 @@ class SimpleDubbedAPI:
         logger.info(f"Processing with target language: {target_language} -> {code} (model: {model_type})")
         return True, None, code
     
-    def _setup_voice_config(self, manifest_override: dict, model_type: str, voice_type: str, reference_ids: List[str], add_subtitle_to_video: bool) -> dict:
+    def _setup_voice_config(self, manifest_override: dict, model_type: str, voice_type: str, reference_ids: List[str], add_subtitle_to_video: bool, num_of_speakers: int) -> dict:
         manifest_model_type = manifest_override.get("model_type") if manifest_override else None
         manifest_subtitle = manifest_override.get("add_subtitle_to_video") if manifest_override else None
+        manifest_num_speakers = manifest_override.get("num_of_speakers") if manifest_override else None
         
         if manifest_override:
             voice_type = voice_type or manifest_override.get("voice_type")
@@ -134,13 +135,15 @@ class SimpleDubbedAPI:
         
         final_model_type = manifest_model_type if manifest_model_type is not None else model_type
         final_subtitle = manifest_subtitle if manifest_subtitle is not None else add_subtitle_to_video
+        final_num_speakers = manifest_num_speakers if manifest_num_speakers is not None else num_of_speakers
         
         self.model_type = final_model_type
         self.add_subtitle_to_video = final_subtitle
         self.voice_type = voice_type
         self.reference_ids = reference_ids or []
+        self.num_of_speakers = final_num_speakers
         
-        return {"model_type": final_model_type, "voice_type": voice_type, "reference_ids": reference_ids, "add_subtitle_to_video": final_subtitle}
+        return {"model_type": final_model_type, "voice_type": voice_type, "reference_ids": reference_ids, "add_subtitle_to_video": final_subtitle, "num_of_speakers": final_num_speakers}
     
     def _get_audio_urls(self, manifest_override: dict, separation_urls: dict) -> tuple:
         if manifest_override:
@@ -225,14 +228,15 @@ class SimpleDubbedAPI:
                            review_mode: bool = False, manifest_override: Optional[Dict[str, Any]] = None,
                            separation_urls: Optional[Dict[str, str]] = None, video_subtitle: bool = False,
                            model_type: str = "normal", voice_type: Optional[str] = None,
-                           reference_ids: Optional[List[str]] = None, add_subtitle_to_video: bool = False) -> dict:
+                           reference_ids: Optional[List[str]] = None, add_subtitle_to_video: bool = False,
+                           num_of_speakers: int = 1) -> dict:
         valid, error, target_code = self._validate_target_language(target_language, model_type)
         if not valid:
             logger.error(error)
             return {"success": False, "error": error}
         
         try:
-            voice_config = self._setup_voice_config(manifest_override, model_type, voice_type, reference_ids, add_subtitle_to_video)
+            voice_config = self._setup_voice_config(manifest_override, model_type, voice_type, reference_ids, add_subtitle_to_video, num_of_speakers)
             
             self._update_status(job_id, JobStatus.PROCESSING, 60, {"message": "Starting dubbing", "phase": "dubbing"})
             
@@ -310,6 +314,90 @@ class SimpleDubbedAPI:
         except (ValueError, IndexError):
             pass
         return None
+    
+    def _create_speaker_voice_clones(self, speaker_timeline: List[Dict], unique_speakers: List[str], 
+                                    process_temp_dir: str, job_id: str) -> List[str]:
+        try:
+            from app.services.dub.elevenlabs_service import get_elevenlabs_service
+            from app.services.dub.fish_audio_api_service import get_fish_audio_api_service
+            from app.services.dub.reference_audio_optimizer import get_reference_audio_optimizer
+            from app.utils.audio import AudioUtils
+            
+            audio_utils = AudioUtils()
+            vocal_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
+            
+            if not os.path.exists(vocal_path):
+                logger.error(f"Vocal file not found: {vocal_path}")
+                return []
+            
+            speaker_segments_map = {}
+            
+            for speaker in unique_speakers:
+                speaker_segments = [s for s in speaker_timeline if s["speaker"] == speaker]
+                if not speaker_segments:
+                    continue
+                
+                segments_to_split = []
+                for seg in speaker_segments:
+                    segments_to_split.append({
+                        "start": int(seg["start"] * 1000),
+                        "end": int(seg["end"] * 1000),
+                        "text": speaker,
+                        "speaker": speaker,
+                        "duration_ms": int((seg["end"] - seg["start"]) * 1000)
+                    })
+                
+                speaker_dir = os.path.join(process_temp_dir, f"speaker_{speaker}")
+                os.makedirs(speaker_dir, exist_ok=True)
+                
+                split_result = audio_utils.split_audio_by_timestamps(vocal_path, speaker_dir, segments_to_split)
+                
+                if not split_result.get("success"):
+                    logger.warning(f"Failed to extract audio for {speaker}")
+                    continue
+                
+                for i, seg in enumerate(segments_to_split):
+                    seg["original_audio_file"] = f"segment_{i:03d}.wav"
+                
+                speaker_segments_map[speaker] = {"segments": segments_to_split, "directory": speaker_dir}
+            
+            optimizer = get_reference_audio_optimizer()
+            reference_ids = []
+            
+            for speaker in unique_speakers:
+                if speaker not in speaker_segments_map:
+                    continue
+                
+                segments = speaker_segments_map[speaker]["segments"]
+                speaker_dir = speaker_segments_map[speaker]["directory"]
+                
+                if self.model_type == "best":
+                    audio_bytes = optimizer.optimize_for_elevenlabs(segments, speaker, speaker_dir)
+                    service = get_elevenlabs_service()
+                else:
+                    audio_bytes = optimizer.optimize_for_fish(segments, speaker, speaker_dir)
+                    service = get_fish_audio_api_service()
+                
+                if not audio_bytes:
+                    logger.error(f"Failed to optimize audio for {speaker}")
+                    return []
+                
+                voice_name = f"{job_id}_{speaker}"
+                result = service.create_voice_reference(audio_bytes, voice_name)
+                
+                if result.get("success"):
+                    voice_id = result.get("voice_id") or result.get("reference_id")
+                    reference_ids.append(voice_id)
+                    logger.info(f"Created voice clone for {speaker}: {voice_id}")
+                else:
+                    logger.error(f"Failed to create voice clone for {speaker}: {result.get('error')}")
+                    return []
+            
+            return reference_ids
+            
+        except Exception as e:
+            logger.error(f"Failed to create speaker voice clones: {e}")
+            return []
     
     def _get_ai_voice_reference(self, reference_id: str, source_language_code: str) -> tuple:
         from app.config.settings import settings as _settings
@@ -663,7 +751,7 @@ class SimpleDubbedAPI:
                 
                 vocal_path = os.path.join(process_temp_dir, f"vocal_{job_id}.wav")
                 if os.path.exists(vocal_path):
-                    num_speakers = len(self.reference_ids) if self.reference_ids else None
+                    num_speakers = self.num_of_speakers if hasattr(self, 'num_of_speakers') and self.num_of_speakers else None
                     logger.info(f"Running speaker detection before AI segmentation (expected speakers: {num_speakers or 'auto'})")
                     speaker_timeline = speaker_detection_service.detect_speakers(vocal_path, job_id, num_speakers)
                     transcription_result["speaker_timeline"] = speaker_timeline
@@ -678,6 +766,21 @@ class SimpleDubbedAPI:
                 logger.error(f"Speaker detection failed: {e}, continuing without speaker tags")
         else:
             logger.info("Redub: using manifest speaker info")
+        
+        if not self.reference_ids and self.model_type in ["best", "medium"]:
+            speaker_timeline = transcription_result.get("speaker_timeline", [])
+            if speaker_timeline:
+                unique_speakers = sorted(set(item["speaker"] for item in speaker_timeline))
+                logger.info(f"Creating voice clones for {len(unique_speakers)} speakers")
+                
+                self.reference_ids = self._create_speaker_voice_clones(
+                    speaker_timeline, unique_speakers, process_temp_dir, job_id
+                )
+                
+                if self.reference_ids:
+                    logger.info(f"Created {len(self.reference_ids)} voice clones")
+                else:
+                    logger.warning("Failed to create voice clones")
         
         self._update_phase_progress(job_id, "dubbing", 0.0, "AI creating segments and dubbing")
         
@@ -928,7 +1031,8 @@ class SimpleDubbedAPI:
                 vocal_audio_url, instrument_audio_url,
                 getattr(self, 'model_type', 'normal'),
                 getattr(self, 'voice_type', None),
-                getattr(self, 'reference_ids', None)
+                getattr(self, 'reference_ids', None),
+                getattr(self, 'num_of_speakers', 1)
             )
             save_manifest_to_dir(manifest, process_temp_dir, job_id)
         except Exception as e:

@@ -1,11 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException, UploadFile, File, Form, Header
-import os
-import tempfile
 import httpx
 from typing import List, Optional
 from app.config.settings import settings
-from app.services.r2_service import R2Service
-from starlette.concurrency import run_in_threadpool
 
 router = APIRouter(prefix="/api/fish", tags=["fish-audio"])
 
@@ -154,7 +150,6 @@ async def create_model(
         from app.services.dub.elevenlabs_service import get_elevenlabs_service
         elevenlabs_service = get_elevenlabs_service()
         
-        # ElevenLabs IVC only supports single audio file
         voice_file = voices[0]
         audio_bytes = await voice_file.read()
         
@@ -163,7 +158,6 @@ async def create_model(
         if not result.get("success"):
             raise HTTPException(status_code=500, detail=result.get("error", "Failed to create voice"))
         
-        # Return in Fish Audio format
         return {
             "_id": result["voice_id"],
             "title": title,
@@ -175,93 +169,39 @@ async def create_model(
             "description": description or "",
             "like_count": 0,
             "task_count": 0,
-            "author": {
-                "nickname": "You"
-            },
+            "author": {"nickname": "You"},
             "visibility": "private",
             "train_mode": "instant",
             "model_type": "elevenlabs"
         }
     
-    # Fish Audio (default)
-    api_key = x_fish_audio_key or settings.FISH_AUDIO_API_KEY
-    if not api_key:
-        raise HTTPException(status_code=500, detail="Fish Audio API key not configured")
-
-    headers = {"Authorization": f"Bearer {api_key}"}
-
-    # If model is requested as public but no cover image is provided, make it private
-    normalized_visibility = (visibility or "").lower()
-    if normalized_visibility == "public" and cover_image is None:
-        normalized_visibility = "private"
-
-    # Normalize list fields
-    if isinstance(texts, str):
-        texts = [texts]
-    if isinstance(tags, str):
-        tags = [tags]
-
-    # Build one multipart list including form fields and files
-    multipart_parts: List[tuple] = []
-    multipart_parts.append(("visibility", (None, normalized_visibility)))
-    multipart_parts.append(("type", (None, type)))
-    multipart_parts.append(("title", (None, title)))
-    multipart_parts.append(("train_mode", (None, train_mode)))
-    multipart_parts.append(("enhance_audio_quality", (None, str(bool(enhance_audio_quality)).lower())))
-    if description is not None:
-        multipart_parts.append(("description", (None, description)))
-    if texts:
-        for t in texts:
-            multipart_parts.append(("texts", (None, t)))
-    if tags:
-        for tg in tags:
-            multipart_parts.append(("tags", (None, tg)))
-
     if not voices or len(voices) == 0:
         raise HTTPException(status_code=422, detail="At least one voice file is required")
-
-    files = []
-    r2_service = R2Service()
-    r2_job_id = r2_service.generate_job_id()
-    for v in voices:
-        content = await v.read()
-        multipart_parts.append(("voices", (v.filename, content, v.content_type or "audio/wav")))
-        try:
-            suffix = os.path.splitext(v.filename)[1] or ".wav"
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(content)
-                tmp_path = tmp.name
-            sanitized_filename = r2_service._sanitize_filename(v.filename)
-            r2_key = r2_service.generate_file_path(r2_job_id, "", sanitized_filename)
-            r2_service.upload_file(tmp_path, r2_key, v.content_type or "audio/wav")
-        finally:
-            try:
-                if 'tmp_path' in locals() and os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-            except Exception:
-                pass
-    if cover_image is not None:
-        content = await cover_image.read()
-        multipart_parts.append(("cover_image", (cover_image.filename, content, cover_image.content_type or "application/octet-stream")))
-    if not multipart_parts:
-        multipart_parts = None
-
-    def _do_post():
-        with httpx.Client(timeout=60.0) as client:
-            response = client.post(
-                "https://api.fish.audio/model",
-                headers=headers,
-                files=multipart_parts,
-            )
-            response.raise_for_status()
-            return response
-
-    try:
-        resp = await run_in_threadpool(_do_post)
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text)
-    except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail=f"Upstream request failed: {str(exc)}")
-
-    return resp.json()
+    
+    from app.services.dub.fish_audio_api_service import get_fish_audio_api_service
+    fish_service = get_fish_audio_api_service()
+    
+    voice_file = voices[0]
+    audio_bytes = await voice_file.read()
+    
+    result = fish_service.create_voice_reference(audio_bytes, title)
+    
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Failed to create voice"))
+    
+    return {
+        "_id": result["reference_id"],
+        "title": title,
+        "cover_image": None,
+        "languages": ['en', 'zh', 'ja'],
+        "tags": tags or ["cloned", "custom"],
+        "samples": [],
+        "description": description or "",
+        "like_count": 0,
+        "task_count": 0,
+        "author": {"nickname": "You"},
+        "visibility": "private",
+        "train_mode": "fast",
+        "model_type": "fish_speech"
+    }
 

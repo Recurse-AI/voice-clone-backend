@@ -24,6 +24,7 @@ def process_dub_task(request_dict: dict, user_id: str):
     add_subtitle_to_video = request_dict.get("add_subtitle_to_video", False)
     voice_type = request_dict.get("voice_type")
     reference_ids = request_dict.get("reference_ids", [])
+    num_of_speakers = request_dict.get("num_of_speakers", 1)
     
     from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, update_dub_job_stage
     
@@ -66,7 +67,7 @@ def process_dub_task(request_dict: dict, user_id: str):
         success = _process_dubbing_pipeline(
             job_id, target_language, source_video_language, 
             job_dir, human_review, separation_result["runpod_urls"], video_subtitle, model_type,
-            voice_type, reference_ids, add_subtitle_to_video
+            voice_type, reference_ids, add_subtitle_to_video, num_of_speakers
         )
         
         if not success:
@@ -160,7 +161,7 @@ def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> dict
 def _process_dubbing_pipeline(job_id: str, target_language: str, 
                             source_video_language: str, job_dir: str,
                             human_review: bool, runpod_urls: dict = None, video_subtitle: bool = False, model_type: str = "normal",
-                            voice_type: str = None, reference_ids: list = None, add_subtitle_to_video: bool = False) -> bool:
+                            voice_type: str = None, reference_ids: list = None, add_subtitle_to_video: bool = False, num_of_speakers: int = 1) -> bool:
     try:
         from app.utils.pipeline_utils import update_dub_job_stage
         
@@ -186,7 +187,8 @@ def _process_dubbing_pipeline(job_id: str, target_language: str,
             model_type=model_type,
             voice_type=voice_type,
             reference_ids=reference_ids,
-            add_subtitle_to_video=add_subtitle_to_video
+            add_subtitle_to_video=add_subtitle_to_video,
+            num_of_speakers=num_of_speakers
         )
         
         if not pipeline_result["success"]:
@@ -279,6 +281,8 @@ def process_redub_task(redub_job_id: str, target_language: str,
     logger.info(f"REDUB WORKER: Processing job {redub_job_id}")
     logger.info(f"🔧 DEBUG: Redub worker using manifest model_type = {manifest.get('model_type', 'normal')}")
     
+    num_of_speakers = manifest.get('num_of_speakers', 1)
+    
     try:
         from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, update_dub_job_stage
         
@@ -308,7 +312,8 @@ def process_redub_task(redub_job_id: str, target_language: str,
                 model_type=manifest.get('model_type', 'normal'),
                 voice_type=manifest.get('voice_type'),
                 reference_ids=manifest.get('reference_ids', []),
-                add_subtitle_to_video=manifest.get('add_subtitle_to_video', False)
+                add_subtitle_to_video=manifest.get('add_subtitle_to_video', False),
+                num_of_speakers=num_of_speakers
             )
         finally:
             mark_dub_job_inactive(redub_job_id)
