@@ -114,20 +114,25 @@ class ElevenLabsService:
             else:
                 tags = list(voice.labels)
         
-        # Add category/type as tag
         if hasattr(voice, 'category') and voice.category:
             tags.append(voice.category)
         
-        # Build samples array from preview_url (Fish Audio format)
         samples = []
-        if hasattr(voice, 'preview_url') and voice.preview_url:
+        if hasattr(voice, 'samples') and voice.samples is not None and len(voice.samples) > 0:
+            for sample in voice.samples:
+                sample_url = f"https://api.elevenlabs.io/v1/voices/{voice.voice_id}/samples/{sample.sample_id}/audio"
+                samples.append({
+                    "audio": sample_url,
+                    "title": sample.file_name if hasattr(sample, 'file_name') else "Voice Sample",
+                    "text": f"Sample audio ({sample.duration_secs:.1f}s)" if hasattr(sample, 'duration_secs') else "Sample audio"
+                })
+        elif hasattr(voice, 'preview_url') and voice.preview_url:
             samples.append({
                 "audio": voice.preview_url,
                 "title": "Voice Preview",
                 "text": f"Preview of {voice.name}"
             })
         
-        # ElevenLabs V3 supports 80+ languages
         supported_languages = ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'zh', 'ja', 'ko', 
                               'ar', 'hi', 'tr', 'pl', 'nl', 'sv', 'uk', 'vi']
         
