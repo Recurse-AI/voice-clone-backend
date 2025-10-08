@@ -113,7 +113,10 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
         if seg["id"] in id_to_edit:
             edit = id_to_edit[seg["id"]]
             if edit.dubbed_text is not None:
-                seg["dubbed_text"] = edit.dubbed_text
+                dubbed_text = edit.dubbed_text.strip()
+                if not dubbed_text and not seg.get("original_text", "").strip():
+                    raise HTTPException(status_code=400, detail=f"Segment {seg['id']} cannot have empty text")
+                seg["dubbed_text"] = dubbed_text if dubbed_text else seg.get("original_text", "")
             if edit.start is not None:
                 seg["start"] = edit.start
             if edit.end is not None:

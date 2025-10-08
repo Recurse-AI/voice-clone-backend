@@ -291,9 +291,15 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓ Spe
             end_ms = int(end_s * 1000)
             duration_ms = end_ms - start_ms
             
+            original_text = seg.get("original_text", "").strip()
             dubbed_text = seg.get("dubbed_text", "").strip()
             dubbed_text = re.sub(r'\[\w+:\s*([^\]]+)\]', r'\1', dubbed_text)
             dubbed_text = re.sub(r'\[[^\]]+\]', '', dubbed_text).strip()
+            
+            if not original_text and not dubbed_text:
+                seg_id = seg.get("id", f"seg_{idx}")
+                logger.warning(f"AI created empty segment {seg_id} at {start_ms}-{end_ms}ms - using fallback")
+                original_text = dubbed_text = "[unclear audio]"
             
             global_segment_index = global_segment_index_start + len(formatted_segments)
             
@@ -303,7 +309,7 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓ Spe
                 "start": start_ms,
                 "end": end_ms,
                 "duration_ms": duration_ms,
-                "original_text": seg.get("original_text", "").strip(),
+                "original_text": original_text,
                 "dubbed_text": dubbed_text,
                 "voice_cloned": False,
                 "original_audio_file": None,
@@ -374,13 +380,16 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓ Spe
             for seg_result in result.get("segments", []):
                 original_seg = next((s for s in chunk if s.get("id") == seg_result.get("id")), None)
                 if original_seg:
+                    dubbed_text = seg_result.get("dubbed_text", "").strip()
+                    
+                    
                     chunk_results.append({
                         "id": seg_result.get("id"),
                         "start": int(original_seg.get("start", 0)),
                         "end": int(original_seg.get("end", 0)),
                         "duration_ms": int(original_seg.get("end", 0)) - int(original_seg.get("start", 0)),
                         "original_text": seg_result.get("original_text", ""),
-                        "dubbed_text": seg_result.get("dubbed_text", "").strip(),
+                        "dubbed_text": dubbed_text,
                         "voice_cloned": False,
                         "original_audio_file": None,
                         "cloned_audio_file": None,

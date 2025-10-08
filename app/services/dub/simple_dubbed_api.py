@@ -805,8 +805,8 @@ class SimpleDubbedAPI:
                 logger.info(f"REDUB MODE: Preserved {len(ai_segments)} segments with translation")
                 self._update_phase_progress(job_id, "dubbing", 1.0, f"Redub completed {len(ai_segments)} segments")
             else:
-                logger.info(f"AI created {len(ai_segments)} optimal segments with S1 dubbing")
-                self._update_phase_progress(job_id, "dubbing", 1.0, f"AI completed {len(ai_segments)} segments with S1 dubbing")
+                logger.info(f"AI created {len(ai_segments)} optimal segments")
+                self._update_phase_progress(job_id, "dubbing", 1.0, f"AI completed {len(ai_segments)} segments")
         
         for segment in ai_segments:
             speaker = segment.get("speaker")
