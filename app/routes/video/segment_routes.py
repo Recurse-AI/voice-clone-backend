@@ -1,11 +1,13 @@
 from fastapi import APIRouter, HTTPException, Depends
 import logging
 import os
+from typing import List
 from app.schemas import (
     SegmentsResponse,
     SaveEditsRequest,
     RegenerateSegmentRequest,
     RegenerateSegmentResponse,
+    SegmentItem,
 )
 from app.dependencies.share_token_auth import get_video_dub_user
 from app.services.dub_job_service import dub_job_service
@@ -91,7 +93,9 @@ async def get_segments(job_id: str, current_user = Depends(get_video_dub_user)):
             manifestUrl=manifest_url, 
             version=normalized_manifest.get("version"),
             target_language=normalized_manifest.get("target_language"),
-            reference_ids=normalized_manifest.get("reference_ids", [])
+            reference_ids=normalized_manifest.get("reference_ids", []),
+            vocal_url=normalized_manifest.get("vocal_audio_url"),
+            instrument_url=normalized_manifest.get("instrument_audio_url")
         )
     except Exception as e:
         logger.error(f"Failed to load manifest from {manifest_url}: {str(e)}")
@@ -175,6 +179,89 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
         manifestUrl=manifest_url_out, 
         version=normalized_manifest.get("version"),
         target_language=normalized_manifest.get("target_language")
+    )
+
+@router.put("/video-dub/{job_id}/segments/update", response_model=SegmentsResponse)
+async def update_segments(job_id: str, segments: List[SegmentItem], current_user = Depends(get_video_dub_user)):
+    """Update manifest with new segments data and upload to R2"""
+    job = await dub_job_service.get_job(job_id)
+    if not job or job.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    manifest_url = job.segments_manifest_url or (job.details or {}).get("segments_manifest_url")
+    manifest_key = job.segments_manifest_key or (job.details or {}).get("segments_manifest_key")
+    
+    if not manifest_url:
+        raise HTTPException(status_code=400, detail="No manifest available for this job")
+    
+    # Load existing manifest
+    manifest = manifest_manager.load_manifest(manifest_url)
+    
+    # Convert SegmentItem list to manifest format
+    updated_segments = []
+    for seg in segments:
+        segment_data = {
+            "id": seg.id,
+            "segment_index": seg.segment_index,
+            "start": seg.start,
+            "end": seg.end,
+            "duration_ms": seg.duration_ms,
+            "original_text": seg.original_text,
+            "dubbed_text": seg.dubbed_text,
+            "voice_cloned": False,
+            "original_audio_file": seg.original_audio_file,
+            "cloned_audio_file": None,
+            "speaker": seg.speaker,
+            "reference_id": seg.reference_id
+        }
+        updated_segments.append(segment_data)
+    
+    # Update manifest with new segments
+    manifest["segments"] = updated_segments
+    manifest["version"] = int(manifest.get("version", 1)) + 1
+    
+    logger.info(f"Updating manifest with {len(updated_segments)} segments")
+    
+    # Write and upload manifest to R2
+    job_dir = _ensure_job_dir(job_id)
+    manifest_path = os.path.join(job_dir, f"manifest_{job_id}.json")
+    _write_temp_json(manifest, manifest_path)
+    
+    from app.services.r2_service import R2Service
+    r2 = R2Service()
+    
+    if manifest_key:
+        up_res = r2.upload_file(manifest_path, manifest_key, content_type="application/json")
+        manifest_url_out = (up_res or {}).get("url") or manifest_url
+    else:
+        # Upload new copy and persist key
+        manifest_filename = r2._sanitize_filename(os.path.basename(manifest_path))
+        r2_key = r2.generate_file_path(job_id, "", manifest_filename)
+        res = r2.upload_file(manifest_path, r2_key, content_type="application/json")
+        manifest_url_out = res.get("url") if res.get("success") else manifest_url
+        if res.get("success"):
+            manifest_key = r2_key
+    
+    # Update job details with new manifest info
+    current_details = (job.details or {}).copy()
+    current_details.update({
+        "segments_manifest_url": manifest_url_out,
+        "segments_manifest_key": manifest_key,
+        "updated_segments_version": (job.edited_segments_version or 0) + 1,
+    })
+    await dub_job_service.update_details(job_id, current_details)
+    
+    normalized_manifest = manifest_manager._normalize_manifest(manifest)
+    
+    return SegmentsResponse(
+        job_id=job_id,
+        segments=normalized_manifest.get("segments", []),
+        manifestUrl=manifest_url_out,
+        version=normalized_manifest.get("version"),
+        target_language=normalized_manifest.get("target_language"),
+        reference_ids=normalized_manifest.get("reference_ids", []),
+        vocal_url=normalized_manifest.get("vocal_audio_url"),
+        instrument_url=normalized_manifest.get("instrument_audio_url")
     )
 
 @router.post("/video-dub/{job_id}/segments/{segment_id}/regenerate", response_model=RegenerateSegmentResponse)
