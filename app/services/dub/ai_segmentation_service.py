@@ -670,6 +670,99 @@ OUTPUT: Valid JSON with 'segments' array only (each segment MUST include exact s
         logger.info(f"Total processed: {len(all_results)} segments from {len(segments)} input segments")
         return all_results
 
+    def translate_text(self, text: str, target_language: str, source_language: str = "auto") -> str:
+        """Translate a portion of text using OpenAI"""
+        try:
+            is_same_language = source_language.lower().strip() == target_language.lower().strip()
+            
+            if is_same_language:
+                return text.strip()
+            
+            prompt = f"""PROFESSIONAL TRANSLATION TO {target_language.upper()}:
+
+TEXT TO TRANSLATE: {text}
+
+REQUIREMENTS:
+- 100% {target_language} ONLY - no language mixing
+- NATURAL NATIVE SPEECH style (colloquial/informal)
+- Use STANDARD DIALECT and COMMON vocabulary
+- FULL CULTURAL LOCALIZATION of references
+- Sound AUTHENTIC like native speakers
+- Clean any corruption patterns automatically
+
+OUTPUT: Return ONLY the translated text, nothing else."""
+            
+            response = self._call_openai_with_retry(
+                model="gpt-5-mini",
+                input=[
+                    {"role": "system", "content": [{"type": "input_text", "text": f"You are a professional translator. Translate the given text to {target_language} naturally. Return ONLY the translated text."}]},
+                    {"role": "user", "content": [{"type": "input_text", "text": prompt}]}
+                ],
+                text={"verbosity": "low"},
+                reasoning={"effort": "minimal"},
+                max_output_tokens=500
+            )
+            
+            result = response.output_text.strip()
+            return result if result else text
+            
+        except Exception as e:
+            logger.error(f"Translation failed: {str(e)}")
+            return text
+
+    def translate_contextual_segment(self, segments: List[str], target_segment_index: int, target_language: str, source_language: str = "auto") -> str:
+        """Translate a specific segment with context from all segments"""
+        try:
+            if not segments or target_segment_index < 0 or target_segment_index >= len(segments):
+                raise ValueError(f"Invalid segment index {target_segment_index} for {len(segments)} segments")
+            
+            target_text = segments[target_segment_index]
+            is_same_language = source_language.lower().strip() == target_language.lower().strip()
+            
+            if is_same_language:
+                return target_text.strip()
+            
+            # Build context from all segments
+            context_parts = []
+            for i, segment in enumerate(segments):
+                marker = " ← TRANSLATE THIS" if i == target_segment_index else ""
+                context_parts.append(f"Segment {i+1}: {segment}{marker}")
+            
+            context = "\n".join(context_parts)
+            
+            prompt = f"""CONTEXTUAL TRANSLATION TO {target_language.upper()}:
+
+FULL CONVERSATION CONTEXT:
+{context}
+
+INSTRUCTIONS:
+- Translate ONLY the marked segment (Segment {target_segment_index + 1})
+- Keep the translation CONSISTENT with the overall conversation flow
+- Maintain the same tone, style, and meaning as the other segments
+- Ensure the translated segment fits naturally in the conversation context
+- Use NATURAL NATIVE SPEECH style (colloquial/informal)
+- Apply FULL CULTURAL LOCALIZATION
+
+OUTPUT: Return ONLY the translated segment text, nothing else."""
+            
+            response = self._call_openai_with_retry(
+                model="gpt-5-mini",
+                input=[
+                    {"role": "system", "content": [{"type": "input_text", "text": f"You are a professional translator specializing in contextual translation. Translate the specified segment to {target_language} while maintaining conversation consistency. Return ONLY the translated text."}]},
+                    {"role": "user", "content": [{"type": "input_text", "text": prompt}]}
+                ],
+                text={"verbosity": "low"},
+                reasoning={"effort": "minimal"},
+                max_output_tokens=500
+            )
+            
+            result = response.output_text.strip()
+            return result if result else target_text
+            
+        except Exception as e:
+            logger.error(f"Contextual translation failed: {str(e)}")
+            return segments[target_segment_index] if segments else ""
+
     def _get_language_name(self, code):
         lang_names = {
             'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German', 'it': 'Italian',
