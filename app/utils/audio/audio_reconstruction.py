@@ -148,16 +148,19 @@ class AudioReconstruction:
                                 logger.info(f"Add padding segment {idx}: {actual_duration_ms:.0f}ms + {padding_ms:.0f}ms padding -> {expected_duration_ms:.0f}ms")
                         
                         elif tempo_ratio > 1.0:
-                            if tempo_ratio <= 1.7:
+                            if tempo_ratio <= 2.0:
                                 audio_filters.append(f"atempo={tempo_ratio:.6f}")
                                 logger.info(f"Speed up segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={tempo_ratio:.3f})")
                             else:
-                                max_tempo = 1.7
-                                adjusted_duration_ms = expected_duration_ms * max_tempo
-                                trim_duration_s = adjusted_duration_ms / 1000.0
-                                audio_filters.append(f"atrim=0:{trim_duration_s:.6f}")
+                                max_tempo = 2.0
                                 audio_filters.append(f"atempo={max_tempo:.6f}")
-                                logger.info(f"Trim+speed segment {idx}: {actual_duration_ms:.0f}ms -> trim to {adjusted_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={max_tempo})")
+                                sped_up_duration_ms = actual_duration_ms / max_tempo
+                                if sped_up_duration_ms > expected_duration_ms:
+                                    trim_duration_s = expected_duration_ms / 1000.0
+                                    audio_filters.append(f"atrim=0:{trim_duration_s:.6f}")
+                                    logger.info(f"Speed+trim segment {idx}: {actual_duration_ms:.0f}ms -> speed 2.0x -> {sped_up_duration_ms:.0f}ms -> trim to {expected_duration_ms:.0f}ms")
+                                else:
+                                    logger.info(f"Speed up segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={max_tempo})")
                 except Exception as e:
                     logger.warning(f"Duration check failed for segment {idx}: {e}")
             
