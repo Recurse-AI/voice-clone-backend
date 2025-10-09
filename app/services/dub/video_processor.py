@@ -236,7 +236,7 @@ class VideoProcessor:
             
             f.write("[V4+ Styles]\n")
             f.write("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
-            f.write("Style: Default,Arial,48,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,3,2,2,20,20,40,1\n\n")
+            f.write("Style: Default,Arial,34,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2.5,1.5,2,20,20,30,1\n\n")
             
             f.write("[Events]\n")
             f.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
@@ -246,10 +246,23 @@ class VideoProcessor:
                 if not text:
                     continue
                 
-                start = self._seconds_to_ass_time(subtitle['start'])
-                end = self._seconds_to_ass_time(subtitle['end'])
+                chunks = self._chunk_subtitle_text(text)
+                if not chunks:
+                    continue
                 
-                f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n")
+                start_time = subtitle['start']
+                end_time = subtitle['end']
+                duration = end_time - start_time
+                chunk_duration = duration / len(chunks)
+                
+                for i, chunk in enumerate(chunks):
+                    chunk_start = start_time + (i * chunk_duration)
+                    chunk_end = chunk_start + chunk_duration
+                    
+                    start = self._seconds_to_ass_time(chunk_start)
+                    end = self._seconds_to_ass_time(chunk_end)
+                    
+                    f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{chunk}\n")
     
     def _seconds_to_ass_time(self, seconds: float) -> str:
         """Convert seconds to ASS time format (h:mm:ss.cc)"""
@@ -268,14 +281,27 @@ class VideoProcessor:
                 if not text:
                     continue
                 
-                start_time_str = self._seconds_to_srt_time(subtitle['start'])
-                end_time_str = self._seconds_to_srt_time(subtitle['end'])
+                chunks = self._chunk_subtitle_text(text)
+                if not chunks:
+                    continue
                 
-                f.write(f"{subtitle_index}\n")
-                f.write(f"{start_time_str} --> {end_time_str}\n")
-                f.write(f"{text}\n\n")
+                start_time = subtitle['start']
+                end_time = subtitle['end']
+                duration = end_time - start_time
+                chunk_duration = duration / len(chunks)
                 
-                subtitle_index += 1
+                for i, chunk in enumerate(chunks):
+                    chunk_start = start_time + (i * chunk_duration)
+                    chunk_end = chunk_start + chunk_duration
+                    
+                    start_time_str = self._seconds_to_srt_time(chunk_start)
+                    end_time_str = self._seconds_to_srt_time(chunk_end)
+                    
+                    f.write(f"{subtitle_index}\n")
+                    f.write(f"{start_time_str} --> {end_time_str}\n")
+                    f.write(f"{chunk}\n\n")
+                    
+                    subtitle_index += 1
     
     def _seconds_to_srt_time(self, seconds: float) -> str:
         hours = int(seconds // 3600)

@@ -6,8 +6,6 @@ from typing import List, Dict, Any, Optional
 logger = logging.getLogger(__name__)
 
 class AudioReconstruction:
-    """Simplified audio reconstruction using only FFmpeg"""
-    
     @staticmethod
     def reconstruct_final_audio(
         segments: List[Dict[str, Any]], 
@@ -15,10 +13,6 @@ class AudioReconstruction:
         job_id: str,
         process_temp_dir: str
     ) -> Optional[str]:
-        """
-        Reconstruct final audio from dubbed segments using FFmpeg only.
-        Much simpler than numpy/scipy approach.
-        """
         if not segments:
             logger.warning("No segments to reconstruct")
             return None
@@ -84,9 +78,8 @@ class AudioReconstruction:
     
     @staticmethod
     def _get_sample_rate(audio_path: Optional[str], ffmpeg_path: str) -> int:
-        """Get sample rate from audio file using FFmpeg"""
         if not audio_path or not os.path.exists(audio_path):
-            return 44100  # Default
+            return 44100
         
         try:
             cmd = [
@@ -108,12 +101,10 @@ class AudioReconstruction:
     
     @staticmethod
     def _build_filter_complex(segments: List[Dict[str, Any]], target_sr: int) -> str:
-        """
-        Build FFmpeg filter complex for segment reconstruction.
-        Handles: delay, time-stretch, fade, concatenation
-        """
         filters = []
-        valid_segments = []
+        concat_inputs = []
+        
+        current_time_ms = 0
         
         for idx, seg in enumerate(segments):
             cloned_path = seg.get("cloned_audio_path")
@@ -122,31 +113,48 @@ class AudioReconstruction:
             
             start_ms = seg.get("start", 0)
             end_ms = seg.get("end", 0)
-            expected_duration = (end_ms - start_ms) / 1000.0
+            expected_duration_ms = end_ms - start_ms
             
-            if expected_duration <= 0:
+            if expected_duration_ms <= 0:
                 continue
             
-            filter_chain_parts = [
-                f"aresample={target_sr}",
-                "aformat=channel_layouts=mono",
-                "afade=t=in:d=0.003,afade=t=out:d=0.003"
-            ]
+            if start_ms > current_time_ms:
+                silence_duration_ms = start_ms - current_time_ms
+                silence_duration_s = silence_duration_ms / 1000.0
+                silence_filter = f"aevalsrc=0:d={silence_duration_s}:s={target_sr}:c=mono[silence{idx}]"
+                filters.append(silence_filter)
+                concat_inputs.append(f"[silence{idx}]")
             
-            delay_ms = start_ms
-            if delay_ms > 0:
-                filter_chain_parts.append(f"adelay={int(delay_ms)}")
+            audio_filters = [f"aresample={target_sr}", "aformat=channel_layouts=mono"]
             
-            filter_chain = f"[{idx}:a]" + ",".join(filter_chain_parts)
-            filters.append(f"{filter_chain}[a{idx}]")
-            valid_segments.append(idx)
+
+            audio_path = seg.get("cloned_audio_path")
+            if audio_path and os.path.exists(audio_path):
+                try:
+                    import soundfile as sf
+                    audio_data, sr = sf.read(audio_path)
+                    actual_duration_ms = (len(audio_data) / sr) * 1000
+                    
+                    if abs(actual_duration_ms - expected_duration_ms) > 50:
+                        tempo = actual_duration_ms / expected_duration_ms
+                        tempo = max(0.5, min(2.0, tempo))
+                        audio_filters.append(f"atempo={tempo}")
+                        logger.info(f"Adjusting segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={tempo:.3f})")
+                except Exception as e:
+                    logger.warning(f"Could not check duration for segment {idx}: {e}")
+            
+            audio_filter = f"[{idx}:a]{','.join(audio_filters)}[a{idx}]"
+            filters.append(audio_filter)
+            concat_inputs.append(f"[a{idx}]")
+            
+            current_time_ms = end_ms
         
-        if not valid_segments:
+        if not concat_inputs:
             return ""
         
-        input_labels = "".join([f"[a{i}]" for i in valid_segments])
-        mix_filter = f"{input_labels}amix=inputs={len(valid_segments)}:duration=longest:normalize=0[out]"
-        full_filter = ";".join(filters) + ";" + mix_filter
+        filter_str = ";".join(filters)
+        concat_str = "".join(concat_inputs) + f"concat=n={len(concat_inputs)}:v=0:a=1[out]"
+        full_filter = filter_str + ";" + concat_str if filter_str else concat_str
         
         return full_filter
 
@@ -157,7 +165,6 @@ def reconstruct_final_audio_ffmpeg(
     job_id: str,
     process_temp_dir: str
 ) -> Optional[str]:
-    """Convenience function for FFmpeg-based reconstruction"""
     return AudioReconstruction.reconstruct_final_audio(
         segments, original_audio_path, job_id, process_temp_dir
     )
