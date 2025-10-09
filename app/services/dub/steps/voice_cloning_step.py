@@ -45,7 +45,10 @@ class VoiceCloningStep:
             )
             
             transcription_segments = context.transcription_result.get("segments", [])
-            split_files = [{"output_path": seg.get("original_audio_file")} for seg in transcription_segments]
+            split_files = [
+                {"output_path": os.path.join(context.process_temp_dir, seg.get("original_audio_file"))} 
+                for seg in transcription_segments
+            ]
         
         segments_data = []
         for seg, split_file in zip(context.segments, split_files):

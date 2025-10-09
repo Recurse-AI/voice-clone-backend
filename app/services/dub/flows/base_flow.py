@@ -1,3 +1,4 @@
+import os
 import logging
 from typing import Dict, Any
 from app.services.dub.context import DubbingContext
@@ -17,7 +18,7 @@ class BaseFlow:
         
         for i, segment in enumerate(context.transcription_result.get("segments", [])):
             if i < len(split_files):
-                segment["original_audio_file"] = split_files[i]["output_path"]
+                segment["original_audio_file"] = os.path.basename(split_files[i]["output_path"])
         
         context.audio_already_split = True
     
