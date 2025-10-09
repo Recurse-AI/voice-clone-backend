@@ -17,7 +17,7 @@ class BaseFlow:
         
         for i, segment in enumerate(context.transcription_result.get("segments", [])):
             if i < len(split_files):
-                segment["original_audio_file"] = split_files[i]
+                segment["original_audio_file"] = split_files[i]["output_path"]
         
         context.audio_already_split = True
     
