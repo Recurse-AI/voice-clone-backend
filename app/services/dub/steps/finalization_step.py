@@ -14,7 +14,6 @@ from app.services.dub.manifest_service import upload_process_dir_to_r2
 from app.services.r2_service import R2Service
 from app.services.dub.video_processor import VideoProcessor
 from app.config.settings import settings
-from app.config.constants import INSTRUMENT_DEFAULT_VOLUME
 
 logger = logging.getLogger(__name__)
 
@@ -204,7 +203,7 @@ class FinalizationStep:
                 
                 cmd.extend(["-i", str(instrument_path)])
                 cmd.extend([
-                    "-filter_complex", f"[1:a]volume=2.0[dub];[2:a]volume={INSTRUMENT_DEFAULT_VOLUME}[inst];[dub][inst]amix=inputs=2:duration={duration_mode}[out]",
+                    "-filter_complex", f"[1:a]volume=2.0[dub];[2:a]volume=0.95[inst];[dub][inst]amix=inputs=2:duration={duration_mode}[out]",
                     "-map", "0:v", "-map", "[out]"
                 ])
             else:
