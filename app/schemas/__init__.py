@@ -73,6 +73,8 @@ class SegmentsResponse(BaseModel):
     version: Optional[int] = None
     target_language: Optional[str] = None
     reference_ids: Optional[List[str]] = None
+    vocal_url: Optional[str] = None
+    instrument_url: Optional[str] = None
     model_type: Optional[str] = None
 
 class SegmentEdit(BaseModel):
