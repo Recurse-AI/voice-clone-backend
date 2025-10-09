@@ -54,7 +54,7 @@ def initialize_ai_models(queue_name: str):
     elif queue_name == "dub_queue":
         from app.services.dub.speaker_detection_service import speaker_detection_service
         speaker_detection_service.preload_model()
-        logger.info("✅ GPU Speaker Detection loaded")
+        logger.info("✅ Speaker Detection initialized (GPU required for multi-speaker support)")
 
     else:
         logger.info("⏭️ No specific models needed")

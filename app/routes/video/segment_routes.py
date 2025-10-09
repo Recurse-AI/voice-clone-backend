@@ -139,6 +139,7 @@ async def get_segments(job_id: str, current_user = Depends(get_video_dub_user)):
             reference_ids=normalized_manifest.get("reference_ids", []),
             vocal_url=normalized_manifest.get("vocal_audio_url"),
             instrument_url=normalized_manifest.get("instrument_audio_url")
+            model_type=normalized_manifest.get("model_type", "normal")
         )
     except Exception as e:
         logger.error(f"Failed to load manifest from {manifest_url}: {str(e)}")
@@ -166,7 +167,10 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
             # Segment exists in request - update it
             edit = request_segments_by_id[seg["id"]]
             if edit.dubbed_text is not None:
-                seg["dubbed_text"] = edit.dubbed_text
+                dubbed_text = edit.dubbed_text.strip()
+                if not dubbed_text and not seg.get("original_text", "").strip():
+                    raise HTTPException(status_code=400, detail=f"Segment {seg['id']} cannot have empty text")
+                seg["dubbed_text"] = dubbed_text if dubbed_text else seg.get("original_text", "")
             if edit.start is not None:
                 seg["start"] = edit.start
             if edit.end is not None:

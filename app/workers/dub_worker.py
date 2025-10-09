@@ -20,9 +20,11 @@ def process_dub_task(request_dict: dict, user_id: str):
     source_video_language = request_dict.get("source_video_language")
     human_review = request_dict.get("humanReview", False)
     video_subtitle = request_dict.get("video_subtitle", False)
-    voice_premium_model = request_dict.get("voice_premium_model", False)
+    model_type = request_dict.get("model_type", "normal")
+    add_subtitle_to_video = request_dict.get("add_subtitle_to_video", False)
     voice_type = request_dict.get("voice_type")
     reference_ids = request_dict.get("reference_ids", [])
+    num_of_speakers = request_dict.get("num_of_speakers", 1)
     
     from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, update_dub_job_stage
     
@@ -64,8 +66,8 @@ def process_dub_task(request_dict: dict, user_id: str):
         
         success = _process_dubbing_pipeline(
             job_id, target_language, source_video_language, 
-            job_dir, human_review, separation_result["runpod_urls"], video_subtitle, voice_premium_model,
-            voice_type, reference_ids
+            job_dir, human_review, separation_result["runpod_urls"], video_subtitle, model_type,
+            voice_type, reference_ids, add_subtitle_to_video, num_of_speakers
         )
         
         if not success:
@@ -74,6 +76,7 @@ def process_dub_task(request_dict: dict, user_id: str):
         
         # Step 5: Cleanup
         _cleanup_r2_file(r2_key)
+        _cleanup_temp_files(job_id)
         
     except Exception as e:
         try:
@@ -157,8 +160,8 @@ def _process_audio_separation(job_id: str, audio_url: str, job_dir: str) -> dict
 
 def _process_dubbing_pipeline(job_id: str, target_language: str, 
                             source_video_language: str, job_dir: str,
-                            human_review: bool, runpod_urls: dict = None, video_subtitle: bool = False, voice_premium_model: bool = False,
-                            voice_type: str = None, reference_ids: list = None) -> bool:
+                            human_review: bool, runpod_urls: dict = None, video_subtitle: bool = False, model_type: str = "normal",
+                            voice_type: str = None, reference_ids: list = None, add_subtitle_to_video: bool = False, num_of_speakers: int = 1) -> bool:
     try:
         from app.utils.pipeline_utils import update_dub_job_stage
         
@@ -181,9 +184,11 @@ def _process_dubbing_pipeline(job_id: str, target_language: str,
             review_mode=human_review,
             separation_urls=runpod_urls,
             video_subtitle=video_subtitle,
-            voice_premium_model=voice_premium_model,
+            model_type=model_type,
             voice_type=voice_type,
-            reference_ids=reference_ids
+            reference_ids=reference_ids,
+            add_subtitle_to_video=add_subtitle_to_video,
+            num_of_speakers=num_of_speakers
         )
         
         if not pipeline_result["success"]:
@@ -220,6 +225,7 @@ def _process_dubbing_pipeline(job_id: str, target_language: str,
             return False
         
         logger.info(f"Dubbing pipeline completed for {job_id}")
+        _cleanup_temp_files(job_id)
         return True
         
     except Exception as e:
@@ -273,7 +279,9 @@ def process_redub_task(redub_job_id: str, target_language: str,
                       manifest: dict, human_review: bool):
     """Process redub task with existing manifest"""
     logger.info(f"REDUB WORKER: Processing job {redub_job_id}")
-    logger.info(f"🔧 DEBUG: Redub worker using manifest voice_premium_model = {manifest.get('voice_premium_model', False)}")
+    logger.info(f"🔧 DEBUG: Redub worker using manifest model_type = {manifest.get('model_type', 'normal')}")
+    
+    num_of_speakers = manifest.get('num_of_speakers', 1)
     
     try:
         from app.utils.pipeline_utils import mark_dub_job_active, mark_dub_job_inactive, update_dub_job_stage
@@ -292,7 +300,7 @@ def process_redub_task(redub_job_id: str, target_language: str,
             from app.services.dub.simple_dubbed_api import get_simple_dubbed_api
             api = get_simple_dubbed_api()
             
-            logger.info(f"🔧 DEBUG: Redub using manifest voice_premium_model = {manifest.get('voice_premium_model', False)}")
+            logger.info(f"🔧 DEBUG: Redub using manifest model_type = {manifest.get('model_type', 'normal')}")
             result = api.process_dubbed_audio(
                 job_id=redub_job_id,
                 target_language=target_language,
@@ -301,9 +309,11 @@ def process_redub_task(redub_job_id: str, target_language: str,
                 review_mode=human_review,
                 manifest_override=manifest,
                 video_subtitle=False,  # Redubs use existing transcription
-                voice_premium_model=manifest.get('voice_premium_model', False),
+                model_type=manifest.get('model_type', 'normal'),
                 voice_type=manifest.get('voice_type'),
-                reference_ids=manifest.get('reference_ids', [])
+                reference_ids=manifest.get('reference_ids', []),
+                add_subtitle_to_video=manifest.get('add_subtitle_to_video', False),
+                num_of_speakers=num_of_speakers
             )
         finally:
             mark_dub_job_inactive(redub_job_id)
@@ -340,6 +350,7 @@ def process_redub_task(redub_job_id: str, target_language: str,
             return
         
         logger.info(f"Redub completed: {redub_job_id}")
+        _cleanup_temp_files(redub_job_id)
         
     except Exception as e:
         logger.error(f"Redub failed for {redub_job_id}: {e}")

@@ -35,6 +35,7 @@ class LanguageService:
         "ukrainian": "uk",
         "vietnamese": "vi",
         "arabic": "ar",  # Fish Speech dubbing only
+        "bengali": "bn",
     }
     
     # Languages supported for dubbing (Fish Speech) - matches frontend target languages exactly
@@ -49,8 +50,48 @@ class LanguageService:
         "ko", "pl", "pt", "ru", "es", "tr", "uk", "vi"
     }
     
+    # ElevenLabs V3 supported languages (70+ languages)
+    ELEVENLABS_V3_LANGUAGES: Set[str] = {
+        'af', 'ar', 'hy', 'as', 'az', 'be', 'bn', 'bs', 'bg', 'ca',
+        'hr', 'cs', 'da', 'nl', 'en', 'et', 'fil', 'fi', 'fr', 'gl',
+        'ka', 'de', 'el', 'gu', 'ha', 'he', 'hi', 'hu', 'is', 'id',
+        'ga', 'it', 'ja', 'jv', 'kn', 'kk', 'ky', 'ko', 'lv', 'lt',
+        'lb', 'mk', 'ms', 'ml', 'zh', 'mr', 'ne', 'no', 'ps', 'fa',
+        'pl', 'pt', 'pa', 'ro', 'ru', 'sr', 'sd', 'sk', 'sl', 'so',
+        'es', 'sw', 'sv', 'ta', 'te', 'th', 'tr', 'uk', 'ur', 'vi',
+        'cy', 'sq', 'ce', 'ny', 'si', 'sn', 'su', 'tg', 'tt', 'uz'
+    }
+    
     # Accepted tokens that mean: let the system auto-detect source language
     AUTO_DETECT_TOKENS: Set[str] = {"auto", "auto_detect", "auto-detect", "auto detect"}
+    
+    # Full language names mapping (for AI prompts and display)
+    LANGUAGE_CODE_TO_NAME: Dict[str, str] = {
+        'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German', 'it': 'Italian',
+        'pt': 'Portuguese', 'ru': 'Russian', 'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean',
+        'ar': 'Arabic', 'hi': 'Hindi', 'bn': 'Bengali', 'ur': 'Urdu', 'tr': 'Turkish',
+        'pl': 'Polish', 'nl': 'Dutch', 'sv': 'Swedish', 'da': 'Danish', 'no': 'Norwegian',
+        'af': 'Afrikaans', 'hy': 'Armenian', 'as': 'Assamese', 'az': 'Azerbaijani', 
+        'be': 'Belarusian', 'bs': 'Bosnian', 'bg': 'Bulgarian', 'ca': 'Catalan',
+        'hr': 'Croatian', 'cs': 'Czech', 'et': 'Estonian', 'fil': 'Filipino', 
+        'fi': 'Finnish', 'gl': 'Galician', 'ka': 'Georgian', 'el': 'Greek', 
+        'gu': 'Gujarati', 'ha': 'Hausa', 'he': 'Hebrew', 'hu': 'Hungarian',
+        'is': 'Icelandic', 'id': 'Indonesian', 'ga': 'Irish', 'jv': 'Javanese',
+        'kn': 'Kannada', 'kk': 'Kazakh', 'ky': 'Kyrgyz', 'lv': 'Latvian',
+        'lt': 'Lithuanian', 'lb': 'Luxembourgish', 'mk': 'Macedonian', 'ms': 'Malay',
+        'ml': 'Malayalam', 'mr': 'Marathi', 'ne': 'Nepali', 'ps': 'Pashto',
+        'fa': 'Persian', 'pa': 'Punjabi', 'ro': 'Romanian', 'sr': 'Serbian',
+        'sd': 'Sindhi', 'sk': 'Slovak', 'sl': 'Slovenian', 'so': 'Somali',
+        'sw': 'Swahili', 'ta': 'Tamil', 'te': 'Telugu', 'th': 'Thai',
+        'uk': 'Ukrainian', 'vi': 'Vietnamese', 'cy': 'Welsh', 'sq': 'Albanian',
+        'ce': 'Chechen', 'ny': 'Chichewa', 'si': 'Sinhala', 'sn': 'Shona',
+        'su': 'Sundanese', 'tg': 'Tajik', 'tt': 'Tatar', 'uz': 'Uzbek'
+    }
+    
+    @classmethod
+    def get_language_name(cls, code: str) -> str:
+        """Get full language name from code (e.g., 'en' -> 'English')"""
+        return cls.LANGUAGE_CODE_TO_NAME.get(code, code.title())
     
     @classmethod
     def normalize_language_input(cls, language: str) -> str:
@@ -72,26 +113,43 @@ class LanguageService:
             return cls.LANGUAGE_NAME_TO_CODE[language_lower]
         
         # If it's already a language code, validate and return
-        if language_lower in cls.DUBBING_SUPPORTED_CODES or language_lower in cls.TRANSCRIPTION_SUPPORTED_CODES:
+        if (language_lower in cls.DUBBING_SUPPORTED_CODES or 
+            language_lower in cls.TRANSCRIPTION_SUPPORTED_CODES or
+            language_lower in cls.ELEVENLABS_V3_LANGUAGES):
             return language_lower
         
         # Handle compound codes (en-US -> en) - but only if base code is supported
         if "-" in language_lower or "_" in language_lower:
             base_code = language_lower.split("-")[0].split("_")[0]
-            if base_code in cls.DUBBING_SUPPORTED_CODES or base_code in cls.TRANSCRIPTION_SUPPORTED_CODES:
+            if (base_code in cls.DUBBING_SUPPORTED_CODES or 
+                base_code in cls.TRANSCRIPTION_SUPPORTED_CODES or
+                base_code in cls.ELEVENLABS_V3_LANGUAGES):
                 return base_code
+        
+        # Return as-is for 2-letter codes (might be valid for ElevenLabs)
+        if len(language_lower) == 2:
+            return language_lower
         
         # Return default if not found
         logger.warning(f"Unknown language input: {language}, defaulting to English")
         return "en"
     
     @classmethod
-    def is_dubbing_supported(cls, language: str) -> bool:
-        """Check if a language is supported for dubbing (Fish Speech)."""
+    def is_dubbing_supported(cls, language: str, model_type: str = "normal") -> bool:
+        """
+        Check if a language is supported for dubbing.
+        - best (ElevenLabs): 70+ languages
+        - medium (Fish): 17 languages
+        - normal (Local): 17 languages
+        """
         if not language:
             return False
         normalized = cls.normalize_language_input(language)
-        return normalized in cls.DUBBING_SUPPORTED_CODES
+        
+        if model_type == "best":
+            return normalized in cls.ELEVENLABS_V3_LANGUAGES
+        else:
+            return normalized in cls.DUBBING_SUPPORTED_CODES
     
     @classmethod
     def is_transcription_supported(cls, language: str) -> bool:
@@ -105,10 +163,14 @@ class LanguageService:
         return normalized in cls.TRANSCRIPTION_SUPPORTED_CODES
     
     @classmethod
-    def get_supported_dubbing_languages(cls) -> Set[str]:
-        """Get all supported language names for dubbing."""
-        return {name for name, code in cls.LANGUAGE_NAME_TO_CODE.items() 
-                if code in cls.DUBBING_SUPPORTED_CODES}
+    def get_supported_dubbing_languages(cls, model_type: str = "normal") -> Set[str]:
+        """
+        Get all supported language codes for dubbing based on model type.
+        """
+        if model_type == "best":
+            return cls.ELEVENLABS_V3_LANGUAGES
+        else:
+            return cls.DUBBING_SUPPORTED_CODES
     
     @classmethod
     def get_language_code_for_transcription(cls, language: str) -> str:

@@ -161,7 +161,7 @@ class RunPodService:
                     logger.error(f"Failed to get status: {response.status_code} - {response.text}")
                     return None
                     
-            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.DNSError) as e:
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 if attempt < max_retries - 1:
                     logger.warning(f"Network error getting status for {request_id}, retrying (attempt {attempt + 1}/{max_retries}): {e}")
                     time.sleep(2 ** attempt)  # Exponential backoff

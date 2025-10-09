@@ -43,7 +43,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/api/video-dub/",      # Video dubbing segments, actions
             "/api/audio-separation", # Audio separation
             "/upload-file",         # File uploads
-            "/api/voice-clone-segment", # Voice cloning
             "/api/dubbing/",        # Dubbing APIs
             "/api/stripe/",         # Stripe APIs (except webhooks)
             "/api/clips/",          # Clip generation APIs

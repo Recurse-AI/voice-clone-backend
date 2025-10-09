@@ -5,6 +5,7 @@ import time
 import random
 import soundfile as sf
 from typing import Dict, Any
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 try:
     from fish_audio_sdk import Session, TTSRequest, ReferenceAudio
@@ -27,77 +28,100 @@ class FishAudioAPIService:
         else:
             self.session = None
     
-    def generate_voice_clone(self, text: str, reference_audio_bytes: bytes = None, reference_text: str = None, job_id: str = None, target_language_code: str = None, reference_id: str = None) -> Dict[str, Any]:
+    def create_voice_reference(self, audio_bytes: bytes, name: str) -> Dict[str, Any]:
+        if not self.api_key:
+            return {"success": False, "error": "Fish Audio API key not configured"}
+        
+        try:
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            
+            multipart_data = [
+                ("visibility", (None, "private")),
+                ("type", (None, "tts")),
+                ("title", (None, name)),
+                ("train_mode", (None, "fast")),
+                ("enhance_audio_quality", (None, "false")),
+                ("voices", ("audio.wav", audio_bytes, "audio/wav"))
+            ]
+            
+            with httpx.Client(timeout=120.0) as client:
+                response = client.post(
+                    "https://api.fish.audio/model",
+                    headers=headers,
+                    files=multipart_data
+                )
+                response.raise_for_status()
+                result = response.json()
+                
+                return {
+                    "success": True,
+                    "reference_id": result.get("_id"),
+                    "voice_id": result.get("_id"),
+                    "name": name
+                }
+        except Exception as e:
+            logger.error(f"Failed to create Fish Audio voice: {e}")
+            return {"success": False, "error": str(e)}
+    
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=2, min=4, max=30),
+        retry=retry_if_exception_type((httpx.TimeoutException, httpx.ConnectError, Exception)),
+        reraise=True
+    )
+    def _fish_api_request_with_retry(self, text: str, reference_id: str) -> bytes:
+        with httpx.Client(timeout=300.0) as client:
+            response = client.post(
+                "https://api.fish.audio/v1/tts",
+                content=ormsgpack.packb({
+                    "text": text,
+                    "reference_id": reference_id,
+                    "format": "wav",
+                    "normalize": True,
+                    "latency": "normal",
+                    "chunk_length": settings.FISH_SPEECH_CHUNK_SIZE
+                }),
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/msgpack",
+                    "model": "s1"
+                }
+            )
+            
+            if response.status_code == 402:
+                raise Exception("Payment Required: Check Fish Audio account credits")
+            elif response.status_code != 200:
+                raise Exception(f"API error: {response.status_code}")
+            
+            return response.content
+    
+    def generate_voice_clone(self, text: str, reference_id: str, job_id: str = None, target_language_code: str = None, **kwargs) -> Dict[str, Any]:
         if not FISH_SDK_AVAILABLE:
-            return {"success": False, "error": "Fish Audio SDK not installed. Run: pip install fish-audio-sdk"}
+            return {"success": False, "error": "Fish Audio SDK not installed"}
         
         if not self.session:
             return {"success": False, "error": "Fish Audio API key not configured"}
         
+        if not reference_id:
+            return {"success": False, "error": "reference_id is required"}
+        
         try:
-            audio_len = len(reference_audio_bytes) if reference_audio_bytes else 0
-            logger.info(f"Fish API request - text: {len(text)} chars, audio: {audio_len} bytes, reference_id: {reference_id}")
+            logger.info(f"Fish API: {len(text)} chars, ref_id: {reference_id[:8]}...")
             
-            # Create output directory
             output_dir = os.path.join(settings.TEMP_DIR, job_id or "temp")
             os.makedirs(output_dir, exist_ok=True)
             
             request_id = f"fish_api_{job_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
             output_path = os.path.join(output_dir, f"output_{request_id}.wav")
             
-            # Text already contains language tag from orchestration layer
-            tagged_text = text
-            
-            # Rate limit protection: Add random delay (0.3-0.7s) to avoid concurrent request spikes
             time.sleep(random.uniform(0.3, 0.7))
             
-            # Build request payload: use reference_id for AI voice, otherwise inline references
-            if reference_id:
-                request_data = {
-                    "text": tagged_text,
-                    "reference_id": reference_id,
-                    "format": "wav",
-                    "normalize": True,
-                    "latency": "normal",
-                    "chunk_length": settings.FISH_SPEECH_CHUNK_SIZE
-                }
-            else:
-                request_data = {
-                    "text": tagged_text,
-                    "references": [{
-                        "audio": reference_audio_bytes,
-                        "text": reference_text or ""
-                    }],
-                    "format": "wav",
-                    "normalize": True,
-                    "latency": "normal",
-                    "chunk_length": settings.FISH_SPEECH_CHUNK_SIZE
-                }
+            audio_content = self._fish_api_request_with_retry(text, reference_id)
             
-            # Use direct HTTP request with proper model header
-            with httpx.Client(timeout=300.0) as client:
-                response = client.post(
-                    "https://api.fish.audio/v1/tts",
-                    content=ormsgpack.packb(request_data),
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/msgpack",
-                        "model": "s1"
-                    }
-                )
-                
-                if response.status_code == 402:
-                    logger.error("Fish Audio API: 402 Payment Required")
-                    return {"success": False, "error": "Payment Required: Check Fish Audio account credits"}
-                elif response.status_code != 200:
-                    logger.error(f"Fish API error: {response.status_code}")
-                    return {"success": False, "error": f"API error: {response.status_code}"}
-                
-                # Write response content to file
-                with open(output_path, "wb") as f:
-                    f.write(response.content)
-                
-                logger.info(f"Fish API response: {len(response.content)} bytes")
+            with open(output_path, "wb") as f:
+                f.write(audio_content)
+            
+            logger.info(f"Fish API: {len(audio_content)} bytes")
             
             # Validate and repair audio if needed
             try:
@@ -133,5 +157,62 @@ class FishAudioAPIService:
                 return {"success": False, "error": f"Invalid audio: {e}"}
                 
         except Exception as e:
-            logger.error(f"Fish Audio API failed: {e}")
+            logger.error(f"❌ Fish API failed after retries: {e}")
             return {"success": False, "error": str(e)}
+    
+    def cleanup_old_voices(self, keep_count: int = 0) -> Dict[str, Any]:
+        try:
+            if not self.api_key:
+                return {"success": False, "error": "API key not configured"}
+            
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            
+            with httpx.Client(timeout=30.0) as client:
+                response = client.get("https://api.fish.audio/model", headers=headers)
+                response.raise_for_status()
+                
+                custom_models = [m for m in response.json().get("items", []) if m.get("visibility") == "private"]
+                
+                if not custom_models:
+                    return {"success": True, "deleted": 0}
+                
+                to_delete = custom_models[:-keep_count] if keep_count > 0 else custom_models
+                deleted = sum(1 for m in to_delete if self._delete_model(m.get("_id"), headers, client))
+                
+                logger.info(f"🧹 Cleaned {deleted}/{len(to_delete)} Fish Audio models")
+                return {"success": True, "deleted": deleted}
+        except Exception as e:
+            logger.error(f"Fish Audio cleanup failed: {e}")
+            return {"success": False, "error": str(e)}
+    
+    def delete_voice(self, voice_id: str) -> bool:
+        """Delete a specific voice model by ID"""
+        try:
+            if not self.api_key:
+                return False
+            
+            headers = {"Authorization": f"Bearer {self.api_key}"}
+            with httpx.Client(timeout=30.0) as client:
+                response = client.delete(f"https://api.fish.audio/model/{voice_id}", headers=headers)
+                response.raise_for_status()
+                return True
+        except Exception as e:
+            logger.error(f"Failed to delete voice {voice_id}: {e}")
+            return False
+    
+    def _delete_model(self, model_id: str, headers: dict, client: httpx.Client) -> bool:
+        """Internal delete method for cleanup_old_voices"""
+        try:
+            client.delete(f"https://api.fish.audio/model/{model_id}", headers=headers).raise_for_status()
+            return True
+        except Exception:
+            return False
+
+
+_fish_api_service_instance = None
+
+def get_fish_audio_api_service() -> FishAudioAPIService:
+    global _fish_api_service_instance
+    if _fish_api_service_instance is None:
+        _fish_api_service_instance = FishAudioAPIService()
+    return _fish_api_service_instance

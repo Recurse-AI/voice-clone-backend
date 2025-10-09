@@ -30,6 +30,11 @@ from app.utils.cleanup_utils import cleanup_utils
 from app.utils.token_helper import generate_url_safe_token
 from app.config.database import db
 from app.config.pipeline_settings import pipeline_settings
+from app.services.dub.handlers.manifest_handler import ManifestHandler
+from app.services.dub.context import DubbingContext
+from app.services.dub.manifest_manager import manifest_manager
+from app.services.dub.manifest_service import ensure_job_dir as _ensure_job_dir
+
 
 
 router = APIRouter()
@@ -111,7 +116,8 @@ async def start_video_dub(
         job_dir = os.path.join(settings.TEMP_DIR, request_obj.job_id)
         os.makedirs(job_dir, exist_ok=True)
         
-        logger.info(f"📥 Downloading file from: {request_obj.file_url}")
+        logger.info(f"📥 Job ID: {request_obj.job_id}")
+        logger.info(f"📥 File URL received: {request_obj.file_url}")
         file_extension = os.path.splitext(request_obj.file_url.split('?')[0])[-1].lower()
         temp_download_path = os.path.join(job_dir, f"original{file_extension}")
         
@@ -177,9 +183,11 @@ async def start_video_dub(
             "status": "pending",
             "progress": 0,
             "video_subtitle": request_obj.video_subtitle,
-            "voice_premium_model": request_obj.voice_premium_model,
+            "model_type": request_obj.model_type,
+            "add_subtitle_to_video": request_obj.add_subtitle_to_video,
             "voice_type": getattr(request_obj, "voice_type", None),
-            "reference_ids": getattr(request_obj, "reference_ids", [])
+            "reference_ids": getattr(request_obj, "reference_ids", []),
+            "num_of_speakers": request_obj.num_of_speakers
         }
         
         if video_url:
@@ -282,12 +290,6 @@ async def get_video_dub_status(job_id: str):
         logger.error(f"Failed to get dub job status {job_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get job status: {str(e)}")
 
-## Removed per requirement: clients should use details.files only
-
-
-from app.services.dub.manifest_manager import manifest_manager
-from app.services.dub.manifest_service import ensure_job_dir as _ensure_job_dir
-
 def _resume_approved_job(job_id: str, manifest: dict, target_language: str, source_video_language: str, user_id: str):
     try:
         from app.utils.pipeline_utils import mark_resume_job, mark_dub_job_active, mark_dub_job_inactive
@@ -323,10 +325,16 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
             })
             return
 
-        # Download missing files before processing
         logger.info(f"Checking for missing files in job directory: {job_dir}")
         try:
-            api._download_missing_files(job_id, manifest, job_dir)
+            temp_context = DubbingContext(
+                job_id=job_id,
+                target_language=target_language,
+                target_language_code="",
+                process_temp_dir=job_dir,
+                manifest=manifest
+            )
+            ManifestHandler._download_missing_files(temp_context)
             logger.info(f"✅ Missing files check completed for job {job_id}")
         except Exception as e:
             logger.warning(f"⚠️ Missing files download failed for job {job_id}: {e}")
@@ -338,6 +346,11 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
             output_dir=job_dir,
             review_mode=False,
             manifest_override=manifest,
+            model_type=manifest.get("model_type", "normal"),
+            voice_type=manifest.get("voice_type"),
+            reference_ids=manifest.get("reference_ids", []),
+            add_subtitle_to_video=manifest.get("add_subtitle_to_video", False),
+            num_of_speakers=manifest.get("num_of_speakers", 1)
         )
         if not result.get("success"):
             status_service.update_status(job_id, "dub", JobStatus.FAILED, 0, {
@@ -497,7 +510,8 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
         "progress": 0,
         "parent_job_id": parent_job_id,
         "redub_from": parent_job.target_language,
-        "voice_premium_model": getattr(request_body, "voice_premium_model", False)
+        "model_type": request_body.model_type,
+        "add_subtitle_to_video": request_body.add_subtitle_to_video
     }
     
     # Inherit video_url from parent job for final video generation
@@ -531,12 +545,13 @@ async def redub_job(job_id: str, request_body: RedubRequest, current_user = Depe
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    # Prepare manifest for redub using utility function
+    reference_ids_for_redub = request_body.reference_ids if request_body.reference_ids else None
     manifest = job_utils.prepare_manifest_for_redub(
         manifest, redub_job_id, request_body.target_language, parent_job_id, 
-        getattr(request_body, "voice_premium_model", False),
+        request_body.model_type,
         getattr(request_body, "voice_type", None),
-        getattr(request_body, "reference_ids", [])
+        reference_ids_for_redub,
+        request_body.add_subtitle_to_video
     )
     
     # Enqueue redub job
