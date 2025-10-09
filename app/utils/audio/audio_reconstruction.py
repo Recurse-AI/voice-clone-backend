@@ -56,6 +56,7 @@ class AudioReconstruction:
             
             cmd.extend([
                 "-filter_complex", filter_complex,
+                "-map", "[out]",
                 "-ar", str(target_sr),
                 "-ac", "1",
                 "-acodec", "pcm_s16le",
@@ -126,16 +127,17 @@ class AudioReconstruction:
             if expected_duration <= 0:
                 continue
             
-            filter_parts = [f"[{idx}:a]"]
-            filter_parts.append(f"aresample={target_sr}")
-            filter_parts.append("pan=mono|c0=c0")
-            filter_parts.append("afade=t=in:d=0.003,afade=t=out:d=0.003")
+            filter_chain_parts = [
+                f"aresample={target_sr}",
+                "aformat=channel_layouts=mono",
+                "afade=t=in:d=0.003,afade=t=out:d=0.003"
+            ]
             
             delay_ms = start_ms
             if delay_ms > 0:
-                filter_parts.append(f"adelay={delay_ms}|{delay_ms}")
+                filter_chain_parts.append(f"adelay={int(delay_ms)}")
             
-            filter_chain = ",".join(filter_parts)
+            filter_chain = f"[{idx}:a]" + ",".join(filter_chain_parts)
             filters.append(f"{filter_chain}[a{idx}]")
             valid_segments.append(idx)
         

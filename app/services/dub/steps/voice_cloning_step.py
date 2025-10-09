@@ -22,8 +22,9 @@ class VoiceCloningStep:
         self._ai_voice_reference_cache = {}
     
     def execute(self, context: DubbingContext):
+        from app.services.simple_status_service import JobStatus
         ProgressTracker.update_status(
-            context.job_id, "processing", 65,
+            context.job_id, JobStatus.PROCESSING, 65,
             {"message": "Starting voice cloning", "phase": "voice_cloning"}
         )
         
