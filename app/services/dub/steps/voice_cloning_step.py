@@ -27,16 +27,25 @@ class VoiceCloningStep:
             {"message": "Starting voice cloning", "phase": "voice_cloning"}
         )
         
-        ProgressTracker.update_phase_progress(
-            context.job_id, "voice_cloning", 0.0, "Segmenting audio for voice cloning"
-        )
-        
-        split_files = AudioHandler.split_audio_segments(context)
-        
-        ProgressTracker.update_phase_progress(
-            context.job_id, "voice_cloning", 0.1,
-            f"Audio segmented into {len(split_files)} parts"
-        )
+        if not getattr(context, 'audio_already_split', False):
+            ProgressTracker.update_phase_progress(
+                context.job_id, "voice_cloning", 0.0, "Segmenting audio for voice cloning"
+            )
+            
+            split_files = AudioHandler.split_audio_segments(context)
+            
+            ProgressTracker.update_phase_progress(
+                context.job_id, "voice_cloning", 0.1,
+                f"Audio segmented into {len(split_files)} parts"
+            )
+        else:
+            logger.info("Audio already split - skipping segmentation")
+            ProgressTracker.update_phase_progress(
+                context.job_id, "voice_cloning", 0.1, "Using pre-split audio"
+            )
+            
+            transcription_segments = context.transcription_result.get("segments", [])
+            split_files = [{"output_path": seg.get("original_audio_file")} for seg in transcription_segments]
         
         segments_data = []
         for seg, split_file in zip(context.segments, split_files):

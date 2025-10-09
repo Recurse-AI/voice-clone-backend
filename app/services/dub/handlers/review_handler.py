@@ -63,7 +63,6 @@ class ReviewHandler:
             }
         )
         
-        # Cleanup immediately - files already uploaded to R2 and can be restored from manifest
         try:
             from app.utils.audio import AudioUtils
             AudioUtils.remove_temp_dir(folder_path=context.process_temp_dir)

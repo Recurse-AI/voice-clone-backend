@@ -24,7 +24,7 @@ class RedubFlow(BaseFlow):
             return self.handle_review_mode(context)
         
         if not context.reference_ids and context.model_type in ["best", "medium"]:
-            logger.info("Creating fresh reference_ids for redub")
+            self.split_audio_for_references(context)
             ReferenceCreationStep.execute(context)
         
         ReferenceCreationStep.assign_to_segments(context)

@@ -28,6 +28,7 @@ class DubbingContext:
     instrument_url: Optional[str] = None
     
     created_voice_ids: List[str] = field(default_factory=list)
+    audio_already_split: bool = False
     
     def is_redub(self) -> bool:
         return self.manifest is not None and self.manifest.get("parent_job_id") is not None

@@ -18,6 +18,7 @@ class ResumeFlow(BaseFlow):
         SegmentationStep.execute(context)
         
         if not context.reference_ids and context.model_type in ["best", "medium"]:
+            self.split_audio_for_references(context)
             ReferenceCreationStep.execute(context)
         
         ReferenceCreationStep.assign_to_segments(context)

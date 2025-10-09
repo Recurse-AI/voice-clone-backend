@@ -23,7 +23,7 @@ class VideoDubFlow(BaseFlow):
             return self.handle_review_mode(context)
         
         if not context.reference_ids and context.model_type in ["best", "medium"]:
-            logger.info("Creating reference_ids for voice cloning")
+            self.split_audio_for_references(context)
             ReferenceCreationStep.execute(context)
         
         ReferenceCreationStep.assign_to_segments(context)
