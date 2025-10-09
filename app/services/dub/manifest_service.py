@@ -24,11 +24,11 @@ def write_json(content: Dict[str, Any], path: str) -> None:
 def build_manifest(job_id: str, transcript_id: Optional[str], target_language: str, dubbed_segments: list,
                   vocal_audio_url: Optional[str] = None, instrument_audio_url: Optional[str] = None, 
                   model_type: str = "normal", voice_type: Optional[str] = None, reference_ids: Optional[list] = None,
-                  num_of_speakers: int = 1) -> Dict[str, Any]:
+                  num_of_speakers: int = 1, add_subtitle_to_video: bool = False) -> Dict[str, Any]:
     from app.services.dub.manifest_manager import manifest_manager
     return manifest_manager.create_manifest(job_id, transcript_id, target_language, dubbed_segments, 
                                            vocal_audio_url, instrument_audio_url, model_type,
-                                           voice_type, reference_ids, num_of_speakers)
+                                           voice_type, reference_ids, num_of_speakers, add_subtitle_to_video)
 
 
 def save_manifest_to_dir(manifest: Dict[str, Any], process_temp_dir: str, job_id: str) -> str:

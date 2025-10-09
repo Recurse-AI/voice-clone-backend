@@ -49,7 +49,7 @@ class ManifestManager:
                        segments: list, vocal_audio_url: Optional[str] = None, 
                        instrument_audio_url: Optional[str] = None, model_type: str = "normal",
                        voice_type: Optional[str] = None, reference_ids: Optional[list] = None,
-                       num_of_speakers: int = 1) -> Dict[str, Any]:
+                       num_of_speakers: int = 1, add_subtitle_to_video: bool = False) -> Dict[str, Any]:
         normalized_segments = [self._normalize_segment(seg) for seg in segments]
         return {
             "job_id": job_id,
@@ -62,6 +62,7 @@ class ManifestManager:
             "voice_type": voice_type,
             "reference_ids": reference_ids,
             "num_of_speakers": num_of_speakers,
+            "add_subtitle_to_video": add_subtitle_to_video,
             "segments": normalized_segments
         }
     

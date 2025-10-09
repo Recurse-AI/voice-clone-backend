@@ -30,6 +30,11 @@ from app.utils.cleanup_utils import cleanup_utils
 from app.utils.token_helper import generate_url_safe_token
 from app.config.database import db
 from app.config.pipeline_settings import pipeline_settings
+from app.services.dub.handlers.manifest_handler import ManifestHandler
+from app.services.dub.context import DubbingContext
+from app.services.dub.manifest_manager import manifest_manager
+from app.services.dub.manifest_service import ensure_job_dir as _ensure_job_dir
+
 
 
 router = APIRouter()
@@ -111,7 +116,8 @@ async def start_video_dub(
         job_dir = os.path.join(settings.TEMP_DIR, request_obj.job_id)
         os.makedirs(job_dir, exist_ok=True)
         
-        logger.info(f"📥 Downloading file from: {request_obj.file_url}")
+        logger.info(f"📥 Job ID: {request_obj.job_id}")
+        logger.info(f"📥 File URL received: {request_obj.file_url}")
         file_extension = os.path.splitext(request_obj.file_url.split('?')[0])[-1].lower()
         temp_download_path = os.path.join(job_dir, f"original{file_extension}")
         
@@ -284,12 +290,6 @@ async def get_video_dub_status(job_id: str):
         logger.error(f"Failed to get dub job status {job_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get job status: {str(e)}")
 
-## Removed per requirement: clients should use details.files only
-
-
-from app.services.dub.manifest_manager import manifest_manager
-from app.services.dub.manifest_service import ensure_job_dir as _ensure_job_dir
-
 def _resume_approved_job(job_id: str, manifest: dict, target_language: str, source_video_language: str, user_id: str):
     try:
         from app.utils.pipeline_utils import mark_resume_job, mark_dub_job_active, mark_dub_job_inactive
@@ -327,7 +327,14 @@ def _resume_approved_job(job_id: str, manifest: dict, target_language: str, sour
 
         logger.info(f"Checking for missing files in job directory: {job_dir}")
         try:
-            api._download_missing_files(job_id, manifest, job_dir)
+            temp_context = DubbingContext(
+                job_id=job_id,
+                target_language=target_language,
+                target_language_code="",
+                process_temp_dir=job_dir,
+                manifest=manifest
+            )
+            ManifestHandler._download_missing_files(temp_context)
             logger.info(f"✅ Missing files check completed for job {job_id}")
         except Exception as e:
             logger.warning(f"⚠️ Missing files download failed for job {job_id}: {e}")

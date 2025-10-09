@@ -18,14 +18,18 @@ class SpeakerDetectionService:
             return
         logger.info("🚀 Preloading speaker detection model...")
         self._initialize_pipeline()
-        logger.info("✅ Speaker detection model preloaded successfully!")
+        if self.pipeline:
+            logger.info("✅ Speaker detection model preloaded successfully!")
+        else:
+            logger.warning("⚠️ Speaker detection skipped - GPU not available")
         
     def _initialize_pipeline(self):
         if self.pipeline is not None:
             return
         
         if not torch.cuda.is_available():
-            raise RuntimeError("GPU required for speaker detection")
+            logger.warning("⚠️ GPU not available - speaker detection will not work")
+            return
             
         self.device = torch.device("cuda")
         logger.info(f"Initializing speaker detection on GPU: {torch.cuda.get_device_name(0)}")
@@ -39,6 +43,9 @@ class SpeakerDetectionService:
     def detect_speakers(self, audio_path: str, job_id: str = None, num_speakers: int = None) -> List[Dict[str, Any]]:
         try:
             self._initialize_pipeline()
+            
+            if self.pipeline is None:
+                raise RuntimeError("Speaker detection requires GPU - not available on this system")
             
             logger.info(f"Loading audio: {audio_path}")
             waveform, sample_rate = torchaudio.load(audio_path)

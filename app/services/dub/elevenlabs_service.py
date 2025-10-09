@@ -6,6 +6,10 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 logger = logging.getLogger(__name__)
 
+class BlockedVoiceError(Exception):
+    """Raised when ElevenLabs detects a blocked voice"""
+    pass
+
 class ElevenLabsService:
     def __init__(self, api_key: str = None):
         from app.config.settings import settings
@@ -38,24 +42,26 @@ class ElevenLabsService:
                 "name": name
             }
         except Exception as e:
+            error_str = str(e)
+            if "detected_blocked_voice" in error_str or "violate our Terms of Service" in error_str:
+                logger.error(f"Blocked voice detected during creation: {error_str}")
+                raise BlockedVoiceError("Voice blocked by ElevenLabs for ToS violation")
             logger.error(f"Failed to create voice clone: {e}")
             return {"success": False, "error": str(e)}
     
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=2, min=4, max=30),
-        retry=retry_if_exception_type((TimeoutError, ConnectionError, Exception)),
-        reraise=True
-    )
-    def _generate_with_retry(self, text: str, voice_id: str, speed: float = 1.0):
-        voice_settings = {"speed": speed} if speed != 1.0 else None
-        
-        return self.client.text_to_speech.convert(
-            text=text,
-            voice_id=voice_id,
-            model_id="eleven_v3",
-            voice_settings=voice_settings
-        )
+    def _generate_with_retry(self, text: str, voice_id: str):
+        try:
+            return self.client.text_to_speech.convert(
+                text=text,
+                voice_id=voice_id,
+                model_id="eleven_v3"
+            )
+        except Exception as e:
+            error_str = str(e)
+            if "detected_blocked_voice" in error_str or "violate our Terms of Service" in error_str:
+                logger.error(f"Blocked voice detected: {error_str}")
+                raise BlockedVoiceError("Voice blocked by ElevenLabs for ToS violation")
+            raise
     
     def generate_speech(self, text: str, voice_id: str, target_language: str = None, job_id: str = None, segment_index: int = 0, target_duration_ms: int = None) -> Dict[str, Any]:
         try:
@@ -68,13 +74,15 @@ class ElevenLabsService:
             os.makedirs(temp_dir, exist_ok=True)
             output_path = os.path.join(temp_dir, f"cloned_elevenlabs_{job_id}_{segment_index:03d}.mp3")
             
-            audio = self._generate_with_retry(text, voice_id, speed=1.0)
+            audio = self._generate_with_retry(text, voice_id)
             audio_bytes = b"".join(chunk for chunk in audio)
             
             with open(output_path, "wb") as f:
                 f.write(audio_bytes)
             
             return {"success": True, "output_path": output_path}
+        except BlockedVoiceError:
+            raise
         except Exception as e:
             logger.error(f"ElevenLabs failed: {e}")
             return {"success": False, "error": str(e)}

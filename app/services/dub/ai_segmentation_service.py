@@ -41,15 +41,11 @@ class AISegmentationService:
             source_language_code = language_service.normalize_language_input(source_language)
             target_language_code = language_service.normalize_language_input(target_language)
             
-            is_same_language = source_language_code == target_language_code
-            if is_same_language:
-                logger.info(f"🎯 SAME LANGUAGE DETECTED: source={source_language_code}, target={target_language_code}")
-            else:
-                logger.info(f"🌍 TRANSLATION NEEDED: source={source_language_code} → target={target_language_code}")
+            logger.info(f"🌍 TRANSLATION: source={source_language_code} → target={target_language_code}")
             
             if preserve_segments:
                 logger.info(f"REDUB: Preserving {len(segments)} segments, translating text only")
-                return self._translate_existing_segments(segments, target_language_code, is_same_language)
+                return self._translate_existing_segments(segments, target_language_code)
             
             logger.info(f"FRESH DUBBING: Full AI segmentation + translation for {len(segments)} segments")
             combined_text = []
@@ -83,23 +79,16 @@ class AISegmentationService:
             
             logger.info(f"Processing {len(combined_text)} segments in chunks")
             logger.info(f"✅ TIMING STANDARD: All inputs converted to milliseconds, AI gets seconds for better understanding")
-            return self._process_in_chunks(combined_text, target_language, is_same_language, preserve_segments=False, num_speakers=num_speakers)
+            return self._process_in_chunks(combined_text, target_language, preserve_segments=False, num_speakers=num_speakers)
         except Exception as e:
             logger.error(f"CRITICAL ERROR in create_optimal_segments_and_dub: {str(e)}")
             logger.error(f"Transcription data structure: {transcription_data}")
             raise e
 
-    def _build_segmentation_and_dubbing_prompt(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False) -> str:
+    def _build_segmentation_and_dubbing_prompt(self, segments: List[Dict], target_language: str, preserve_segments: bool = False) -> str:
         target_lang_name = language_service.get_language_name(target_language)
         
-        if is_same_language:
-            translation_instructions = f"""SAME LANGUAGE ({target_lang_name}):
-- NO translation (source = target)
-- PRESERVE original_text exactly as-is
-- FIX errors in dubbed_text only
-- Clean corrupted patterns"""
-        else:
-            translation_instructions = f"""TRANSLATION TO {target_lang_name}:
+        translation_instructions = f"""TRANSLATION TO {target_lang_name}:
 - 100% {target_lang_name} only
 - Natural conversational style
 - Fix typos in original_text (keep meaning)
@@ -107,12 +96,8 @@ class AISegmentationService:
 - Adapt idioms naturally"""
         
         if preserve_segments:
-            if is_same_language:
-                processing_instruction = f"SAME LANGUAGE REDUB - Clean corruption then copy to dubbed_text"
-                example_dubbed = "cleaned meaningful text (same as original after corruption removal)"
-            else:
-                processing_instruction = f"TRANSLATION REDUB - Clean corruption then translate to {target_lang_name}"
-                example_dubbed = f"professional {target_lang_name} translation of cleaned text"
+            processing_instruction = f"TRANSLATION REDUB - Clean corruption then translate to {target_lang_name}"
+            example_dubbed = f"professional {target_lang_name} translation of cleaned text"
             
             return f"""REDUB MODE: Edit existing segments
 
@@ -187,15 +172,23 @@ OUTPUT FORMAT:
 ✓ No overlaps in timestamps
 ✓ Keep speaker tags exact"""
     
-    def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0) -> List[Dict[str, Any]]:
+    def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0, preserve_original_timing: bool = False, original_segments: List[Dict] = None) -> List[Dict[str, Any]]:
         formatted_segments = []
         
+        if preserve_original_timing and original_segments:
+            logger.info(f"🔒 REDUB: Using original manifest timing and speakers for {len(ai_segments)} segments (ignoring AI timing)")
+        
         for idx, seg in enumerate(ai_segments):
-            start_s = float(seg.get("start", 0))
-            end_s = float(seg.get("end", 0))
-            
-            start_ms = int(start_s * 1000)
-            end_ms = int(end_s * 1000)
+            if preserve_original_timing and original_segments and idx < len(original_segments):
+                start_ms = int(original_segments[idx].get("start_ms", original_segments[idx].get("start", 0)))
+                end_ms = int(original_segments[idx].get("end_ms", original_segments[idx].get("end", 0)))
+                original_speaker = original_segments[idx].get("speaker")
+            else:
+                start_s = float(seg.get("start", 0))
+                end_s = float(seg.get("end", 0))
+                start_ms = int(start_s * 1000)
+                end_ms = int(end_s * 1000)
+                original_speaker = seg.get("speaker")
             
             if formatted_segments:
                 prev_end_ms = formatted_segments[-1]["end"]
@@ -229,46 +222,13 @@ OUTPUT FORMAT:
                 "voice_cloned": False,
                 "original_audio_file": None,
                 "cloned_audio_file": None,
-                "speaker": seg.get("speaker")
+                "speaker": original_speaker
             })
         
         return formatted_segments
     
-    def _translate_existing_segments(self, segments: List[Dict], target_language_code: str, is_same_language: bool = False) -> List[Dict[str, Any]]:
+    def _translate_existing_segments(self, segments: List[Dict], target_language_code: str) -> List[Dict[str, Any]]:
         logger.info(f"REDUB MODE: Translating {len(segments)} segments to {target_language_code}")
-        
-        if is_same_language:
-            logger.info(f"Same language redub - preserving original text")
-            formatted_segments = []
-            for idx, seg in enumerate(segments):
-                start_ms = int(seg.get("start", 0))
-                end_ms = int(seg.get("end", 0))
-                
-                if formatted_segments:
-                    prev_end_ms = formatted_segments[-1]["end"]
-                    if start_ms < prev_end_ms:
-                        gap = (prev_end_ms - start_ms) // 2
-                        formatted_segments[-1]["end"] = prev_end_ms - gap
-                        formatted_segments[-1]["duration_ms"] = formatted_segments[-1]["end"] - formatted_segments[-1]["start"]
-                        start_ms = prev_end_ms - gap
-                        logger.warning(f"REDUB: Fixed overlap - adjusted boundaries by {gap}ms")
-                
-                original_text = seg.get("original_text", seg.get("text", "")).strip()
-                formatted_segments.append({
-                    "id": seg.get("id", f"seg_{idx+1:03d}"),
-                    "segment_index": idx,
-                    "start": start_ms,
-                    "end": end_ms,
-                    "duration_ms": end_ms - start_ms,
-                    "original_text": original_text,
-                    "dubbed_text": original_text,
-                    "voice_cloned": False,
-                    "original_audio_file": None,
-                    "cloned_audio_file": None,
-                    "speaker": seg.get("speaker")
-                })
-            return formatted_segments
-        
         return self._translate_segments_preserve_timing(segments, target_language_code)
     
     def _translate_chunk_worker(self, args) -> tuple:
@@ -448,7 +408,7 @@ VALIDATION CHECKLIST:
                 logger.error(f"OpenAI API error: {error_msg}")
             raise
     
-    def _process_in_chunks(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False, num_speakers: Optional[int] = None) -> List[Dict[str, Any]]:
+    def _process_in_chunks(self, segments: List[Dict], target_language: str, preserve_segments: bool = False, num_speakers: Optional[int] = None) -> List[Dict[str, Any]]:
         chunk_size = self.settings.AI_SEGMENTATION_CHUNK_SIZE
         all_results = []
         
@@ -541,7 +501,7 @@ CONTENT PRESERVATION (CRITICAL):
 """
             
             target_lang_name = self._get_language_name(target_lang_code)
-            prompt = chunk_context + self._build_segmentation_and_dubbing_prompt(chunk, target_lang_name, is_same_language, preserve_segments)
+            prompt = chunk_context + self._build_segmentation_and_dubbing_prompt(chunk, target_lang_name, preserve_segments)
             
             try:
                 response = self._call_openai_with_retry(
@@ -610,7 +570,9 @@ OUTPUT: Valid JSON with 'segments' array only (each segment MUST include exact s
                 global_segment_index_start = len(all_results)
                 chunk_segments = self._format_segments_with_translation(
                     ai_segments, 
-                    global_segment_index_start
+                    global_segment_index_start,
+                    preserve_original_timing=preserve_segments,
+                    original_segments=chunk if preserve_segments else None
                 )
                 all_results.extend(chunk_segments)
                 
