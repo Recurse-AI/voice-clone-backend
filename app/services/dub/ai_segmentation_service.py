@@ -41,15 +41,11 @@ class AISegmentationService:
             source_language_code = language_service.normalize_language_input(source_language)
             target_language_code = language_service.normalize_language_input(target_language)
             
-            is_same_language = source_language_code == target_language_code
-            if is_same_language:
-                logger.info(f"🎯 SAME LANGUAGE DETECTED: source={source_language_code}, target={target_language_code}")
-            else:
-                logger.info(f"🌍 TRANSLATION NEEDED: source={source_language_code} → target={target_language_code}")
+            logger.info(f"🌍 TRANSLATION: source={source_language_code} → target={target_language_code}")
             
             if preserve_segments:
                 logger.info(f"REDUB: Preserving {len(segments)} segments, translating text only")
-                return self._translate_existing_segments(segments, target_language_code, is_same_language)
+                return self._translate_existing_segments(segments, target_language_code)
             
             logger.info(f"FRESH DUBBING: Full AI segmentation + translation for {len(segments)} segments")
             combined_text = []
@@ -83,213 +79,136 @@ class AISegmentationService:
             
             logger.info(f"Processing {len(combined_text)} segments in chunks")
             logger.info(f"✅ TIMING STANDARD: All inputs converted to milliseconds, AI gets seconds for better understanding")
-            return self._process_in_chunks(combined_text, target_language, is_same_language, preserve_segments=False, num_speakers=num_speakers)
+            return self._process_in_chunks(combined_text, target_language, preserve_segments=False, num_speakers=num_speakers)
         except Exception as e:
             logger.error(f"CRITICAL ERROR in create_optimal_segments_and_dub: {str(e)}")
             logger.error(f"Transcription data structure: {transcription_data}")
             raise e
 
-    def _build_segmentation_and_dubbing_prompt(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False) -> str:
+    def _build_segmentation_and_dubbing_prompt(self, segments: List[Dict], target_language: str, preserve_segments: bool = False) -> str:
+        target_lang_name = language_service.get_language_name(target_language)
         
-        def get_language_name(code):
-            lang_names = {
-                'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German', 'it': 'Italian',
-                'pt': 'Portuguese', 'ru': 'Russian', 'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean',
-                'ar': 'Arabic', 'hi': 'Hindi', 'bn': 'Bengali', 'ur': 'Urdu', 'tr': 'Turkish',
-                'pl': 'Polish', 'nl': 'Dutch', 'sv': 'Swedish', 'da': 'Danish', 'no': 'Norwegian'
-            }
-            return lang_names.get(code, code.title())
-        
-        target_lang_name = get_language_name(target_language)
-        
-        if is_same_language:
-            translation_instructions = f"""SAME LANGUAGE PROCESSING ({target_lang_name}):
-- Source and target are IDENTICAL - NO translation needed
-- CLEAN corrupted/repetitive patterns first
-- Copy cleaned meaningful text to dubbed_text 
-- If purely corrupted, use '[unclear audio]' in {target_lang_name}
-- NEVER output repetitive patterns like "000,000..." or "aaa..."
-- Extract only meaningful speech content
-- ADD SPEECH MARKERS: Enhance with OpenAudio S1 markers when context requires: (laughing) (excited) (whispering) (angry) (sad) (hesitating) etc."""
-        else:
-            translation_instructions = f"""PROFESSIONAL TRANSLATION TO {target_lang_name.upper()} - NATURAL NATIVE SPEECH:
-- ABSOLUTE RULE: 100% {target_lang_name} ONLY - NO Spanish/German/French/Italian mixing
-- CORRUPTION AUTO-CLEAN: Before translating, automatically detect and remove:
-  * Long repetitive numbers (40,000,000,000,000...)
-  * Repeated character sequences (aaaaaaa, xxxxx...)
-  * Looping words/phrases (juice juice juice, do it do it...)
-  * Symbol spam or transcription artifacts (@#$%, [[[, +++...)
-  * Placeholder text or corrupted patterns
-- MEANINGFUL EXTRACTION: Find the actual speech content within corrupted input
-- NATURAL SPEECH STYLE: Sound like native speakers in everyday conversation
-  * Use COLLOQUIAL/INFORMAL language (how people actually talk)
-  * Use STANDARD DIALECT (neutral form understood by all)
-  * Prefer COMMON/POPULAR words over formal vocabulary
-  * NO literal/word-for-word translation - adapt naturally
-  * Make it sound AUTHENTIC, not textbook translation
-- FULL CULTURAL LOCALIZATION:
-  * Convert ALL cultural references to {target_lang_name} equivalents
-  * Adapt idioms/metaphors/expressions to target culture
-  * Replace foreign examples with local familiar ones
-  * Use expressions popular in {target_lang_name} speaking regions
-- LANGUAGE PURITY: Every single word must be proper {target_lang_name} vocabulary
-- FALLBACK PROTOCOL: Purely corrupted segments → '[unclear audio]' in {target_lang_name}
-- PRESERVE INTENT: Keep original meaning/tone of actual speech content
-- SPEECH CONTROL: Add OpenAudio S1 markers ONLY when truly needed: (laughing) (excited) (angry) (sad) (whispering) (shouting) (hesitating) (scared) (surprised) etc."""
+        translation_instructions = f"""TRANSLATION TO {target_lang_name}:
+- 100% {target_lang_name} only
+- Natural conversational style
+- Fix typos in original_text (keep meaning)
+- Clean corrupted text
+- Adapt idioms naturally"""
         
         if preserve_segments:
-            if is_same_language:
-                processing_instruction = f"SAME LANGUAGE REDUB - Clean corruption then copy to dubbed_text"
-                example_dubbed = "cleaned meaningful text (same as original after corruption removal)"
-            else:
-                processing_instruction = f"TRANSLATION REDUB - Clean corruption then translate to {target_lang_name}"
-                example_dubbed = f"professional {target_lang_name} translation of cleaned text"
+            processing_instruction = f"TRANSLATION REDUB - Clean corruption then translate to {target_lang_name}"
+            example_dubbed = f"professional {target_lang_name} translation of cleaned text"
             
-            return f"""REDUB MODE - EXACT PRESERVATION:
+            return f"""REDUB MODE: Edit existing segments
 
-MANDATORY 1:1 MAPPING:
-1. Output EXACTLY {len(segments)} segments (one output per input)
-2. PRESERVE exact start/end timing from input
-3. PRESERVE exact original_text from input
+RULES:
+1. Output EXACTLY {len(segments)} segments (1 input = 1 output)
+2. PRESERVE timing (start/end) from input
+3. PRESERVE original_text from input (no changes)
 4. {processing_instruction}
-5. NO merging, NO splitting, NO structure changes
+5. NO merging, NO splitting
+6. PRESERVE speaker field exactly
 
-TRANSLATION QUALITY:
-- Make dubbed_text sound natural in target language
-- Preserve emotional tone and speaker emphasis
-- Adapt punctuation for target language conventions
-- Convert idioms/expressions to cultural equivalents
-- Maintain conversation flow and context
-- Clean corruption while keeping meaningful content
+{translation_instructions}
+
+INPUT:
+{json.dumps(segments, ensure_ascii=False, indent=2)}
+
+OUTPUT:
+{{
+  "segments": [
+    {{
+      "id": "<from_input>",
+      "start": <from_input>,
+      "end": <from_input>,
+      "speaker": "<from_input>",
+      "original_text": "<from_input_no_changes>",
+      "dubbed_text": "{example_dubbed}"
+    }}
+  ]
+}}
+
+✓ Exactly {len(segments)} segments
+✓ Same timing as input
+✓ {processing_instruction}"""
+        else:
+            return f"""DUBBING TASK: Translate audio transcription to {target_lang_name}
+
+🚨 CRITICAL RULES:
+1. USE ALL INPUT: Every word from input MUST appear in output (no content loss)
+2. PRESERVE TIMING: Keep input start/end times (only split if segment >15s)
+3. MAX DURATION: Each output segment ≤15.0 seconds
+4. NO OVERLAPS: segment[i].start ≥ segment[i-1].end
+5. PRESERVE SPEAKER: Copy exact speaker field from input to output
+
+SEGMENTATION:
+- If input segment ≤15s → Keep as-is (1 input = 1 output)
+- If input segment >15s → Split at sentence/clause boundaries
+- MERGE only if segments are very short (<2s) AND same speaker
+- When splitting: All parts get same speaker as input
+- When merging: Only merge if same speaker
 
 {translation_instructions}
 
 INPUT SEGMENTS:
 {json.dumps(segments, ensure_ascii=False, indent=2)}
 
-OUTPUT JSON FORMAT:
+OUTPUT FORMAT:
 {{
   "segments": [
     {{
       "id": "seg_001",
-      "start": 0.080,
-      "end": 4.560,
-      "speaker": "SPEAKER_00",
-      "original_text": "exact text from input (preserved)",
-      "dubbed_text": "{example_dubbed} (natural translation)"
+      "start": <input_start>,
+      "end": <input_end or split_point>,
+      "speaker": "<exact_speaker_from_input>",
+      "original_text": "<corrected_input_text>",
+      "dubbed_text": "{target_lang_name} translation"
     }}
   ]
 }}
 
-🚨 MANDATORY SPEAKER PRESERVATION:
-- MUST preserve "speaker" field from input to output EXACTLY
-- If input segment has "speaker": "SPEAKER_00", output MUST include "speaker": "SPEAKER_00"
-- Speaker tags are CRITICAL for voice consistency - NEVER drop them
-
-CORRUPTION HANDLING:
-- Clean repetitive patterns before translating
-- Extract meaningful content from corrupted input
-- Use "[unclear audio]" only for completely unrecoverable segments
-- Leverage context from surrounding segments when possible
-
-CRITICAL: Must output exactly {len(segments)} segments as valid JSON. {processing_instruction}."""
-        else:
-            return f"""FRESH DUBBING MODE:
-
-🚨 ABSOLUTE RULE: Every output segment MUST be ≤15.0 seconds duration. NO EXCEPTIONS.
-
-🚨 CRITICAL SPEAKER PRESERVATION RULES (HIGHEST PRIORITY):
-1. EVERY input segment has a "speaker" field (SPEAKER_00, SPEAKER_01, etc.)
-2. When you SPLIT a segment → ALL output segments MUST keep the SAME speaker as the input
-3. When you MERGE segments → Check speakers FIRST:
-   - If SAME speaker → use that speaker in merged output
-   - If DIFFERENT speakers → DO NOT MERGE (keep separate to maintain speaker distinction)
-4. NEVER change a speaker assignment - only copy from input
-5. NEVER default to SPEAKER_00 - use the actual speaker from input segment
-6. Speaker boundaries are SACRED - never merge across different speakers
-
-SEGMENTATION STRATEGY:
-1. Calculate each segment: (end - start) MUST be ≤15.0 seconds
-2. SPLIT long segments at:
-   • Sentence endings (period, question mark, exclamation)
-   • Clause boundaries (commas, semicolons)
-   • Natural pauses in speech flow
-   • Speaker transitions (NEVER merge different speakers)
-3. MERGE short segments (< 2s) ONLY if:
-   • Combined duration ≤15.0s AND
-   • SAME SPEAKER (never merge different speakers)
-4. IDEAL target: 3-8 seconds per segment for best voice quality
-5. Output segment count can differ from input count
-
-QUALITY REQUIREMENTS:
-- Use ALL input content exactly once (no gaps, no duplicates)
-- Preserve emotional tone and speaker intent
-- Adapt cultural idioms/expressions naturally
-- Maintain conversation flow and context
-- Fix corrupted text by extracting meaningful parts
-- NEVER merge segments from different speakers
-
-{translation_instructions}
-
-INPUT: {json.dumps(segments, ensure_ascii=False, indent=2)}
-
-OUTPUT JSON EXAMPLE:
-{{
-  "segments": [
-    {{
-      "id": "seg_001", 
-      "start": 0.080,
-      "end": 4.560,
-      "speaker": "SPEAKER_00",
-      "original_text": "meaningful clean text",
-      "dubbed_text": "natural {target_lang_name} translation"
-    }},
-    {{
-      "id": "seg_002", 
-      "start": 4.560,
-      "end": 7.200,
-      "speaker": "SPEAKER_01",
-      "original_text": "meaningful clean text",
-      "dubbed_text": "natural {target_lang_name} translation"
-    }}
-  ]
-}}
-
-🚨 SPEAKER ASSIGNMENT ALGORITHM:
-Step 1: Read input segment → Note its speaker (e.g., "SPEAKER_01")
-Step 2: If splitting → Copy "SPEAKER_01" to ALL resulting segments
-Step 3: If merging → Check speakers match first, then merge and use that speaker
-Step 4: Write output → Include exact speaker from input (e.g., "speaker": "SPEAKER_01")
-NEVER write "speaker": "SPEAKER_00" unless input was actually SPEAKER_00!
-
-🚨 CORRUPTION AUTO-CLEAN EXAMPLES:
-- "40,000,000,000..." → Extract meaningful part or "[unclear audio]"
-- "juice juice juice..." → "juice" (deduplicate)
-- "aaaaaaaaa..." → Remove entirely
-- "कर दो कर दो कर दो" → "कर दो" (clean repetition)
-- Partial corruption → Use context from nearby segments to infer meaning
-
-🚨 LANGUAGE PURITY:
-- Target: {target_lang_name} → 100% {target_lang_name} in ALL dubbed_text
-- NEVER mix languages (no English in French, no Spanish in English, etc.)
-- Cultural adaptation: Convert idioms to target culture equivalents
-
-FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓ Speaker preserved correctly ✓"""
+✓ Use ALL input content
+✓ Preserve timing unless splitting >15s segments
+✓ No overlaps in timestamps
+✓ Keep speaker tags exact"""
     
-    def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0) -> List[Dict[str, Any]]:
+    def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0, preserve_original_timing: bool = False, original_segments: List[Dict] = None) -> List[Dict[str, Any]]:
         formatted_segments = []
         
+        if preserve_original_timing and original_segments:
+            logger.info(f"🔒 REDUB: Using original manifest timing and speakers for {len(ai_segments)} segments (ignoring AI timing)")
+        
         for idx, seg in enumerate(ai_segments):
-            start_s = float(seg.get("start", 0))
-            end_s = float(seg.get("end", 0))
+            if preserve_original_timing and original_segments and idx < len(original_segments):
+                start_ms = int(original_segments[idx].get("start_ms", original_segments[idx].get("start", 0)))
+                end_ms = int(original_segments[idx].get("end_ms", original_segments[idx].get("end", 0)))
+                original_speaker = original_segments[idx].get("speaker")
+            else:
+                start_s = float(seg.get("start", 0))
+                end_s = float(seg.get("end", 0))
+                start_ms = int(start_s * 1000)
+                end_ms = int(end_s * 1000)
+                original_speaker = seg.get("speaker")
             
-            start_ms = int(start_s * 1000)
-            end_ms = int(end_s * 1000)
+            if formatted_segments:
+                prev_end_ms = formatted_segments[-1]["end"]
+                if start_ms < prev_end_ms:
+                    logger.warning(f"AI generated overlap: segment {idx} starts at {start_ms}ms but previous ends at {prev_end_ms}ms")
+                    start_ms = prev_end_ms
+                    if start_ms >= end_ms:
+                        end_ms = start_ms + 100
+                    logger.warning(f"Fixed overlap: adjusted segment to start at {start_ms}ms")
+            
             duration_ms = end_ms - start_ms
             
+            original_text = seg.get("original_text", "").strip()
             dubbed_text = seg.get("dubbed_text", "").strip()
             dubbed_text = re.sub(r'\[\w+:\s*([^\]]+)\]', r'\1', dubbed_text)
             dubbed_text = re.sub(r'\[[^\]]+\]', '', dubbed_text).strip()
+            
+            if not original_text or not dubbed_text:
+                seg_id = seg.get("id", f"seg_{idx}")
+                raise ValueError(f"AI failed: segment {seg_id} has empty text (original: '{original_text}', dubbed: '{dubbed_text}')")
             
             global_segment_index = global_segment_index_start + len(formatted_segments)
             
@@ -299,39 +218,18 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓ Spe
                 "start": start_ms,
                 "end": end_ms,
                 "duration_ms": duration_ms,
-                "original_text": seg.get("original_text", "").strip(),
+                "original_text": original_text,
                 "dubbed_text": dubbed_text,
                 "voice_cloned": False,
                 "original_audio_file": None,
                 "cloned_audio_file": None,
-                "speaker": seg.get("speaker")
+                "speaker": original_speaker
             })
         
         return formatted_segments
     
-    def _translate_existing_segments(self, segments: List[Dict], target_language_code: str, is_same_language: bool = False) -> List[Dict[str, Any]]:
+    def _translate_existing_segments(self, segments: List[Dict], target_language_code: str) -> List[Dict[str, Any]]:
         logger.info(f"REDUB MODE: Translating {len(segments)} segments to {target_language_code}")
-        
-        if is_same_language:
-            logger.info(f"Same language redub - preserving original text")
-            formatted_segments = []
-            for idx, seg in enumerate(segments):
-                original_text = seg.get("original_text", seg.get("text", "")).strip()
-                formatted_segments.append({
-                    "id": seg.get("id", f"seg_{idx+1:03d}"),
-                    "segment_index": idx,
-                    "start": int(seg.get("start", 0)),
-                    "end": int(seg.get("end", 0)),
-                    "duration_ms": int(seg.get("end", 0)) - int(seg.get("start", 0)),
-                    "original_text": original_text,
-                    "dubbed_text": original_text,
-                    "voice_cloned": False,
-                    "original_audio_file": None,
-                    "cloned_audio_file": None,
-                    "speaker": seg.get("speaker")
-                })
-            return formatted_segments
-        
         return self._translate_segments_preserve_timing(segments, target_language_code)
     
     def _translate_chunk_worker(self, args) -> tuple:
@@ -370,13 +268,16 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓ Spe
             for seg_result in result.get("segments", []):
                 original_seg = next((s for s in chunk if s.get("id") == seg_result.get("id")), None)
                 if original_seg:
+                    dubbed_text = seg_result.get("dubbed_text", "").strip()
+                    
+                    
                     chunk_results.append({
                         "id": seg_result.get("id"),
                         "start": int(original_seg.get("start", 0)),
                         "end": int(original_seg.get("end", 0)),
                         "duration_ms": int(original_seg.get("end", 0)) - int(original_seg.get("start", 0)),
                         "original_text": seg_result.get("original_text", ""),
-                        "dubbed_text": seg_result.get("dubbed_text", "").strip(),
+                        "dubbed_text": dubbed_text,
                         "voice_cloned": False,
                         "original_audio_file": None,
                         "cloned_audio_file": None,
@@ -384,26 +285,11 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓ Spe
                     })
             
             logger.info(f"✅ Translated chunk {chunk_number}: {len(chunk_results)} segments")
-            return (i, chunk_results, True)
+            return (i, chunk_results)
             
         except Exception as e:
             logger.error(f"❌ Translation chunk {chunk_number} failed: {str(e)}")
-            fallback_results = []
-            for seg in chunk:
-                original_text = seg.get("original_text", seg.get("text", "")).strip()
-                fallback_results.append({
-                    "id": seg.get("id"),
-                    "start": int(seg.get("start", 0)),
-                    "end": int(seg.get("end", 0)),
-                    "duration_ms": int(seg.get("end", 0)) - int(seg.get("start", 0)),
-                    "original_text": original_text,
-                    "dubbed_text": original_text,
-                    "voice_cloned": False,
-                    "original_audio_file": None,
-                    "cloned_audio_file": None,
-                    "speaker": seg.get("speaker")
-                })
-            return (i, fallback_results, False)
+            raise ValueError(f"AI translation failed for chunk {chunk_number}: {str(e)}")
     
     def _translate_segments_preserve_timing(self, segments: List[Dict], target_language_code: str) -> List[Dict[str, Any]]:
         chunk_size = self.settings.AI_SEGMENTATION_CHUNK_SIZE
@@ -421,7 +307,7 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓ Spe
             }
             
             for future in as_completed(futures):
-                chunk_idx, results, success = future.result()
+                chunk_idx, results = future.result()
                 chunk_results[chunk_idx] = results
         
         all_results = []
@@ -430,6 +316,15 @@ FINAL CHECK: Every segment ≤15.0s ✓ No corruption ✓ Natural speech ✓ Spe
                 for seg in chunk_result:
                     seg["segment_index"] = len(all_results)
                     all_results.append(seg)
+        
+        for i in range(1, len(all_results)):
+            if all_results[i]["start"] < all_results[i-1]["end"]:
+                gap = (all_results[i-1]["end"] - all_results[i]["start"]) // 2
+                all_results[i-1]["end"] -= gap
+                all_results[i-1]["duration_ms"] = all_results[i-1]["end"] - all_results[i-1]["start"]
+                all_results[i]["start"] = all_results[i-1]["end"]
+                all_results[i]["duration_ms"] = all_results[i]["end"] - all_results[i]["start"]
+                logger.warning(f"REDUB TRANSLATE: Fixed overlap between segments - adjusted by {gap}ms")
         
         logger.info(f"🎯 REDUB: Translated {len(all_results)} segments")
         return all_results
@@ -451,8 +346,7 @@ Detect and remove these patterns automatically:
 • Meaningless/garbled content
 • Transcription errors
 
-ACTION: Extract meaningful speech only, ignore corruption artifacts
-FALLBACK: Use "[unclear audio]" for completely corrupted segments
+ACTION: Extract meaningful speech only, clean corruption artifacts
 
 TRANSLATION REQUIREMENTS:
 1. LANGUAGE PURITY: 100% {target_lang_name} - never mix other languages
@@ -515,7 +409,7 @@ VALIDATION CHECKLIST:
                 logger.error(f"OpenAI API error: {error_msg}")
             raise
     
-    def _process_in_chunks(self, segments: List[Dict], target_language: str, is_same_language: bool = False, preserve_segments: bool = False, num_speakers: Optional[int] = None) -> List[Dict[str, Any]]:
+    def _process_in_chunks(self, segments: List[Dict], target_language: str, preserve_segments: bool = False, num_speakers: Optional[int] = None) -> List[Dict[str, Any]]:
         chunk_size = self.settings.AI_SEGMENTATION_CHUNK_SIZE
         all_results = []
         
@@ -563,8 +457,27 @@ OPTIMIZATION GOALS:
 - MAXIMUM segment length: 15.0 seconds (strict limit)
 - Merge very short segments if SAME speaker and combined duration ≤15s
 - Split long segments intelligently at natural breaks
+- When merging: Combine BOTH original_text AND dubbed_text
+- When splitting: Divide BOTH original_text AND dubbed_text proportionally
 
-SPLIT PRIORITY (when breaking long segments):
+SPLIT RULES (when breaking long segments):
+- BOTH original_text AND dubbed_text must be split proportionally
+- Each split segment must have corresponding portions of BOTH texts
+- Split at natural boundaries to maintain meaning in BOTH languages
+
+SPLIT EXAMPLE:
+Input: start=0.0s, end=12.5s (12.5s duration - too long)
+       original_text: "Hello everyone, welcome to the show. Today we'll discuss AI."
+       dubbed_text: "সবাইকে স্বাগতম, আমাদের শোতে। আজ আমরা AI নিয়ে আলোচনা করব।"
+       
+Split → Segment 1: start=0.0s, end=6.2s
+                    original_text: "Hello everyone, welcome to the show."
+                    dubbed_text: "সবাইকে স্বাগতম, আমাদের শোতে।"
+        Segment 2: start=6.2s, end=12.5s
+                    original_text: "Today we'll discuss AI."
+                    dubbed_text: "আজ আমরা AI নিয়ে আলোচনা করব।"
+
+SPLIT PRIORITY:
 1. Sentence boundaries (highest priority)
 2. Clause boundaries (commas, conjunctions)
 3. Natural pauses in speech
@@ -582,14 +495,14 @@ QUALITY RULES:
 CONTENT PRESERVATION (CRITICAL):
 - MUST cover ALL input text exactly once - no gaps, no missing content
 - EVERY segment MUST have both original_text, dubbed_text AND speaker filled
-- NO empty segments allowed - if unclear, use "[unclear audio]" in target language
+- NO empty segments allowed - all text must be meaningful
 - If {num_speakers if num_speakers else 'auto'} speakers detected, preserve speaker distinction across segments
 - Split/merge intelligently but NEVER drop content or speaker info
 - Validate output: all input content AND speaker tags must appear in output segments
 """
             
             target_lang_name = self._get_language_name(target_lang_code)
-            prompt = chunk_context + self._build_segmentation_and_dubbing_prompt(chunk, target_lang_name, is_same_language, preserve_segments)
+            prompt = chunk_context + self._build_segmentation_and_dubbing_prompt(chunk, target_lang_name, preserve_segments)
             
             try:
                 response = self._call_openai_with_retry(
@@ -621,16 +534,15 @@ CRITICAL RULES:
    - Make output AUTHENTIC like real {target_lang_name} speakers
 
 CORRUPTION AUTO-CLEAN:
-• Repetitive patterns (40,000,000... or juice juice juice...) → Extract once or mark unclear
+• Repetitive patterns (40,000,000... or juice juice juice...) → Extract once
 • Repeated characters (aaaaaaa...) → Remove entirely
-• Meaningless sequences → Use '[unclear audio]' in {target_lang_name}
-• Partial corruption → Extract meaningful parts using context clues
+• Partial corruption → Extract meaningful parts using context
 
 QUALITY GUIDELINES:
-• FULL Cultural Localization: Convert ALL cultural references to {target_lang_name} equivalents
+• Cultural Localization: Convert cultural references to {target_lang_name} equivalents
 • Consistency: Keep terminology consistent across segments
 • Punctuation: Adapt to {target_lang_name} conventions
-• Context: Use surrounding segments to infer unclear audio when possible
+• Context: Use surrounding segments to infer meaning
 
 OUTPUT: Valid JSON with 'segments' array only (each segment MUST include exact speaker from input)"""}]},
                         {"role": "user", "content": [{"type": "input_text", "text": prompt}]}
@@ -659,7 +571,9 @@ OUTPUT: Valid JSON with 'segments' array only (each segment MUST include exact s
                 global_segment_index_start = len(all_results)
                 chunk_segments = self._format_segments_with_translation(
                     ai_segments, 
-                    global_segment_index_start
+                    global_segment_index_start,
+                    preserve_original_timing=preserve_segments,
+                    original_segments=chunk if preserve_segments else None
                 )
                 all_results.extend(chunk_segments)
                 
@@ -671,13 +585,7 @@ OUTPUT: Valid JSON with 'segments' array only (each segment MUST include exact s
         return all_results
 
     def _get_language_name(self, code):
-        lang_names = {
-            'en': 'English', 'es': 'Spanish', 'fr': 'French', 'de': 'German', 'it': 'Italian',
-            'pt': 'Portuguese', 'ru': 'Russian', 'zh': 'Chinese', 'ja': 'Japanese', 'ko': 'Korean',
-            'ar': 'Arabic', 'hi': 'Hindi', 'bn': 'Bengali', 'ur': 'Urdu', 'tr': 'Turkish',
-            'pl': 'Polish', 'nl': 'Dutch', 'sv': 'Swedish', 'da': 'Danish', 'no': 'Norwegian'
-        }
-        return lang_names.get(code, code.title())
+        return language_service.get_language_name(code)
 
 
 def get_ai_segmentation_service() -> AISegmentationService:

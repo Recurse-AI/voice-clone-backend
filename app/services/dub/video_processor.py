@@ -19,7 +19,7 @@ class VideoProcessor:
     def __init__(self, temp_dir: str = "./tmp/video_processing"):
         self.temp_dir = Path(temp_dir)
         self.temp_dir.mkdir(parents=True, exist_ok=True)
-        self.subtitle_font_size = 18
+        self.subtitle_font_size = 32
         self.subtitle_margin_bottom = 30
         self.words_per_subtitle = 3
 
@@ -227,6 +227,51 @@ class VideoProcessor:
             "all_chunks_single_line": all(len(chunk) <= char_limit for chunk in chunks)
         }
 
+    def create_ass_file(self, subtitle_data: List[Dict], output_path: Path) -> None:
+        with open(output_path, 'w', encoding='utf-8-sig') as f:
+            f.write("[Script Info]\n")
+            f.write("ScriptType: v4.00+\n")
+            f.write("PlayResX: 1920\n")
+            f.write("PlayResY: 1080\n\n")
+            
+            f.write("[V4+ Styles]\n")
+            f.write("Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n")
+            f.write("Style: Default,Arial,50,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,2.5,1.5,2,20,20,30,1\n\n")
+            
+            f.write("[Events]\n")
+            f.write("Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n")
+            
+            for subtitle in subtitle_data:
+                text = subtitle['text'].strip()
+                if not text:
+                    continue
+                
+                chunks = self._chunk_subtitle_text(text)
+                if not chunks:
+                    continue
+                
+                start_time = subtitle['start']
+                end_time = subtitle['end']
+                duration = end_time - start_time
+                chunk_duration = duration / len(chunks)
+                
+                for i, chunk in enumerate(chunks):
+                    chunk_start = start_time + (i * chunk_duration)
+                    chunk_end = chunk_start + chunk_duration
+                    
+                    start = self._seconds_to_ass_time(chunk_start)
+                    end = self._seconds_to_ass_time(chunk_end)
+                    
+                    f.write(f"Dialogue: 0,{start},{end},Default,,0,0,0,,{chunk}\n")
+    
+    def _seconds_to_ass_time(self, seconds: float) -> str:
+        """Convert seconds to ASS time format (h:mm:ss.cc)"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        centisecs = int((seconds % 1) * 100)
+        return f"{hours}:{minutes:02d}:{secs:02d}.{centisecs:02d}"
+    
     def create_srt_file(self, subtitle_data: List[Dict], output_path: Path) -> None:
         subtitle_index = 1
         
@@ -236,13 +281,10 @@ class VideoProcessor:
                 if not text:
                     continue
                 
-                # Chunk text for optimal single-line display
                 chunks = self._chunk_subtitle_text(text)
-                
                 if not chunks:
                     continue
                 
-                # Calculate timing for each chunk
                 start_time = subtitle['start']
                 end_time = subtitle['end']
                 duration = end_time - start_time
@@ -250,11 +292,7 @@ class VideoProcessor:
                 
                 for i, chunk in enumerate(chunks):
                     chunk_start = start_time + (i * chunk_duration)
-                    chunk_end = start_time + ((i + 1) * chunk_duration)
-                    
-                    # Ensure last chunk ends exactly at original end time
-                    if i == len(chunks) - 1:
-                        chunk_end = end_time
+                    chunk_end = chunk_start + chunk_duration
                     
                     start_time_str = self._seconds_to_srt_time(chunk_start)
                     end_time_str = self._seconds_to_srt_time(chunk_end)

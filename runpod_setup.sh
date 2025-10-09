@@ -15,14 +15,9 @@ export FORCE_CUDA=1
 echo "🐍 Activating virtual environment..."
 source venv/bin/activate
 
-echo "🔧 Upgrading yt-dlp..."
-pip install --upgrade yt-dlp --quiet
-pip install --upgrade bgutil-ytdlp-pot-provider --quiet
+#clear all workers
+python cleanup_workers.py
 
-echo "⏰ Setting up auto-update schedule (3 AM on 1st of every month)..."
-chmod +x auto_update_ytdlp.sh
-SCRIPT_PATH="$(pwd)/auto_update_ytdlp.sh"
-(crontab -l 2>/dev/null | grep -v "auto_update_ytdlp.sh"; echo "0 3 1 * * $SCRIPT_PATH") | crontab - 2>/dev/null || true
 
 mkdir -p ./tmp ./logs
 chmod 755 ./tmp ./logs
@@ -45,13 +40,6 @@ if command -v nvidia-smi >/dev/null 2>&1; then
 fi
 
 sleep 1
-
-echo "🔐 Checking PO Token Plugin..."
-if python -c "import bgutil_ytdlp_pot_provider" 2>/dev/null; then
-    echo "✅ PO Token Plugin installed"
-else
-    pip install --upgrade bgutil-ytdlp-pot-provider --quiet
-fi
 
 echo "🚀 Starting Redis..."
 rm -f dump.rdb appendonly.aof 2>/dev/null || true
