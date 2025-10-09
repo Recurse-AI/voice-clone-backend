@@ -138,7 +138,7 @@ async def get_segments(job_id: str, current_user = Depends(get_video_dub_user)):
             target_language=normalized_manifest.get("target_language"),
             reference_ids=normalized_manifest.get("reference_ids", []),
             vocal_url=normalized_manifest.get("vocal_audio_url"),
-            instrument_url=normalized_manifest.get("instrument_audio_url")
+            instrument_url=normalized_manifest.get("instrument_audio_url"),
             model_type=normalized_manifest.get("model_type", "normal")
         )
     except Exception as e:
