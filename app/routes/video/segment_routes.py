@@ -17,6 +17,49 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
+async def translate_with_context(manifest: dict, current_seg: dict, edited_original_text: str, target_language: str) -> str:
+    """Translate edited original text using contextual translation with surrounding segments"""
+    try:
+        from app.services.dub.ai_segmentation_service import get_ai_segmentation_service
+        
+        segments = manifest.get("segments", [])
+        current_index = next((i for i, s in enumerate(segments) if s.get("id") == current_seg.get("id")), -1)
+        
+        if current_index == -1:
+            logger.warning("Current segment not found in manifest segments")
+            return current_seg.get("dubbed_text", "")
+        
+        # Get surrounding segments (upper 2 + lower 2)
+        start_idx = max(0, current_index - 2)
+        end_idx = min(len(segments), current_index + 3)
+        context_segments = segments[start_idx:end_idx]
+        
+        # Create segments list with original_text
+        context_texts = []
+        target_segment_index = current_index - start_idx  # Index within context segments
+        
+        for seg in context_segments:
+            if seg.get("id") == current_seg.get("id"):
+                context_texts.append(edited_original_text)  # Use edited text
+            else:
+                context_texts.append(seg.get("original_text", ""))
+        
+        # Use contextual translation
+        ai_service = get_ai_segmentation_service()
+        translated = ai_service.translate_contextual_segment(
+            segments=context_texts,
+            target_segment_index=target_segment_index,
+            target_language=target_language,
+            source_language="auto"
+        )
+        
+        logger.info(f"Contextual translation completed for segment {current_seg.get('id')}")
+        return translated
+        
+    except Exception as e:
+        logger.error(f"Contextual translation failed: {str(e)}")
+        return current_seg.get("dubbed_text", "")
+
 async def regenerate_text_with_openai(original_text: str, target_language: str, custom_prompt: str) -> str:
     """Regenerate text using OpenAI with custom prompt"""
     try:
@@ -293,9 +336,18 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
         if regenerated_text and not regenerated_text.startswith("[Error]"):
             dubbed_text = regenerated_text
     
+    # If original_text is provided (user edited), use contextual translation
+    if request_body.original_text and request_body.original_text != seg.get("original_text"):
+        target_lang = request_body.target_language or manifest.get("target_language", "English")
+        dubbed_text = await translate_with_context(manifest, seg, request_body.original_text, target_lang)
+    
     # Apply tone if provided
     if request_body.tone and dubbed_text:
         dubbed_text = f"({request_body.tone}) " + dubbed_text
+    
+    # Update original_text if provided
+    if request_body.original_text:
+        seg["original_text"] = request_body.original_text
     
     seg["dubbed_text"] = dubbed_text
     

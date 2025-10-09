@@ -116,6 +116,7 @@ class RedubResponse(BaseModel):
 
 class RegenerateSegmentRequest(BaseModel):
     dubbed_text: Optional[str] = None
+    original_text: Optional[str] = Field(None, description="Optional edited original text for contextual translation")
     tone: Optional[str] = Field(None, description="Optional tone marker like excited, sad, whispering")
     target_language: Optional[str] = None
     prompt: Optional[str] = Field(None, description="Optional custom prompt for text regeneration using OpenAI")
