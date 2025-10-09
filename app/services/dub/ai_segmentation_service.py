@@ -193,10 +193,11 @@ OUTPUT FORMAT:
             if formatted_segments:
                 prev_end_ms = formatted_segments[-1]["end"]
                 if start_ms < prev_end_ms:
-                    gap = (prev_end_ms - start_ms) // 2
-                    formatted_segments[-1]["end"] = prev_end_ms - gap
-                    start_ms = prev_end_ms - gap
-                    logger.warning(f"Fixed overlap: adjusted segment boundaries by {gap}ms")
+                    logger.warning(f"AI generated overlap: segment {idx} starts at {start_ms}ms but previous ends at {prev_end_ms}ms")
+                    start_ms = prev_end_ms
+                    if start_ms >= end_ms:
+                        end_ms = start_ms + 100
+                    logger.warning(f"Fixed overlap: adjusted segment to start at {start_ms}ms")
             
             duration_ms = end_ms - start_ms
             

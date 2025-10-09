@@ -12,11 +12,6 @@ from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-def _add_language_tag(text: str, language_code: str) -> str:
-    if not text or not language_code:
-        return text
-    return f"{text} [{language_code}]"
-
 class VoiceCloningStep:
     def __init__(self):
         self._ai_voice_reference_cache = {}
@@ -74,10 +69,9 @@ class VoiceCloningStep:
         for i, data in enumerate(segments_data):
             result = results[i] if i < len(results) else None
             cloned_audio_path = result.get("path") if result else None
-            cloned_duration_ms = result.get("duration_ms", data["duration_ms"]) if result else data["duration_ms"]
             
             segment_json = self._create_segment_data(
-                data["seg_id"], data["global_idx"], data["start_ms"], cloned_duration_ms,
+                data["seg_id"], data["global_idx"], data["start_ms"], data["end_ms"],
                 data["original_text"], data["dubbed_text"], data["original_audio_path"],
                 cloned_audio_path, context.job_id, data.get("speaker"), data.get("reference_id")
             )
@@ -156,10 +150,8 @@ class VoiceCloningStep:
     
     def _voice_clone_segment(self, data: dict, context: DubbingContext) -> Optional[Dict[str, Any]]:
         try:
-            tagged_text = _add_language_tag(data["dubbed_text"], context.target_language_code)
-            tagged_reference_text = _add_language_tag(
-                data["original_text"] or "Reference audio", context.source_language_code
-            )
+            dubbed_text = data["dubbed_text"]
+            reference_text = data["original_text"] or "Reference audio"
             
             segment_index = int(data['seg_id'].split('_')[1]) - 1
             cloned_path = os.path.join(
@@ -175,7 +167,7 @@ class VoiceCloningStep:
                 )
                 reference_audio_bytes = audio_bytes
                 if sample_text:
-                    tagged_reference_text = _add_language_tag(sample_text, context.source_language_code)
+                    reference_text = sample_text
             
             if reference_audio_bytes is None:
                 reference_audio_bytes = self._load_reference_audio(data["original_audio_path"])
@@ -184,24 +176,24 @@ class VoiceCloningStep:
                 if not ai_voice_id:
                     return None
                 result = self._generate_with_elevenlabs(
-                    tagged_text, ai_voice_id, context.job_id,
+                    dubbed_text, ai_voice_id, context.job_id,
                     context.target_language_code, segment_index, data["duration_ms"]
                 )
             elif context.model_type == 'medium':
                 if not ai_voice_id:
                     return None
                 result = self._generate_with_premium_api(
-                    tagged_text, ai_voice_id, context.job_id, context.target_language_code
+                    dubbed_text, ai_voice_id, context.job_id, context.target_language_code
                 )
                 if not result.get("success"):
                     logger.warning(f"Fish API failed, using local model")
                     result = self._generate_with_local_model(
-                        tagged_text, reference_audio_bytes, tagged_reference_text,
+                        dubbed_text, reference_audio_bytes, reference_text,
                         context.job_id, context.target_language_code
                     )
             else:
                 result = self._generate_with_local_model(
-                    tagged_text, reference_audio_bytes, tagged_reference_text,
+                    dubbed_text, reference_audio_bytes, reference_text,
                     context.job_id, context.target_language_code
                 )
             
@@ -309,12 +301,12 @@ class VoiceCloningStep:
                 os.remove(output_path)
             return None
     
-    def _create_segment_data(self, seg_id: str, segment_index: int, start_ms: int, cloned_duration_ms: int,
+    def _create_segment_data(self, seg_id: str, segment_index: int, start_ms: int, end_ms: int,
                            original_text: str, dubbed_text: str, original_audio_path: str, 
                            cloned_audio_path: str, job_id: str, speaker: str = None, reference_id: str = None) -> dict:
         start_ms = int(start_ms)
-        end_ms = int(start_ms + cloned_duration_ms)
-        duration_ms = int(cloned_duration_ms)
+        end_ms = int(end_ms)
+        duration_ms = int(end_ms - start_ms)
         
         return {
             "id": seg_id,

@@ -127,7 +127,6 @@ class AudioReconstruction:
             
             audio_filters = [f"aresample={target_sr}", "aformat=channel_layouts=mono"]
             
-
             audio_path = seg.get("cloned_audio_path")
             if audio_path and os.path.exists(audio_path):
                 try:
@@ -135,13 +134,31 @@ class AudioReconstruction:
                     audio_data, sr = sf.read(audio_path)
                     actual_duration_ms = (len(audio_data) / sr) * 1000
                     
-                    if abs(actual_duration_ms - expected_duration_ms) > 50:
-                        tempo = actual_duration_ms / expected_duration_ms
-                        tempo = max(0.5, min(2.0, tempo))
-                        audio_filters.append(f"atempo={tempo}")
-                        logger.info(f"Adjusting segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={tempo:.3f})")
+                    tempo_ratio = actual_duration_ms / expected_duration_ms
+                    
+                    if abs(tempo_ratio - 1.0) > 0.01:
+                        if 0.5 <= tempo_ratio <= 2.0:
+                            audio_filters.append(f"atempo={tempo_ratio:.6f}")
+                            logger.info(f"Stretch segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={tempo_ratio:.3f})")
+                        else:
+                            tempo_steps = []
+                            remaining_ratio = tempo_ratio
+                            
+                            while remaining_ratio > 2.0:
+                                tempo_steps.append(2.0)
+                                remaining_ratio /= 2.0
+                            while remaining_ratio < 0.5:
+                                tempo_steps.append(0.5)
+                                remaining_ratio /= 0.5
+                            if abs(remaining_ratio - 1.0) > 0.01:
+                                tempo_steps.append(remaining_ratio)
+                            
+                            for step in tempo_steps:
+                                audio_filters.append(f"atempo={step:.6f}")
+                            
+                            logger.info(f"Multi-step stretch segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (steps={len(tempo_steps)})")
                 except Exception as e:
-                    logger.warning(f"Could not check duration for segment {idx}: {e}")
+                    logger.warning(f"Duration check failed for segment {idx}: {e}")
             
             audio_filter = f"[{idx}:a]{','.join(audio_filters)}[a{idx}]"
             filters.append(audio_filter)
