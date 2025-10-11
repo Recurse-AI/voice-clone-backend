@@ -53,11 +53,16 @@ class AudioReconstruction:
                 
                 if abs(tempo_ratio - 1.0) > 0.01:
                     if tempo_ratio > 1.0:
-                        audio_data = AudioReconstruction._trim_silence(audio_data, target_sr)
+                        audio_data = AudioReconstruction._trim_silence_edges(audio_data, target_sr)
                         actual_duration_ms = (len(audio_data) / target_sr) * 1000
                         tempo_ratio = actual_duration_ms / expected_duration_ms
+                        
+                        if tempo_ratio > 1.5:
+                            audio_data = AudioReconstruction._remove_internal_silence(audio_data, target_sr)
+                            actual_duration_ms = (len(audio_data) / target_sr) * 1000
+                            tempo_ratio = actual_duration_ms / expected_duration_ms
                     
-                    clamped_tempo = max(0.8, min(1.5, tempo_ratio))
+                    clamped_tempo = max(0.9, min(1.5, tempo_ratio))
                     
                     adjusted_audio = AudioReconstruction._apply_tempo_ffmpeg(
                         audio_data, target_sr, clamped_tempo, process_temp_dir, f"{job_id}_seg{idx}"
@@ -123,7 +128,7 @@ class AudioReconstruction:
             return None
     
     @staticmethod
-    def _trim_silence(audio_data: np.ndarray, sr: int, threshold: float = 0.01) -> np.ndarray:
+    def _trim_silence_edges(audio_data: np.ndarray, sr: int, threshold: float = 0.01) -> np.ndarray:
         try:
             abs_audio = np.abs(audio_data)
             
@@ -142,6 +147,33 @@ class AudioReconstruction:
             if start_idx < end_idx:
                 return audio_data[start_idx:end_idx]
             return audio_data
+            
+        except Exception:
+            return audio_data
+    
+    @staticmethod
+    def _remove_internal_silence(audio_data: np.ndarray, sr: int, threshold: float = 0.01, min_silence_ms: int = 200) -> np.ndarray:
+        try:
+            abs_audio = np.abs(audio_data)
+            min_silence_samples = int((min_silence_ms / 1000.0) * sr)
+            
+            result = []
+            i = 0
+            
+            while i < len(audio_data):
+                if abs_audio[i] > threshold:
+                    result.append(audio_data[i])
+                    i += 1
+                else:
+                    silence_start = i
+                    while i < len(audio_data) and abs_audio[i] <= threshold:
+                        i += 1
+                    
+                    silence_length = i - silence_start
+                    if silence_length < min_silence_samples:
+                        result.extend(audio_data[silence_start:i])
+            
+            return np.array(result) if len(result) > 0 else audio_data
             
         except Exception:
             return audio_data
