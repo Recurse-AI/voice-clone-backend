@@ -140,7 +140,7 @@ class AudioReconstruction:
                         if tempo_ratio < 1.0:
                             clamped_tempo = max(0.8, tempo_ratio)
                         else:
-                            clamped_tempo = min(1.7, tempo_ratio)
+                            clamped_tempo = min(2.0, tempo_ratio)
                         
                         audio_filters.append(f"atempo={clamped_tempo:.6f}")
                         result_duration_ms = actual_duration_ms / clamped_tempo
@@ -151,7 +151,7 @@ class AudioReconstruction:
                             logger.info(f"Segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f}, pad={pad_duration_s:.3f}s)")
                         elif result_duration_ms > expected_duration_ms:
                             trim_duration_s = expected_duration_ms / 1000.0
-                            audio_filters.append(f"atrim=0:{trim_duration_s:.6f}")
+                            audio_filters.append(f"atrim=0:{trim_duration_s:.6f},asetpts=PTS-STARTPTS")
                             logger.info(f"Segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f}, trim={trim_duration_s:.3f}s)")
                         else:
                             logger.info(f"Segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f})")
