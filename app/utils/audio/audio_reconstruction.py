@@ -139,27 +139,18 @@ class AudioReconstruction:
                     if abs(tempo_ratio - 1.0) > 0.01:
                         if tempo_ratio < 1.0:
                             clamped_tempo = max(0.8, tempo_ratio)
-                            audio_filters.append(f"atempo={clamped_tempo:.6f}")
-                            result_duration_ms = actual_duration_ms / clamped_tempo
-                            
-                            if result_duration_ms < expected_duration_ms:
-                                pad_duration_s = (expected_duration_ms - result_duration_ms) / 1000.0
-                                audio_filters.append(f"apad=pad_dur={pad_duration_s:.6f}")
-                                logger.info(f"Slow down segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f}, pad={pad_duration_s:.3f}s)")
-                            else:
-                                logger.info(f"Slow down segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f})")
+                        else:
+                            clamped_tempo = min(1.7, tempo_ratio)
                         
-                        elif tempo_ratio > 1.0:
-                            clamped_tempo = min(2.0, tempo_ratio)
-                            audio_filters.append(f"atempo={clamped_tempo:.6f}")
-                            result_duration_ms = actual_duration_ms / clamped_tempo
-                            
-                            if result_duration_ms > expected_duration_ms:
-                                trim_duration_s = expected_duration_ms / 1000.0
-                                audio_filters.append(f"atrim=0:{trim_duration_s:.6f}")
-                                logger.info(f"Speed up segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f}, trim={trim_duration_s:.3f}s)")
-                            else:
-                                logger.info(f"Speed up segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f})")
+                        audio_filters.append(f"atempo={clamped_tempo:.6f}")
+                        result_duration_ms = actual_duration_ms / clamped_tempo
+                        
+                        if result_duration_ms < expected_duration_ms:
+                            pad_duration_s = (expected_duration_ms - result_duration_ms) / 1000.0
+                            audio_filters.append(f"apad=pad_dur={pad_duration_s:.6f}")
+                            logger.info(f"Segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f}, pad={pad_duration_s:.3f}s)")
+                        else:
+                            logger.info(f"Segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f})")
                 except Exception as e:
                     logger.warning(f"Duration check failed for segment {idx}: {e}")
             
