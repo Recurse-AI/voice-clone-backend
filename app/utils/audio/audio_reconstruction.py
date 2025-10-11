@@ -52,7 +52,12 @@ class AudioReconstruction:
                 tempo_ratio = actual_duration_ms / expected_duration_ms
                 
                 if abs(tempo_ratio - 1.0) > 0.01:
-                    clamped_tempo = max(0.8, min(2.0, tempo_ratio))
+                    if tempo_ratio > 1.0:
+                        audio_data = AudioReconstruction._trim_silence(audio_data, target_sr)
+                        actual_duration_ms = (len(audio_data) / target_sr) * 1000
+                        tempo_ratio = actual_duration_ms / expected_duration_ms
+                    
+                    clamped_tempo = max(0.8, min(1.7, tempo_ratio))
                     
                     adjusted_audio = AudioReconstruction._apply_tempo_ffmpeg(
                         audio_data, target_sr, clamped_tempo, process_temp_dir, f"{job_id}_seg{idx}"
@@ -104,7 +109,7 @@ class AudioReconstruction:
                 output_path
             ]
             
-            result = subprocess.run(cmd, capture_output=True, timeout=30)
+            result = subprocess.run(cmd, capture_output=True, timeout=120)
             
             if result.returncode == 0 and os.path.exists(output_path):
                 adjusted_audio, _ = sf.read(output_path)
@@ -116,6 +121,30 @@ class AudioReconstruction:
             
         except Exception:
             return None
+    
+    @staticmethod
+    def _trim_silence(audio_data: np.ndarray, sr: int, threshold: float = 0.01) -> np.ndarray:
+        try:
+            abs_audio = np.abs(audio_data)
+            
+            start_idx = 0
+            for i in range(len(audio_data)):
+                if abs_audio[i] > threshold:
+                    start_idx = i
+                    break
+            
+            end_idx = len(audio_data)
+            for i in range(len(audio_data) - 1, -1, -1):
+                if abs_audio[i] > threshold:
+                    end_idx = i + 1
+                    break
+            
+            if start_idx < end_idx:
+                return audio_data[start_idx:end_idx]
+            return audio_data
+            
+        except Exception:
+            return audio_data
 
 
 def reconstruct_final_audio_ffmpeg(
