@@ -57,7 +57,7 @@ class AudioReconstruction:
                         actual_duration_ms = (len(audio_data) / target_sr) * 1000
                         tempo_ratio = actual_duration_ms / expected_duration_ms
                     
-                    clamped_tempo = max(0.8, min(1.7, tempo_ratio))
+                    clamped_tempo = max(0.8, min(1.5, tempo_ratio))
                     
                     adjusted_audio = AudioReconstruction._apply_tempo_ffmpeg(
                         audio_data, target_sr, clamped_tempo, process_temp_dir, f"{job_id}_seg{idx}"
