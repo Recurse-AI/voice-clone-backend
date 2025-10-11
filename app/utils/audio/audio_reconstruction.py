@@ -138,19 +138,14 @@ class AudioReconstruction:
                     
                     if abs(tempo_ratio - 1.0) > 0.01:
                         if tempo_ratio < 1.0:
-                            clamped_tempo = max(0.7, tempo_ratio)
+                            clamped_tempo = max(0.8, tempo_ratio)
                             audio_filters.append(f"atempo={clamped_tempo:.6f}")
                             logger.info(f"Slow down segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={tempo_ratio:.3f}, applied={clamped_tempo:.3f})")
                         
                         elif tempo_ratio > 1.0:
-                            clamped_tempo = min(2.5, tempo_ratio)
-                            
-                            if clamped_tempo <= 2.0:
-                                audio_filters.append(f"atempo={clamped_tempo:.6f}")
-                                logger.info(f"Speed up segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={tempo_ratio:.3f}, applied={clamped_tempo:.3f})")
-                            else:
-                                audio_filters.append(f"atempo=2.0,atempo={clamped_tempo/2.0:.6f}")
-                                logger.info(f"Speed up segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={tempo_ratio:.3f}, applied={clamped_tempo:.3f} chained)")
+                            clamped_tempo = min(2.0, tempo_ratio)
+                            audio_filters.append(f"atempo={clamped_tempo:.6f}")
+                            logger.info(f"Speed up segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={tempo_ratio:.3f}, applied={clamped_tempo:.3f})")
                 except Exception as e:
                     logger.warning(f"Duration check failed for segment {idx}: {e}")
             
