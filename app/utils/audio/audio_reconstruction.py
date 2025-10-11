@@ -151,7 +151,7 @@ class AudioReconstruction:
                             logger.info(f"Segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f}, pad={pad_duration_s:.3f}s)")
                         elif result_duration_ms > expected_duration_ms:
                             trim_duration_s = expected_duration_ms / 1000.0
-                            audio_filters.append(f"atrim=0:{trim_duration_s:.6f},asetpts=PTS-STARTPTS")
+                            audio_filters.append(f"atrim=duration={trim_duration_s:.6f}")
                             logger.info(f"Segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f}, trim={trim_duration_s:.3f}s)")
                         else:
                             logger.info(f"Segment {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.3f})")
