@@ -103,6 +103,8 @@ class AudioReconstruction:
     def _build_filter_complex(segments: List[Dict[str, Any]], target_sr: int) -> str:
         filters = []
         concat_inputs = []
+        silence_idx = 0
+        current_time_ms = 0
         
         for idx, seg in enumerate(segments):
             cloned_path = seg.get("cloned_audio_path")
@@ -115,6 +117,19 @@ class AudioReconstruction:
             
             if expected_duration_ms <= 0:
                 continue
+            
+            # Add silence for gap before this segment
+            if start_ms > current_time_ms:
+                gap_duration_ms = start_ms - current_time_ms
+                if gap_duration_ms > 60000:  # Safety: max 60s gap
+                    logger.warning(f"Large gap detected: {gap_duration_ms}ms, capping to 60s")
+                    gap_duration_ms = 60000
+                gap_duration_s = gap_duration_ms / 1000.0
+                silence_filter = f"anullsrc=r={target_sr}:cl=mono:d={gap_duration_s:.3f}[silence{silence_idx}]"
+                filters.append(silence_filter)
+                concat_inputs.append(f"[silence{silence_idx}]")
+                silence_idx += 1
+                logger.info(f"Adding silence gap: {current_time_ms}ms -> {start_ms}ms ({gap_duration_ms}ms)")
             
             audio_filters = [f"aresample={target_sr}", "aformat=channel_layouts=mono"]
             
@@ -152,6 +167,8 @@ class AudioReconstruction:
             audio_filter = f"[{idx}:a]{','.join(audio_filters)}[a{idx}]"
             filters.append(audio_filter)
             concat_inputs.append(f"[a{idx}]")
+            
+            current_time_ms = end_ms
         
         if not concat_inputs:
             return ""
