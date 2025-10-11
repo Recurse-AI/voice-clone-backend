@@ -152,9 +152,21 @@ app.add_middleware(
     max_age=3600
 )
 
+allowed_origins = [
+    settings.FRONTEND_URL,
+    f"https://www.{settings.PUBLIC_HOST}",
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "http://localhost:5173",
+    "https://clearvocals.ai"
+]
+
+if settings.DEBUG or settings.NODE_ENV == "development":
+    allowed_origins.append("*")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins if not settings.DEBUG else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

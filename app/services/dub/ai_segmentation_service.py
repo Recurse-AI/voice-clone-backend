@@ -89,7 +89,7 @@ class AISegmentationService:
         target_lang_name = language_service.get_language_name(target_language)
         
         translation_instructions = f"""TRANSLATION TO {target_lang_name}:
-- 100% {target_lang_name} only
+- 100% {target_lang_name} only (same-language dubbing is valid for voice cloning/clarity)
 - Natural conversational style
 - Fix typos in original_text (keep meaning)
 - Clean corrupted text
@@ -140,6 +140,7 @@ OUTPUT:
 3. MAX DURATION: Each output segment ≤15.0 seconds
 4. NO OVERLAPS: segment[i].start ≥ segment[i-1].end
 5. PRESERVE SPEAKER: Copy exact speaker field from input to output
+6. MANDATORY FIELDS: Every segment MUST have both original_text AND dubbed_text (never empty)
 
 SEGMENTATION:
 - If input segment ≤15s → Keep as-is (1 input = 1 output)
@@ -161,8 +162,8 @@ OUTPUT FORMAT:
       "start": <input_start>,
       "end": <input_end or split_point>,
       "speaker": "<exact_speaker_from_input>",
-      "original_text": "<corrected_input_text>",
-      "dubbed_text": "{target_lang_name} translation"
+      "original_text": "<corrected_input_text_NEVER_EMPTY>",
+      "dubbed_text": "{target_lang_name} translation_NEVER_EMPTY"
     }}
   ]
 }}
@@ -170,7 +171,8 @@ OUTPUT FORMAT:
 ✓ Use ALL input content
 ✓ Preserve timing unless splitting >15s segments
 ✓ No overlaps in timestamps
-✓ Keep speaker tags exact"""
+✓ Keep speaker tags exact
+✓ Both original_text and dubbed_text MUST be filled (never empty strings)"""
     
     def _format_segments_with_translation(self, ai_segments: List[Dict], global_segment_index_start: int = 0, preserve_original_timing: bool = False, original_segments: List[Dict] = None) -> List[Dict[str, Any]]:
         formatted_segments = []
@@ -208,6 +210,7 @@ OUTPUT FORMAT:
             
             if not original_text or not dubbed_text:
                 seg_id = seg.get("id", f"seg_{idx}")
+                logger.error(f"AI returned malformed segment {seg_id}: {json.dumps(seg, ensure_ascii=False)}")
                 raise ValueError(f"AI failed: segment {seg_id} has empty text (original: '{original_text}', dubbed: '{dubbed_text}')")
             
             global_segment_index = global_segment_index_start + len(formatted_segments)
@@ -525,8 +528,9 @@ CRITICAL RULES:
 2. Duration: All segments ≤15 seconds maximum
 3. Language: {target_lang_name} ONLY - no mixing with other languages
 4. Content Coverage: ALL input text must appear in output - NO empty segments
-5. Emotion: Preserve speaker's tone, emphasis, and emotional intent
-6. NATURAL NATIVE SPEECH: Sound like everyday native speakers
+5. MANDATORY: Every segment MUST have both original_text AND dubbed_text filled (never empty)
+6. Emotion: Preserve speaker's tone, emphasis, and emotional intent
+7. NATURAL NATIVE SPEECH: Sound like everyday native speakers
    - Use COLLOQUIAL/INFORMAL expressions (daily conversation style)
    - Use STANDARD DIALECT (neutral, widely understood)
    - Prefer COMMON/POPULAR words over formal vocabulary
@@ -544,7 +548,7 @@ QUALITY GUIDELINES:
 • Punctuation: Adapt to {target_lang_name} conventions
 • Context: Use surrounding segments to infer meaning
 
-OUTPUT: Valid JSON with 'segments' array only (each segment MUST include exact speaker from input)"""}]},
+OUTPUT: Valid JSON with 'segments' array only (EVERY segment MUST have: speaker, original_text, dubbed_text - all filled/never empty)"""}]},
                         {"role": "user", "content": [{"type": "input_text", "text": prompt}]}
                     ],
                     text={"verbosity": "low"},

@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     DEBUG: bool = os.getenv("DEBUG", "false").lower() == "true"
     NODE_ENV: str = os.getenv("NODE_ENV", "development")
     BACKEND_URL: str = os.getenv("BACKEND_URL", "http://localhost:8000")
-    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://clearvocals.io")
-    PUBLIC_HOST: str = os.getenv("PUBLIC_HOST", "clearvocals.io")
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL", "https://clearvocals.ai")
+    PUBLIC_HOST: str = os.getenv("PUBLIC_HOST", "clearvocals.ai")
     
     # File Upload Configuration
     MAX_FILE_SIZE: int = 1024 * 1024 * 1024  # 1GB
