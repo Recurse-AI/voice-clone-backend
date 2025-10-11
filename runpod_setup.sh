@@ -4,12 +4,12 @@ rm -rf logs/* tmp/*
 
 echo "🚀 Starting Voice Cloning API on RunPod..."
 
-# if [ -f .env.proxy ]; then
-#     set -a
-#     source .env.proxy
-#     set +a
-#     echo "📡 Proxy loaded: $BACKEND_URL"
-# fi
+if [ -f .env.proxy ]; then
+    set -a
+    source .env.proxy
+    set +a
+    echo "📡 Proxy loaded: $BACKEND_URL"
+fi
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export FFMPEG_USE_GPU=1
