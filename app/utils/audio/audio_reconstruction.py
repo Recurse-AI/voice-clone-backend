@@ -104,8 +104,6 @@ class AudioReconstruction:
         filters = []
         concat_inputs = []
         
-        current_time_ms = 0
-        
         for idx, seg in enumerate(segments):
             cloned_path = seg.get("cloned_audio_path")
             if not cloned_path or not os.path.exists(cloned_path):
@@ -117,13 +115,6 @@ class AudioReconstruction:
             
             if expected_duration_ms <= 0:
                 continue
-            
-            if start_ms > current_time_ms:
-                silence_duration_ms = start_ms - current_time_ms
-                silence_duration_s = silence_duration_ms / 1000.0
-                silence_filter = f"aevalsrc=0:d={silence_duration_s}:s={target_sr}:c=mono[silence{idx}]"
-                filters.append(silence_filter)
-                concat_inputs.append(f"[silence{idx}]")
             
             audio_filters = [f"aresample={target_sr}", "aformat=channel_layouts=mono"]
             
@@ -161,8 +152,6 @@ class AudioReconstruction:
             audio_filter = f"[{idx}:a]{','.join(audio_filters)}[a{idx}]"
             filters.append(audio_filter)
             concat_inputs.append(f"[a{idx}]")
-            
-            current_time_ms = end_ms
         
         if not concat_inputs:
             return ""
