@@ -145,6 +145,9 @@ class Settings(BaseSettings):
     # ElevenLabs API Configuration
     ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
 
+    # Google Analytics Configuration
+    GA_MEASUREMENT_ID: str = os.getenv("GA_MEASUREMENT_ID", "G-WHZ0X8J9PJ")
+    GA_API_SECRET: Optional[str] = os.getenv("GA_API_SECRET")
 
     # YouTube Cookie Configuration
     YOUTUBE_EMAIL: str = os.getenv("YOUTUBE_EMAIL", "")

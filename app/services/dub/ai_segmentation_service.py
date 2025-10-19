@@ -402,8 +402,13 @@ VALIDATION CHECKLIST:
     )
     def _call_openai_with_retry(self, **kwargs):
         """OpenAI API call with exponential backoff retry logic"""
+        success = False
+        tokens = 0
         try:
-            return self._get_openai_client().responses.create(**kwargs)
+            response = self._get_openai_client().responses.create(**kwargs)
+            success = True
+            tokens = response.usage.total_tokens if hasattr(response, 'usage') else 0
+            return response
         except Exception as e:
             error_msg = str(e)
             if "rate_limit" in error_msg.lower() or "429" in error_msg:
@@ -411,6 +416,13 @@ VALIDATION CHECKLIST:
             else:
                 logger.error(f"OpenAI API error: {error_msg}")
             raise
+        finally:
+            import asyncio
+            from app.services.analytics_service import AnalyticsService
+            try:
+                asyncio.create_task(AnalyticsService.track_api_call("system", "openai", tokens=tokens, success=success))
+            except:
+                pass
     
     def _process_in_chunks(self, segments: List[Dict], target_language: str, preserve_segments: bool = False, num_speakers: Optional[int] = None) -> List[Dict[str, Any]]:
         chunk_size = self.settings.AI_SEGMENTATION_CHUNK_SIZE

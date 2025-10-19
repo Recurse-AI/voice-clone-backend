@@ -216,18 +216,30 @@ class ClipService:
         
         time.sleep(0.5)
         
-        response = self._get_openai_client().responses.create(
-            model="gpt-5-mini",
-            input=[
-                {"role": "system", "content": [{"type": "input_text", "text": prompt["content"]}]},
-                {"role": "user", "content": [{"type": "input_text", "text": user_content}]}
-            ],
-            text={"verbosity": "medium"},
-            reasoning={"effort": "low"},
-            max_output_tokens=2000
-        )
-        
-        return self._extract_json_from_response(response.output_text)
+        success = False
+        tokens = 0
+        try:
+            response = self._get_openai_client().responses.create(
+                model="gpt-5-mini",
+                input=[
+                    {"role": "system", "content": [{"type": "input_text", "text": prompt["content"]}]},
+                    {"role": "user", "content": [{"type": "input_text", "text": user_content}]}
+                ],
+                text={"verbosity": "medium"},
+                reasoning={"effort": "low"},
+                max_output_tokens=2000
+            )
+            
+            success = True
+            tokens = response.usage.total_tokens if hasattr(response, 'usage') else 0
+            return self._extract_json_from_response(response.output_text)
+        finally:
+            import asyncio
+            from app.services.analytics_service import AnalyticsService
+            try:
+                asyncio.create_task(AnalyticsService.track_api_call("system", "openai", tokens=tokens, success=success))
+            except:
+                pass
     
     def _extract_json_from_response(self, text: str) -> Dict[str, Any]:
         """Extract and parse JSON from OpenAI response with robust error handling"""

@@ -65,6 +65,7 @@ class ElevenLabsService:
             raise
     
     def generate_speech(self, text: str, voice_id: str, target_language: str = None, job_id: str = None, segment_index: int = 0, target_duration_ms: int = None, speed: float = 1.0) -> Dict[str, Any]:
+        success = False
         try:
             from app.config.settings import settings
             
@@ -81,12 +82,21 @@ class ElevenLabsService:
             with open(output_path, "wb") as f:
                 f.write(audio_bytes)
             
+            success = True
             return {"success": True, "output_path": output_path}
         except BlockedVoiceError:
             raise
         except Exception as e:
             logger.error(f"ElevenLabs failed: {e}")
             return {"success": False, "error": str(e)}
+        finally:
+            if job_id:
+                import asyncio
+                from app.services.analytics_service import AnalyticsService
+                try:
+                    asyncio.create_task(AnalyticsService.track_api_call(job_id, "elevenlabs", chars=len(text), success=success))
+                except:
+                    pass
     
     def get_all_voices(self) -> Dict[str, Any]:
         try:

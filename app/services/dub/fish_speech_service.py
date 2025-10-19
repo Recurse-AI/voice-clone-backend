@@ -190,61 +190,66 @@ class FishSpeechService:
         import base64
         import os
         
+        success = False
         request_id = f"fish_speech_{job_id}_{int(time.time())}_{uuid.uuid4().hex[:8]}"
         
-        # Generate output path
-        output_path = kwargs.get('output_path')
-        if not output_path:
-            from app.config.settings import settings
-            output_dir = os.path.join(settings.TEMP_DIR, job_id or "temp")
-            os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, f"output_{request_id}.wav")
-        
-        # Text already contains language tag from orchestration layer
-        tagged_text = text
-        
-        # Prepare request data
-        request_data = {
-            "request_id": request_id,
-            "text": tagged_text,
-            "reference_audio_bytes": base64.b64encode(reference_audio_bytes).decode(),
-            "output_path": output_path,
-            "reference_text": reference_text,
-            "params": {
-                "max_new_tokens": kwargs.get("max_new_tokens"),
-                "top_p": kwargs.get("top_p"),
-                "repetition_penalty": kwargs.get("repetition_penalty"),
-                "temperature": kwargs.get("temperature"),
-                "chunk_length": kwargs.get("chunk_length"),
-            },
-        }
-        
-        # Enqueue request to service worker with load balancing
-        from app.queue.queue_manager import queue_manager
-        success = queue_manager.enqueue_with_load_balance(request_data, "fish_speech")
-        
-        if not success:
-            logger.error(f"Failed to enqueue Fish Speech request for {job_id}")
-            raise Exception("Failed to submit to Fish Speech service worker")
-        
-        # Wait for result with timeout
-        from app.utils.pipeline_utils import wait_for_service_result, cleanup_service_result
-        result = wait_for_service_result("fish_speech", request_id, timeout=1800)  # 30 min timeout
-        
-        # Cleanup result from Redis
-        cleanup_service_result("fish_speech", request_id)
-        
-        if "error" in result:
-            logger.error(f"Fish Speech service worker error: {result['error']}")
-            return {"success": False, "error": result["error"]}
-        
-        # Return in expected format
-        return {
-            "success": True,
-            "output_path": result.get("output_path"),
-            "audio_duration": result.get("audio_duration"),
-            "processing_time": result.get("processing_time", 0)
-        }
+        try:
+            # Generate output path
+            output_path = kwargs.get('output_path')
+            if not output_path:
+                from app.config.settings import settings
+                output_dir = os.path.join(settings.TEMP_DIR, job_id or "temp")
+                os.makedirs(output_dir, exist_ok=True)
+                output_path = os.path.join(output_dir, f"output_{request_id}.wav")
+            
+            # Text already contains language tag from orchestration layer
+            tagged_text = text
+            
+            # Prepare request data
+            request_data = {
+                "request_id": request_id,
+                "text": tagged_text,
+                "reference_audio_bytes": base64.b64encode(reference_audio_bytes).decode(),
+                "output_path": output_path,
+                "reference_text": reference_text,
+                "params": {
+                    "max_new_tokens": kwargs.get("max_new_tokens"),
+                    "top_p": kwargs.get("top_p"),
+                    "repetition_penalty": kwargs.get("repetition_penalty"),
+                    "temperature": kwargs.get("temperature"),
+                    "chunk_length": kwargs.get("chunk_length"),
+                },
+            }
+            
+            # Enqueue request to service worker with load balancing
+            from app.queue.queue_manager import queue_manager
+            success = queue_manager.enqueue_with_load_balance(request_data, "fish_speech")
+            
+            if not success:
+                logger.error(f"Failed to enqueue Fish Speech request for {job_id}")
+                raise Exception("Failed to submit to Fish Speech service worker")
+            
+            # Wait for result with timeout
+            from app.utils.pipeline_utils import wait_for_service_result, cleanup_service_result
+            result = wait_for_service_result("fish_speech", request_id, timeout=1800)  # 30 min timeout
+            
+            # Cleanup result from Redis
+            cleanup_service_result("fish_speech", request_id)
+            
+            if "error" in result:
+                logger.error(f"Fish Speech worker returned error: {result['error']}")
+                return {"success": False, "error": result["error"]}
+            
+            success = True
+            return {"success": True, "output_path": result.get("output_path")}
+        finally:
+            if job_id:
+                import asyncio
+                from app.services.analytics_service import AnalyticsService
+                try:
+                    asyncio.create_task(AnalyticsService.track_api_call(job_id, "fishspeech", chars=len(text), success=success))
+                except:
+                    pass
     
     def _generate_direct(self, text: str, reference_audio_bytes: bytes, 
                         reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:
