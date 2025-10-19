@@ -86,7 +86,6 @@ class VoiceCloningStep:
     
     def _process_voice_cloning_batch(self, segments_data: list, context: DubbingContext) -> list:
         total_segments = len(segments_data)
-        batch_size = settings.VOICE_CLONING_BATCH_SIZE
         max_workers = settings.VOICE_CLONING_PARALLEL_WORKERS if context.model_type in ['best', 'medium'] else 1
         
         mode_map = {
@@ -99,23 +98,27 @@ class VoiceCloningStep:
         
         results = [None] * total_segments
         
-        for batch_start in range(0, total_segments, batch_size):
-            batch_end = min(batch_start + batch_size, total_segments)
-            batch_data = segments_data[batch_start:batch_end]
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._clone_segment_worker, data, i, total_segments, context): i
+                for i, data in enumerate(segments_data)
+            }
             
-            logger.info(f"Batch {batch_start//batch_size + 1}: segments {batch_start+1}-{batch_end}")
-            
-            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                futures = {
-                    executor.submit(
-                        self._clone_segment_worker, data, batch_start + i,
-                        total_segments, context
-                    ): i
-                    for i, data in enumerate(batch_data)
-                }
-                
+            try:
                 for future in as_completed(futures):
                     actual_index, result, success = future.result()
+                    
+                    if not success or result is None:
+                        for pending_future in futures:
+                            pending_future.cancel()
+                        
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        
+                        seg_id = segments_data[actual_index].get('seg_id', 'unknown')
+                        error_msg = f"Segment {seg_id} failed - cancelling remaining segments"
+                        logger.error(error_msg)
+                        raise Exception(error_msg)
+                    
                     results[actual_index] = result
                     
                     completed = sum(1 for r in results if r is not None)
@@ -128,8 +131,19 @@ class VoiceCloningStep:
                         )
                     except Exception:
                         pass
+            except Exception:
+                for pending_future in futures:
+                    pending_future.cancel()
+                raise
         
         successful = sum(1 for r in results if r is not None)
+        
+        if successful < total_segments:
+            failed_count = total_segments - successful
+            error_msg = f"Voice cloning failed: {failed_count}/{total_segments} segments failed"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+        
         logger.info(f"Completed: {successful}/{total_segments} successful")
         
         try:

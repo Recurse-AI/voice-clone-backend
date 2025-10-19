@@ -244,12 +244,8 @@ class FishSpeechService:
             return {"success": True, "output_path": result.get("output_path")}
         finally:
             if job_id:
-                import asyncio
                 from app.services.analytics_service import AnalyticsService
-                try:
-                    asyncio.create_task(AnalyticsService.track_api_call(job_id, "fishspeech", chars=len(text), success=success))
-                except:
-                    pass
+                AnalyticsService.track_api_call_sync(job_id, "fishspeech", chars=len(text), success=success)
     
     def _generate_direct(self, text: str, reference_audio_bytes: bytes, 
                         reference_text: str, job_id: str = None, **kwargs) -> Dict[str, Any]:

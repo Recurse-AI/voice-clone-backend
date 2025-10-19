@@ -234,12 +234,8 @@ class ClipService:
             tokens = response.usage.total_tokens if hasattr(response, 'usage') else 0
             return self._extract_json_from_response(response.output_text)
         finally:
-            import asyncio
             from app.services.analytics_service import AnalyticsService
-            try:
-                asyncio.create_task(AnalyticsService.track_api_call("system", "openai", tokens=tokens, success=success))
-            except:
-                pass
+            AnalyticsService.track_api_call_sync("system", "openai", tokens=tokens, success=success)
     
     def _extract_json_from_response(self, text: str) -> Dict[str, Any]:
         """Extract and parse JSON from OpenAI response with robust error handling"""

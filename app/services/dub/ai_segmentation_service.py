@@ -417,12 +417,8 @@ VALIDATION CHECKLIST:
                 logger.error(f"OpenAI API error: {error_msg}")
             raise
         finally:
-            import asyncio
             from app.services.analytics_service import AnalyticsService
-            try:
-                asyncio.create_task(AnalyticsService.track_api_call("system", "openai", tokens=tokens, success=success))
-            except:
-                pass
+            AnalyticsService.track_api_call_sync("system", "openai", tokens=tokens, success=success)
     
     def _process_in_chunks(self, segments: List[Dict], target_language: str, preserve_segments: bool = False, num_speakers: Optional[int] = None) -> List[Dict[str, Any]]:
         chunk_size = self.settings.AI_SEGMENTATION_CHUNK_SIZE

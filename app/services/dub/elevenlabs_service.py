@@ -51,11 +51,19 @@ class ElevenLabsService:
     
     def _generate_with_retry(self, text: str, voice_id: str, speed: float = 1.0):
         try:
+            from elevenlabs import VoiceSettings
+            voice_settings = VoiceSettings(
+                stability=0.5,
+                similarity_boost=0.75,
+                style=0.0,
+                use_speaker_boost=True,
+                speed=max(0.7, min(1.2, speed))
+            )
             return self.client.text_to_speech.convert(
                 text=text,
                 voice_id=voice_id,
                 model_id="eleven_v3",
-                speed=speed
+                voice_settings=voice_settings
             )
         except Exception as e:
             error_str = str(e)
@@ -91,12 +99,8 @@ class ElevenLabsService:
             return {"success": False, "error": str(e)}
         finally:
             if job_id:
-                import asyncio
                 from app.services.analytics_service import AnalyticsService
-                try:
-                    asyncio.create_task(AnalyticsService.track_api_call(job_id, "elevenlabs", chars=len(text), success=success))
-                except:
-                    pass
+                AnalyticsService.track_api_call_sync(job_id, "elevenlabs", chars=len(text), success=success)
     
     def get_all_voices(self) -> Dict[str, Any]:
         try:

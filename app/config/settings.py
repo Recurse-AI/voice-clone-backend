@@ -109,7 +109,6 @@ class Settings(BaseSettings):
     FISH_SPEECH_MIN_CHUNK_SIZE: int = int(os.getenv("FISH_SPEECH_MIN_CHUNK_SIZE", "270"))  # Minimum chunk size for text processing
     
     # Batch Processing Configuration
-    VOICE_CLONING_BATCH_SIZE: int = int(os.getenv("VOICE_CLONING_BATCH_SIZE", "10"))
     VOICE_CLONING_PARALLEL_WORKERS: int = int(os.getenv("VOICE_CLONING_PARALLEL_WORKERS", "5"))
     AI_SEGMENTATION_CHUNK_SIZE: int = int(os.getenv("AI_SEGMENTATION_CHUNK_SIZE", "16"))
     OPENAI_PARALLEL_WORKERS: int = int(os.getenv("OPENAI_PARALLEL_WORKERS", "8"))
