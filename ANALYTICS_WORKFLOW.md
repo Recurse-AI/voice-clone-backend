@@ -4,18 +4,6 @@
 
 This document shows how Google Analytics 4 (GA4) tracks events across the entire ClearVocals platform.
 
----
-
-## Environment Variables
-
-```env
-GA_MEASUREMENT_ID=G-WHZ0X8J9PJ
-GA_API_SECRET=ePmKGNiGS126gxaqp6N-4w
-ENABLE_ANALYTICS=true
-```
-
----
-
 ## Architecture Diagram
 
 ```mermaid
