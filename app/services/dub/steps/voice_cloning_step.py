@@ -15,10 +15,6 @@ logger = logging.getLogger(__name__)
 class VoiceCloningStep:
     def __init__(self):
         self._ai_voice_reference_cache = {}
-        self._speed_cache = {}
-    
-    def cleanup_job_cache(self, job_id: str):
-        self._speed_cache.pop(job_id, None)
     
     def execute(self, context: DubbingContext):
         from app.services.simple_status_service import JobStatus
@@ -82,7 +78,6 @@ class VoiceCloningStep:
             final_segments.append(segment_json)
         
         context.segments = final_segments
-        self.cleanup_job_cache(context.job_id)
     
     def _process_voice_cloning_batch(self, segments_data: list, context: DubbingContext) -> list:
         total_segments = len(segments_data)
@@ -263,25 +258,19 @@ class VoiceCloningStep:
         
         try:
             service = get_elevenlabs_service()
-            speed = self._speed_cache.get(job_id, 1.0)
-            
-            should_test_speed = job_id not in self._speed_cache and segment_index == 0 and target_duration_ms
-            if not should_test_speed:
-                return service.generate_speech(text, voice_id, target_language_code, job_id, segment_index, target_duration_ms, speed=speed)
             
             result = service.generate_speech(text, voice_id, target_language_code, job_id, segment_index, target_duration_ms, speed=1.0)
             if not result.get("success"):
                 return result
             
             actual_duration_ms = self._get_audio_duration_ms(result["output_path"])
-            if actual_duration_ms > target_duration_ms * 1.1:
-                logger.info(f"Regenerating with speed 1.2 ({actual_duration_ms}ms > {target_duration_ms}ms)")
+            tolerance = target_duration_ms * 1.1
+            
+            if actual_duration_ms > tolerance:
+                logger.info(f"Regenerating with 1.2x speed: {actual_duration_ms}ms > {tolerance}ms (target: {target_duration_ms}ms)")
                 os.remove(result["output_path"])
                 result = service.generate_speech(text, voice_id, target_language_code, job_id, segment_index, target_duration_ms, speed=1.2)
-                speed = 1.2
             
-            self._speed_cache[job_id] = speed
-            logger.info(f"Cached speed {speed}x for job {job_id}")
             return result
         except BlockedVoiceError:
             raise

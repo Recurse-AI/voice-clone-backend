@@ -93,7 +93,12 @@ class AISegmentationService:
 - Natural conversational style
 - Fix typos in original_text (keep meaning)
 - Clean corrupted text
-- Adapt idioms naturally"""
+- Adapt idioms naturally
+- CRITICAL: Keep dubbed_text length close to original_text length for audio sync
+  * If original is short, keep translation concise
+  * If original is long, use fuller expressions
+  * Aim for ±20% length match without changing meaning
+  * Choose words/phrases that fit the timing naturally"""
         
         if preserve_segments:
             processing_instruction = f"TRANSLATION REDUB - Clean corruption then translate to {target_lang_name}"
@@ -369,6 +374,12 @@ TRANSLATION REQUIREMENTS:
 6. CONTEXT: Use surrounding segments to infer unclear parts
 7. CONSISTENCY: Keep terminology consistent across all segments
 8. OUTPUT: EXACTLY {len(segments)} segments
+9. LENGTH MATCHING FOR DUBBING SYNC:
+   - Keep dubbed_text length CLOSE to original_text length (±20%)
+   - Short original → concise translation
+   - Long original → fuller expressions
+   - Choose words/phrases that naturally fit the audio timing
+   - Maintain meaning while matching length for better lip-sync
 
 OUTPUT SPECIFICATION (JSON):
 {{
