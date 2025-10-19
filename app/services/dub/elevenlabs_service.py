@@ -49,12 +49,13 @@ class ElevenLabsService:
             logger.error(f"Failed to create voice clone: {e}")
             return {"success": False, "error": str(e)}
     
-    def _generate_with_retry(self, text: str, voice_id: str):
+    def _generate_with_retry(self, text: str, voice_id: str, speed: float = 1.0):
         try:
             return self.client.text_to_speech.convert(
                 text=text,
                 voice_id=voice_id,
-                model_id="eleven_v3"
+                model_id="eleven_v3",
+                speed=speed
             )
         except Exception as e:
             error_str = str(e)
@@ -63,7 +64,7 @@ class ElevenLabsService:
                 raise BlockedVoiceError("Voice blocked by ElevenLabs for ToS violation")
             raise
     
-    def generate_speech(self, text: str, voice_id: str, target_language: str = None, job_id: str = None, segment_index: int = 0, target_duration_ms: int = None) -> Dict[str, Any]:
+    def generate_speech(self, text: str, voice_id: str, target_language: str = None, job_id: str = None, segment_index: int = 0, target_duration_ms: int = None, speed: float = 1.0) -> Dict[str, Any]:
         try:
             from app.config.settings import settings
             
@@ -74,7 +75,7 @@ class ElevenLabsService:
             os.makedirs(temp_dir, exist_ok=True)
             output_path = os.path.join(temp_dir, f"cloned_elevenlabs_{job_id}_{segment_index:03d}.mp3")
             
-            audio = self._generate_with_retry(text, voice_id)
+            audio = self._generate_with_retry(text, voice_id, speed)
             audio_bytes = b"".join(chunk for chunk in audio)
             
             with open(output_path, "wb") as f:
