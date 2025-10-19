@@ -36,7 +36,7 @@ class AudioHandler:
         return split_result.get("split_files", [])
     
     @staticmethod
-    def reconstruct_final_audio(context: DubbingContext) -> str:
+    def reconstruct_final_audio(context: DubbingContext, video_duration: float = None) -> str:
         orig_vocal_path = os.path.join(context.process_temp_dir, f"vocal_{context.job_id}.wav")
         orig_vocal_path = orig_vocal_path if os.path.exists(orig_vocal_path) else None
         
@@ -44,6 +44,7 @@ class AudioHandler:
             context.segments,
             orig_vocal_path,
             context.job_id,
-            context.process_temp_dir
+            context.process_temp_dir,
+            video_duration
         )
 

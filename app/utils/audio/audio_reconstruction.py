@@ -12,7 +12,8 @@ class AudioReconstruction:
         segments: List[Dict[str, Any]], 
         original_audio_path: Optional[str],
         job_id: str,
-        process_temp_dir: str
+        process_temp_dir: str,
+        video_duration_seconds: Optional[float] = None
     ) -> Optional[str]:
         if not segments:
             return None
@@ -23,10 +24,18 @@ class AudioReconstruction:
             
             target_sr = 44100
             max_end_ms = max(seg.get("end", 0) for seg in segments)
-            total_samples = int((max_end_ms / 1000.0) * target_sr)
+            
+            total_duration_ms = max_end_ms
+            if video_duration_seconds:
+                video_duration_ms = int(video_duration_seconds * 1000)
+                if video_duration_ms > max_end_ms:
+                    total_duration_ms = video_duration_ms
+                    logger.info(f"📏 Extending audio from {max_end_ms/1000:.2f}s to {video_duration_seconds:.2f}s to match video")
+            
+            total_samples = int((total_duration_ms / 1000.0) * target_sr)
             timeline_audio = np.zeros(total_samples, dtype=np.float32)
             
-            logger.info(f"Building {max_end_ms/1000:.1f}s timeline with {len(segments)} segments")
+            logger.info(f"Building {total_duration_ms/1000:.1f}s timeline with {len(segments)} segments")
             
             for idx, seg in enumerate(segments):
                 audio_path = seg.get("cloned_audio_path")
@@ -183,9 +192,10 @@ def reconstruct_final_audio_ffmpeg(
     segments: List[Dict[str, Any]], 
     original_audio_path: Optional[str],
     job_id: str,
-    process_temp_dir: str
+    process_temp_dir: str,
+    video_duration_seconds: Optional[float] = None
 ) -> Optional[str]:
     return AudioReconstruction.reconstruct_final_audio(
-        segments, original_audio_path, job_id, process_temp_dir
+        segments, original_audio_path, job_id, process_temp_dir, video_duration_seconds
     )
 

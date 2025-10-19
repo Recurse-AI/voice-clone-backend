@@ -24,7 +24,8 @@ class FinalizationStep:
             context.job_id, "final_processing", 0.0, "Reconstructing final audio..."
         )
         
-        final_audio_path = AudioHandler.reconstruct_final_audio(context)
+        video_duration = FinalizationStep._get_video_duration_from_job(context.job_id)
+        final_audio_path = AudioHandler.reconstruct_final_audio(context, video_duration)
         
         ProgressTracker.update_phase_progress(
             context.job_id, "final_processing", 0.5, "Finalizing output files..."
@@ -41,6 +42,15 @@ class FinalizationStep:
         video_result = FinalizationStep._create_video_if_available(context, final_audio_path)
         
         return FinalizationStep._upload_and_finalize(context, final_audio_path, video_result)
+    
+    @staticmethod
+    def _get_video_duration_from_job(job_id: str) -> float:
+        try:
+            from app.utils.db_sync_operations import get_dub_job_sync
+            job_data = get_dub_job_sync(job_id)
+            return job_data.get("duration") if job_data else None
+        except Exception:
+            return None
     
     @staticmethod
     def _generate_srt_file(context: DubbingContext) -> str:
@@ -173,12 +183,6 @@ class FinalizationStep:
                     else:
                         return {"success": False, "error": "No valid video source available"}
             
-            video_duration = FinalizationStep._get_duration(str(downloaded_video_path))
-            audio_duration = FinalizationStep._get_duration(audio_path)
-            
-            duration_mode = "shortest" if audio_duration > video_duration else "longest"
-            logger.info(f"Video: {video_duration:.2f}s, Audio: {audio_duration:.2f}s → Using '{duration_mode}' mode")
-            
             final_video_path = output_dir_path / f"final_video_{context.job_id}.mp4"
             
             subtitle_path = None
@@ -203,7 +207,7 @@ class FinalizationStep:
                 
                 cmd.extend(["-i", str(instrument_path)])
                 cmd.extend([
-                    "-filter_complex", f"[1:a]volume=2.0[dub];[2:a]volume=0.95[inst];[dub][inst]amix=inputs=2:duration={duration_mode}[out]",
+                    "-filter_complex", f"[1:a]volume=2.0[dub];[2:a]volume=0.95[inst];[dub][inst]amix=inputs=2:duration=longest[out]",
                     "-map", "0:v", "-map", "[out]"
                 ])
             else:
@@ -218,12 +222,7 @@ class FinalizationStep:
             else:
                 cmd.extend(["-c:v", "copy"])
             
-            cmd.extend(["-c:a", "aac", "-b:a", "128k"])
-            
-            if duration_mode == "shortest":
-                cmd.append("-shortest")
-            
-            cmd.extend(["-movflags", "+faststart", str(final_video_path)])
+            cmd.extend(["-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(final_video_path)])
             
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
             if result.returncode != 0:
