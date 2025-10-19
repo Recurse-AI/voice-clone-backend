@@ -1,0 +1,127 @@
+flowchart TD
+    %% User Input Phase
+    A[User Access] --> B[Frontend: /workspace/clips]
+    B --> C[ClipHero Component]
+    C --> D[Start Creating Clips Button]
+    D --> E[Frontend: /workspace/clips/start]
+    
+    %% Video Upload Phase
+    E --> F{Video Input Method}
+    F -->|Upload File| G[Frontend: File Upload]
+    F -->|YouTube/TikTok/Facebook URL| H[Frontend: URL Input]
+    
+    G --> I[Backend: /upload-clip-srt]
+    H --> I
+    I --> J[R2Service: Upload to R2 Bucket]
+    J --> K[Return video_url to Frontend]
+    
+    %% Optional Subtitle Upload
+    E --> L{Subtitle Upload?}
+    L -->|Yes| M[Frontend: SRT File Upload]
+    L -->|No| N[Skip Subtitle Upload]
+    M --> O[Backend: /upload-clip-srt]
+    O --> P[R2Service: Store SRT in R2]
+    P --> Q[Return srt_url to Frontend]
+    
+    %% Clip Generation Request
+    K --> R[Frontend: Generate Clips Request]
+    Q --> R
+    N --> R
+    R --> S[Backend: /generate-clips]
+    
+    %% Credit Reservation & Job Creation
+    S --> T[CreditService: Reserve Credits]
+    T --> U{User Type?}
+    U -->|PAYG| V[Validate Payment Method]
+    U -->|Credit Pack| W[Check Credit Balance]
+    
+    V --> X[Create PAYG Job]
+    W --> Y[Create Credit Pack Job]
+    X --> Z[ClipRepository: Insert Job]
+    Y --> Z
+    
+    %% Queue Management
+    Z --> AA[QueueManager: Enqueue Task]
+    AA --> BB[Redis Queue: clip_queue]
+    BB --> CC[Clip Worker: process_clip_generation_task]
+    
+    %% Async Processing Pipeline
+    CC --> DD[ClipService: Download Video]
+    DD --> EE[Status: downloading - 5%]
+    EE --> FF[ClipService: Trim Video]
+    FF --> GG[Status: trimming - 10%]
+    
+    %% Transcription Phase
+    GG --> HH{SRT File Exists?}
+    HH -->|Yes| II[ClipService: Parse SRT]
+    HH -->|No| JJ[ClipService: Extract Audio]
+    II --> KK[ClipService: Convert SRT to Words]
+    JJ --> LL[ClipService: AssemblyAI Transcription]
+    LL --> MM[Status: transcribing - 20%]
+    MM --> NN[Get Word-level Timestamps]
+    
+    %% AI Segmentation
+    KK --> OO[ClipService: OpenAI GPT-5-mini Segmentation]
+    NN --> OO
+    OO --> PP[Status: segmenting - 40%]
+    PP --> QQ{Segmentation Success?}
+    QQ -->|Yes| RR[Validate Segment Timestamps]
+    QQ -->|No| SS[Fallback: Single Segment 30s-30% duration]
+    
+    RR --> TT[Filter Valid Segments]
+    SS --> TT
+    TT --> UU[Status: rendering - 50%]
+    
+    %% Parallel Clip Processing
+    UU --> VV[ThreadPoolExecutor: Parallel Processing]
+    VV --> WW[For Each Segment]
+    WW --> XX[ClipService: Cut Segment]
+    XX --> YY[ClipService: Extract Segment Words]
+    YY --> ZZ{Subtitle Style?}
+    ZZ -->|Yes| AAA[ClipService: Render Subtitles]
+    ZZ -->|No| BBB[ClipService: Resize Video]
+    AAA --> CCC[R2Service: Upload Clip]
+    BBB --> CCC
+    CCC --> DDD[Update Progress: 50-95%]
+    
+    %% Completion Phase
+    DDD --> EEE[All Segments Complete?]
+    EEE -->|No| WW
+    EEE -->|Yes| FFF[Status: completed - 100%]
+    FFF --> GGG[CreditService: Complete Billing]
+    GGG --> HHH[EmailHelper: Send Completion Email]
+    HHH --> III[Frontend: Job Status Update]
+    
+    %% Frontend Display
+    III --> JJJ[Frontend: /workspace/clips]
+    JJJ --> KKK[ClipCard Component]
+    KKK --> LLL[Display Job Status & Progress]
+    LLL --> MMM[Show AI Ratings & Segments]
+    MMM --> NNN[Download Links for Clips]
+    
+    %% Error Handling
+    CC --> OOO{Processing Error?}
+    OOO -->|Yes| PPP[CreditService: Refund Credits]
+    PPP --> QQQ[Status: failed]
+    QQQ --> RRR[Frontend: Error Display]
+    
+    %% Job Management
+    JJJ --> SSS[Job Management Actions]
+    SSS --> TTT[Delete Job]
+    SSS --> UUU[Share Job]
+    SSS --> VVV[View Job Details]
+    
+    %% Styling
+    classDef frontend fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    classDef backend fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+    classDef service fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px
+    classDef storage fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    classDef queue fill:#fce4ec,stroke:#880e4f,stroke-width:2px
+    classDef error fill:#ffebee,stroke:#c62828,stroke-width:2px
+    
+    class A,B,C,D,E,F,G,H,L,M,N,R,III,JJJ,KKK,LLL,MMM,NNN,RRR,SSS,TTT,UUU,VVV frontend
+    class I,O,S,T,U,V,W,X,Y,Z,AA,BB,CC,DD,EE,FF,GG,HH,II,JJ,KK,LL,MM,NN,OO,PP,QQ,RR,SS,TT,UU,VV,WW,XX,YY,ZZ,AAA,BBB,CCC,DDD,EEE,FFF,GGG,HHH backend
+    class ClipService,R2Service,CreditService,EmailHelper service
+    class J,P,CCC storage
+    class BB,CC queue
+    class OOO,PPP,QQQ error
