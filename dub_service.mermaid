@@ -3,183 +3,231 @@ flowchart TD
     A[User Access] --> B[Frontend: /workspace/dub]
     B --> C[DubWorkspace Component]
     C --> D[Start Dubbing Button]
-    D --> E[Frontend: Video/Audio Upload]
+    D --> E{Input Method?}
     
-    %% File Upload Phase
-    E --> F{File Type?}
-    F -->|Video| G[Frontend: Video File Upload]
-    F -->|Audio| H[Frontend: Audio File Upload]
+    %% Input Method Selection
+    E -->|File Upload| F[Frontend: Video/Audio Upload]
+    E -->|URL| G[Frontend: Enter URL YouTube/TikTok/Facebook]
     
-    G --> I[Backend: /video-dub]
-    H --> I
+    %% URL Download Flow
+    G --> H[Backend: /available-formats]
+    H --> I[Check Available Formats]
+    I --> J[Frontend: Select Quality/Format]
+    J --> K[Backend: /download-media]
+    K --> L[VideoDownloadService: yt-dlp Download]
+    L --> M{Download Success?}
+    M -->|No| N[Return Error: Region-restricted/Private]
+    M -->|Yes| O[Upload to R2]
+    O --> P[Return R2 URL]
+    
+    %% File Upload Flow
+    F --> Q[Upload File to R2]
+    Q --> P
+    P --> R[Frontend: Start Dubbing]
     
     %% Optional SRT Upload
-    E --> J{SRT File?}
-    J -->|Yes| K[Upload SRT File]
-    J -->|No| L[Skip SRT]
-    K --> I
-    L --> I
+    R --> S{SRT File?}
+    S -->|Yes| T[Upload SRT File]
+    S -->|No| U[Skip SRT]
+    T --> V[Backend: /video-dub]
+    U --> V
     
     %% Job Creation & Credit Reservation
-    I --> M[Download File from R2]
-    M --> N[Extract Audio if Video]
-    N --> O[CreditService: Reserve Credits]
-    O --> P{User Type?}
-    P -->|PAYG| Q[Validate Payment Method]
-    P -->|Credit Pack| R[Check Credit Balance]
+    V --> W[Download File from R2]
+    W --> X[Extract Audio if Video]
+    X --> Y[CreditService: Reserve Credits]
+    Y --> Z{User Type?}
+    Z -->|PAYG| AA[Validate Payment Method]
+    Z -->|Credit Pack| AB[Check Credit Balance]
     
-    Q --> S[Create Dub Job]
-    R --> S
-    S --> T[StatusService: Set PENDING]
-    T --> U[QueueManager: Enqueue Task]
+    AA --> AC[Create Dub Job]
+    AB --> AC
+    AC --> AD[StatusService: Set PENDING]
+    AD --> AE[QueueManager: Enqueue Task]
     
     %% Queue & Worker Processing
-    U --> V[Redis Queue: dub_queue]
-    V --> W[Dub Worker: process_dub_task]
-    W --> X[Mark Job Active]
+    AE --> AF[Redis Queue: dub_queue]
+    AF --> AG[Dub Worker: process_dub_task]
+    AG --> AH[Mark Job Active]
     
     %% File Validation
-    X --> Y[DubService: Validate Files]
-    Y --> Z{Files Valid?}
-    Z -->|No| AA[Fail Job: file_validation_failed]
-    Z -->|Yes| AB[Status: uploading - 10%]
+    AH --> AI[DubService: Validate Files]
+    AI --> AJ{Files Valid?}
+    AJ -->|No| AK[Fail Job: file_validation_failed]
+    AJ -->|Yes| AL[Status: uploading - 10%]
     
     %% R2 Upload
-    AB --> AC[DubService: Upload to R2]
-    AC --> AD{Upload Success?}
-    AD -->|No| AE[Fail Job: upload_failed]
-    AD -->|Yes| AF[Get R2 Audio URL]
+    AL --> AM[DubService: Upload to R2]
+    AM --> AN{Upload Success?}
+    AN -->|No| AO[Fail Job: upload_failed]
+    AN -->|Yes| AP[Get R2 Audio URL]
     
     %% Audio Separation Phase
-    AF --> AG[Status: separating - 25%]
-    AG --> AH[RunPodService: Submit Separation]
-    AH --> AI[Monitor RunPod Job]
-    AI --> AJ{Separation Success?}
-    AJ -->|No| AK[Fail Job: separation_failed]
-    AJ -->|Yes| AL[Download Vocal & Instrument]
-    AL --> AM[Status: transcribing - 45%]
+    AP --> AQ[Status: separating - 25%]
+    AQ --> AR[RunPodService: Submit Separation]
+    AR --> AS[Monitor RunPod Job]
+    AS --> AT{Separation Success?}
+    AT -->|No| AU[Fail Job: separation_failed]
+    AT -->|Yes| AV[Download Vocal & Instrument]
+    AV --> AW[Status: transcribing - 45%]
     
     %% Dubbing Pipeline Decision
-    AM --> AN[SimpleDubbedAPI: process_dubbed_audio]
-    AN --> AO[DubbingOrchestrator: Validate Language]
-    AO --> AP[Build DubbingContext]
-    AP --> AQ[FlowCoordinator: Determine Flow]
+    AW --> AX[SimpleDubbedAPI: process_dubbed_audio]
+    AX --> AY[DubbingOrchestrator: Validate Language]
+    AY --> AZ[Build DubbingContext]
+    AZ --> BA[FlowCoordinator: Determine Flow]
     
     %% Flow Selection
-    AQ --> AR{Flow Type?}
-    AR -->|Fresh Dub| AS[VideoDubFlow]
-    AR -->|Resume| AT[ResumeFlow]
-    AR -->|Redub| AU[RedubFlow]
+    BA --> BB{Flow Type?}
+    BB -->|Fresh Dub| BC[VideoDubFlow]
+    BB -->|Resume| BD[ResumeFlow]
+    BB -->|Redub| BE[RedubFlow]
     
     %% Fresh Video Dub Flow
-    AS --> AV[TranscriptionStep: WhisperX]
-    AV --> AW[Status: transcribing - 50%]
-    AW --> AX[SpeakerDetectionStep: Pyannote]
-    AX --> AY[Status: speaker detection - 55%]
-    AY --> AZ[SegmentationStep: AI Split]
-    AZ --> BA[Status: segmenting - 60%]
+    BC --> BF[TranscriptionStep: WhisperX]
+    BF --> BG[Status: transcribing - 50%]
+    BG --> BH[SpeakerDetectionStep: Pyannote]
+    BH --> BI[Status: speaker detection - 55%]
+    BI --> BJ[SegmentationStep: AI Split]
+    BJ --> BK[Status: segmenting - 60%]
     
     %% Resume/Redub Flows
-    AT --> BB[Load Manifest]
-    AU --> BB
-    BB --> AV
+    BD --> BL[Load Manifest from R2]
+    BE --> BL
+    BL --> BF
     
     %% Review Mode Check
-    BA --> BC{Review Mode?}
-    BC -->|Yes| BD[ReviewHandler: Prepare Review]
-    BD --> BE[Save Manifest]
-    BE --> BF[Status: review_ready - 100%]
-    BF --> BG[Frontend: Review Interface]
+    BK --> BM{Review Mode?}
+    BM -->|Yes| BN[ReviewHandler: Prepare Review]
+    BN --> BO[Save Manifest to R2]
+    BO --> BP[Status: review_ready - 100%]
+    BP --> BQ[Frontend: Review Interface]
+    BQ --> BR{User Action?}
+    BR -->|Approve| BS[Resume Job]
+    BR -->|Edit| BT[Edit Segments]
+    BR -->|Cancel| BU[Cancel Job]
+    BS --> BV[Voice Cloning Phase]
+    BT --> BO
     
     %% Voice Cloning Phase
-    BC -->|No| BH{Model Type?}
-    BH -->|best/medium| BI[Create Voice References]
-    BH -->|normal| BJ[Skip Voice Creation]
+    BM -->|No| BV
+    BV --> BW{Model Type?}
+    BW -->|best/medium| BX[Create Voice References]
+    BW -->|normal| BY[Skip Voice Creation]
     
-    BI --> BK{Service Type?}
-    BK -->|best| BL[ElevenLabs: Create Voice Clone]
-    BK -->|medium| BM[Fish Audio: Create Voice Clone]
+    BX --> BZ{Service Type?}
+    BZ -->|best| CA[ElevenLabs: Create Voice Clone]
+    BZ -->|medium| CB[Fish Audio: Create Voice Clone]
     
-    BL --> BN[Assign References to Segments]
-    BM --> BN
-    BJ --> BN
+    CA --> CC[Assign References to Segments]
+    CB --> CC
+    BY --> CC
     
     %% Voice Cloning Execution
-    BN --> BO[VoiceCloningStep: Start]
-    BO --> BP[Status: voice_cloning - 65%]
-    BP --> BQ[AudioHandler: Split Audio Segments]
-    BQ --> BR[Parallel Processing: ThreadPoolExecutor]
+    CC --> CD[VoiceCloningStep: Start]
+    CD --> CE[Status: voice_cloning - 65%]
+    CE --> CF[AudioHandler: Split Audio Segments]
+    CF --> CG[Parallel Processing: ThreadPoolExecutor]
     
-    BR --> BS[For Each Segment]
-    BS --> BT{Model Type?}
-    BT -->|best| BU[ElevenLabs: Generate Speech with Speed Control]
-    BT -->|medium| BV[Fish Audio: Generate Speech]
-    BT -->|normal| BW[Local Fish-Speech: Generate]
+    CG --> CH[For Each Segment]
+    CH --> CI{Model Type?}
+    CI -->|best| CJ[ElevenLabs: Generate with Speed 1.0]
+    CI -->|medium| CK[Fish Audio: Generate Speech]
+    CI -->|normal| CL[Local Fish-Speech: Generate]
     
-    BU --> BX[Save Cloned Audio]
-    BV --> BX
-    BW --> BX
-    BX --> BY[Update Progress: 65-90%]
-    BY --> BZ{All Segments Done?}
-    BZ -->|No| BS
-    BZ -->|Yes| CA[Cleanup Speed Cache]
+    %% ElevenLabs Speed Control
+    CJ --> CM{First Segment?}
+    CM -->|Yes| CN{Duration > Expected?}
+    CN -->|Yes| CO[Regenerate with Speed 1.2]
+    CN -->|No| CP[Cache Speed 1.0]
+    CO --> CQ[Cache Speed 1.2]
+    CM -->|No| CR[Use Cached Speed]
+    
+    CQ --> CS[Save Cloned Audio]
+    CP --> CS
+    CR --> CS
+    CK --> CS
+    CL --> CS
+    CS --> CT[Update Progress: 65-90%]
+    CT --> CU{All Segments Done?}
+    CU -->|No| CH
+    CU -->|Yes| CV[Cleanup Speed Cache]
     
     %% Finalization Phase
-    CA --> CB[FinalizationStep: Start]
-    CB --> CC[Status: finalizing - 92%]
-    CC --> CD[AudioReconstruction: Merge Segments]
-    CD --> CE[Mix with Instrument Audio]
-    CE --> CF{Subtitle Needed?}
-    CF -->|Yes| CG[Generate SRT File]
-    CF -->|No| CH[Skip Subtitle]
+    CV --> CW[FinalizationStep: Start]
+    CW --> CX[Status: finalizing - 92%]
+    CX --> CY[AudioReconstruction: Merge Segments]
+    CY --> CZ[Mix with Instrument Audio]
+    CZ --> DA{Subtitle Needed?}
+    DA -->|Yes| DB[Generate SRT File]
+    DA -->|No| DC[Skip Subtitle]
     
-    CG --> CI[Upload SRT to R2]
-    CH --> CI
-    CI --> CJ{Video Processing?}
-    CJ -->|Yes| CK[Merge Audio with Video]
-    CJ -->|No| CL[Export Audio Only]
+    DB --> DD[Upload SRT to R2]
+    DC --> DD
+    DD --> DE{Video Processing?}
+    DE -->|Yes| DF[Merge Audio with Video]
+    DE -->|No| DG[Export Audio Only]
     
-    CK --> CM[Upload Final Video to R2]
-    CL --> CN[Upload Final Audio to R2]
+    DF --> DH[Upload Final Video to R2]
+    DG --> DI[Upload Final Audio to R2]
     
-    CM --> CO[Save Manifest to R2]
-    CN --> CO
-    CO --> CP[Status: completed - 100%]
+    DH --> DJ[Save Manifest to R2]
+    DI --> DJ
+    DJ --> DK[Status: completed - 100%]
     
     %% Completion
-    CP --> CQ[CreditService: Complete Billing]
-    CQ --> CR[EmailHelper: Send Email]
-    CR --> CS[Mark Job Inactive]
-    CS --> CT[Cleanup Temp Files]
-    CT --> CU[Frontend: Job Complete]
+    DK --> DL[CreditService: Complete Billing]
+    DL --> DM[EmailHelper: Send Email]
+    DM --> DN[Mark Job Inactive]
+    DN --> DO[Cleanup Temp Files]
+    DO --> DP[Frontend: Job Complete]
     
     %% Frontend Display
-    CU --> CV[Frontend: /workspace/dub]
-    CV --> CW[JobCard Component]
-    CW --> CX[Display Status & Progress]
-    CX --> CY[Download Links]
-    CY --> CZ[Redub Options]
+    DP --> DQ[Frontend: /workspace/dub]
+    DQ --> DR[JobCard Component]
+    DR --> DS[Display Status & Progress]
+    DS --> DT[Download Options]
     
-    %% Error Handling
-    W --> DA{Processing Error?}
-    DA -->|Yes| DB[DubService: Fail Job]
-    DB --> DC[CreditService: Refund Credits]
-    DC --> DD[Status: failed]
-    DD --> DE[Frontend: Error Display]
-    DE --> DF[Cleanup Resources]
+    %% Download Options
+    DT --> DU{Download Type?}
+    DU -->|Video| DV[Download Dubbed Video]
+    DU -->|Audio| DW[Download Dubbed Audio]
+    DU -->|SRT| DX[Download Subtitle File]
+    DU -->|Manifest| DY[Download Segment Manifest]
+    DU -->|Vocal Only| DZ[Download Vocal Track]
+    DU -->|Instrument| EA[Download Instrument Track]
     
     %% Job Management Actions
-    CV --> DG[Job Actions]
-    DG --> DH[Delete Job]
-    DG --> DI[Share Job]
-    DG --> DJ[Redub to Language]
-    DG --> DK[Download Results]
+    DQ --> EB[Job Actions]
+    EB --> EC[Delete Job]
+    EB --> ED[Share Job Link]
+    EB --> EE[Redub to Another Language]
+    EB --> EF[Resume/Edit Job]
+    EB --> EG[View Segments]
     
     %% Redub Flow
-    DJ --> DL[Backend: /video-dub/:id/redub]
-    DL --> DM[Create Redub Job with Manifest]
-    DM --> DN[Queue Redub Task]
-    DN --> AR
+    EE --> EH[Backend: /video-dub/:id/redub]
+    EH --> EI[Fetch Manifest from R2]
+    EI --> EJ[Create Redub Job ID]
+    EJ --> EK[Prepare Redub Context]
+    EK --> EL[Queue Redub Task]
+    EL --> BB
+    
+    %% Share Flow
+    ED --> EM[Backend: /video-dub/:id/share]
+    EM --> EN[Generate Share Token]
+    EN --> EO[Create Share Link with Expiry]
+    EO --> EP[Return Shareable URL]
+    EP --> EQ[Frontend: Display Share Link]
+    
+    %% Error Handling
+    AG --> ER{Processing Error?}
+    ER -->|Yes| ES[DubService: Fail Job]
+    ES --> ET[CreditService: Refund Credits]
+    ET --> EU[Status: failed]
+    EU --> EV[EmailHelper: Send Error Email]
+    EV --> EW[Frontend: Error Display]
+    EW --> EX[Cleanup Resources]
     
     %% Styling with better color combinations
     classDef frontend fill:#3b82f6,stroke:#1e40af,stroke-width:2px,color:#fff
@@ -190,13 +238,16 @@ flowchart TD
     classDef error fill:#ef4444,stroke:#dc2626,stroke-width:2px,color:#fff
     classDef ai fill:#8b5cf6,stroke:#5b21b6,stroke-width:2px,color:#fff
     classDef review fill:#06b6d4,stroke:#0e7490,stroke-width:2px,color:#fff
+    classDef download fill:#14b8a6,stroke:#0f766e,stroke-width:2px,color:#fff
     
-    class A,B,C,D,E,F,G,H,J,K,L,CU,CV,CW,CX,CY,CZ,DG,DH,DI,DJ,DK,DE,BG frontend
-    class I,M,N,S,T,Y,AC,AH,AN,DL,DM,DN backend
-    class O,P,Q,R,CQ,CR,DB,DC service
-    class AB,AF,AL,CI,CM,CN,CO storage
-    class U,V,W,X queue
-    class AA,AE,AK,DA,DB,DC,DD,DF error
-    class AV,AX,AZ,BI,BL,BM,BU,BV,BW ai
-    class BC,BD,BE,BF review
+    class A,B,C,D,E,F,G,J,R,DP,DQ,DR,DS,DT,DU,DV,DW,DX,DY,DZ,EA,EB,EC,ED,EF,EG,EQ,EW,BQ,BR,BT frontend
+    class H,K,V,W,X,AC,AD,AI,AM,EH,EI,EJ,EK,EL,EM,EN,EO backend
+    class Y,Z,AA,AB,DL,DM,ES,ET,EV service
+    class O,P,Q,AL,AP,DD,DH,DI,DJ storage
+    class AE,AF,AG,AH queue
+    class AK,AO,AU,ER,ES,ET,EU,EX,N error
+    class BF,BH,BJ,BX,CA,CB,CJ,CK,CL ai
+    class BM,BN,BO,BP,BS,BU review
+    class L,M download
+
 
