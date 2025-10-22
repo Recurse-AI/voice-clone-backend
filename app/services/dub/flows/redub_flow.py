@@ -16,10 +16,11 @@ class RedubFlow(BaseFlow):
         TranscriptionStep.execute(context)
         SegmentationStep.execute(context)
         
-        self.assign_reference_ids_to_segments(context)
-        
-        for segment in context.segments:
-            segment["reference_id"] = None
+        if context.voice_type != 'ai_voice':
+            for segment in context.segments:
+                segment["reference_id"] = None
+        else:
+            self.assign_reference_ids_to_segments(context)
         
         if context.review_mode:
             return self.handle_review_mode(context)
