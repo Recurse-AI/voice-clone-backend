@@ -2,7 +2,6 @@ import logging
 from typing import Optional, Dict, Any, List
 from app.services.dub.context import DubbingContext
 from app.services.dub.orchestrators.flow_coordinator import FlowCoordinator
-from app.services.dub.utils.voice_cleanup import VoiceCleanup
 from app.services.dub.utils.progress_tracker import ProgressTracker
 from app.services.simple_status_service import JobStatus
 from app.services.language_service import language_service
@@ -47,16 +46,12 @@ class DubbingOrchestrator:
             
             result = FlowCoordinator.determine_and_execute(context)
             
-            VoiceCleanup.cleanup_voices(context.created_voice_ids, context.model_type)
-            
             return result
         
         except Exception as e:
             logger.error(f"Dubbed processing failed: {e}")
             if output_dir:
                 AudioUtils.remove_temp_dir(folder_path=output_dir)
-            if 'context' in locals():
-                VoiceCleanup.cleanup_voices(locals()['context'].created_voice_ids, model_type)
             return {"success": False, "error": str(e)}
     
     def _validate_target_language(self, target_language: str, model_type: str = "normal") -> tuple:
