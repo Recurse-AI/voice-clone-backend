@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class VoiceCloningStep:
     def __init__(self):
-        self._ai_voice_reference_cache = {}
+        pass
     
     def execute(self, context: DubbingContext):
         from app.services.simple_status_service import JobStatus
@@ -166,55 +166,32 @@ class VoiceCloningStep:
         try:
             dubbed_text = data["dubbed_text"]
             reference_text = data["original_text"] or "Reference audio"
-            
             segment_index = int(data['seg_id'].split('_')[1]) - 1
-            cloned_path = os.path.join(
-                context.process_temp_dir, f"cloned_{context.job_id}_{segment_index:03d}.wav"
-            ).replace('\\', '/')
             
-            ai_voice_id = data.get("reference_id")
-            reference_audio_bytes = None
-            
-            if context.voice_type == 'ai_voice' and ai_voice_id and context.model_type == 'normal':
-                audio_bytes, sample_text = self._get_ai_voice_reference(
-                    ai_voice_id, context.source_language_code
-                )
-                reference_audio_bytes = audio_bytes
-                if sample_text:
-                    reference_text = sample_text
-            
-            if reference_audio_bytes is None:
-                reference_audio_bytes = self._load_reference_audio(data["original_audio_path"])
+            provided_reference_id = data.get("reference_id")
             
             if context.model_type == 'best':
-                if not ai_voice_id:
-                    return None
-                result = self._generate_with_elevenlabs(
-                    dubbed_text, ai_voice_id, context.job_id,
-                    context.target_language_code, segment_index, data["duration_ms"]
+                return self._process_elevenlabs_segment(
+                    dubbed_text, context, segment_index, data, provided_reference_id
                 )
             elif context.model_type == 'medium':
-                if not ai_voice_id:
-                    return None
-                result = self._generate_with_premium_api(
-                    dubbed_text, ai_voice_id, context.job_id, context.target_language_code
+                return self._process_fish_api_segment(
+                    dubbed_text, reference_text, context, segment_index, data, provided_reference_id
                 )
-                if not result.get("success"):
-                    logger.warning(f"Fish API failed, using local model")
-                    result = self._generate_with_local_model(
-                        dubbed_text, reference_audio_bytes, reference_text,
-                        context.job_id, context.target_language_code
-                    )
             else:
-                result = self._generate_with_local_model(
-                    dubbed_text, reference_audio_bytes, reference_text,
-                    context.job_id, context.target_language_code
+                reference_audio_bytes = self._load_reference_audio(data["original_audio_path"])
+                if provided_reference_id and context.voice_type == 'ai_voice':
+                    audio_bytes, sample_text = self._get_ai_voice_reference(provided_reference_id, context.source_language_code)
+                    if audio_bytes:
+                        reference_audio_bytes = audio_bytes
+                        reference_text = sample_text or reference_text
+                
+                if not reference_audio_bytes:
+                    return None
+                
+                return self._process_local_segment(
+                    dubbed_text, reference_audio_bytes, reference_text, context, segment_index
                 )
-            
-            if result.get("success"):
-                return self._save_cloned_audio(result.get("output_path"), cloned_path, data['seg_id'])
-            
-            return None
         except Exception as e:
             logger.error(f"Voice cloning error for {data['seg_id']}: {e}")
             return None
@@ -223,15 +200,111 @@ class VoiceCloningStep:
         from app.config.settings import settings as _settings
         from app.services.dub.fish_audio_sample_helper import fetch_sample_audio_wav_bytes
         
-        cached = self._ai_voice_reference_cache.get(reference_id)
-        if cached:
-            return cached
-        
         audio_bytes, sample_text = fetch_sample_audio_wav_bytes(reference_id, _settings.FISH_AUDIO_API_KEY)
-        if audio_bytes:
-            self._ai_voice_reference_cache[reference_id] = (audio_bytes, sample_text)
-        
         return audio_bytes, sample_text
+    
+    def _process_elevenlabs_segment(self, text: str, context: DubbingContext, seg_idx: int, data: dict, provided_voice_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        from app.services.dub.elevenlabs_service import get_elevenlabs_service
+        
+        service = get_elevenlabs_service()
+        voice_id = provided_voice_id
+        should_cleanup = False
+        
+        try:
+            if not voice_id:
+                audio_bytes = self._load_reference_audio(data["original_audio_path"])
+                if not audio_bytes:
+                    return None
+                
+                voice_name = f"{context.job_id}_seg{seg_idx}_{int(time.time())}"
+                result = service.create_voice_reference(audio_bytes, voice_name)
+                
+                if not result.get("success"):
+                    return None
+                
+                voice_id = result["voice_id"]
+                should_cleanup = True
+            
+            gen_result = service.generate_speech(
+                text, voice_id, context.target_language_code, 
+                context.job_id, seg_idx, data["duration_ms"], speed=1.2
+            )
+            
+            if not gen_result.get("success"):
+                return None
+            
+            cloned_path = os.path.join(
+                context.process_temp_dir, f"cloned_{context.job_id}_{seg_idx:03d}.wav"
+            )
+            return self._save_cloned_audio(gen_result.get("output_path"), cloned_path, data['seg_id'])
+            
+        finally:
+            if should_cleanup and voice_id:
+                service.delete_voice(voice_id)
+    
+    def _process_fish_api_segment(self, text: str, ref_text: str, context: DubbingContext, seg_idx: int, data: dict, provided_reference_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        from app.services.dub.fish_audio_api_service import get_fish_audio_api_service
+        
+        service = get_fish_audio_api_service()
+        reference_id = provided_reference_id
+        should_cleanup = False
+        
+        try:
+            if not reference_id:
+                audio_bytes = self._load_reference_audio(data["original_audio_path"])
+                if not audio_bytes:
+                    return self._process_local_segment(text, audio_bytes, ref_text, context, seg_idx)
+                
+                ref_name = f"{context.job_id}_seg{seg_idx}_{int(time.time())}"
+                result = service.create_voice_reference(audio_bytes, ref_name)
+                
+                if not result.get("success"):
+                    audio_bytes = self._load_reference_audio(data["original_audio_path"])
+                    return self._process_local_segment(text, audio_bytes, ref_text, context, seg_idx)
+                
+                reference_id = result["reference_id"]
+                should_cleanup = True
+            
+            gen_result = service.generate_voice_clone(
+                text, reference_id, context.job_id, context.target_language_code
+            )
+            
+            if not gen_result.get("success"):
+                audio_bytes = self._load_reference_audio(data["original_audio_path"])
+                return self._process_local_segment(text, audio_bytes, ref_text, context, seg_idx)
+            
+            cloned_path = os.path.join(
+                context.process_temp_dir, f"cloned_{context.job_id}_{seg_idx:03d}.wav"
+            )
+            return self._save_cloned_audio(gen_result.get("output_path"), cloned_path, data['seg_id'])
+            
+        finally:
+            if should_cleanup and reference_id:
+                service.delete_voice(reference_id)
+    
+    def _process_local_segment(self, text: str, audio_bytes: bytes, ref_text: str, context: DubbingContext, seg_idx: int) -> Optional[Dict[str, Any]]:
+        from app.services.dub.fish_speech_service import get_fish_speech_service
+        
+        service = get_fish_speech_service()
+        result = service.generate_with_reference_audio(
+            text=text,
+            reference_audio_bytes=audio_bytes,
+            reference_text=ref_text,
+            max_new_tokens=1024,
+            top_p=0.9,
+            repetition_penalty=1.07,
+            temperature=0.75,
+            job_id=context.job_id,
+            target_language_code=context.target_language_code
+        )
+        
+        if not result.get("success"):
+            return None
+        
+        cloned_path = os.path.join(
+            context.process_temp_dir, f"cloned_{context.job_id}_{seg_idx:03d}.wav"
+        )
+        return self._save_cloned_audio(result.get("output_path"), cloned_path, f"seg_{seg_idx}")
     
     def _load_reference_audio(self, audio_path: str) -> Optional[bytes]:
         if not audio_path or not os.path.exists(audio_path):
@@ -248,69 +321,6 @@ class VoiceCloningStep:
         except Exception as e:
             logger.error(f"Failed to load reference audio from {audio_path}: {e}")
             return None
-    
-    def _get_audio_duration_ms(self, audio_path: str) -> int:
-        audio_data, sr = sf.read(audio_path)
-        return int(len(audio_data) / sr * 1000)
-    
-    def _generate_with_elevenlabs(self, text: str, voice_id: str, job_id: str, target_language_code: str, segment_index: int, target_duration_ms: int) -> dict:
-        from app.services.dub.elevenlabs_service import get_elevenlabs_service, BlockedVoiceError
-        
-        try:
-            service = get_elevenlabs_service()
-            
-            result = service.generate_speech(text, voice_id, target_language_code, job_id, segment_index, target_duration_ms, speed=1.0)
-            if not result.get("success"):
-                return result
-            
-            actual_duration_ms = self._get_audio_duration_ms(result["output_path"])
-            tolerance = target_duration_ms * 1.1
-            
-            if actual_duration_ms > tolerance:
-                logger.info(f"Regenerating with 1.2x speed: {actual_duration_ms}ms > {tolerance}ms (target: {target_duration_ms}ms)")
-                os.remove(result["output_path"])
-                result = service.generate_speech(text, voice_id, target_language_code, job_id, segment_index, target_duration_ms, speed=1.2)
-            
-            return result
-        except BlockedVoiceError:
-            raise
-        except Exception as e:
-            logger.error(f"ElevenLabs generation error: {e}")
-            return {"success": False, "error": str(e)}
-    
-    def _generate_with_premium_api(self, tagged_text: str, reference_id: str, job_id: str, target_language_code: str) -> dict:
-        from app.services.dub.fish_audio_api_service import get_fish_audio_api_service
-        
-        if not reference_id:
-            return {"success": False, "error": "reference_id is required"}
-        
-        try:
-            service = get_fish_audio_api_service()
-            return service.generate_voice_clone(
-                text=tagged_text,
-                reference_id=reference_id,
-                job_id=job_id,
-                target_language_code=target_language_code
-            )
-        except Exception as e:
-            logger.error(f"Fish API error: {e}")
-            return {"success": False, "error": str(e)}
-    
-    def _generate_with_local_model(self, tagged_text: str, reference_audio_bytes: bytes, tagged_reference_text: str, job_id: str, target_language_code: str) -> dict:
-        from app.services.dub.fish_speech_service import get_fish_speech_service
-        
-        service = get_fish_speech_service()
-        return service.generate_with_reference_audio(
-            text=tagged_text,
-            reference_audio_bytes=reference_audio_bytes,
-            reference_text=tagged_reference_text,
-            max_new_tokens=1024,
-            top_p=0.9,
-            repetition_penalty=1.07,
-            temperature=0.75,
-            job_id=job_id,
-            target_language_code=target_language_code
-        )
     
     def _save_cloned_audio(self, output_path: str, cloned_path: str, segment_id: str) -> Optional[Dict[str, Any]]:
         if not output_path or not os.path.exists(output_path):
