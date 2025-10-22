@@ -58,25 +58,26 @@ class AudioReconstruction:
                 
                 actual_duration_ms = (len(audio_data) / target_sr) * 1000
                 expected_samples = int((expected_duration_ms / 1000.0) * target_sr)
+                duration_ratio = actual_duration_ms / expected_duration_ms
+                
+                if abs(duration_ratio - 1.0) > 0.05:
+                    if duration_ratio < 1.0:
+                        slowdown_factor = max(duration_ratio, 0.7)
+                        audio_data = AudioReconstruction._apply_tempo_change(audio_data, target_sr, slowdown_factor, process_temp_dir, f"{job_id}_seg{idx}")
+                        if audio_data is not None:
+                            actual_duration_ms = (len(audio_data) / target_sr) * 1000
+                            logger.info(f"Seg {idx}: applied {slowdown_factor:.2f}x slowdown, {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms")
+                    else:
+                        speedup_factor = min(duration_ratio, 1.47)
+                        audio_data = AudioReconstruction._apply_tempo_change(audio_data, target_sr, speedup_factor, process_temp_dir, f"{job_id}_seg{idx}")
+                        if audio_data is not None:
+                            actual_duration_ms = (len(audio_data) / target_sr) * 1000
+                            logger.info(f"Seg {idx}: applied {speedup_factor:.2f}x speedup, {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms")
                 
                 if len(audio_data) < expected_samples:
                     audio_data = np.pad(audio_data, (0, expected_samples - len(audio_data)))
-                    logger.info(f"Seg {idx}: {actual_duration_ms:.0f}ms padded to {expected_duration_ms:.0f}ms")
                 elif len(audio_data) > expected_samples:
-                    duration_ratio = actual_duration_ms / expected_duration_ms
-                    
-                    if duration_ratio > 1.05:
-                        speedup = min(duration_ratio, 1.7)
-                        audio_data = AudioReconstruction._apply_speedup(audio_data, target_sr, speedup, process_temp_dir, f"{job_id}_seg{idx}")
-                        if audio_data is not None:
-                            actual_duration_ms = (len(audio_data) / target_sr) * 1000
-                            logger.info(f"Seg {idx}: applied {speedup:.2f}x speedup, {actual_duration_ms:.0f}ms")
-                        
-                        if len(audio_data) > expected_samples:
-                            audio_data = audio_data[:expected_samples]
-                    else:
-                        audio_data = audio_data[:expected_samples]
-                        logger.info(f"Seg {idx}: {actual_duration_ms:.0f}ms trimmed to {expected_duration_ms:.0f}ms")
+                    audio_data = audio_data[:expected_samples]
                 
                 start_sample = int((start_ms / 1000.0) * target_sr)
                 end_sample = min(start_sample + len(audio_data), total_samples)
@@ -93,7 +94,7 @@ class AudioReconstruction:
             return None
     
     @staticmethod
-    def _apply_speedup(audio_data: np.ndarray, sr: int, speedup: float, temp_dir: str, file_id: str) -> np.ndarray:
+    def _apply_tempo_change(audio_data: np.ndarray, sr: int, tempo_factor: float, temp_dir: str, file_id: str) -> np.ndarray:
         try:
             import soundfile as sf
             import subprocess
@@ -108,7 +109,7 @@ class AudioReconstruction:
             
             sf.write(input_path, audio_data, sr)
             
-            cmd = [ffmpeg, "-y", "-i", input_path, "-af", f"atempo={speedup:.4f}", "-ar", str(sr), "-ac", "1", output_path]
+            cmd = [ffmpeg, "-y", "-i", input_path, "-af", f"atempo={tempo_factor:.4f}", "-ar", str(sr), "-ac", "1", output_path]
             result = subprocess.run(cmd, capture_output=True, timeout=60)
             
             if result.returncode == 0 and os.path.exists(output_path):
