@@ -62,13 +62,13 @@ class AudioReconstruction:
                 
                 if abs(duration_ratio - 1.0) > 0.05:
                     if duration_ratio < 1.0:
-                        slowdown_factor = max(duration_ratio, 0.7)
+                        slowdown_factor = max(duration_ratio, 0.75)
                         audio_data = AudioReconstruction._apply_tempo_change(audio_data, target_sr, slowdown_factor, process_temp_dir, f"{job_id}_seg{idx}")
                         if audio_data is not None:
                             actual_duration_ms = (len(audio_data) / target_sr) * 1000
                             logger.info(f"Seg {idx}: applied {slowdown_factor:.2f}x slowdown, {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms")
                     else:
-                        speedup_factor = min(duration_ratio, 1.47)
+                        speedup_factor = min(duration_ratio, 1.45)
                         audio_data = AudioReconstruction._apply_tempo_change(audio_data, target_sr, speedup_factor, process_temp_dir, f"{job_id}_seg{idx}")
                         if audio_data is not None:
                             actual_duration_ms = (len(audio_data) / target_sr) * 1000
