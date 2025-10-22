@@ -1,5 +1,4 @@
 import os
-import subprocess
 import logging
 import numpy as np
 from typing import List, Dict, Any, Optional
@@ -58,34 +57,26 @@ class AudioReconstruction:
                     audio_data = signal.resample(audio_data, int(len(audio_data) * target_sr / sr))
                 
                 actual_duration_ms = (len(audio_data) / target_sr) * 1000
-                tempo_ratio = actual_duration_ms / expected_duration_ms
-                
-                if abs(tempo_ratio - 1.0) > 0.01:
-                    if tempo_ratio > 1.0:
-                        audio_data = AudioReconstruction._trim_silence_edges(audio_data, target_sr)
-                        actual_duration_ms = (len(audio_data) / target_sr) * 1000
-                        tempo_ratio = actual_duration_ms / expected_duration_ms
-                        
-                        if tempo_ratio > 1.5:
-                            audio_data = AudioReconstruction._remove_internal_silence(audio_data, target_sr)
-                            actual_duration_ms = (len(audio_data) / target_sr) * 1000
-                            tempo_ratio = actual_duration_ms / expected_duration_ms
-                    
-                    clamped_tempo = max(0.9, min(1.5, tempo_ratio))
-                    
-                    adjusted_audio = AudioReconstruction._apply_tempo_ffmpeg(
-                        audio_data, target_sr, clamped_tempo, process_temp_dir, f"{job_id}_seg{idx}"
-                    )
-                    
-                    if adjusted_audio is not None:
-                        audio_data = adjusted_audio
-                        logger.info(f"Seg {idx}: {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms (tempo={clamped_tempo:.2f})")
-                
                 expected_samples = int((expected_duration_ms / 1000.0) * target_sr)
+                
                 if len(audio_data) < expected_samples:
                     audio_data = np.pad(audio_data, (0, expected_samples - len(audio_data)))
+                    logger.info(f"Seg {idx}: {actual_duration_ms:.0f}ms padded to {expected_duration_ms:.0f}ms")
                 elif len(audio_data) > expected_samples:
-                    audio_data = audio_data[:expected_samples]
+                    duration_ratio = actual_duration_ms / expected_duration_ms
+                    
+                    if duration_ratio > 1.05:
+                        speedup = min(duration_ratio, 1.7)
+                        audio_data = AudioReconstruction._apply_speedup(audio_data, target_sr, speedup, process_temp_dir, f"{job_id}_seg{idx}")
+                        if audio_data is not None:
+                            actual_duration_ms = (len(audio_data) / target_sr) * 1000
+                            logger.info(f"Seg {idx}: applied {speedup:.2f}x speedup, {actual_duration_ms:.0f}ms")
+                        
+                        if len(audio_data) > expected_samples:
+                            audio_data = audio_data[:expected_samples]
+                    else:
+                        audio_data = audio_data[:expected_samples]
+                        logger.info(f"Seg {idx}: {actual_duration_ms:.0f}ms trimmed to {expected_duration_ms:.0f}ms")
                 
                 start_sample = int((start_ms / 1000.0) * target_sr)
                 end_sample = min(start_sample + len(audio_data), total_samples)
@@ -102,28 +93,23 @@ class AudioReconstruction:
             return None
     
     @staticmethod
-    def _apply_tempo_ffmpeg(audio_data: np.ndarray, sr: int, tempo: float, temp_dir: str, file_id: str) -> Optional[np.ndarray]:
+    def _apply_speedup(audio_data: np.ndarray, sr: int, speedup: float, temp_dir: str, file_id: str) -> np.ndarray:
         try:
             import soundfile as sf
+            import subprocess
             from app.utils.ffmpeg_helper import get_ffmpeg_path
             
             ffmpeg = get_ffmpeg_path()
             if not ffmpeg:
-                return None
+                return audio_data
             
             input_path = os.path.join(temp_dir, f"temp_in_{file_id}.wav")
             output_path = os.path.join(temp_dir, f"temp_out_{file_id}.wav")
             
             sf.write(input_path, audio_data, sr)
             
-            cmd = [
-                ffmpeg, "-y", "-i", input_path,
-                "-af", f"atempo={tempo:.6f}",
-                "-ar", str(sr), "-ac", "1",
-                output_path
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, timeout=120)
+            cmd = [ffmpeg, "-y", "-i", input_path, "-af", f"atempo={speedup:.4f}", "-ar", str(sr), "-ac", "1", output_path]
+            result = subprocess.run(cmd, capture_output=True, timeout=60)
             
             if result.returncode == 0 and os.path.exists(output_path):
                 adjusted_audio, _ = sf.read(output_path)
@@ -131,59 +117,7 @@ class AudioReconstruction:
                 os.remove(output_path)
                 return adjusted_audio
             
-            return None
-            
-        except Exception:
-            return None
-    
-    @staticmethod
-    def _trim_silence_edges(audio_data: np.ndarray, sr: int, threshold: float = 0.01) -> np.ndarray:
-        try:
-            abs_audio = np.abs(audio_data)
-            
-            start_idx = 0
-            for i in range(len(audio_data)):
-                if abs_audio[i] > threshold:
-                    start_idx = i
-                    break
-            
-            end_idx = len(audio_data)
-            for i in range(len(audio_data) - 1, -1, -1):
-                if abs_audio[i] > threshold:
-                    end_idx = i + 1
-                    break
-            
-            if start_idx < end_idx:
-                return audio_data[start_idx:end_idx]
             return audio_data
-            
-        except Exception:
-            return audio_data
-    
-    @staticmethod
-    def _remove_internal_silence(audio_data: np.ndarray, sr: int, threshold: float = 0.01, min_silence_ms: int = 200) -> np.ndarray:
-        try:
-            abs_audio = np.abs(audio_data)
-            min_silence_samples = int((min_silence_ms / 1000.0) * sr)
-            
-            result = []
-            i = 0
-            
-            while i < len(audio_data):
-                if abs_audio[i] > threshold:
-                    result.append(audio_data[i])
-                    i += 1
-                else:
-                    silence_start = i
-                    while i < len(audio_data) and abs_audio[i] <= threshold:
-                        i += 1
-                    
-                    silence_length = i - silence_start
-                    if silence_length < min_silence_samples:
-                        result.extend(audio_data[silence_start:i])
-            
-            return np.array(result) if len(result) > 0 else audio_data
-            
         except Exception:
             return audio_data
 
