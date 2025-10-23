@@ -205,10 +205,12 @@ class VoiceCloningStep:
     
     def _process_elevenlabs_segment(self, text: str, context: DubbingContext, seg_idx: int, data: dict, provided_voice_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         from app.services.dub.elevenlabs_service import get_elevenlabs_service
+        import time as time_module
         
         service = get_elevenlabs_service()
         voice_id = provided_voice_id
         should_cleanup = False
+        max_retries = 2
         
         try:
             if not voice_id:
@@ -225,18 +227,24 @@ class VoiceCloningStep:
                 voice_id = result["voice_id"]
                 should_cleanup = True
             
-            gen_result = service.generate_speech(
-                text, voice_id, context.target_language_code, 
-                context.job_id, seg_idx, data["duration_ms"], speed=1.2
-            )
+            for attempt in range(max_retries):
+                gen_result = service.generate_speech(
+                    text, voice_id, context.target_language_code, 
+                    context.job_id, seg_idx, data["duration_ms"], speed=1.2
+                )
+                
+                if gen_result.get("success"):
+                    cloned_path = os.path.join(
+                        context.process_temp_dir, f"cloned_{context.job_id}_{seg_idx:03d}.wav"
+                    )
+                    return self._save_cloned_audio(gen_result.get("output_path"), cloned_path, data['seg_id'])
+                
+                if attempt < max_retries - 1:
+                    logger.warning(f"ElevenLabs seg_{seg_idx} attempt {attempt+1} failed, retrying in 2s...")
+                    time_module.sleep(2)
             
-            if not gen_result.get("success"):
-                return None
-            
-            cloned_path = os.path.join(
-                context.process_temp_dir, f"cloned_{context.job_id}_{seg_idx:03d}.wav"
-            )
-            return self._save_cloned_audio(gen_result.get("output_path"), cloned_path, data['seg_id'])
+            logger.error(f"ElevenLabs seg_{seg_idx} failed after {max_retries} attempts")
+            return None
             
         finally:
             if should_cleanup and voice_id:
