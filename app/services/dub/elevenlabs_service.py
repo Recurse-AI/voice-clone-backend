@@ -102,13 +102,52 @@ class ElevenLabsService:
                 from app.services.analytics_service import AnalyticsService
                 AnalyticsService.track_api_call_sync(job_id, "elevenlabs", chars=len(text), success=success)
     
-    def get_all_voices(self) -> Dict[str, Any]:
+    def get_all_voices(self, include_library: bool = True) -> Dict[str, Any]:
         try:
-            voices_response = self.client.voices.get_all()
-            
             normalized_voices = []
-            for voice in voices_response.voices:
+            
+            user_voices_response = self.client.voices.get_all()
+            for voice in user_voices_response.voices:
                 normalized_voices.append(self._normalize_voice_to_fish_format(voice))
+            
+            if include_library:
+                try:
+                    import requests
+                    headers = {"xi-api-key": self.api_key}
+                    page_size = 100
+                    page = 0
+                    
+                    while True:
+                        response = requests.get(
+                            "https://api.elevenlabs.io/v1/shared-voices",
+                            headers=headers,
+                            params={
+                                "page_size": page_size,
+                                "page": page
+                            },
+                            timeout=30
+                        )
+                        
+                        if response.status_code != 200:
+                            break
+                        
+                        data = response.json()
+                        voices = data.get("voices", [])
+                        
+                        if not voices:
+                            break
+                        
+                        for voice_data in voices:
+                            normalized_voices.append(self._normalize_shared_voice(voice_data))
+                        
+                        if len(voices) < page_size:
+                            break
+                        
+                        page += 1
+                    
+                    logger.info(f"Fetched {len(normalized_voices)} total voices from ElevenLabs")
+                except Exception as lib_error:
+                    logger.warning(f"Failed to fetch Voice Library: {lib_error}")
             
             return {
                 "success": True,
@@ -185,8 +224,8 @@ class ElevenLabsService:
                 "text": f"Preview of {voice.name}"
             })
         
-        supported_languages = ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'zh', 'ja', 'ko', 
-                              'ar', 'hi', 'tr', 'pl', 'nl', 'sv', 'uk', 'vi']
+        from app.services.language_service import LanguageService
+        supported_languages = sorted(list(LanguageService.ELEVENLABS_V3_LANGUAGES))
         
         return {
             "_id": voice.voice_id,
@@ -202,6 +241,45 @@ class ElevenLabsService:
                 "nickname": "ElevenLabs"
             },
             "visibility": "private" if hasattr(voice, 'category') and voice.category == "cloned" else "public",
+            "train_mode": "instant",
+            "model_type": "elevenlabs"
+        }
+    
+    def _normalize_shared_voice(self, voice_data: Dict) -> Dict[str, Any]:
+        from app.services.language_service import LanguageService
+        
+        tags = []
+        if voice_data.get("category"):
+            tags.append(voice_data["category"])
+        if voice_data.get("labels"):
+            labels = voice_data["labels"]
+            if isinstance(labels, dict):
+                tags.extend([f"{k}:{v}" for k, v in labels.items() if v])
+            elif isinstance(labels, list):
+                tags.extend(labels)
+        
+        samples = []
+        if voice_data.get("preview_url"):
+            samples.append({
+                "audio": voice_data["preview_url"],
+                "title": "Voice Preview",
+                "text": f"Preview of {voice_data.get('name', 'Voice')}"
+            })
+        
+        return {
+            "_id": voice_data.get("public_owner_id"),
+            "title": voice_data.get("name", "Unknown Voice"),
+            "cover_image": None,
+            "languages": sorted(list(LanguageService.ELEVENLABS_V3_LANGUAGES)),
+            "tags": tags,
+            "samples": samples,
+            "description": voice_data.get("description", ""),
+            "like_count": voice_data.get("like_count", 0),
+            "task_count": voice_data.get("usage_character_count_1y", 0),
+            "author": {
+                "nickname": voice_data.get("creator_name", "ElevenLabs Community")
+            },
+            "visibility": "public",
             "train_mode": "instant",
             "model_type": "elevenlabs"
         }

@@ -7,6 +7,15 @@ logger = logging.getLogger(__name__)
 
 class AudioReconstruction:
     @staticmethod
+    def _calculate_gaps(segments: List[Dict[str, Any]]) -> List[float]:
+        gaps = []
+        for i in range(len(segments) - 1):
+            gap_ms = segments[i + 1].get("start", 0) - segments[i].get("end", 0)
+            gaps.append(max(0, gap_ms))
+        gaps.append(0)
+        return gaps
+    
+    @staticmethod
     def reconstruct_final_audio(
         segments: List[Dict[str, Any]], 
         original_audio_path: Optional[str],
@@ -19,7 +28,6 @@ class AudioReconstruction:
         
         try:
             import soundfile as sf
-            from app.utils.ffmpeg_helper import get_ffmpeg_path
             
             target_sr = 44100
             max_end_ms = max(seg.get("end", 0) for seg in segments)
@@ -29,21 +37,25 @@ class AudioReconstruction:
                 video_duration_ms = int(video_duration_seconds * 1000)
                 if video_duration_ms > max_end_ms:
                     total_duration_ms = video_duration_ms
-                    logger.info(f"📏 Extending audio from {max_end_ms/1000:.2f}s to {video_duration_seconds:.2f}s to match video")
             
             total_samples = int((total_duration_ms / 1000.0) * target_sr)
             timeline_audio = np.zeros(total_samples, dtype=np.float32)
+            
+            gaps = AudioReconstruction._calculate_gaps(segments)
+            current_position_ms = 0.0
             
             logger.info(f"Building {total_duration_ms/1000:.1f}s timeline with {len(segments)} segments")
             
             for idx, seg in enumerate(segments):
                 audio_path = seg.get("cloned_audio_path")
                 if not audio_path or not os.path.exists(audio_path):
+                    current_position_ms = seg.get("end", 0) + gaps[idx]
                     continue
                 
-                start_ms = seg.get("start", 0)
-                end_ms = seg.get("end", 0)
-                expected_duration_ms = end_ms - start_ms
+                expected_start_ms = seg.get("start", 0)
+                expected_end_ms = seg.get("end", 0)
+                expected_duration_ms = expected_end_ms - expected_start_ms
+                gap_ms = gaps[idx]
                 
                 if expected_duration_ms <= 0:
                     continue
@@ -57,36 +69,45 @@ class AudioReconstruction:
                     audio_data = signal.resample(audio_data, int(len(audio_data) * target_sr / sr))
                 
                 actual_duration_ms = (len(audio_data) / target_sr) * 1000
-                expected_samples = int((expected_duration_ms / 1000.0) * target_sr)
-                duration_ratio = actual_duration_ms / expected_duration_ms
+                difference_ms = actual_duration_ms - expected_duration_ms
+                is_last = idx == len(segments) - 1
                 
-                if abs(duration_ratio - 1.0) > 0.05:
-                    if duration_ratio < 1.0:
-                        slowdown_factor = max(duration_ratio, 0.85)
-                        audio_data = AudioReconstruction._apply_tempo_change(audio_data, target_sr, slowdown_factor, process_temp_dir, f"{job_id}_seg{idx}")
-                        if audio_data is not None:
-                            actual_duration_ms = (len(audio_data) / target_sr) * 1000
-                            logger.info(f"Seg {idx}: applied {slowdown_factor:.2f}x slowdown, {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms")
+                if difference_ms > 50:
+                    if gap_ms >= difference_ms:
+                        gap_ms -= difference_ms
+                        logger.info(f"Seg {idx}: {actual_duration_ms:.0f}ms (+{difference_ms:.0f}ms), absorbed by gap")
                     else:
-                        speedup_factor = min(duration_ratio, 1.45)
-                        audio_data = AudioReconstruction._apply_tempo_change(audio_data, target_sr, speedup_factor, process_temp_dir, f"{job_id}_seg{idx}")
-                        if audio_data is not None:
-                            actual_duration_ms = (len(audio_data) / target_sr) * 1000
-                            logger.info(f"Seg {idx}: applied {speedup_factor:.2f}x speedup, {actual_duration_ms:.0f}ms -> {expected_duration_ms:.0f}ms")
+                        if is_last and current_position_ms + actual_duration_ms > total_duration_ms:
+                            overshoot = current_position_ms + actual_duration_ms - total_duration_ms
+                            speedup = 1.45 if overshoot > 500 else 1.2
+                        else:
+                            speedup = 1.2
+                        
+                        audio_data = AudioReconstruction._apply_tempo_change(
+                            audio_data, target_sr, speedup, process_temp_dir, f"{job_id}_seg{idx}"
+                        )
+                        actual_duration_ms = (len(audio_data) / target_sr) * 1000
+                        logger.info(f"Seg {idx}: applied {speedup:.2f}x speedup -> {actual_duration_ms:.0f}ms")
                 
-                if len(audio_data) < expected_samples:
-                    audio_data = np.pad(audio_data, (0, expected_samples - len(audio_data)))
-                elif len(audio_data) > expected_samples:
-                    audio_data = audio_data[:expected_samples]
+                elif difference_ms < -50:
+                    gap_ms += abs(difference_ms)
+                    if expected_duration_ms < 1000:
+                        audio_data = AudioReconstruction._apply_tempo_change(
+                            audio_data, target_sr, 0.9, process_temp_dir, f"{job_id}_seg{idx}"
+                        )
+                        actual_duration_ms = (len(audio_data) / target_sr) * 1000
+                        logger.info(f"Seg {idx}: applied 0.9x slowdown -> {actual_duration_ms:.0f}ms")
                 
-                start_sample = int((start_ms / 1000.0) * target_sr)
+                start_sample = int((current_position_ms / 1000.0) * target_sr)
                 end_sample = min(start_sample + len(audio_data), total_samples)
                 timeline_audio[start_sample:end_sample] = audio_data[:end_sample - start_sample]
+                
+                current_position_ms += actual_duration_ms + gap_ms
             
             final_path = os.path.join(process_temp_dir, f"final_{job_id}.wav")
             sf.write(final_path, timeline_audio, target_sr, subtype='PCM_16')
             
-            logger.info(f"Audio reconstructed: {final_path}")
+            logger.info(f"Audio reconstructed: {final_path}, final position: {current_position_ms/1000:.2f}s")
             return final_path
             
         except Exception as e:
