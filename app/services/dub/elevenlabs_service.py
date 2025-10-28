@@ -110,45 +110,6 @@ class ElevenLabsService:
             for voice in user_voices_response.voices:
                 normalized_voices.append(self._normalize_voice_to_fish_format(voice))
             
-            if include_library:
-                try:
-                    import requests
-                    headers = {"xi-api-key": self.api_key}
-                    page_size = 100
-                    page = 0
-                    
-                    while True:
-                        response = requests.get(
-                            "https://api.elevenlabs.io/v1/shared-voices",
-                            headers=headers,
-                            params={
-                                "page_size": page_size,
-                                "page": page
-                            },
-                            timeout=30
-                        )
-                        
-                        if response.status_code != 200:
-                            break
-                        
-                        data = response.json()
-                        voices = data.get("voices", [])
-                        
-                        if not voices:
-                            break
-                        
-                        for voice_data in voices:
-                            normalized_voices.append(self._normalize_shared_voice(voice_data))
-                        
-                        if len(voices) < page_size:
-                            break
-                        
-                        page += 1
-                    
-                    logger.info(f"Fetched {len(normalized_voices)} total voices from ElevenLabs")
-                except Exception as lib_error:
-                    logger.warning(f"Failed to fetch Voice Library: {lib_error}")
-            
             return {
                 "success": True,
                 "items": normalized_voices,
