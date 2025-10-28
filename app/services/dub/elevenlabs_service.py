@@ -267,7 +267,7 @@ class ElevenLabsService:
             })
         
         return {
-            "_id": voice_data.get("public_owner_id"),
+            "_id": voice_data.get("voice_id"),
             "title": voice_data.get("name", "Unknown Voice"),
             "cover_image": None,
             "languages": sorted(list(LanguageService.ELEVENLABS_V3_LANGUAGES)),
