@@ -46,6 +46,13 @@ async def lifespan(app: FastAPI):
         logger.info("🔄 Cookie auto-refresh scheduler started")
     except Exception as e:
         logger.warning(f"Cookie scheduler not started: {e}")
+    
+    try:
+        from app.services.voice_cleanup_scheduler import voice_cleanup_scheduler
+        asyncio.create_task(voice_cleanup_scheduler.start())
+        logger.info("🧹 Voice cleanup scheduler started")
+    except Exception as e:
+        logger.warning(f"Voice cleanup scheduler not started: {e}")
 
     mongodb_lock_acquired = await startup_sync.acquire_startup_lock("mongodb_check", timeout=30)
 

@@ -109,8 +109,9 @@ class JobUtils:
         else:
             updated_manifest.pop("reference_ids", None)
         
-        for segment in updated_manifest.get("segments", []):
-            segment["reference_id"] = None
+        if voice_type != 'ai_voice':
+            for segment in updated_manifest.get("segments", []):
+                segment["reference_id"] = None
         
         return updated_manifest
     

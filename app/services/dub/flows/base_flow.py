@@ -2,7 +2,6 @@ import os
 import logging
 from typing import Dict, Any
 from app.services.dub.context import DubbingContext
-from app.services.dub.steps.reference_creation_step import ReferenceCreationStep
 from app.services.dub.steps.voice_cloning_step import VoiceCloningStep
 from app.services.dub.steps.finalization_step import FinalizationStep
 from app.services.dub.handlers.review_handler import ReviewHandler
@@ -23,13 +22,22 @@ class BaseFlow:
         context.audio_already_split = True
     
     @staticmethod
-    def handle_review_mode(context: DubbingContext) -> Dict[str, Any]:
-        if context.reference_ids:
-            logger.info(f"Assigning user-provided reference_ids before review")
-            ReferenceCreationStep.assign_to_segments(context)
-        else:
-            logger.info("No reference_ids needed - will create after resume/approve")
+    def assign_reference_ids_to_segments(context: DubbingContext):
+        if not context.reference_ids or context.voice_type != 'ai_voice':
+            return
         
+        logger.info(f"Assigning {len(context.reference_ids)} user-provided reference_ids to {len(context.segments)} segments")
+        
+        for segment in context.segments:
+            speaker = segment.get("speaker")
+            if speaker:
+                speaker_index = int(speaker.split("_")[-1]) if "_" in speaker else 0
+                reference_id = context.reference_ids[speaker_index] if speaker_index < len(context.reference_ids) else context.reference_ids[-1]
+                segment["reference_id"] = reference_id
+    
+    @staticmethod
+    def handle_review_mode(context: DubbingContext) -> Dict[str, Any]:
+        logger.info("Preparing for review mode")
         return ReviewHandler.prepare_for_review(context)
     
     @staticmethod

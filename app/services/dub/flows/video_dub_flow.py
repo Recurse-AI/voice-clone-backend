@@ -5,7 +5,6 @@ from app.services.dub.flows.base_flow import BaseFlow
 from app.services.dub.steps.transcription_step import TranscriptionStep
 from app.services.dub.steps.speaker_detection_step import SpeakerDetectionStep
 from app.services.dub.steps.segmentation_step import SegmentationStep
-from app.services.dub.steps.reference_creation_step import ReferenceCreationStep
 
 logger = logging.getLogger(__name__)
 
@@ -17,16 +16,12 @@ class VideoDubFlow(BaseFlow):
         SpeakerDetectionStep.execute(context, tag_segments=True)
         SegmentationStep.execute(context)
         
+        self.assign_reference_ids_to_segments(context)
+        
         context.vocal_url, context.instrument_url = self._get_audio_urls(context.separation_urls)
         
         if context.review_mode:
             return self.handle_review_mode(context)
-        
-        if not context.reference_ids and context.model_type in ["best", "medium"]:
-            self.split_audio_for_references(context)
-            ReferenceCreationStep.execute(context)
-        
-        ReferenceCreationStep.assign_to_segments(context)
         
         return self.execute_voice_cloning_and_finalize(context)
     

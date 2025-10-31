@@ -158,12 +158,13 @@ async def create_model(
         if not result.get("success"):
             raise HTTPException(status_code=500, detail=result.get("error", "Failed to create voice"))
         
+        from app.services.language_service import LanguageService
+        
         return {
             "_id": result["voice_id"],
             "title": title,
             "cover_image": None,
-            "languages": ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'zh', 'ja', 'ko', 
-                         'ar', 'hi', 'tr', 'pl', 'nl', 'sv', 'uk', 'vi'],
+            "languages": sorted(list(LanguageService.ELEVENLABS_V3_LANGUAGES)),
             "tags": tags or ["cloned", "custom"],
             "samples": [],
             "description": description or "",
