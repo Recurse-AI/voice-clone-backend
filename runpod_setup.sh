@@ -26,11 +26,11 @@ echo "🧹 Cleanup previous processes..."
 pkill -9 -f "python.*main" 2>/dev/null || true
 pkill -9 -f "python.*worker" 2>/dev/null || true
 pkill -9 -f "rq.*worker" 2>/dev/null || true
-pkill -9 -f "uvicorn" 2>/dev/null || true
+# pkill -9 -f "uvicorn" 2>/dev/null || true
 redis-cli shutdown 2>/dev/null || true
 pkill -9 -f "redis-server" 2>/dev/null || true
 
-fuser -k 8000/tcp 6379/tcp 8080/tcp 5000/tcp 2>/dev/null || true
+fuser -k 8000/tcp 6379/tcp 8001/tcp 5000/tcp 2>/dev/null || true
 
 rm -rf ./tmp/* ./logs/*.pid ./logs/*.log 2>/dev/null || true
 rm -f dump.rdb appendonly.aof *.rdb *.aof 2>/dev/null || true
@@ -55,10 +55,14 @@ for i in 1 2 3; do
     sleep 1
 done
 
-echo "🚀 Starting API server..."
 WORKERS=${WORKERS:-4}
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-8000}
+
+echo "🧹 Killing process on port ${PORT}..."
+fuser -k ${PORT}/tcp 2>/dev/null || true
+
+echo "🚀 Starting API server on port ${PORT}..."
 
 > logs/info.log 2>/dev/null || true
 
