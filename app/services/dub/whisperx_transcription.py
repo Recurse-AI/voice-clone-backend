@@ -84,7 +84,12 @@ class WhisperXTranscriptionService:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to load WhisperX model: {e}")
+            error_msg = str(e)
+            if "incomplete" in error_msg.lower() or "failed to read" in error_msg.lower():
+                logger.error(f"Failed to load WhisperX model: {e}")
+                logger.info("🔄 Model file corrupted. Delete cache and restart: rm -rf ./cache/whisperx")
+            else:
+                logger.error(f"Failed to load WhisperX model: {e}")
             return False
 
     def _setup_optimal_memory(self):
