@@ -82,8 +82,8 @@ class DubJobService(BaseJobService[DubJob]):
             # Get total count
             total_count = await self.collection.count_documents(query_filter)
             
-            # Get paginated results
-            cursor = self.collection.find(query_filter).sort("created_at", -1).skip(skip).limit(limit)
+            # Get paginated results (exclude 'details' field as it contains folder_upload which is large and not needed for list view)
+            cursor = self.collection.find(query_filter, {"details": 0}).sort("created_at", -1).skip(skip).limit(limit)
             
             jobs = []
             async for job_data in cursor:
