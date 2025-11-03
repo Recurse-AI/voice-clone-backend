@@ -255,8 +255,12 @@ class DubService:
     def _send_completion_email(self, job_id: str, user_id: str, result_url: str = None, details: Dict[str, Any] = None):
         """Send completion email notification"""
         try:
-            # Get user synchronously to avoid async conflicts
+            # Import settings and email helpers first
+            from app.utils.email_helper import send_email, create_job_completion_template
+            from app.config.settings import settings
             from app.utils.db_sync_operations import get_user_sync
+            
+            # Get user synchronously to avoid async conflicts
             user = get_user_sync(user_id)
 
             if not user:
@@ -273,10 +277,6 @@ class DubService:
                     download_urls["audio_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/audio-download/{job_id}"
                 if result_urls.get("video_url"):
                     download_urls["video_url"] = f"{settings.FRONTEND_URL}/workspace/dubbing/video-download/{job_id}"
-
-            # Send email directly without BackgroundTasks to avoid async issues
-            from app.utils.email_helper import send_email, create_job_completion_template
-            from app.config.settings import settings
 
             # Create email content
             html_body = create_job_completion_template(
