@@ -21,6 +21,7 @@ transformers>=4.40.0
 tokenizers
 accelerate
 openai
+nvidia-cudnn-cu12  # GPU library for PyAnnote/WhisperX (CUDA 12)
 
 # Fish Speech TTS dependencies (comprehensive)
 huggingface_hub[hf_xet]
