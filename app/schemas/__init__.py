@@ -24,7 +24,7 @@ class VideoDubRequest(BaseModel):
     source_video_language: Optional[str] = Field(None, description="Source video language (default: None, auto-detect)")
     humanReview: bool = Field(False, description="If true, pause after transcription+translation for human review")
     video_subtitle: bool = Field(False, description="If true, use provided SRT file instead of WhisperX transcription")
-    model_type: str = Field("normal", pattern="^(best|medium|normal)$", description="Voice model: 'best' (ElevenLabs), 'medium' (Fish API), 'normal' (local)")
+    model_type: str = Field("normal", pattern="^(excellent|best|medium|normal)$", description="Voice model: 'excellent' (ElevenLabs Dubbing API), 'best' (ElevenLabs TTS), 'medium' (Fish API), 'normal' (local)")
     add_subtitle_to_video: bool = Field(False, description="If true, add subtitles to final video output")
     voice_type: Optional[str] = Field(None, description="Voice mode: 'voice_clone' or 'ai_voice'")
     reference_ids: Optional[List[str]] = Field(default_factory=list, max_length=10, description="List of reference IDs for different speakers")
@@ -94,7 +94,7 @@ class ApproveReviewRequest(BaseModel):
 class RedubRequest(BaseModel):
     target_language: str = Field(..., description="New target language for re-dub")
     humanReview: Optional[bool] = False
-    model_type: str = Field("normal", pattern="^(best|medium|normal)$", description="Voice model: 'best' (ElevenLabs), 'medium' (Fish API), 'normal' (local)")
+    model_type: str = Field("normal", pattern="^(excellent|best|medium|normal)$", description="Voice model: 'excellent' (ElevenLabs Dubbing API), 'best' (ElevenLabs TTS), 'medium' (Fish API), 'normal' (local)")
     add_subtitle_to_video: bool = Field(False, description="If true, add subtitles to final video output")
     voice_type: Optional[str] = Field(None, description="Voice mode: 'voice_clone' or 'ai_voice'")
     reference_ids: Optional[List[str]] = Field(default_factory=list, max_length=10, description="List of reference IDs for different speakers")
@@ -361,6 +361,7 @@ class UserDubJob(BaseModel):
     original_filename: Optional[str] = None
     target_language: str
     source_video_language: Optional[str] = None
+    model_type: Optional[str] = None
     result_url: Optional[str] = None
     files: Optional[List[FileInfo]] = None
     error: Optional[str] = None

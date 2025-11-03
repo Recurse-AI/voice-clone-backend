@@ -17,22 +17,22 @@ def handle_stripe_errors(func: Callable) -> Callable:
     async def wrapper(*args, **kwargs):
         try:
             return await func(*args, **kwargs)
-        except stripe.error.CardError as e:
+        except stripe.CardError as e:
             logger.error(f"Stripe card error in {func.__name__}: {e}")
             raise HTTPException(status_code=400, detail=f"Card error: {str(e)}")
-        except stripe.error.RateLimitError as e:
+        except stripe.RateLimitError as e:
             logger.error(f"Stripe rate limit in {func.__name__}: {e}")
             raise HTTPException(status_code=429, detail="Rate limit exceeded, please try again later")
-        except stripe.error.InvalidRequestError as e:
+        except stripe.InvalidRequestError as e:
             logger.error(f"Stripe invalid request in {func.__name__}: {e}")
             raise HTTPException(status_code=400, detail=f"Invalid request: {str(e)}")
-        except stripe.error.AuthenticationError as e:
+        except stripe.AuthenticationError as e:
             logger.error(f"Stripe auth error in {func.__name__}: {e}")
             raise HTTPException(status_code=401, detail="Authentication failed")
-        except stripe.error.APIConnectionError as e:
+        except stripe.APIConnectionError as e:
             logger.error(f"Stripe connection error in {func.__name__}: {e}")
             raise HTTPException(status_code=503, detail="Service temporarily unavailable")
-        except stripe.error.StripeError as e:
+        except stripe.StripeError as e:
             logger.error(f"General Stripe error in {func.__name__}: {e}")
             raise HTTPException(status_code=400, detail=f"Payment processing error: {str(e)}")
         except Exception as e:

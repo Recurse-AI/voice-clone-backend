@@ -52,7 +52,7 @@ class StripeService:
         try:
             stripe.Customer.retrieve(customer_id)
             return True
-        except stripe.error.StripeError:
+        except stripe.StripeError:
             logger.warning(f"Stripe customer {customer_id} not found")
             return False
     
