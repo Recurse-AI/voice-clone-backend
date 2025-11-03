@@ -4,6 +4,11 @@ rm -rf logs/* tmp/*
 
 echo "🚀 Starting Voice Cloning API on RunPod..."
 
+apt-get update
+apt-get install -y ffmpeg
+
+apt-get install -y libcudnn8-dev libcudnn8 
+
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export FFMPEG_USE_GPU=1
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
