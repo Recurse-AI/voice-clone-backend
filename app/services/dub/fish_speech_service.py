@@ -317,8 +317,8 @@ class FishSpeechService:
                 
                 return {"success": True, "audio_data": audio_data, "sample_rate": sample_rate}
             
-            # Execute with timeout (300s for first generation with compilation, 180s for subsequent)
-            timeout_seconds = 300 if not hasattr(self, '_first_generation_done') else 180
+            # Execute with timeout (600s for first generation with compilation, 180s for subsequent)
+            timeout_seconds = 600 if not hasattr(self, '_first_generation_done') else 180
             
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(_generate_audio)
