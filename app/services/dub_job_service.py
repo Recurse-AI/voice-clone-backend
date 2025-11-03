@@ -91,8 +91,6 @@ class DubJobService(BaseJobService[DubJob]):
                     job_data['id'] = str(job_data['_id'])
                     del job_data['_id']
                     
-
-                    
                     job = DubJob(**job_data)
                     jobs.append(job)
                 except Exception as validation_error:

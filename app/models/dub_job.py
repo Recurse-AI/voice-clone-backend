@@ -34,7 +34,7 @@ class DubJob(BaseModel):
     duration: Optional[float] = Field(None, description="Video duration in seconds")
     details: Optional[Dict[str, Any]] = Field(None, description="Additional processing details")
     review_required: bool = Field(False, description="Whether human review is required before final processing")
-    model_type: str = Field("normal", description="Voice model: 'best' (ElevenLabs), 'medium' (Fish API), 'normal' (local)")
+    model_type: str = Field("normal", description="Voice model: 'excellent' (ElevenLabs Dubbing API), 'best' (ElevenLabs TTS), 'medium' (Fish API), 'normal' (local)")
     add_subtitle_to_video: bool = Field(False, description="If true, add subtitles to final video output")
     voice_type: Optional[str] = Field(None, description="Voice mode: 'voice_clone' or 'ai_voice'")
     reference_ids: Optional[List[str]] = Field(None, description="List of reference IDs for multi-speaker support")

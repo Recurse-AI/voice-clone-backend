@@ -53,16 +53,19 @@ class CreditService:
         required_credits = self.calculator.calculate_job_credits(job_type, duration_seconds)
         original_credits = required_credits
         
-        # Double credits for premium voice model
+        # Apply multiplier based on model type
         model_type = job_data.get("model_type", "normal")
-        if model_type == "best":
+        if model_type == "excellent":
+            required_credits *= 4
+            logger.info(f"🔧 DEBUG: ElevenLabs Dubbing API (excellent) - 4x credits: {original_credits} → {required_credits}")
+        elif model_type == "best":
             required_credits *= 3
-            logger.info(f"🔧 DEBUG: ElevenLabs (best) model - tripling credits: {original_credits} → {required_credits}")
+            logger.info(f"🔧 DEBUG: ElevenLabs TTS (best) - 3x credits: {original_credits} → {required_credits}")
         elif model_type == "medium":
             required_credits *= 2
-            logger.info(f"🔧 DEBUG: Fish API (medium) model - doubling credits: {original_credits} → {required_credits}")
+            logger.info(f"🔧 DEBUG: Fish API (medium) - 2x credits: {original_credits} → {required_credits}")
         else:
-            logger.info(f"🔧 DEBUG: Local (normal) model - credits: {required_credits}")
+            logger.info(f"🔧 DEBUG: Local (normal) model - 1x credits: {required_credits}")
             
         estimated_cost = self.calculator.calculate_cost_estimate(required_credits)
         

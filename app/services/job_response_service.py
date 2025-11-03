@@ -59,21 +59,27 @@ class JobResponseService:
                 files_info.append(file_info)
         
         # Backward-compat: include older-style instrument/vocal URLs if present in details
+        # Also handle ElevenLabs dubbing which saves these URLs separately
         try:
             # Build a set of existing filenames for de-duplication
             existing_names = set(f.filename for f in files_info)
-            # Older jobs may have saved direct URLs in details
-            if job.details.get("vocal_url") and f"vocal_{job.job_id}.wav" not in existing_names:
+            
+            # Check for vocal_audio_url (ElevenLabs) or vocal_url (older jobs)
+            vocal_url = job.details.get("vocal_audio_url") or job.details.get("vocal_url")
+            if vocal_url and f"vocal_{job.job_id}.wav" not in existing_names:
                 files_info.append(FileInfo(
                     filename=f"vocal_{job.job_id}.wav",
-                    url=job.details.get("vocal_url"),
+                    url=vocal_url,
                     size=None,
                     type='audio'
                 ))
-            if job.details.get("instrument_url") and f"instrument_{job.job_id}.wav" not in existing_names:
+            
+            # Check for instrumental_audio_url (ElevenLabs) or instrument_url (older jobs)
+            instrument_url = job.details.get("instrumental_audio_url") or job.details.get("instrument_url")
+            if instrument_url and f"instrument_{job.job_id}.wav" not in existing_names:
                 files_info.append(FileInfo(
                     filename=f"instrument_{job.job_id}.wav",
-                    url=job.details.get("instrument_url"),
+                    url=instrument_url,
                     size=None,
                     type='audio'
                 ))
@@ -98,6 +104,7 @@ class JobResponseService:
             original_filename=job.original_filename,
             target_language=job.target_language,
             source_video_language=job.source_video_language,
+            model_type=job.model_type,
             result_url=JobResponseService._extract_result_url(job),
             files=JobResponseService._extract_files_info(job),
             error=job.error,

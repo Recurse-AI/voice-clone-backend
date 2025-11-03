@@ -5,6 +5,7 @@ Handles video dubbing workflow with separation of concerns
 import logging
 import gc
 import time
+import os
 from app.services.dub_service import dub_service
 from app.services.simple_status_service import status_service, JobStatus
 from app.utils.runpod_service import runpod_service
@@ -64,11 +65,18 @@ def process_dub_task(request_dict: dict, user_id: str):
         # Step 4: Process dubbing pipeline with separation URLs
         update_dub_job_stage(job_id, "dubbing")
         
-        success = _process_dubbing_pipeline(
-            job_id, target_language, source_video_language, 
-            job_dir, human_review, separation_result["runpod_urls"], video_subtitle, model_type,
-            voice_type, reference_ids, add_subtitle_to_video, num_of_speakers
-        )
+        if model_type == "excellent":
+            success = _process_elevenlabs_dubbing_api(
+                job_id, target_language, source_video_language,
+                job_dir, audio_path, num_of_speakers,
+                separation_result["runpod_urls"]
+            )
+        else:
+            success = _process_dubbing_pipeline(
+                job_id, target_language, source_video_language, 
+                job_dir, human_review, separation_result["runpod_urls"], video_subtitle, model_type,
+                voice_type, reference_ids, add_subtitle_to_video, num_of_speakers
+            )
         
         if not success:
             _cleanup_r2_file(r2_key)
@@ -231,6 +239,112 @@ def _process_dubbing_pipeline(job_id: str, target_language: str,
     except Exception as e:
         logger.error(f"Dubbing pipeline failed for {job_id}: {e}")
         dub_service.fail_job(job_id, f"Pipeline error: {str(e)}", "pipeline_error")
+        return False
+
+
+def _process_elevenlabs_dubbing_api(
+    job_id: str,
+    target_language: str,
+    source_video_language: str,
+    job_dir: str,
+    audio_path: str,
+    num_of_speakers: int,
+    separation_urls: dict
+) -> bool:
+    """Process dubbing using ElevenLabs Dubbing API"""
+    try:
+        from app.services.elevenlabs_dubbing_service import get_elevenlabs_dubbing_service
+        
+        elevenlabs_service = get_elevenlabs_dubbing_service()
+        
+        result = elevenlabs_service.process_dubbing(
+            job_id=job_id,
+            target_language=target_language,
+            source_video_language=source_video_language,
+            job_dir=job_dir,
+            audio_path=audio_path,
+            num_of_speakers=num_of_speakers,
+            separation_urls=separation_urls
+        )
+        
+        if not result.get("success"):
+            error = result.get("error", "Unknown error")
+            dub_service.fail_job(job_id, error, "elevenlabs_failed")
+            return False
+        
+        # Extract the permanent R2 URLs for separated tracks
+        separation_r2_urls = result.get("separation_r2_urls", {})
+        result_urls = result.get("result_urls", {})
+        
+        # Build folder_upload structure to match normal dubbing flow
+        folder_upload = {}
+        
+        # Add vocal audio if available
+        if separation_r2_urls.get("vocal_url"):
+            folder_upload[f"vocal_{job_id}.wav"] = {
+                "success": True,
+                "url": separation_r2_urls.get("vocal_url"),
+                "size": None
+            }
+        
+        # Add instrumental audio if available
+        if separation_r2_urls.get("instrumental_url"):
+            folder_upload[f"instrument_{job_id}.wav"] = {
+                "success": True,
+                "url": separation_r2_urls.get("instrumental_url"),
+                "size": None
+            }
+        
+        # Add final dubbed audio
+        if result_urls.get("audio_url"):
+            folder_upload[f"final_{job_id}.wav"] = {
+                "success": True,
+                "url": result_urls.get("audio_url"),
+                "size": None
+            }
+        
+        # Add final video if available
+        if result_urls.get("video_url"):
+            folder_upload[f"final_video_{job_id}.mp4"] = {
+                "success": True,
+                "url": result_urls.get("video_url"),
+                "size": None
+            }
+        
+        details = {
+            "folder_upload": folder_upload,
+            "result_urls": result_urls,
+            "dubbing_id": result.get("dubbing_id"),
+            "provider": "elevenlabs",
+            "has_watermark": True,
+            "vocal_audio_url": separation_r2_urls.get("vocal_url"),
+            "instrumental_audio_url": separation_r2_urls.get("instrumental_url")
+        }
+        
+        logger.info(f"🎵 Saved permanent separation URLs - Vocal: {separation_r2_urls.get('vocal_url')}, Instrumental: {separation_r2_urls.get('instrumental_url')}")
+        logger.info(f"📦 Folder upload structure created with {len(folder_upload)} files")
+        
+        audio_url = result_urls.get("audio_url")
+        video_url = result_urls.get("video_url")
+        
+        logger.info(f"📦 Result URLs - Audio: {audio_url}, Video: {video_url}")
+        
+        # Use video URL as primary result if available, otherwise audio
+        primary_result_url = video_url if video_url else audio_url
+        logger.info(f"✅ Primary result URL: {primary_result_url}")
+        
+        success = dub_service.complete_job(job_id, primary_result_url, details)
+        if not success:
+            dub_service.fail_job(job_id, "Failed to complete job", "completion_failed")
+            return False
+        
+        logger.info(f"✅ ElevenLabs dubbing completed for job {job_id}")
+        _cleanup_temp_files(job_id)
+        return True
+        
+    except Exception as e:
+        logger.error(f"ElevenLabs dubbing failed for {job_id}: {e}")
+        dub_service.fail_job(job_id, f"ElevenLabs error: {str(e)}", "elevenlabs_failed")
         return False
 
 

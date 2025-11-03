@@ -1,0 +1,94 @@
+┌─────────────────────────────────────────────────────────┐
+│  INPUT: Video or Audio                                  │
+└──────────────┬──────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│  ALWAYS: Extract Audio First                             │
+│  - Video → Extract audio (already done in route)         │
+│  - Audio → Use as is                                     │
+│  Store: audio_path, has_original_video flag              │
+└──────────────┬───────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│  Create Blank Video                                      │
+│  - Black screen (1280x720)                               │
+│  - Add original audio                                    │
+│  - Output: blank_video.mp4                               │
+└──────────────┬───────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│  Upload Blank Video to R2 (temp storage)                 │
+│  - Get public URL                                        │
+│  - For ElevenLabs API input                              │
+└──────────────┬───────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│  Submit to ElevenLabs API                                │
+│  - POST /dubbing with blank_video_url                    │
+│  - watermark: true                                       │
+│  - Get dubbing_id                                        │
+└──────────────┬───────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│  Poll Status (every 10s)                                 │
+│  - GET /dubbing/{dubbing_id}                             │
+│  - Wait until status == "dubbed"                         │
+│  - Update progress 40% → 85%                             │
+└──────────────┬───────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│  Download Dubbed Video                                   │
+│  - Black screen with watermark                           │
+│  - Dubbed audio track                                    │
+└──────────────┬───────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│  Extract Dubbed Audio                                    │
+│  - ffmpeg -i dubbed_video.mp4 -vn dubbed_audio.wav       │
+│  - Pure dubbed audio only                                │
+└──────────────┬───────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│  Mix with Instrumental (if available)                    │
+│  - dubbed_audio + instrumental → final_audio             │
+│  - Volume balance: dub=2.0, inst=0.3                     │
+└──────────────┬───────────────────────────────────────────┘
+               │
+               ▼
+        ┌──────┴──────┐
+        │             │
+        ▼             ▼
+┌───────────┐   ┌────────────┐
+│ Has Video?│   │ Audio Only │
+│    YES    │   │     NO     │
+└─────┬─────┘   └─────┬──────┘
+      │               │
+      ▼               ▼
+┌──────────────┐   ┌──────────────┐
+│ Merge Audio  │   │ Return Audio │
+│ with Original│   │     Only     │
+│    Video     │   │              │
+└──────┬───────┘   └──────┬───────┘
+       │                  │
+       ▼                  ▼
+┌────────────────────────────┐
+│ Upload to R2               │
+│ - audio_url (always)       │
+│ - video_url (if exists)    │
+└────────────┬───────────────┘
+             │
+             ▼
+┌────────────────────────────┐
+│ Complete Job               │
+│ - Save URLs                │
+│ - Send email               │
+│ - Cleanup temp files       │
+└────────────────────────────┘

@@ -636,7 +636,7 @@ async def handle_setup_completion(session: Dict[str, Any]):
                         customer=customer_id,
                     )
                     logger.info(f"Payment method {payment_method_id} attached to customer {customer_id}")
-                except stripe.error.InvalidRequestError as e:
+                except stripe.InvalidRequestError as e:
                     if "already attached" in str(e):
                         logger.info(f"Payment method {payment_method_id} already attached to customer {customer_id}")
                     else:
@@ -687,7 +687,7 @@ async def handle_setup_intent_succeeded(setup_intent: Dict[str, Any]):
                 customer=customer_id,
             )
             logger.info(f"Payment method {payment_method_id} attached to customer {customer_id}")
-        except stripe.error.InvalidRequestError as e:
+        except stripe.InvalidRequestError as e:
             if "already attached" in str(e):
                 logger.info(f"Payment method {payment_method_id} already attached to customer {customer_id}")
             else:
@@ -768,7 +768,7 @@ async def get_payment_details(
             "invoice": invoice_info
         })
         
-    except stripe.error.StripeError as e:
+    except stripe.StripeError as e:
         logger.error(f"Stripe error retrieving payment {payment_intent_id}: {e}")
         return error_response("Failed to retrieve payment details", 400, {"error": str(e)})
     except Exception as e:

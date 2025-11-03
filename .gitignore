@@ -207,6 +207,12 @@ htmlcov/
 dev_*
 test_*
 
+# Redis
+dump.rdb
+*.rdb
+*.aof
+appendonly.aof
+
 # Backup files
 *.bak
 *.backup
