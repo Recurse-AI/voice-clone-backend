@@ -20,6 +20,28 @@ export FORCE_CUDA=1
 echo "🐍 Activating virtual environment..."
 source venv/bin/activate
 
+# Check and install cuDNN if missing (required for WhisperX/PyAnnote)
+echo "🔍 Checking GPU dependencies..."
+if command -v nvidia-smi >/dev/null 2>&1; then
+    CUDA_VERSION=$(nvidia-smi | grep "CUDA Version" | awk '{print $9}' | cut -d'.' -f1)
+    
+    # Check if cuDNN is already installed
+    python -c "import nvidia.cudnn" 2>/dev/null
+    if [ $? -ne 0 ]; then
+        echo "📦 Installing cuDNN for CUDA ${CUDA_VERSION}..."
+        if [ "$CUDA_VERSION" = "12" ] || [ "$CUDA_VERSION" -ge 12 ]; then
+            pip install --no-cache-dir nvidia-cudnn-cu12 -q
+        else
+            pip install --no-cache-dir nvidia-cudnn-cu11 -q
+        fi
+        echo "✅ cuDNN installed successfully"
+    else
+        echo "✅ cuDNN already installed"
+    fi  
+else
+    echo "⚠️ No GPU detected, skipping cuDNN installation"
+fi
+
 #clear all workers
 python cleanup_workers.py
 
