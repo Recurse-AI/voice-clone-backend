@@ -161,12 +161,25 @@ class FishAudioAPIService:
             return {"success": False, "error": str(e)}
     
     def cleanup_old_voices(self, keep_count: int = 0) -> Dict[str, Any]:
+        """
+        Clean up old Fish Audio voice models
+        
+        Previous Issue: Single httpx.Client with 30s timeout was shared for GET + all DELETE operations.
+        When deleting multiple models (e.g., 20-30), the accumulated time exceeded 30s causing 
+        "read operation timed out" errors.
+        
+        Solution: Separate the GET operation from DELETE operations. Each DELETE gets its own client 
+        with fresh 30s timeout, preventing timeout accumulation. Individual error handling ensures 
+        one failure doesn't stop the entire cleanup process.
+        """
+        
         try:
             if not self.api_key:
                 return {"success": False, "error": "API key not configured"}
             
             headers = {"Authorization": f"Bearer {self.api_key}"}
             
+            # Fetch models list with isolated timeout
             with httpx.Client(timeout=30.0) as client:
                 response = client.get("https://api.fish.audio/model", headers=headers)
                 response.raise_for_status()
@@ -177,10 +190,20 @@ class FishAudioAPIService:
                     return {"success": True, "deleted": 0}
                 
                 to_delete = custom_models[:-keep_count] if keep_count > 0 else custom_models
-                deleted = sum(1 for m in to_delete if self._delete_model(m.get("_id"), headers, client))
-                
-                logger.info(f"🧹 Cleaned {deleted}/{len(to_delete)} Fish Audio models")
-                return {"success": True, "deleted": deleted}
+            
+            # Delete each model with fresh timeout per operation (prevents timeout accumulation)
+            deleted = 0
+            for model in to_delete:
+                try:
+                    with httpx.Client(timeout=30.0) as delete_client:
+                        delete_client.delete(f"https://api.fish.audio/model/{model.get('_id')}", headers=headers).raise_for_status()
+                        deleted += 1
+                except Exception as e:
+                    logger.warning(f"Failed to delete model {model.get('_id')}: {e}")
+                    continue
+            
+            logger.info(f"🧹 Cleaned {deleted}/{len(to_delete)} Fish Audio models")
+            return {"success": True, "deleted": deleted}
         except Exception as e:
             logger.error(f"Fish Audio cleanup failed: {e}")
             return {"success": False, "error": str(e)}
@@ -200,13 +223,6 @@ class FishAudioAPIService:
             logger.error(f"Failed to delete voice {voice_id}: {e}")
             return False
     
-    def _delete_model(self, model_id: str, headers: dict, client: httpx.Client) -> bool:
-        """Internal delete method for cleanup_old_voices"""
-        try:
-            client.delete(f"https://api.fish.audio/model/{model_id}", headers=headers).raise_for_status()
-            return True
-        except Exception:
-            return False
 
 
 _fish_api_service_instance = None
