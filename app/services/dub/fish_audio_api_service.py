@@ -172,6 +172,7 @@ class FishAudioAPIService:
         with fresh 30s timeout, preventing timeout accumulation. Individual error handling ensures 
         one failure doesn't stop the entire cleanup process.
         """
+        
         try:
             if not self.api_key:
                 return {"success": False, "error": "API key not configured"}
