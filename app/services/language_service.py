@@ -16,26 +16,71 @@ class LanguageService:
     
     # Language mapping - includes all supported languages (source + target)
     LANGUAGE_NAME_TO_CODE: Dict[str, str] = {
-        # Core supported languages
         "english": "en",
         "chinese": "zh",
-        "dutch": "nl",
-        "finnish": "fi",  # WhisperX transcription only
-        "french": "fr",
-        "german": "de",
-        "hindi": "hi",
-        "italian": "it",
         "japanese": "ja",
-        "korean": "ko",
-        "polish": "pl",
-        "portuguese": "pt",
-        "russian": "ru",
+        "german": "de",
+        "french": "fr",
         "spanish": "es",
+        "korean": "ko",
+        "arabic": "ar",
+        "russian": "ru",
         "turkish": "tr",
         "ukrainian": "uk",
         "vietnamese": "vi",
-        "arabic": "ar",  # Fish Speech dubbing only
+        "hindi": "hi",
+        "dutch": "nl",
+        "italian": "it",
+        "polish": "pl",
+        "portuguese": "pt",
+        "bulgarian": "bg",
+        "czech": "cs",
+        "danish": "da",
+        "greek": "el",
+        "estonian": "et",
+        "finnish": "fi",
+        "hebrew": "he",
+        "croatian": "hr",
+        "hungarian": "hu",
+        "indonesian": "id",
+        "lithuanian": "lt",
+        "latvian": "lv",
+        "malay": "ms",
+        "norwegian": "no",
+        "romanian": "ro",
+        "slovak": "sk",
+        "slovenian": "sl",
+        "serbian": "sr",
+        "swedish": "sv",
+        "thai": "th",
+        "filipino": "fil",
         "bengali": "bn",
+        "tamil": "ta",
+        "telugu": "te",
+        "urdu": "ur",
+        "persian": "fa",
+        "georgian": "ka",
+        "armenian": "hy",
+        "azeri": "az",
+        "azerbaijani": "az",
+        "kazakh": "kk",
+        "nepali": "ne",
+        "marathi": "mr",
+        "punjabi": "pa",
+        "gujarati": "gu",
+        "kannada": "kn",
+        "malayalam": "ml",
+        "afrikaans": "af",
+        "welsh": "cy",
+        "icelandic": "is",
+        "irish": "ga",
+        "macedonian": "mk",
+        "bosnian": "bs",
+        "galician": "gl",
+        "catalan": "ca",
+        "swahili": "sw",
+        "somali": "so",
+        "hausa": "ha",
     }
     
     # Languages supported for dubbing (Fish Speech) - matches frontend target languages exactly
@@ -44,11 +89,40 @@ class LanguageService:
         "tr", "uk", "vi", "hi", "nl", "it", "pl", "pt"
     }
     
-    # Languages supported for transcription (WhisperX) - matches frontend exactly
+    # Languages supported for transcription (WhisperX + AssemblyAI) - only languages supported by BOTH
     TRANSCRIPTION_SUPPORTED_CODES: Set[str] = {
-        "en", "zh", "nl", "fi", "fr", "de", "hi", "it", "ja",
-        "ko", "pl", "pt", "ru", "es", "tr", "uk", "vi"
+        "en",  # English
+        "es",  # Spanish
+        "fr",  # French
+        "de",  # German
+        "it",  # Italian
+        "pt",  # Portuguese
+        "nl",  # Dutch
+        "ru",  # Russian
+        "pl",  # Polish
+        "tr",  # Turkish
+        "uk",  # Ukrainian
+        "ar",  # Arabic
+        "hi",  # Hindi
+        "ja",  # Japanese
+        "zh",  # Chinese (Mandarin)
+        "ko",  # Korean
+        "id",  # Indonesian
+        "sv",  # Swedish
+        "cs",  # Czech
+        "fi",  # Finnish
+        "el",  # Greek
+        "da",  # Danish
+        "hu",  # Hungarian
+        "ro",  # Romanian
+        "vi",  # Vietnamese
+        "bg",  # Bulgarian
+        "hr",  # Croatian
+        "sk",  # Slovak
+        "sl",  # Slovenian
+        "sr"   # Serbian
     }
+
     
     # ElevenLabs V3 supported languages (70+ languages)
     ELEVENLABS_V3_LANGUAGES: Set[str] = {
@@ -206,23 +280,35 @@ class LanguageService:
         
         assemblyai_mapping = {
             "en": "en",
-            "zh": "zh",
-            "nl": "nl",
-            "fi": "fi",
+            "es": "es",
             "fr": "fr",
             "de": "de",
-            "hi": "hi",
             "it": "it",
-            "ja": "ja",
-            "ko": "ko",
-            "pl": "pl",
             "pt": "pt",
+            "nl": "nl",
             "ru": "ru",
-            "es": "es",
+            "pl": "pl",
             "tr": "tr",
             "uk": "uk",
+            "ar": "ar",
+            "hi": "hi",
+            "ja": "ja",
+            "zh": "zh",
+            "ko": "ko",
+            "id": "id",
+            "sv": "sv",
+            "cs": "cs",
+            "fi": "fi",
+            "el": "el",
+            "da": "da",
+            "hu": "hu",
+            "ro": "ro",
             "vi": "vi",
-            "ar": "ar"
+            "bg": "bg",
+            "hr": "hr",
+            "sk": "sk",
+            "sl": "sl",
+            "sr": "sr"
         }
         
         return assemblyai_mapping.get(normalized, "en")
