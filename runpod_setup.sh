@@ -20,6 +20,36 @@ export FORCE_CUDA=1
 echo "🐍 Activating virtual environment..."
 source venv/bin/activate
 
+# Check if fish-speech exists, clone if missing
+if [ ! -d "fish-speech" ]; then
+    echo "🐟 Fish Speech not found, cloning..."
+    git clone https://github.com/fishaudio/fish-speech.git
+    cd fish-speech
+    pip install -e . --no-deps
+    cd ..
+    export PYTHONPATH="${PWD}/fish-speech:${PYTHONPATH}"
+else
+    echo "✅ Fish Speech already exists, skipping clone"
+fi
+
+# Check and update yt-dlp if newer version available
+echo "🔄 Checking yt-dlp version..."
+CURRENT_VERSION=$(pip show yt-dlp 2>/dev/null | grep "Version:" | awk '{print $2}' || echo "not_installed")
+if [ "$CURRENT_VERSION" = "not_installed" ]; then
+    echo "📦 Installing yt-dlp..."
+    pip install yt-dlp --quiet
+else
+    echo "📋 Current yt-dlp version: $CURRENT_VERSION"
+    echo "🔄 Updating yt-dlp to latest version..."
+    pip install --upgrade yt-dlp --quiet
+    NEW_VERSION=$(pip show yt-dlp 2>/dev/null | grep "Version:" | awk '{print $2}')
+    if [ "$CURRENT_VERSION" != "$NEW_VERSION" ]; then
+        echo "✅ Updated yt-dlp: $CURRENT_VERSION → $NEW_VERSION"
+    else
+        echo "✅ yt-dlp already at latest version ($CURRENT_VERSION)"
+    fi
+fi
+
 # Check and install cuDNN if missing (required for WhisperX/PyAnnote)
 echo "🔍 Checking GPU dependencies..."
 if command -v nvidia-smi >/dev/null 2>&1; then
