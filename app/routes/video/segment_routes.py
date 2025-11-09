@@ -177,6 +177,8 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
                 seg["end"] = edit.end
             if edit.reference_id is not None:
                 seg["reference_id"] = edit.reference_id
+            if edit.speaker is not None:
+                seg["speaker"] = edit.speaker
             if edit.original_text is not None:
                 logger.info(f"Updating original_text for segment {seg['id']}: '{edit.original_text}'")
                 seg["original_text"] = edit.original_text
@@ -362,6 +364,9 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     # Update reference_id if provided
     if request_body.reference_id is not None:
         seg["reference_id"] = request_body.reference_id
+
+    if request_body.speaker is not None:
+        seg["speaker"] = request_body.speaker
     
     # Store prompt and tone separately for future reference
     if request_body.prompt:
