@@ -84,6 +84,7 @@ class SegmentEdit(BaseModel):
     end: Optional[int] = None
     reference_id: Optional[str] = None
     original_text: Optional[str] = None
+    speaker: Optional[str] = None
 
 class SaveEditsRequest(BaseModel):
     segments: list[SegmentEdit]
@@ -123,6 +124,7 @@ class RegenerateSegmentRequest(BaseModel):
     start: Optional[int] = None
     end: Optional[int] = None
     reference_id: Optional[str] = Field(None, description="Optional reference_id to change voice model")
+    speaker: Optional[str] = Field(None, description="Optional speaker identifier to change speaker")
 
     @field_validator('start')
     @classmethod
