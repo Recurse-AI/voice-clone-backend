@@ -186,6 +186,11 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
             updated_segments.append(seg)
         # Segments not in request_segment_ids are effectively deleted
     
+    # Reassign sequential IDs based on array index
+    for idx, seg in enumerate(updated_segments):
+        seg["id"] = f"seg_{idx+1:03d}"
+        seg["segment_index"] = idx
+    
     # Replace manifest segments with updated ones
     manifest["segments"] = updated_segments
     manifest["version"] = int(manifest.get("version", 1)) + 1
