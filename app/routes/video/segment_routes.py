@@ -8,12 +8,13 @@ from app.schemas import (
     RegenerateSegmentRequest,
     RegenerateSegmentResponse,
     SegmentItem,
+    AddSegmentRequest,
 )
 from app.dependencies.share_token_auth import get_video_dub_user
 from app.services.dub_job_service import dub_job_service
 from app.services.simple_status_service import JobStatus
 
-router = APIRouter()
+router = APIRouter(tags=["video-segments"])
 
 logger = logging.getLogger(__name__)
 
@@ -302,6 +303,121 @@ async def update_segments(job_id: str, segments: List[SegmentItem], current_user
         "segments_manifest_url": manifest_url_out,
         "segments_manifest_key": manifest_key,
         "updated_segments_version": (job.edited_segments_version or 0) + 1,
+    })
+    await dub_job_service.update_details(job_id, current_details)
+    
+    normalized_manifest = manifest_manager._normalize_manifest(manifest)
+    
+    return SegmentsResponse(
+        job_id=job_id,
+        segments=normalized_manifest.get("segments", []),
+        manifestUrl=manifest_url_out,
+        version=normalized_manifest.get("version"),
+        target_language=normalized_manifest.get("target_language"),
+        reference_ids=normalized_manifest.get("reference_ids", []),
+        vocal_url=normalized_manifest.get("vocal_audio_url"),
+        instrument_url=normalized_manifest.get("instrument_audio_url")
+    )
+
+@router.post("/video-dub/{job_id}/segments/add", response_model=SegmentsResponse)
+async def add_segment(job_id: str, request_body: AddSegmentRequest, current_user = Depends(get_video_dub_user)):
+    """Add a new segment at the specified position"""
+    job = await dub_job_service.get_job(job_id)
+    if not job or job.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    manifest_url = job.segments_manifest_url or (job.details or {}).get("segments_manifest_url")
+    manifest_key = job.segments_manifest_key or (job.details or {}).get("segments_manifest_key")
+    
+    if not manifest_url:
+        raise HTTPException(status_code=400, detail="No manifest available for this job")
+    
+    manifest = manifest_manager.load_manifest(manifest_url)
+    segments = manifest.get("segments", [])
+    
+    if request_body.position > len(segments):
+        raise HTTPException(status_code=400, detail=f"Position {request_body.position} exceeds segment count {len(segments)}")
+    
+    if request_body.position > 0:
+        prev_segment = segments[request_body.position - 1]
+        prev_end = prev_segment.get("end", 0)
+        if request_body.start < prev_end:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Start time {request_body.start}ms must be >= previous segment end time {prev_end}ms"
+            )
+    
+    if request_body.position < len(segments):
+        next_segment = segments[request_body.position]
+        next_start = next_segment.get("start", 0)
+        if request_body.end > next_start:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"End time {request_body.end}ms must be <= next segment start time {next_start}ms"
+            )
+    
+    duration_ms = max(0, request_body.end - request_body.start)
+    temp_id = "temp_new_segment"
+    
+    new_segment = {
+        "id": temp_id,
+        "segment_index": request_body.position,
+        "start": request_body.start,
+        "end": request_body.end,
+        "duration_ms": duration_ms,
+        "original_text": request_body.original_text,
+        "dubbed_text": request_body.dubbed_text if request_body.dubbed_text else request_body.original_text,
+        "voice_cloned": False,
+        "original_audio_file": None,
+        "cloned_audio_file": None,
+        "speaker": request_body.speaker,
+        "reference_id": request_body.reference_id
+    }
+    
+    segments.insert(request_body.position, new_segment)
+    manifest["segments"] = segments
+    
+    if not request_body.dubbed_text:
+        target_lang = manifest.get("target_language", "English")
+        try:
+            dubbed_text = await translate_with_context(manifest, new_segment, request_body.original_text, target_lang)
+            new_segment["dubbed_text"] = dubbed_text
+        except Exception as e:
+            logger.error(f"Contextual translation failed for new segment: {str(e)}")
+            new_segment["dubbed_text"] = request_body.original_text
+    
+    for idx, seg in enumerate(segments):
+        seg["id"] = f"seg_{idx+1:03d}"
+        seg["segment_index"] = idx
+    
+    manifest["segments"] = segments
+    manifest["version"] = int(manifest.get("version", 1)) + 1
+    
+    logger.info(f"Added new segment at position {request_body.position}, total segments: {len(segments)}")
+    
+    job_dir = _ensure_job_dir(job_id)
+    manifest_path = os.path.join(job_dir, f"manifest_{job_id}.json")
+    _write_temp_json(manifest, manifest_path)
+    
+    from app.services.r2_service import R2Service
+    r2 = R2Service()
+    
+    if manifest_key:
+        up_res = r2.upload_file(manifest_path, manifest_key, content_type="application/json")
+        manifest_url_out = (up_res or {}).get("url") or manifest_url
+    else:
+        manifest_filename = r2._sanitize_filename(os.path.basename(manifest_path))
+        r2_key = r2.generate_file_path(job_id, "", manifest_filename)
+        res = r2.upload_file(manifest_path, r2_key, content_type="application/json")
+        manifest_url_out = res.get("url") if res.get("success") else manifest_url
+        if res.get("success"):
+            manifest_key = r2_key
+    
+    current_details = (job.details or {}).copy()
+    current_details.update({
+        "segments_manifest_url": manifest_url_out,
+        "segments_manifest_key": manifest_key,
+        "edited_segments_version": (job.edited_segments_version or 0) + 1,
     })
     await dub_job_service.update_details(job_id, current_details)
     

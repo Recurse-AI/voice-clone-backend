@@ -156,6 +156,23 @@ class RegenerateSegmentResponse(BaseModel):
     version: int
     segment: SegmentItem
 
+class AddSegmentRequest(BaseModel):
+    position: int = Field(..., ge=0, description="Position/index where to insert the new segment")
+    start: int = Field(..., ge=0, description="Start time in milliseconds")
+    end: int = Field(..., gt=0, description="End time in milliseconds")
+    original_text: str = Field(..., min_length=1, description="Original text for the segment")
+    dubbed_text: Optional[str] = Field(None, description="Dubbed text (if not provided, uses original_text)")
+    speaker: Optional[str] = Field(None, description="Speaker identifier")
+    reference_id: Optional[str] = Field(None, description="Reference ID for voice cloning")
+    
+    @field_validator('end')
+    @classmethod
+    def validate_end(cls, v, info):
+        if hasattr(info, 'data') and 'start' in info.data:
+            if v <= info.data['start']:
+                raise ValueError("End time must be greater than start time")
+        return v
+
 
 
 # Audio Separation API Schemas
