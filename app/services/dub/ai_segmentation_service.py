@@ -654,7 +654,14 @@ OUTPUT: Return ONLY the translated text, nothing else."""
                 raise ValueError(f"Invalid segment index {target_segment_index} for {len(segments)} segments")
             
             target_text = segments[target_segment_index]
-            is_same_language = source_language.lower().strip() == target_language.lower().strip()
+            
+            # Normalize target language to ensure consistent format
+            target_lang_code = language_service.normalize_language_input(target_language)
+            target_lang_name = language_service.get_language_name(target_lang_code)
+            
+            # Normalize source language for comparison
+            source_lang_code = language_service.normalize_language_input(source_language) if source_language != "auto" else "auto"
+            is_same_language = source_lang_code != "auto" and source_lang_code == target_lang_code
             
             if is_same_language:
                 return target_text.strip()
@@ -667,7 +674,7 @@ OUTPUT: Return ONLY the translated text, nothing else."""
             
             context = "\n".join(context_parts)
             
-            prompt = f"""CONTEXTUAL TRANSLATION TO {target_language.upper()}:
+            prompt = f"""CONTEXTUAL TRANSLATION TO {target_lang_name.upper()}:
 
 FULL CONVERSATION CONTEXT:
 {context}
@@ -685,7 +692,7 @@ OUTPUT: Return ONLY the translated segment text, nothing else."""
             response = self._call_openai_with_retry(
                 model="gpt-5-mini",
                 input=[
-                    {"role": "system", "content": [{"type": "input_text", "text": f"You are a professional translator specializing in contextual translation. Translate the specified segment to {target_language} while maintaining conversation consistency. Return ONLY the translated text."}]},
+                    {"role": "system", "content": [{"type": "input_text", "text": f"You are a professional translator specializing in contextual translation. Translate the specified segment to {target_lang_name} while maintaining conversation consistency. Return ONLY the translated text."}]},
                     {"role": "user", "content": [{"type": "input_text", "text": prompt}]}
                 ],
                 text={"verbosity": "low"},
