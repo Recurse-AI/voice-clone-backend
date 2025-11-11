@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 import logging
 import os
+import copy
 from typing import List
 from app.schemas import (
     SegmentsResponse,
@@ -115,9 +116,11 @@ from app.services.dub.manifest_manager import manifest_manager
 from app.services.dub.manifest_service import ensure_job_dir as _ensure_job_dir, write_json as _write_temp_json
 
 def _preserve_original_fields(original: dict, updated: dict) -> dict:
-    """Preserve original manifest fields that shouldn't change"""
+    """Preserve original manifest fields that shouldn't change - only restore if original had a value"""
     for field in ["target_language", "reference_ids", "vocal_audio_url", "instrument_audio_url", "model_type", "job_id", "transcript_id", "voice_type", "num_of_speakers", "add_subtitle_to_video"]:
         if field in original and original[field] is not None:
+            if updated.get(field) != original[field]:
+                logger.debug(f"Restoring {field}: {updated.get(field)} -> {original[field]}")
             updated[field] = original[field]
     return updated
 
@@ -204,7 +207,7 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
         seg["segment_index"] = idx
     
     # Replace manifest segments with updated ones
-    original_manifest = manifest.copy()
+    original_manifest = copy.deepcopy(manifest)
     manifest["segments"] = updated_segments
     manifest["version"] = int(manifest.get("version", 1)) + 1
     manifest = _preserve_original_fields(original_manifest, manifest)
@@ -284,7 +287,7 @@ async def update_segments(job_id: str, segments: List[SegmentItem], current_user
         updated_segments.append(segment_data)
     
     # Update manifest with new segments
-    original_manifest = manifest.copy()
+    original_manifest = copy.deepcopy(manifest)
     manifest["segments"] = updated_segments
     manifest["version"] = int(manifest.get("version", 1)) + 1
     manifest = _preserve_original_fields(original_manifest, manifest)
@@ -346,6 +349,7 @@ async def add_segment(job_id: str, request_body: AddSegmentRequest, current_user
         raise HTTPException(status_code=400, detail="No manifest available for this job")
     
     manifest = manifest_manager.load_manifest(manifest_url)
+    original_manifest = copy.deepcopy(manifest)
     segments = manifest.get("segments", [])
     
     if request_body.position > len(segments):
@@ -388,7 +392,6 @@ async def add_segment(job_id: str, request_body: AddSegmentRequest, current_user
     }
     
     segments.insert(request_body.position, new_segment)
-    manifest["segments"] = segments
     
     if not request_body.dubbed_text:
         target_lang = manifest.get("target_language", "English")
@@ -405,7 +408,6 @@ async def add_segment(job_id: str, request_body: AddSegmentRequest, current_user
         seg["id"] = f"seg_{idx+1:03d}"
         seg["segment_index"] = idx
     
-    original_manifest = manifest.copy()
     manifest["segments"] = segments
     manifest["version"] = int(manifest.get("version", 1)) + 1
     manifest = _preserve_original_fields(original_manifest, manifest)
@@ -459,7 +461,7 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     if not manifest_url:
         raise HTTPException(status_code=400, detail="No manifest available for this job")
     manifest = manifest_manager.load_manifest(manifest_url)
-    original_manifest = manifest.copy()
+    original_manifest = copy.deepcopy(manifest)
     seg = next((s for s in manifest.get("segments", []) if s.get("id") == segment_id), None)
     if not seg:
         raise HTTPException(status_code=404, detail="Segment not found")
