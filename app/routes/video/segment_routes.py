@@ -114,6 +114,13 @@ Rewrite this text following the instructions:"""
 from app.services.dub.manifest_manager import manifest_manager
 from app.services.dub.manifest_service import ensure_job_dir as _ensure_job_dir, write_json as _write_temp_json
 
+def _preserve_original_fields(original: dict, updated: dict) -> dict:
+    """Preserve original manifest fields that shouldn't change"""
+    for field in ["target_language", "reference_ids", "vocal_audio_url", "instrument_audio_url", "model_type", "job_id", "transcript_id", "voice_type", "num_of_speakers", "add_subtitle_to_video"]:
+        if field in original and original[field] is not None:
+            updated[field] = original[field]
+    return updated
+
 @router.get("/video-dub/{job_id}/segments", response_model=SegmentsResponse)
 async def get_segments(job_id: str, current_user = Depends(get_video_dub_user)):
     job = await dub_job_service.get_job(job_id)
@@ -197,10 +204,11 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
         seg["segment_index"] = idx
     
     # Replace manifest segments with updated ones
+    original_manifest = manifest.copy()
     manifest["segments"] = updated_segments
     manifest["version"] = int(manifest.get("version", 1)) + 1
+    manifest = _preserve_original_fields(original_manifest, manifest)
     logger.info(f"Saving manifest with {len(updated_segments)} segments")
-    logger.info(f"Manifest: {manifest}")
     # Write and upload manifest back to R2
     job_dir = _ensure_job_dir(job_id)
     manifest_path = os.path.join(job_dir, f"manifest_{job_id}.json")
@@ -276,9 +284,10 @@ async def update_segments(job_id: str, segments: List[SegmentItem], current_user
         updated_segments.append(segment_data)
     
     # Update manifest with new segments
+    original_manifest = manifest.copy()
     manifest["segments"] = updated_segments
     manifest["version"] = int(manifest.get("version", 1)) + 1
-    
+    manifest = _preserve_original_fields(original_manifest, manifest)
     logger.info(f"Updating manifest with {len(updated_segments)} segments")
     
     # Write and upload manifest to R2
@@ -396,9 +405,10 @@ async def add_segment(job_id: str, request_body: AddSegmentRequest, current_user
         seg["id"] = f"seg_{idx+1:03d}"
         seg["segment_index"] = idx
     
+    original_manifest = manifest.copy()
     manifest["segments"] = segments
     manifest["version"] = int(manifest.get("version", 1)) + 1
-    
+    manifest = _preserve_original_fields(original_manifest, manifest)
     logger.info(f"Added new segment at position {request_body.position}, total segments: {len(segments)}")
     
     job_dir = _ensure_job_dir(job_id)
@@ -449,6 +459,7 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     if not manifest_url:
         raise HTTPException(status_code=400, detail="No manifest available for this job")
     manifest = manifest_manager.load_manifest(manifest_url)
+    original_manifest = manifest.copy()
     seg = next((s for s in manifest.get("segments", []) if s.get("id") == segment_id), None)
     if not seg:
         raise HTTPException(status_code=404, detail="Segment not found")
@@ -506,12 +517,13 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     if request_body.tone:
         seg["tone"] = request_body.tone
 
-    # If target_language provided, update manifest target_language (optional)
-    if request_body.target_language:
-        manifest["target_language"] = request_body.target_language
-
     # Persist manifest (version +1)
     manifest["version"] = int(manifest.get("version", 1)) + 1
+    manifest = _preserve_original_fields(original_manifest, manifest)
+    
+    # If target_language provided, update manifest target_language (optional - after preserve)
+    if request_body.target_language:
+        manifest["target_language"] = request_body.target_language
     job_dir = _ensure_job_dir(job_id)
     manifest_path = os.path.join(job_dir, f"manifest_{job_id}.json")
     _write_temp_json(manifest, manifest_path)
