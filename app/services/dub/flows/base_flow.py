@@ -29,6 +29,9 @@ class BaseFlow:
         logger.info(f"Assigning {len(context.reference_ids)} user-provided reference_ids to {len(context.segments)} segments")
         
         for segment in context.segments:
+            if segment.get("reference_id"):
+                continue
+            
             speaker = segment.get("speaker")
             if speaker:
                 speaker_index = int(speaker.split("_")[-1]) if "_" in speaker else 0
