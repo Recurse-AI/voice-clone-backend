@@ -115,14 +115,27 @@ Rewrite this text following the instructions:"""
 from app.services.dub.manifest_manager import manifest_manager
 from app.services.dub.manifest_service import ensure_job_dir as _ensure_job_dir, write_json as _write_temp_json
 
-def _preserve_original_fields(original: dict, updated: dict) -> dict:
-    """Preserve original manifest fields that shouldn't change - only restore if original had a value"""
-    for field in ["target_language", "reference_ids", "vocal_audio_url", "instrument_audio_url", "model_type", "job_id", "transcript_id", "voice_type", "num_of_speakers", "add_subtitle_to_video"]:
-        if field in original and original[field] is not None:
-            if updated.get(field) != original[field]:
-                logger.debug(f"Restoring {field}: {updated.get(field)} -> {original[field]}")
-            updated[field] = original[field]
-    return updated
+def _extract_important_fields(manifest: dict) -> dict:
+    """Extract important fields from manifest right after loading"""
+    return {
+        "target_language": manifest.get("target_language"),
+        "reference_ids": manifest.get("reference_ids"),
+        "vocal_audio_url": manifest.get("vocal_audio_url"),
+        "instrument_audio_url": manifest.get("instrument_audio_url"),
+        "model_type": manifest.get("model_type"),
+        "job_id": manifest.get("job_id"),
+        "transcript_id": manifest.get("transcript_id"),
+        "voice_type": manifest.get("voice_type"),
+        "num_of_speakers": manifest.get("num_of_speakers"),
+        "add_subtitle_to_video": manifest.get("add_subtitle_to_video")
+    }
+
+def _restore_important_fields(manifest: dict, saved_fields: dict) -> dict:
+    """Restore important fields to manifest"""
+    for field, value in saved_fields.items():
+        if value is not None:
+            manifest[field] = value
+    return manifest
 
 @router.get("/video-dub/{job_id}/segments", response_model=SegmentsResponse)
 async def get_segments(job_id: str, current_user = Depends(get_video_dub_user)):
@@ -170,6 +183,7 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
     if not manifest_url:
         raise HTTPException(status_code=400, detail="No manifest available for this job")
     manifest = manifest_manager.load_manifest(manifest_url)
+    saved_fields = _extract_important_fields(manifest)
     
     # Create mapping of request segments by ID
     request_segments_by_id = {e.id: e for e in request_body.segments}
@@ -207,10 +221,9 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
         seg["segment_index"] = idx
     
     # Replace manifest segments with updated ones
-    original_manifest = copy.deepcopy(manifest)
     manifest["segments"] = updated_segments
     manifest["version"] = int(manifest.get("version", 1)) + 1
-    manifest = _preserve_original_fields(original_manifest, manifest)
+    manifest = _restore_important_fields(manifest, saved_fields)
     logger.info(f"Saving manifest with {len(updated_segments)} segments")
     # Write and upload manifest back to R2
     job_dir = _ensure_job_dir(job_id)
@@ -242,13 +255,18 @@ async def save_segment_edits(job_id: str, request_body: SaveEditsRequest, curren
     await dub_job_service.update_details(job_id, current_details)
     
     normalized_manifest = manifest_manager._normalize_manifest(manifest)
+    normalized_manifest = _restore_important_fields(normalized_manifest, saved_fields)
     
     return SegmentsResponse(
         job_id=job_id, 
         segments=normalized_manifest.get("segments", []), 
         manifestUrl=manifest_url_out, 
         version=normalized_manifest.get("version"),
-        target_language=normalized_manifest.get("target_language")
+        target_language=normalized_manifest.get("target_language"),
+        reference_ids=normalized_manifest.get("reference_ids", []),
+        vocal_url=normalized_manifest.get("vocal_audio_url"),
+        instrument_url=normalized_manifest.get("instrument_audio_url"),
+        model_type=normalized_manifest.get("model_type", "normal")
     )
 
 @router.put("/video-dub/{job_id}/segments/update", response_model=SegmentsResponse)
@@ -266,6 +284,7 @@ async def update_segments(job_id: str, segments: List[SegmentItem], current_user
     
     # Load existing manifest
     manifest = manifest_manager.load_manifest(manifest_url)
+    saved_fields = _extract_important_fields(manifest)
     
     # Convert SegmentItem list to manifest format
     updated_segments = []
@@ -287,10 +306,9 @@ async def update_segments(job_id: str, segments: List[SegmentItem], current_user
         updated_segments.append(segment_data)
     
     # Update manifest with new segments
-    original_manifest = copy.deepcopy(manifest)
     manifest["segments"] = updated_segments
     manifest["version"] = int(manifest.get("version", 1)) + 1
-    manifest = _preserve_original_fields(original_manifest, manifest)
+    manifest = _restore_important_fields(manifest, saved_fields)
     logger.info(f"Updating manifest with {len(updated_segments)} segments")
     
     # Write and upload manifest to R2
@@ -323,6 +341,7 @@ async def update_segments(job_id: str, segments: List[SegmentItem], current_user
     await dub_job_service.update_details(job_id, current_details)
     
     normalized_manifest = manifest_manager._normalize_manifest(manifest)
+    normalized_manifest = _restore_important_fields(normalized_manifest, saved_fields)
     
     return SegmentsResponse(
         job_id=job_id,
@@ -332,7 +351,8 @@ async def update_segments(job_id: str, segments: List[SegmentItem], current_user
         target_language=normalized_manifest.get("target_language"),
         reference_ids=normalized_manifest.get("reference_ids", []),
         vocal_url=normalized_manifest.get("vocal_audio_url"),
-        instrument_url=normalized_manifest.get("instrument_audio_url")
+        instrument_url=normalized_manifest.get("instrument_audio_url"),
+        model_type=normalized_manifest.get("model_type", "normal")
     )
 
 @router.post("/video-dub/{job_id}/segments/add", response_model=SegmentsResponse)
@@ -349,7 +369,7 @@ async def add_segment(job_id: str, request_body: AddSegmentRequest, current_user
         raise HTTPException(status_code=400, detail="No manifest available for this job")
     
     manifest = manifest_manager.load_manifest(manifest_url)
-    original_manifest = copy.deepcopy(manifest)
+    saved_fields = _extract_important_fields(manifest)
     segments = manifest.get("segments", [])
     
     if request_body.position > len(segments):
@@ -410,7 +430,7 @@ async def add_segment(job_id: str, request_body: AddSegmentRequest, current_user
     
     manifest["segments"] = segments
     manifest["version"] = int(manifest.get("version", 1)) + 1
-    manifest = _preserve_original_fields(original_manifest, manifest)
+    manifest = _restore_important_fields(manifest, saved_fields)
     logger.info(f"Added new segment at position {request_body.position}, total segments: {len(segments)}")
     
     job_dir = _ensure_job_dir(job_id)
@@ -440,6 +460,7 @@ async def add_segment(job_id: str, request_body: AddSegmentRequest, current_user
     await dub_job_service.update_details(job_id, current_details)
     
     normalized_manifest = manifest_manager._normalize_manifest(manifest)
+    normalized_manifest = _restore_important_fields(normalized_manifest, saved_fields)
     
     return SegmentsResponse(
         job_id=job_id,
@@ -449,7 +470,8 @@ async def add_segment(job_id: str, request_body: AddSegmentRequest, current_user
         target_language=normalized_manifest.get("target_language"),
         reference_ids=normalized_manifest.get("reference_ids", []),
         vocal_url=normalized_manifest.get("vocal_audio_url"),
-        instrument_url=normalized_manifest.get("instrument_audio_url")
+        instrument_url=normalized_manifest.get("instrument_audio_url"),
+        model_type=normalized_manifest.get("model_type", "normal")
     )
 
 @router.post("/video-dub/{job_id}/segments/{segment_id}/regenerate", response_model=RegenerateSegmentResponse)
@@ -461,7 +483,7 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
     if not manifest_url:
         raise HTTPException(status_code=400, detail="No manifest available for this job")
     manifest = manifest_manager.load_manifest(manifest_url)
-    original_manifest = copy.deepcopy(manifest)
+    saved_fields = _extract_important_fields(manifest)
     seg = next((s for s in manifest.get("segments", []) if s.get("id") == segment_id), None)
     if not seg:
         raise HTTPException(status_code=404, detail="Segment not found")
@@ -521,9 +543,9 @@ async def regenerate_segment(job_id: str, segment_id: str, request_body: Regener
 
     # Persist manifest (version +1)
     manifest["version"] = int(manifest.get("version", 1)) + 1
-    manifest = _preserve_original_fields(original_manifest, manifest)
+    manifest = _restore_important_fields(manifest, saved_fields)
     
-    # If target_language provided, update manifest target_language (optional - after preserve)
+    # If target_language provided, update manifest target_language (optional - after restore)
     if request_body.target_language:
         manifest["target_language"] = request_body.target_language
     job_dir = _ensure_job_dir(job_id)
