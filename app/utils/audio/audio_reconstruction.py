@@ -99,8 +99,21 @@ class AudioReconstruction:
                         logger.info(f"Seg {idx}: applied 0.9x slowdown -> {actual_duration_ms:.0f}ms")
                 
                 start_sample = int((current_position_ms / 1000.0) * target_sr)
+                
+                if start_sample >= total_samples:
+                    logger.warning(f"Seg {idx}: start_sample ({start_sample}) >= total_samples ({total_samples}), skipping")
+                    current_position_ms += actual_duration_ms + gap_ms
+                    continue
+                
                 end_sample = min(start_sample + len(audio_data), total_samples)
-                timeline_audio[start_sample:end_sample] = audio_data[:end_sample - start_sample]
+                audio_length = end_sample - start_sample
+                
+                if audio_length <= 0:
+                    logger.warning(f"Seg {idx}: audio_length <= 0, skipping")
+                    current_position_ms += actual_duration_ms + gap_ms
+                    continue
+                
+                timeline_audio[start_sample:end_sample] = audio_data[:audio_length]
                 
                 current_position_ms += actual_duration_ms + gap_ms
             
