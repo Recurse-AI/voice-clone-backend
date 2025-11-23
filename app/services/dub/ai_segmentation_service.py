@@ -210,13 +210,24 @@ OUTPUT FORMAT:
             
             original_text = seg.get("original_text", "").strip()
             dubbed_text = seg.get("dubbed_text", "").strip()
+            
+            original_text = re.sub(r'\[\w+:\s*([^\]]+)\]', r'\1', original_text)
+            original_text = re.sub(r'\[[^\]]+\]', '', original_text).strip()
+            
             dubbed_text = re.sub(r'\[\w+:\s*([^\]]+)\]', r'\1', dubbed_text)
             dubbed_text = re.sub(r'\[[^\]]+\]', '', dubbed_text).strip()
             
             if not original_text or not dubbed_text:
                 seg_id = seg.get("id", f"seg_{idx}")
-                logger.error(f"AI returned malformed segment {seg_id}: {json.dumps(seg, ensure_ascii=False)}")
-                raise ValueError(f"AI failed: segment {seg_id} has empty text (original: '{original_text}', dubbed: '{dubbed_text}')")
+                logger.warning(f"Skipping empty segment {seg_id} in format step: original='{original_text}', dubbed='{dubbed_text}'")
+                if formatted_segments:
+                    prev_seg = formatted_segments[-1]
+                    seg_end_ms = end_ms
+                    if seg_end_ms > prev_seg["end"]:
+                        prev_seg["end"] = seg_end_ms
+                        prev_seg["duration_ms"] = prev_seg["end"] - prev_seg["start"]
+                        logger.info(f"Extended previous segment end to {seg_end_ms}ms to fill gap from skipped segment")
+                continue
             
             global_segment_index = global_segment_index_start + len(formatted_segments)
             
@@ -579,6 +590,27 @@ OUTPUT: Valid JSON with 'segments' array only (EVERY segment MUST have: speaker,
                 result = json.loads(ai_response)
                 
                 ai_segments = result.get("segments", [])
+
+                filtered_segments = []
+                for seg in ai_segments:
+                    original_text = seg.get("original_text", "").strip()
+                    dubbed_text = seg.get("dubbed_text", "").strip()
+                    
+                    original_text = re.sub(r'\[\w+:\s*([^\]]+)\]', r'\1', original_text)
+                    original_text = re.sub(r'\[[^\]]+\]', '', original_text).strip()
+                    
+                    dubbed_text = re.sub(r'\[\w+:\s*([^\]]+)\]', r'\1', dubbed_text)
+                    dubbed_text = re.sub(r'\[[^\]]+\]', '', dubbed_text).strip()
+                    
+                    if not original_text or not dubbed_text:
+                        logger.warning(f"Skipping empty segment: {seg.get('id', 'unknown')}")
+                        continue
+                    
+                    seg["original_text"] = original_text
+                    seg["dubbed_text"] = dubbed_text
+                    filtered_segments.append(seg)
+
+                ai_segments = filtered_segments
                 
                 if preserve_segments:
                     expected_segments = len(chunk)
